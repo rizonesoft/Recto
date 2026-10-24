@@ -915,6 +915,15 @@ class Schedule(Harness):
         self.assertFalse(self.round("1. calc.py:2 untagged.\n\nOVERALL: needs-attention")[0]["severity_stop"],
                          "a round with no HIGHEST line never stops the loop")
 
+    def test_severity_stop_from_round_one_at_zero(self):
+        # The live pin's 0 (owner decision 2026-10-24): the first round whose worst finding is P3 may end the loop.
+        pin = self.repo / ".conclave/reviewers.toml"
+        pin.write_text(pin.read_text(encoding="utf-8").replace("severity_stop_after = 3", "severity_stop_after = 0"),
+                       encoding="utf-8")
+        p3 = "1. P3 calc.py:2 a name.\n\nHIGHEST: P3\nOVERALL: approve"
+        self.assertTrue(self.round(p3)[0]["severity_stop"])
+        self.assertFalse(self.round("1. P2 calc.py:2.\n\nHIGHEST: P2\nOVERALL: needs-attention")[0]["severity_stop"])
+
     def test_an_unreadable_findings_file_is_refused_before_a_review_runs(self):
         self.findings.write_text("## Round one\n\nnot a record\n", encoding="utf-8")
         result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record", str(self.findings))
@@ -984,7 +993,8 @@ class Schedule(Harness):
             "duplicate lens": {**good, "rotation": {"effort": "low", "lenses": ["record", "record"]}},
             "missing key": {k: v for k, v in good.items() if k != "escalation"},
             "unknown key": {**good, "extra": 1},
-            "stop zero": {**good, "severity_stop_after": 0},
+            "stop negative": {**good, "severity_stop_after": -1},
+            "stop past cap": {**good, "severity_stop_after": 34},
             "stop bool": {**good, "severity_stop_after": True},
         }
         module.check_schedule(good, ["codex"])

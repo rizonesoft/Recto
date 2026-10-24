@@ -25,11 +25,12 @@ claude = ["astra"]
 
 # The review schedule (owner decision 2026-10-23). The dispatcher picks each pass's effort and lenses, so the loop
 # runs the same way every time: a plan review before the build, the completion review after it, three fixed
-# adversarial rounds at falling effort, then one low-effort lens per round in rotation until the loop stops. From
-# round 4 on (past severity_stop_after) a round whose worst finding is P3 stops the loop; a low-effort round that
-# finds a P1 is followed by one medium-effort adversarial round. The cap stays 33 rounds.
+# adversarial rounds at falling effort, then one low-effort lens per round in rotation until the loop stops. The
+# first round with no P1 or P2 finding (its worst P3, or none) ends the loop (owner decision 2026-10-24: was from
+# round 4 on; severity_stop_after = 0 opens the stop from round 1); a low-effort round that finds a P1 is followed
+# by one medium-effort adversarial round. The cap stays 33 rounds.
 [schedule]
-severity_stop_after = 3
+severity_stop_after = 0
 
 [schedule.plan]
 effort = "medium"

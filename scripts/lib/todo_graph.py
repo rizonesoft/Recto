@@ -32,7 +32,7 @@ STATUSES = {"draft", "active", "blocked", "done", "superseded"}
 # stopped-at-33 is the current review-round cap (owner decision 2026-10-23); stopped-at-22, -13, -8 and -3 stay valid on
 # receipts written under earlier caps.
 # stopped-low-severity: after SEVERITY_CUTOFF_ROUND, a round whose findings are all P3 or advisory ends the loop and
-# its findings are filed as leftovers (review-todo-section).
+# its findings are filed as leftovers (review-todo-section). With the cutoff at 0 that is the first such round.
 VERDICTS = {"clean", "fixed", "stopped-at-33", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3",
             "stopped-low-severity"}
 REVIEW_ROUND_CAP = 33
@@ -43,9 +43,10 @@ EARLIER_CAPS = {8, 13, 22}
 # (up to 16), so unlike their verdicts they are not bounded here; the digest is what binds them.
 LEGACY_RECEIPTS = "docs/reviews/legacy-receipts.json"
 LEGACY_VERDICTS = {"clean", "fixed", "stopped-at-3"}
-# Owner decision 2026-10-23: the severity stop opens after the three fixed adversarial rounds of the review schedule
-# (.conclave/reviewers.toml severity_stop_after; it was 8). Lowering it only loosens the rule, so older receipts hold.
-SEVERITY_CUTOFF_ROUND = 3
+# Owner decision 2026-10-24: the first round with no P1 or P2 finding ends the loop, from round 1
+# (.conclave/reviewers.toml severity_stop_after; it was 3 from 2026-10-23, and 8 before). Lowering it only loosens the
+# rule, so older receipts hold.
+SEVERITY_CUTOFF_ROUND = 0
 # The one-pass completion and excellence review (owner decision 2026-10-23), required for every new stamp: complete (no
 # gaps), completed (every gap implemented in the section) or filed (some gaps filed as new sections, each listed under
 # the completion review as "- Filed: DNN TNN §N"). A receipt without a completion field predates the requirement.

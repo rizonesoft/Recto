@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts" / "lib"))
@@ -914,14 +915,16 @@ class Stamp(Tree):
     def test_outage_rounds_do_not_earn_a_stop(self):
         self.tick_work()
         report = "docs/reviews/00-workspace/D00-T01-s1.md"
-        last = tg.SEVERITY_CUTOFF_ROUND + 1
-        (self.root / report).write_text(
-            "".join(envelope(n, "none") for n in range(1, last)) + envelope(last).replace(
-                "Review text.\n\nOVERALL: approve", "1. **P3: wording.**\n\nHIGHEST: P3\n\nOVERALL: needs-attention"), encoding="utf-8")
-        with self.assertRaises(tg.Refused) as ctx:
-            self.stamp("D00 T01 §1", self.sha, [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
-                     ["true -> ok"], "2026-10-13", cap_outcome="filed")
-        self.assertIn("follows only 1 returned reviews", str(ctx.exception))
+        # At the live cutoff of 0 any returned review may stop; outages count toward no cutoff, which shows at 3.
+        with mock.patch.object(tg, "SEVERITY_CUTOFF_ROUND", 3):
+            last = 4
+            (self.root / report).write_text(
+                "".join(envelope(n, "none") for n in range(1, last)) + envelope(last).replace(
+                    "Review text.\n\nOVERALL: approve", "1. **P3: wording.**\n\nHIGHEST: P3\n\nOVERALL: needs-attention"), encoding="utf-8")
+            with self.assertRaises(tg.Refused) as ctx:
+                self.stamp("D00 T01 §1", self.sha, [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
+                         ["true -> ok"], "2026-10-13", cap_outcome="filed")
+            self.assertIn("follows only 1 returned reviews", str(ctx.exception))
         cap = tg.REVIEW_ROUND_CAP
         (self.root / report).write_text(envelope(1, "none") + "".join(
             envelope(n, overall="needs-attention") for n in range(2, cap + 1)), encoding="utf-8")
@@ -929,7 +932,10 @@ class Stamp(Tree):
             self.stamp("D00 T01 §1", self.sha, [{"round": cap, "report": report, "verdict": f"stopped-at-{cap}"}],
                      ["true -> ok"], "2026-10-13", cap_outcome="filed")
         self.assertIn("a cap stop is the round that returns review", str(ctx.exception))
-        # Blocked or empty replies are not returned reviews either.
+        # Blocked or empty replies are not returned reviews either (at the cutoff of 3, as above).
+        cutoff = mock.patch.object(tg, "SEVERITY_CUTOFF_ROUND", 3)
+        cutoff.start()
+        self.addCleanup(cutoff.stop)
         for filler in (envelope(1).replace("OVERALL: approve", "OVERALL: blocked"), envelope(1).replace("OVERALL: approve", ""),
                        envelope(1, "claude (`claude-opus-5` via `claude`)", overall="needs-attention")):
             (self.root / report).write_text("".join(filler.replace("## Round 1:", f"## Round {n}:") for n in range(1, last))
@@ -948,16 +954,22 @@ class Stamp(Tree):
                  ["true -> ok"], "2026-10-13", cap_outcome="filed")
 
     def test_a_severity_stop_before_the_cutoff_refuses(self):
-        self.tick_work()
-        self.record_rounds(tg.SEVERITY_CUTOFF_ROUND)
-        before = self.snapshot()
-        for n in (1, tg.SEVERITY_CUTOFF_ROUND):
-            early = [{"round": n, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
-                      "verdict": "stopped-low-severity"}]
-            with self.assertRaises(tg.Refused) as ctx:
-                self.stamp("D00 T01 §1", self.sha, early, ["true -> ok"], "2026-10-13", cap_outcome="filed")
-            self.assertIn(f"only after round {tg.SEVERITY_CUTOFF_ROUND}", str(ctx.exception))
-        self.assertEqual(self.snapshot(), before)
+        # The live cutoff is 0 (owner decision 2026-10-24), so no round comes before it; the refusal is checked at the
+        # earlier cutoff of 3, which a later decision could restore.
+        with mock.patch.object(tg, "SEVERITY_CUTOFF_ROUND", 3):
+            self.tick_work()
+            self.record_rounds(3)
+            before = self.snapshot()
+            for n in (1, 3):
+                early = [{"round": n, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
+                          "verdict": "stopped-low-severity"}]
+                with self.assertRaises(tg.Refused) as ctx:
+                    self.stamp("D00 T01 §1", self.sha, early, ["true -> ok"], "2026-10-13", cap_outcome="filed")
+                self.assertIn("only after round 3", str(ctx.exception))
+            self.assertEqual(self.snapshot(), before)
+
+    def test_the_live_cutoff_stops_on_the_first_p3_round(self):
+        self.assertEqual(tg.SEVERITY_CUTOFF_ROUND, 0)
 
     def test_a_claimed_round_must_be_a_reviewed_round_in_its_report(self):
         self.tick_work()

@@ -39,7 +39,7 @@ rounds that returned a review already recorded in the `--record` file. Rounds pa
 through `[schedule.rotation]` (the design lens only with `--surface`), and a low-effort round whose review reads
 `HIGHEST: P1` is followed by the `[schedule.escalation]` step. The scheduled lenses are appended to the prompt and
 recorded on an `- Lenses:` line. The JSON summary carries `position`, `escalated` and `severity_stop` (true when a
-returned round past `severity_stop_after` reads `HIGHEST: P3`: the loop may stop there).
+returned round past `severity_stop_after` reads `HIGHEST: P3`: the loop may stop there; with 0, from round 1).
 """
 import argparse
 from datetime import datetime, timezone
@@ -196,8 +196,8 @@ def check_schedule(schedule, clis):
     for n, step in enumerate(rounds, 1):
         check_step(f"round {n}", step, efforts)
     stop = schedule["severity_stop_after"]
-    if type(stop) is not int or not 1 <= stop <= 33:
-        raise Refused("[schedule] severity_stop_after needs a whole number of rounds from 1 to 33")
+    if type(stop) is not int or not 0 <= stop <= 33:
+        raise Refused("[schedule] severity_stop_after needs a whole number of rounds from 0 to 33")
 
 
 HIGHEST = re.compile(r"^\s*HIGHEST:\s*(P[123])\b", re.IGNORECASE | re.MULTILINE)
@@ -808,8 +808,9 @@ def main(argv=None):
     if plan and plan["position"]:
         result.update(position=plan["position"], escalated=plan["escalated"])
         stop_after = pin["schedule"]["severity_stop_after"]
-        # The severity stop: past the fixed adversarial rounds, a returned round whose worst finding is P3 ends the
-        # loop (todo_graph.SEVERITY_CUTOFF_ROUND is the same number, and `stamp` re-checks it).
+        # The severity stop: a returned round past `severity_stop_after` whose worst finding is P3 ends the loop (0:
+        # from round 1, owner decision 2026-10-24; todo_graph.SEVERITY_CUTOFF_ROUND is the same number, and `stamp`
+        # re-checks it).
         result["severity_stop"] = bool(result["reviewer"]) and plan["position"] > stop_after \
             and highest(result["review"]) == "P3"
     if args.record:
