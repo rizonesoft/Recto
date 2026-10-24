@@ -83,7 +83,7 @@ Sections: 91 | Checklist items: 550
 | [x]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host              | 5     |
 | [x]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host              | 5     |
 | [x]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host              | 17    |
-| [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 7     |
+| [x]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 7     |
 | [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host              | 9     |
 | [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 7     |
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 9     |
@@ -905,6 +905,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 69/836 verified sections, 33 ready to run now.
+Progress: 70/836 verified sections, 35 ready to run now.
 
-Checklist: 436/6137 items completed (includes Commit items).
+Checklist: 437/6137 items completed (includes Commit items).

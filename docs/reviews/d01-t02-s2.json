@@ -1,0 +1,99 @@
+{
+  "ref": "D01 T02 \u00a72",
+  "title": "DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback",
+  "implementation_sha": "25694b1ae97d7a52982d44ea761474dc2108b8d1",
+  "date": "2026-10-24",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter 'PdfFont.*:PdfError.*:Corpus.*:Support.AsanActiveWhenEnabled' -> 0 Warning(s), ASan=enabled, [  PASSED  ] 31 tests.",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 235 tests.",
+    "python -m unittest discover -s tests/scripts -> OK; python scripts/build-corpus.py --check -> 49 fixtures current",
+    "Freeze check: shared DirectWrite factory, bytes held by the loader stream, LoadedFont const-only without caches -> holds"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s2.md",
+    "verdict": "filed",
+    "candidate": "90d0138f162abf6670cd9d579eda9d84663b677c",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T01 \u00a77",
+      "D01 T02 \u00a74",
+      "D01 T02 \u00a76"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s2.md",
+    "candidate": "58177cad9dee2f8e8657cf6867d1a1494f3e771d",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 3,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

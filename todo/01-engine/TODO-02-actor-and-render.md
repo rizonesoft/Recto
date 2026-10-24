@@ -59,7 +59,7 @@ track: M1
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
-| 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [ ] |
+| 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
 | 3 | §3 | Content-stream graphics state machine, path construction/clipping and colour spaces | §1 | [ ] |
 | 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
@@ -161,9 +161,12 @@ Load embedded font programs into immutable `LoadedFont` objects in `src/pdf/font
 - [x] **Corrected 2026-10-24 (build):** the premise that DirectWrite refuses subsets lacking `OS/2`, `name` or `post` is false on Windows 11: a probe (`docs/reviews/01-engine/D01-T02-s2.md`, writer note) found it accepts missing or broken `OS/2`, `name`, `post`, wrong checksums, an unsorted directory and the `true` tag, and refuses a `cmap` whose header claims more subtables than it holds and an `hhea.numberOfHMetrics` past the glyph count. The fixture is a subset with the broken `cmap` (no `OS/2`, `name` or `post`), and the reader clamps `numberOfHMetrics` to the glyph count so that font loads too. When DirectWrite refuses a TrueType program, read its `head` (`unitsPerEm`, `indexToLocFormat`), `maxp`, `hhea` (`numberOfHMetrics`), `hmtx` (advances, the last advance repeated for later glyphs, trailing left side bearings), `loca` (short and long formats) and `glyf` tables directly, simple glyphs (implied on-curve points between off-curve points, quadratic contours converted exactly to cubic verbs) and composite glyphs (offsets, `ARGS_ARE_XY_VALUES` or point-matched anchors, scale, x/y scale and 2 by 2 transforms), and load it as `OutlineOnly`. Done when: `PdfFont.RefusedTrueTypeFallsBackToGlyfOutlines` loads a subset with no `OS/2`, `name` or `post` table and fewer `hmtx` records than glyphs, and matches hand-computed advances and outlines for a short- and a long-`loca` fixture, an empty glyph with a non-zero advance, a contour of only off-curve points, a transformed composite and a point-attached composite. Replaying `OutlineOnly` glyphs as filled paths belongs to `§6`. Cheaper substitute: failing the font and drawing every glyph in a system face.
 - [x] Glyph advances and ink boxes in the `§1` convention: glyph units scaled by `1 / units_per_em` into text space, so the interpreter multiplies by the font size and `PositionedGlyph::ink_bounds_pt` follows `D01 T02 §1` (text-space points with the font size applied). Done when: `PdfFont.GlyphMetricsInTextSpace` checks advances and ink boxes against the font's `hmtx` and `glyf` boxes, including a glyph with a negative left side bearing and one that overhangs its advance.
 - [x] Hostile font programs are refused with typed errors and bounded work: a program larger than `kMaxDecodedStreamBytes` (`ResourceLimit`); table offsets or lengths outside the buffer, `loca` offsets that run backwards or past `glyf`, and a component naming a glyph past `numGlyphs` (`DamagedFormat`); composite nesting past 16 levels, more than 4,096 component visits or 65,535 expanded points in one `outline()` call, counted before each expansion, and more than 65,535 points in a simple glyph (`ResourceLimit`). Done when: `PdfFont.HostileFontProgramsRefused` covers each case, including a compact font whose shared components stay within the per-glyph nesting limit but exceed the visit and point budgets, without a crash under ASan and with the code named here. Cheaper substitute: trusting DirectWrite to reject them.
-- [ ] Commit: `pdf: load embedded TrueType and OpenType fonts in memory, with a glyf fallback`
+- [x] Commit: `pdf: load embedded TrueType and OpenType fonts in memory, with a glyf fallback`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-24 | §2 | 25694b1ae97d7a52982d44ea761474dc2108b8d1
+> **Review:** `docs/reviews/d01-t02-s2.json`
 
 ## 3. Content-stream graphics state machine, path construction/clipping and colour spaces
 
