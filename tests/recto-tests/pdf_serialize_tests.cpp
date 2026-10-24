@@ -259,6 +259,41 @@ TEST(PdfSerialize, Failures)
 		EXPECT_TRUE(budgeted.empty());
 	}
 
+	// A stream's written `/Length` counts as the key and value it is: a dictionary whose array brings the object to the
+	// ceiling with `/Length` is refused, one value fewer is written and reads back.
+	for (const size_t ints : {kMaxParsedValues - 3u, kMaxParsedValues - 2u}) {
+		PdfStream stream;
+		stream.dict = dict_of({{"A", PdfValue{PdfArray(ints, PdfValue{int64_t{1}})}}});
+		std::string text = "prefix ";
+		const auto done = serialize_indirect(IndirectRef{3u, 0u}, PdfValue{std::move(stream)}, text);
+		if (ints == kMaxParsedValues - 3u) {
+			ASSERT_TRUE(done.has_value());
+			const std::string object = text.substr(7); // the parser reads from it, so it must outlive the parse
+			Parser parser(bytes_of(object));
+			EXPECT_TRUE(parser.parse_indirect_object().has_value()); // the dictionary, the array, its ints and /Length
+		} else {
+			ASSERT_FALSE(done.has_value());
+			EXPECT_EQ(done.error().refusal_reason, RefusalReason::ObjectValues);
+			EXPECT_EQ(text, "prefix ");
+		}
+	}
+
+	// ISO 32000-1 7.3.5 and 7.3.10: no name holds the byte 0, and object number 0 is not an object.
+	for (const PdfValue& bad : {PdfValue{PdfName::from_decoded(std::string_view("A\0B", 3u))}, PdfValue{IndirectRef{0u, 0u}}}) {
+		std::string kept = "prefix ";
+		const auto refused = serialize_value(bad, kept);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::InvalidArgument);
+		EXPECT_EQ(kept, "prefix ");
+	}
+	{
+		std::string kept = "prefix ";
+		const auto refused = serialize_indirect(IndirectRef{0u, 0u}, PdfValue{int64_t{1}}, kept);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::InvalidArgument);
+		EXPECT_EQ(kept, "prefix ");
+	}
+
 	// A stream is an indirect object, never a direct value.
 	PdfStream stream;
 	const auto direct = serialize_value(PdfValue{stream}, out);
@@ -282,6 +317,15 @@ TEST(PdfSerialize, PayloadLimit)
 	EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
 	EXPECT_EQ(refused.error().refusal_reason, RefusalReason::ObjectValues);
 	EXPECT_EQ(out, "prefix ");
+
+	// The parser's raw stream ceiling: one byte past it is refused, where it would write and fail to reopen.
+	PdfStream big;
+	big.raw_bytes.assign(kMaxLexerTokenBytes + 1u, uint8_t{0x41});
+	std::string stream_out = "prefix ";
+	const auto too_long = serialize_indirect(IndirectRef{4u, 0u}, PdfValue{std::move(big)}, stream_out);
+	ASSERT_FALSE(too_long.has_value());
+	EXPECT_EQ(too_long.error().refusal_reason, RefusalReason::ObjectValues);
+	EXPECT_EQ(stream_out, "prefix ");
 #endif
 }
 

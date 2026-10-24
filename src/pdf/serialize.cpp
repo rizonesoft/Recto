@@ -174,6 +174,11 @@ void write_real(Writer& w, double v)
 
 void write_name(Writer& w, std::string_view name)
 {
+	// ISO 32000-1 7.3.5: no name holds the byte 0, which `#00` cannot stand for either.
+	if (name.find('\0') != std::string_view::npos) {
+		w.fail(make_pdf_error(ErrorCode::InvalidArgument, "A name cannot hold the byte 0"));
+		return;
+	}
 	w.count_bytes(name.size());
 	size_t escaped = 0;
 	for (const char c : name) {
@@ -270,8 +275,21 @@ void write_string(Writer& w, const PdfString& s)
 	w.put(')');
 }
 
+// ISO 32000-1 7.3.10: object numbers are positive.
+[[nodiscard]] bool valid_ref(Writer& w, IndirectRef ref) noexcept
+{
+	if (ref.obj_num == 0u) {
+		w.fail(make_pdf_error(ErrorCode::InvalidArgument, "Object number 0 is not an object"));
+		return false;
+	}
+	return true;
+}
+
 void write_ref(Writer& w, IndirectRef ref)
 {
+	if (!valid_ref(w, ref)) {
+		return;
+	}
 	write_integer(w, ref.obj_num);
 	w.put(' ');
 	write_integer(w, ref.gen_num);
@@ -388,6 +406,9 @@ PdfResult<void> serialize_indirect(IndirectRef ref, const PdfValue& value, std::
 {
 	Writer w(out, max_bytes);
 	try {
+		if (!valid_ref(w, ref)) {
+			return w.finish();
+		}
 		write_integer(w, ref.obj_num);
 		w.put(' ');
 		write_integer(w, ref.gen_num);
@@ -396,7 +417,16 @@ PdfResult<void> serialize_indirect(IndirectRef ref, const PdfValue& value, std::
 			// The encoded bytes, which the dictionary's filters describe; the decoded cache is never written. The
 			// dictionary is a value to the parser, as in `write_value`.
 			w.count_value();
+			// The parser refuses a raw stream longer than its token ceiling (`Parser::parse_indirect_object`).
+			if (stream->raw_bytes.size() > kMaxLexerTokenBytes) {
+				w.fail(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectValues, stream->raw_bytes.size(),
+					kMaxLexerTokenBytes, "Stream is longer than the parser reads back"));
+				return w.finish();
+			}
 			write_dict(w, stream->dict, 0u, true);
+			// The `/Length` written here is a key and a value to the parser too.
+			w.count_bytes(6u);
+			w.count_value();
 			w.put(stream->dict.empty() || (stream->dict.size() == 1u && stream->dict.contains("Length")) ? "/Length " : " /Length ");
 			write_integer(w, static_cast<int64_t>(stream->raw_bytes.size()));
 			w.put(">>\nstream\n");
