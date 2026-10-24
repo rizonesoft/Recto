@@ -362,6 +362,90 @@ TEST(PdfFont, GlyphMetricsInTextSpace)
 	}
 }
 
+// Every component encoding the glyf reader reads, and placement by the glyph's origin (its first phantom point): the
+// glyphs of `fonts/truetype-composites.ttf` (COMPOSITE_FONT_GLYPHS in scripts/build-corpus.py), whose placements are
+// stated there. DirectWrite reads the same program, and its advances and ink boxes agree, except for glyph 6:
+// DirectWrite keeps a USE_MY_METRICS composite's own hmtx advance and bearing, where the OpenType glyf specification
+// says the component's metrics apply and any other hmtx value is ignored, which the glyf reader follows.
+TEST(PdfFont, CompositeEncodingsAndPlacement)
+{
+	const auto glyf = load_through_glyf(font_bytes("truetype-composites.ttf"));
+	ASSERT_NE(glyf, nullptr);
+	// 2: lsb 150 against xMin 200, drawn 50 to the left.
+	expect_polygon(*glyf->outline(2), 0u, 0u, {{0.15, 0.0}, {0.35, 0.5}, {0.55, 0.0}});
+	// 3: byte offsets (-10, -20) and x/y scales (0.5, 1.5).
+	expect_polygon(*glyf->outline(3), 0u, 0u, {{0.04, -0.02}, {0.24, 1.03}, {0.44, -0.02}});
+	// 4: x' = -y, y' = x, then (800, 0).
+	expect_polygon(*glyf->outline(4), 0u, 0u, {{0.8, 0.1}, {0.1, 0.5}, {0.8, 0.9}});
+	// 5: half scale with the offset (100, 100) scaled to (50, 50).
+	expect_polygon(*glyf->outline(5), 0u, 0u, {{0.1, 0.05}, {0.3, 0.4}, {0.5, 0.05}});
+	// 6: USE_MY_METRICS: glyph 2's advance and placement, not its own advance of 999.
+	EXPECT_NEAR(*glyf->advance(6), 0.7, 1e-12);
+	expect_polygon(*glyf->outline(6), 0u, 0u, {{0.15, 0.0}, {0.35, 0.5}, {0.55, 0.0}});
+	// 7: the second copy's advance point on the composite's origin moves it by (-1000, 0).
+	const auto phantom_result = glyf->outline(7);
+	ASSERT_TRUE(phantom_result.has_value()) << phantom_result.error().message.view();
+	const GlyphOutline& phantom = *phantom_result;
+	ASSERT_EQ(phantom.verbs.size(), 8u);
+	expect_polygon(phantom, 0u, 0u, {{0.1, 0.0}, {0.5, 0.7}, {0.9, 0.0}});
+	expect_polygon(phantom, 4u, 3u, {{-0.9, 0.0}, {-0.5, 0.7}, {-0.1, 0.0}});
+
+	const auto dwrite = load_ok(font_bytes("truetype-composites.ttf"));
+	ASSERT_NE(dwrite, nullptr);
+	ASSERT_EQ(dwrite->kind(), LoadedFontKind::TrueType);
+	for (uint16_t g = 1; g < glyf->glyph_count(); ++g) {
+		if (g == 6u) {
+			EXPECT_NEAR(*dwrite->advance(g), 0.999, 1e-12);
+			continue;
+		}
+		EXPECT_NEAR(*glyf->advance(g), *dwrite->advance(g), 1e-12) << "glyph " << g;
+		const auto ours = *glyf->ink_box(g);
+		const auto theirs = *dwrite->ink_box(g);
+		ASSERT_TRUE(ours.has_value() && theirs.has_value()) << "glyph " << g;
+		EXPECT_NEAR(ours->x_min, theirs->x_min, 1e-9) << "glyph " << g;
+		EXPECT_NEAR(ours->y_min, theirs->y_min, 1e-9) << "glyph " << g;
+		EXPECT_NEAR(ours->x_max, theirs->x_max, 1e-9) << "glyph " << g;
+		EXPECT_NEAR(ours->y_max, theirs->y_max, 1e-9) << "glyph " << g;
+	}
+}
+
+// One expansion answers what the three queries answer apart, on both routes.
+TEST(PdfFont, GlyphShapeMatchesSeparateQueries)
+{
+	for (const auto& font : {load_ok(font_bytes("truetype-full-short-loca.ttf")),
+			 load_through_glyf(font_bytes("truetype-composites.ttf")), load_ok(font_bytes("opentype-cff.otf"), FontProgramFormat::OpenType)}) {
+		ASSERT_NE(font, nullptr);
+		for (uint16_t g = 0; g < font->glyph_count(); ++g) {
+			const GlyphShape s = *font->shape(g);
+			EXPECT_EQ(s.advance, *font->advance(g)) << "glyph " << g;
+			EXPECT_EQ(s.ink_box, *font->ink_box(g)) << "glyph " << g;
+			const GlyphOutline o = *font->outline(g);
+			EXPECT_EQ(s.outline.verbs, o.verbs) << "glyph " << g;
+			EXPECT_EQ(s.outline.points, o.points) << "glyph " << g;
+		}
+	}
+}
+
+// A font DirectWrite accepts is still bounded: its glyf outlines are checked before DirectWrite expands a glyph.
+TEST(PdfFont, DirectWriteRouteKeepsTheBudgets)
+{
+	const auto font = load_ok(font_bytes("truetype-hostile-budgets.ttf"));
+	ASSERT_NE(font, nullptr);
+	ASSERT_EQ(font->kind(), LoadedFontKind::TrueType);
+	for (const auto& [glyph, reason] : {std::pair{uint16_t{2}, RefusalReason::GlyphPoints}, std::pair{uint16_t{16}, RefusalReason::ComponentVisits}}) {
+		const auto check = font->check_glyph(glyph);
+		ASSERT_FALSE(check.has_value()) << "glyph " << glyph;
+		EXPECT_EQ(check.error().code, ErrorCode::ResourceLimit) << "glyph " << glyph;
+		EXPECT_EQ(check.error().refusal_reason, reason) << "glyph " << glyph;
+		const auto outline = font->outline(glyph);
+		ASSERT_FALSE(outline.has_value()) << "glyph " << glyph;
+		EXPECT_EQ(outline.error().code, ErrorCode::ResourceLimit) << "glyph " << glyph;
+		EXPECT_EQ(outline.error().refusal_reason, reason) << "glyph " << glyph;
+	}
+	EXPECT_TRUE(font->check_glyph(1).has_value());
+	EXPECT_TRUE(font->outline(1).has_value());
+}
+
 TEST(PdfFont, HostileFontProgramsRefused)
 {
 	const auto refused = [](const std::vector<uint8_t>& bytes, ErrorCode code, std::string_view what) {
@@ -411,6 +495,13 @@ TEST(PdfFont, HostileFontProgramsRefused)
 		put_u16(bad, loca + 2u * 2u, 0u); // glyph 2 starts before glyph 1 ends
 		refused(bad, ErrorCode::DamagedFormat, "loca backwards");
 	}
+	// loca offsets past the end of glyf.
+	{
+		std::vector<uint8_t> bad = font;
+		const size_t loca = table_of(bad, "loca").first;
+		put_u16(bad, loca + 2u * 7u, 0xFFFFu); // the end of the last glyph, far past glyf
+		refused(bad, ErrorCode::DamagedFormat, "loca past glyf");
+	}
 	// A component naming a glyph past numGlyphs, and one naming its own composite (nesting past 16 levels).
 	{
 		std::vector<uint8_t> bad = font;
@@ -432,6 +523,9 @@ TEST(PdfFont, HostileFontProgramsRefused)
 		const std::vector<uint8_t> budgets = *font_bytes("truetype-hostile-budgets.ttf");
 		glyph_refused(budgets, 2, ErrorCode::ResourceLimit, "expanded points", RefusalReason::GlyphPoints);
 		glyph_refused(budgets, 16, ErrorCode::ResourceLimit, "component visits", RefusalReason::ComponentVisits);
+		// Contour ends that repeat (2, 2, 2) in an otherwise well-formed glyph: empty contours would grow storage
+		// without spending points.
+		glyph_refused(budgets, 17, ErrorCode::DamagedFormat, "contour ends do not increase");
 		auto ok = load_through_glyf(std::make_shared<const std::vector<uint8_t>>(budgets));
 		ASSERT_NE(ok, nullptr);
 		EXPECT_EQ(ok->outline(1)->points.size() > 0u, true); // the 20,000-point glyph alone fits

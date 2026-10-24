@@ -841,8 +841,8 @@ enum class RefusalReason : uint16_t {
 			   "/EndOfLine is false or the image is Group 4 (observed is the zero-based row, bound the "
 			   "/DamagedRowsBeforeError allowance); scan the page again or ask for the original";
 	case RefusalReason::FontProgramBytes:
-		return "An embedded font program is larger than its limit (observed and bound are bytes); its text is drawn "
-			   "with a substitute font";
+		return "An embedded font program is larger than its limit (observed and bound are bytes); the font is not "
+			   "used, and its text may not appear as designed";
 	case RefusalReason::GlyphPoints:
 		return "A glyph outline holds more points than its limit (observed and bound are points); that glyph is not "
 			   "drawn, and the file may be damaged";

@@ -46,6 +46,13 @@ struct GlyphOutline {
 	std::vector<PdfPoint> points;
 };
 
+// A glyph's advance, ink box and outline in text space, from one expansion.
+struct GlyphShape {
+	double advance{0.0};
+	std::optional<PdfRect> ink_box{};
+	GlyphOutline outline{};
+};
+
 // Per-call ceilings on one glyph's outline: nesting of composite glyphs, the
 // components visited while expanding, and the points the expansion holds.
 inline constexpr size_t kMaxCompositeDepth = 16u;
@@ -105,6 +112,16 @@ public:
 	// The glyph's outline in text space, computed from the font program on each
 	// call within the per-call ceilings above (`ResourceLimit` past them).
 	[[nodiscard]] PdfResult<GlyphOutline> outline(uint16_t glyph) const noexcept;
+
+	// The advance, ink box and outline together, from one expansion of the
+	// glyph where the font is read through its `glyf` outlines.
+	[[nodiscard]] PdfResult<GlyphShape> shape(uint16_t glyph) const noexcept;
+
+	// Whether the glyph stays within the per-call ceilings, checked through the
+	// font's own `glyf` outlines before DirectWrite expands it: the rasterizer
+	// (`D01 T02 section 6`) calls it before drawing a TrueType glyph through
+	// DirectWrite. Always succeeds for a font without `glyf` outlines.
+	[[nodiscard]] PdfResult<void> check_glyph(uint16_t glyph) const noexcept;
 
 	// The DirectWrite face and the validated glyf tables, defined in font.cpp.
 	struct DWriteState;

@@ -4394,6 +4394,9 @@ def build_truetype_hostile_budgets() -> bytes:
         glyphs.append({"name": f"tree{level}", "advance": 500,
                        "components": [{"glyph": level - 1, "dx": 0, "dy": 0}, {"glyph": level - 1, "dx": 0, "dy": 0}],
                        "bbox": (0, 0, 500, 500)})
+    # Glyph 17: a well-formed glyph whose contour ends repeat (2, 2, 2), two contours of no points.
+    glyphs.append({"name": "repeat_ends", "advance": 500,
+                   "contours": [[(0, 0, True), (250, 500, True), (500, 0, True)], [], []]})
     return build_truetype_font(long_loca=True, stripped=False, glyphs=glyphs, cmap={0x41: 1, 0x42: 2, 0x43: 16})
 
 
@@ -4459,6 +4462,101 @@ def build_opentype_cff_font() -> bytes:
               b"cmap": _font_cmap_table({0x41: 1}), b"OS/2": _font_os2_table(), b"name": _font_name_table(),
               b"post": _font_post_table()}
     return _sfnt(tables, cff=True)
+
+
+
+def _glyf_composite_records(components: list[dict], bbox: tuple[int, int, int, int]) -> bytes:
+    """Composite glyph data with any component encoding: `args` "bytes" or "words", xy offsets or point indices,
+    `scale`, `xy_scale` or `two_by_two`, and the USE_MY_METRICS (0x0200) and SCALED_COMPONENT_OFFSET (0x0800) flags."""
+    out = struct.pack(">hhhhh", -1, *bbox)
+    for i, comp in enumerate(components):
+        words = comp.get("args", "words") == "words"
+        flags = 0x0001 if words else 0
+        if "match" in comp:
+            arg1, arg2 = comp["match"]
+        else:
+            flags |= 0x0002
+            arg1, arg2 = comp["dx"], comp["dy"]
+        if "scale" in comp:
+            flags |= 0x0008
+        elif "xy_scale" in comp:
+            flags |= 0x0040
+        elif "two_by_two" in comp:
+            flags |= 0x0080
+        if comp.get("use_my_metrics"):
+            flags |= 0x0200
+        if comp.get("scaled_offset"):
+            flags |= 0x0800
+        if i + 1 < len(components):
+            flags |= 0x0020
+        out += struct.pack(">HH", flags, comp["glyph"])
+        if words:
+            out += struct.pack(">hh" if flags & 0x0002 else ">HH", arg1, arg2)
+        else:
+            out += struct.pack(">bb" if flags & 0x0002 else ">BB", arg1, arg2)
+        if "scale" in comp:
+            out += struct.pack(">H", _f2dot14(comp["scale"]))
+        elif "xy_scale" in comp:
+            out += struct.pack(">HH", *(_f2dot14(v) for v in comp["xy_scale"]))
+        elif "two_by_two" in comp:
+            out += struct.pack(">HHHH", *(_f2dot14(v) for v in comp["two_by_two"]))
+    return out
+
+
+# Glyphs for `fonts/truetype-composites.ttf`, each with its expected placement stated:
+# 1 the triangle (100, 0), (500, 700), (900, 0), advance 1000, lsb 100 (= xMin);
+# 2 the triangle (200, 0), (400, 500), (600, 0) whose hmtx lsb is 150, not its xMin 200: it is drawn 50 to the left;
+# 3 glyph 1 with byte offsets (-10, -20) and x/y scales (0.5, 1.5) (F2Dot14 stops short of 2): (40, -20), (240, 1030),
+#   (440, -20);
+# 4 glyph 1 turned by the 2 by 2 transform x' = -y, y' = x and moved by (800, 0): (800, 100), (100, 500), (800, 900);
+# 5 glyph 1 at half scale with its offset (100, 100) scaled too (SCALED_COMPONENT_OFFSET): (100, 50), (300, 400), (500, 50);
+# 6 glyph 2 with USE_MY_METRICS: advance 700 and glyph 2's placement, though its own hmtx says 999;
+# 7 glyph 1, then glyph 1 again with its phantom point 1 (its advance point, (1000, 0)) on the composite's phantom
+#   point 0 (its origin, (0, 0)): the copy moves by (-1000, 0) to (-900, 0), (-500, 700), (-100, 0).
+COMPOSITE_FONT_GLYPHS: list[dict] = [
+    {"name": ".notdef", "advance": 500, "contours": [[(50, 0, True), (50, 700, True), (450, 700, True), (450, 0, True)]]},
+    {"name": "tri", "advance": 1000, "contours": [[(100, 0, True), (500, 700, True), (900, 0, True)]]},
+    {"name": "shifted", "advance": 700, "lsb": 150, "contours": [[(200, 0, True), (400, 500, True), (600, 0, True)]]},
+    {"name": "bytes_xy", "advance": 600, "bbox": (40, -20, 440, 1030),
+     "components": [{"glyph": 1, "dx": -10, "dy": -20, "args": "bytes", "xy_scale": (0.5, 1.5)}]},
+    {"name": "turned", "advance": 900, "bbox": (100, 100, 800, 900),
+     "components": [{"glyph": 1, "dx": 800, "dy": 0, "two_by_two": (0.0, 1.0, -1.0, 0.0)}]},
+    {"name": "scaled_offset", "advance": 600, "bbox": (100, 50, 500, 400),
+     "components": [{"glyph": 1, "dx": 100, "dy": 100, "scale": 0.5, "scaled_offset": True}]},
+    {"name": "metrics", "advance": 999, "bbox": (200, 0, 600, 500),
+     "components": [{"glyph": 2, "dx": 0, "dy": 0, "use_my_metrics": True}]},
+    {"name": "phantom", "advance": 1000, "bbox": (-900, 0, 900, 700),
+     "components": [{"glyph": 1, "dx": 0, "dy": 0}, {"glyph": 1, "match": (3, 4)}]},
+]
+
+
+def build_truetype_composites() -> bytes:
+    """TrueType whose composites use every component encoding the glyf reader reads (see COMPOSITE_FONT_GLYPHS)."""
+    glyphs = COMPOSITE_FONT_GLYPHS
+    glyf = b""
+    offsets = []
+    lsbs = []
+    for glyph in glyphs:
+        offsets.append(len(glyf))
+        if "components" in glyph:
+            data = _glyf_composite_records(glyph["components"], glyph["bbox"])
+            lsbs.append(glyph["bbox"][0])
+        else:
+            data = _glyf_simple(glyph["contours"])
+            lsbs.append(glyph.get("lsb", min(p[0] for c in glyph["contours"] for p in c)))
+        glyf += data + b"\0" * (-len(data) % 4)
+    offsets.append(len(glyf))
+    loca = struct.pack(f">{len(offsets)}I", *offsets)
+    head = struct.pack(">IIIIHHqqhhhhHHhhh", 0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0x000B, FONT_UNITS_PER_EM,
+                       0, 0, -900, -20, 900, 1030, 0, 8, 2, 1, 0)
+    hmtx = b"".join(struct.pack(">Hh", g["advance"], lsbs[i]) for i, g in enumerate(glyphs))
+    hhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00010000, 800, -200, 0, 1000, min(lsbs), 0, 900, 1, 0, 0,
+                       0, 0, 0, 0, 0, len(glyphs))
+    maxp = struct.pack(">IHHHHHHHHHHHHHH", 0x00010000, len(glyphs), 4, 1, 12, 2, 1, 0, 0, 0, 0, 0, 0, 2, 1)
+    tables = {b"head": head, b"hhea": hhea, b"maxp": maxp, b"hmtx": hmtx, b"loca": loca, b"glyf": glyf,
+              b"cmap": _font_cmap_table({0x41 + i: i for i in range(1, len(glyphs))}), b"OS/2": _font_os2_table(),
+              b"name": _font_name_table(), b"post": _font_post_table()}
+    return _sfnt(tables)
 
 
 def validate_font_structure(rel_path: str, data: bytes) -> None:
@@ -4538,6 +4636,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "fonts/truetype-subset-short-loca.ttf": "TrueType subset DirectWrite refuses: broken cmap header, no OS/2, name or post",
     "fonts/truetype-hostile-budgets.ttf": "TrueType whose composites exceed the 65,535-point and 4,096-visit outline budgets",
     "fonts/opentype-cff.otf": "Minimal OpenType font with CFF outlines: .notdef and a 500 by 700 box with advance 600",
+    "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
 }
 
 
@@ -4592,6 +4691,7 @@ def expected_corpus_files() -> dict[str, bytes]:
         "fonts/truetype-subset-short-loca.ttf": build_truetype_font(long_loca=False, stripped=True, num_hmetrics=5),
         "fonts/truetype-hostile-budgets.ttf": build_truetype_hostile_budgets(),
         "fonts/opentype-cff.otf": build_opentype_cff_font(),
+        "fonts/truetype-composites.ttf": build_truetype_composites(),
     }
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
         missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))
