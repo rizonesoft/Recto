@@ -172,6 +172,8 @@ Load embedded font programs into immutable `LoadedFont` objects in `src/pdf/font
 
 ## 3. Content-stream interpreter: graphics state, paths, painting, clipping and device colour
 
+> **Started:** 2026-10-24T15:11Z
+
 > **Corrected 2026-10-24:** split before the build (AGENTS.md: small, single-responsibility sections). Two items could not be built here: `sh` and pattern fills need the `FillShading` and `FillTilingPattern` commands `§16` adds (moved to `§16`), and the `/ExtGState /SMask` belongs to `§15`, which already parses it. The colour spaces beyond the device ones moved to `§32` (CalGray, CalRGB, Lab, `ICCBased`, calibrated CMYK and image profiles) and `§33` (`Indexed`, `Separation`, `DeviceN` and PDF functions). This section is the interpreter's core.
 
 Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/pdf/interpreter.h` and `src/pdf/interpreter.cpp` (ISO 32000-1 sections 7.8 and 8): operator dispatch over the lexer's tokens, the graphics state, paths, painting, clipping and the device colour spaces. Text, images and Form XObjects are `§4`, the ceilings on hostile streams `§19`.
