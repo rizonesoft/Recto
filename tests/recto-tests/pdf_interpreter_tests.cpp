@@ -71,6 +71,30 @@ std::vector<uint8_t> pdf_from_objects(const std::vector<std::string>& objects)
 	return std::vector<uint8_t>(out.begin(), out.end());
 }
 
+// `data` as a zlib stream of one stored (uncompressed) deflate block (RFC 1950 and 1951), so the bytes inside it stay
+// as written: a FlateDecode payload that holds " EI " and operator text.
+std::string stored_zlib(std::string_view data)
+{
+	std::string out = "\x78\x01\x01";
+	const auto len = static_cast<uint16_t>(data.size());
+	out += static_cast<char>(len & 0xFFu);
+	out += static_cast<char>(len >> 8);
+	out += static_cast<char>(~len & 0xFFu);
+	out += static_cast<char>((~len >> 8) & 0xFFu);
+	out += data;
+	uint32_t a = 1;
+	uint32_t b = 0;
+	for (const char c : data) {
+		a = (a + static_cast<uint8_t>(c)) % 65521u;
+		b = (b + a) % 65521u;
+	}
+	const uint32_t adler = (b << 16) | a;
+	for (int shift = 24; shift >= 0; shift -= 8) {
+		out += static_cast<char>((adler >> shift) & 0xFFu);
+	}
+	return out;
+}
+
 struct Interpreted {
 	std::vector<uint8_t> bytes;
 	std::unique_ptr<Document> document;
@@ -220,6 +244,15 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(kinds(*filtered.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*filtered.list)[0].fill);
 
+	// A Flate image whose decoded pixels hold " EI " and `re f` is framed by decoding: the `EI` inside the data truncates
+	// the stream, so only the `EI` after it, where the data decodes to all 62 samples, ends the image.
+	const std::string flate_pixels = std::string(" EI 0 0 100 100 re f ") + std::string(40, ' ') + "\x80";
+	ASSERT_EQ(flate_pixels.size(), 62u);
+	const auto framed = interpret("BI /W 62 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(flate_pixels) + "\nEI 0 0 10 10 re S");
+	ASSERT_NE(framed.list, nullptr);
+	EXPECT_EQ(kinds(*framed.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_FALSE(all_of<DrawPathCommand>(*framed.list)[0].fill);
+
 	// An operator that takes no operands, given one, is skipped like any operator with the wrong operands: each case
 	// below would add a save, a restore, a close, a clip or a paint before the `2 w S` if it ran.
 	for (const std::string_view op : {"q", "Q", "h", "W", "W*", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}) {
@@ -295,6 +328,14 @@ TEST(PdfInterpreter, EntryContract)
 		EXPECT_EQ(starved.error().code, ErrorCode::OutOfMemory);
 	}
 	ASSERT_TRUE(interpret_page(**long_doc, 0u).has_value());
+
+	// A refusal that is not damaged content (operands nested past the parser's depth) stops the page with its code.
+	const std::vector<uint8_t> nested = one_page_pdf("0 0 10 10 re f " + std::string(300, '[') + std::string(300, ']') + " 0 0 5 5 re f");
+	auto nested_doc = Document::open_memory(nested);
+	ASSERT_TRUE(nested_doc.has_value());
+	const auto too_deep = interpret_page(**nested_doc, 0u);
+	ASSERT_FALSE(too_deep.has_value());
+	EXPECT_EQ(too_deep.error().code, ErrorCode::RecursionLimitExceeded);
 
 	// A recording failure is returned, never a partial page reported as success.
 	DisplayListLimits failing{};
@@ -417,6 +458,21 @@ TEST(PdfInterpreter, ExtGState)
 	EXPECT_FLOAT_EQ(alphas[1].stroke_alpha, 1.0f);
 	EXPECT_EQ(alphas[1].blend_mode, BlendMode::Normal);
 
+	// Indirect elements inside `/D` and `/BM` arrays (ISO 32000-1 7.3.10): the dash array, one dash value and a blend
+	// name each through a reference.
+	const auto indirect = interpret("/A gs 10 10 m 100 10 l S", "<< /ExtGState << /A << /D [5 0 R 1] /BM [6 0 R /Normal] >> >> >>",
+		{"[7 0 R 2]", "/Multiply", "3"});
+	ASSERT_NE(indirect.list, nullptr);
+	const auto indirect_styles = all_of<SetStrokeStyleCommand>(*indirect.list);
+	ASSERT_EQ(indirect_styles.size(), 1u);
+	const auto indirect_dash = indirect.list->dash_values(indirect_styles[0]);
+	ASSERT_TRUE(indirect_dash.has_value());
+	EXPECT_EQ(std::vector<float>(indirect_dash->begin(), indirect_dash->end()), (std::vector<float>{3.0f, 2.0f}));
+	EXPECT_FLOAT_EQ(indirect_styles[0].dash_phase, 1.0f);
+	const auto indirect_alpha = all_of<SetAlphaAndBlendCommand>(*indirect.list);
+	ASSERT_EQ(indirect_alpha.size(), 1u);
+	EXPECT_EQ(indirect_alpha[0].blend_mode, BlendMode::Multiply);
+
 	// `/G2` alone: the first blend name this reader knows in the array.
 	const auto screen = interpret("/G2 gs 0 0 10 10 re f", "<< /ExtGState << /G2 << /BM [/Bogus /Screen /Multiply] >> >> >>");
 	ASSERT_NE(screen.list, nullptr);
@@ -439,6 +495,21 @@ TEST(PdfInterpreter, PathOperators)
 	EXPECT_EQ(points_of(*r.list, draws[0].path_index),
 		(std::vector<PdfPoint>{{10, 20}, {30, 40}, {1, 2}, {3, 4}, {5, 6}, {5, 6}, {7, 8}, {9, 10}, {11, 12}, {13, 14},
 			{13, 14}, {50, 60}, {70, 80}, {50, 60}, {0, 0}}));
+
+	// A subpath closed by `h` is not closed again by `s`, and a segment after `h` starts at the closed subpath's start.
+	const auto closed_once = interpret("10 w 1 J 50 50 m 100 50 l h s");
+	ASSERT_NE(closed_once.list, nullptr);
+	const auto once_draws = all_of<DrawPathCommand>(*closed_once.list);
+	ASSERT_EQ(once_draws.size(), 1u);
+	EXPECT_EQ(verbs_of(*closed_once.list, once_draws[0].path_index),
+		(std::vector<PathVerb>{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::CloseSubpath}));
+	const auto after_close = interpret("0 0 m 10 0 l h 10 10 l S");
+	ASSERT_NE(after_close.list, nullptr);
+	const auto after_draws = all_of<DrawPathCommand>(*after_close.list);
+	ASSERT_EQ(after_draws.size(), 1u);
+	EXPECT_EQ(verbs_of(*after_close.list, after_draws[0].path_index),
+		(std::vector<PathVerb>{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::CloseSubpath, PathVerb::MoveTo, PathVerb::LineTo}));
+	EXPECT_EQ(points_of(*after_close.list, after_draws[0].path_index), (std::vector<PdfPoint>{{0, 0}, {10, 0}, {0, 0}, {10, 10}}));
 
 	// A rectangle is already closed: `h` and `s` after it add no close.
 	const auto closed = interpret("0 0 10 10 re h s");

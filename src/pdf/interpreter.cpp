@@ -3,6 +3,7 @@
 #include "interpreter.h"
 
 #include "lexer.h"
+#include "filters.h"
 #include "parser.h"
 
 #include <algorithm>
@@ -98,6 +99,28 @@ struct Color {
 	}
 };
 
+// ISO 32000-1 8.6.5.8: an intent this reader does not know is RelativeColorimetric.
+enum class RenderingIntent : uint8_t {
+	AbsoluteColorimetric,
+	RelativeColorimetric,
+	Saturation,
+	Perceptual,
+};
+
+[[nodiscard]] RenderingIntent rendering_intent_named(std::string_view name) noexcept
+{
+	if (name == "AbsoluteColorimetric") {
+		return RenderingIntent::AbsoluteColorimetric;
+	}
+	if (name == "Saturation") {
+		return RenderingIntent::Saturation;
+	}
+	if (name == "Perceptual") {
+		return RenderingIntent::Perceptual;
+	}
+	return RenderingIntent::RelativeColorimetric;
+}
+
 // The graphics state the interpreter keeps beside the builder's (ISO 32000-1 8.4). `style_recorded` and
 // `alpha_recorded` say whether the builder already holds this state's stroke style and alphas, so they are recorded
 // only when they change before a paint.
@@ -113,7 +136,7 @@ struct GraphicsState {
 	float stroke_alpha{1.0f};
 	float fill_alpha{1.0f};
 	BlendMode blend_mode{BlendMode::Normal};
-	std::string rendering_intent{"RelativeColorimetric"};
+	RenderingIntent rendering_intent{RenderingIntent::RelativeColorimetric};
 	double flatness{1.0};
 	bool style_recorded{true};
 	bool alpha_recorded{true};
@@ -251,7 +274,7 @@ static_assert(std::ranges::is_sorted(kOperators, {}, &std::pair<std::string_view
 
 class Interpreter {
 public:
-	Interpreter(const Document& document, const PdfDict& resources, const PdfRect& page_box, const DisplayListLimits& limits) noexcept
+	Interpreter(const Document& document, const PdfDict& resources, const PdfRect& page_box, const DisplayListLimits& limits)
 		: document_(document)
 		, resources_(resources)
 		, builder_(page_box, limits)
@@ -270,11 +293,11 @@ public:
 	}
 
 private:
-	// A lexer, parser or resolver failure that is not the content's fault (memory, an internal error) stops the page;
-	// anything else is damaged content, and the operator it belongs to is skipped.
+	// Damaged content (`DamagedFormat`) skips the operator it belongs to; every other lexer, parser or resolver failure
+	// (memory, a decoder or recursion limit, an internal error) stops the page and is returned.
 	[[nodiscard]] static bool fatal(const PdfError& error) noexcept
 	{
-		return error.code == ErrorCode::OutOfMemory || error.code == ErrorCode::InternalError;
+		return error.code != ErrorCode::DamagedFormat;
 	}
 
 	[[nodiscard]] PdfResult<void> interpret(std::span<const uint8_t> content)
@@ -404,36 +427,45 @@ private:
 		if (array == nullptr || array->empty()) {
 			return std::nullopt;
 		}
-		const auto family = (*array)[0].as_name();
+		const auto head = resolved((*array)[0]);
+		const auto family = head.has_value() ? head->as_name() : std::nullopt;
 		if (!family.has_value()) {
 			return std::nullopt;
 		}
 		if (*family == "DeviceN" && array->size() >= 2u) {
-			if (const PdfArray* names = (*array)[1].as_array(); names != nullptr && !names->empty()) {
-				return names->size();
+			const auto names = resolved((*array)[1]);
+			if (names.has_value() && names->as_array() != nullptr && !names->as_array()->empty()) {
+				return names->as_array()->size();
 			}
 			return std::nullopt;
 		}
 		return *family == "ICCBased" ? std::nullopt : by_name(*family);
 	}
 
-	// The byte length of an unfiltered inline image's data, or none when it is filtered or this section cannot tell.
-	[[nodiscard]] std::optional<size_t> inline_length(const std::vector<std::pair<std::string, PdfValue>>& entries)
+	using InlineEntries = std::vector<std::pair<std::string, PdfValue>>;
+
+	// An inline image entry by its abbreviated or full key (ISO 32000-1 Table 92).
+	[[nodiscard]] static const PdfValue* inline_entry(const InlineEntries& entries, std::string_view abbreviation, std::string_view key) noexcept
 	{
-		const auto find = [&](std::string_view a, std::string_view b) -> const PdfValue* {
-			for (const auto& [key, value] : entries) {
-				if (key == a || key == b) {
-					return &value;
-				}
+		for (const auto& [name, value] : entries) {
+			if (name == abbreviation || name == key) {
+				return &value;
 			}
-			return nullptr;
-		};
-		if (const PdfValue* filter = find("F", "Filter");
-			filter != nullptr && !(filter->as_array() != nullptr && filter->as_array()->empty())) {
-			return std::nullopt;
 		}
-		const PdfValue* w = find("W", "Width");
-		const PdfValue* h = find("H", "Height");
+		return nullptr;
+	}
+
+	[[nodiscard]] static bool inline_filtered(const InlineEntries& entries) noexcept
+	{
+		const PdfValue* filter = inline_entry(entries, "F", "Filter");
+		return filter != nullptr && !(filter->as_array() != nullptr && filter->as_array()->empty());
+	}
+
+	// The byte length of an inline image's samples once decoded, or none when this section cannot tell.
+	[[nodiscard]] std::optional<size_t> inline_sample_bytes(const InlineEntries& entries)
+	{
+		const PdfValue* w = inline_entry(entries, "W", "Width");
+		const PdfValue* h = inline_entry(entries, "H", "Height");
 		if (w == nullptr || h == nullptr) {
 			return std::nullopt;
 		}
@@ -444,13 +476,13 @@ private:
 		}
 		size_t bpc = 0;
 		size_t comps = 0;
-		const PdfValue* mask = find("IM", "ImageMask");
+		const PdfValue* mask = inline_entry(entries, "IM", "ImageMask");
 		if (mask != nullptr && mask->as_bool().value_or(false)) {
 			bpc = 1u;
 			comps = 1u;
 		} else {
-			const PdfValue* b = find("BPC", "BitsPerComponent");
-			const PdfValue* cs = find("CS", "ColorSpace");
+			const PdfValue* b = inline_entry(entries, "BPC", "BitsPerComponent");
+			const PdfValue* cs = inline_entry(entries, "CS", "ColorSpace");
 			const auto bits = b != nullptr ? b->as_int() : std::nullopt;
 			if (!bits.has_value() || (*bits != 1 && *bits != 2 && *bits != 4 && *bits != 8 && *bits != 16) || cs == nullptr) {
 				return std::nullopt;
@@ -467,15 +499,26 @@ private:
 		return row * static_cast<size_t>(*height);
 	}
 
+	// An `EI` that could end the image's data at `at`: whitespace (or the data's start) before it, whitespace or the
+	// end after it.
+	[[nodiscard]] static bool ei_candidate(std::span<const uint8_t> input, size_t data_start, size_t at) noexcept
+	{
+		return at + 2u <= input.size() && input[at] == 'E' && input[at + 1u] == 'I' &&
+			(at == data_start || (at > 0u && is_white(input[at - 1u]))) && (at + 2u == input.size() || is_white(input[at + 2u]));
+	}
+
 	// Inline images are read by section 4; until then `BI ... ID data EI` is skipped whole, so the data is never read
-	// as operators. The dictionary is parsed to find `ID`; an unfiltered image's data is skipped by its length, and
-	// otherwise the `EI` that ends it is the first one `ends_image` accepts.
+	// as operators. The dictionary is parsed to find `ID`. An unfiltered image's data is skipped by its length. A
+	// filtered one ends at the first `EI` before which the data decodes through its filters to the image's full size:
+	// an `EI` inside compressed data truncates it, so it cannot. Only when the size is unknown, or 16 candidates fail,
+	// does the first `EI` with no binary byte after it end the image.
 	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
 	{
 		static constexpr size_t kMaxInlineEntries = 64u;
+		static constexpr size_t kMaxFramingTries = 16u;
 		Lexer& lexer = parser.lexer();
 		const std::span<const uint8_t> input = lexer.input();
-		std::vector<std::pair<std::string, PdfValue>> entries;
+		InlineEntries entries;
 		std::optional<size_t> data_start;
 		for (size_t pair = 0; pair <= kMaxInlineEntries; ++pair) {
 			auto peeked = lexer.peek_token();
@@ -520,15 +563,40 @@ private:
 		}
 		size_t at = data_start.value_or(lexer.position());
 		if (data_start.has_value()) {
-			if (const auto length = inline_length(entries); length.has_value() && *length <= input.size() - at) {
-				size_t after = at + *length;
-				while (after < input.size() && is_white(input[after])) {
-					++after;
+			const auto samples = inline_sample_bytes(entries);
+			if (!inline_filtered(entries)) {
+				if (samples.has_value() && *samples <= input.size() - at) {
+					size_t after = at + *samples;
+					while (after < input.size() && is_white(input[after])) {
+						++after;
+					}
+					if (ei_candidate(input, after, after)) {
+						lexer.seek(after + 2u);
+						return {};
+					}
 				}
-				if (after + 2u <= input.size() && input[after] == 'E' && input[after + 1u] == 'I' &&
-					(after + 2u == input.size() || is_white(input[after + 2u]))) {
-					lexer.seek(after + 2u);
-					return {};
+			} else if (samples.has_value()) {
+				PdfDict filters;
+				filters.set("Filter", *inline_entry(entries, "F", "Filter"));
+				if (const PdfValue* parms = inline_entry(entries, "DP", "DecodeParms")) {
+					filters.set("DecodeParms", *parms);
+				}
+				size_t tries = 0;
+				for (size_t end = *data_start; end + 2u <= input.size() && tries < kMaxFramingTries; ++end) {
+					if (!ei_candidate(input, *data_start, end)) {
+						continue;
+					}
+					++tries;
+					const auto data = input.subspan(*data_start, end - *data_start);
+					auto decoded = decode_stream(data, filters, *samples + 4'096u);
+					if (decoded.has_value() && decoded->size() >= *samples) {
+						lexer.seek(end + 2u);
+						return {};
+					}
+					if (!decoded.has_value() && (decoded.error().code == ErrorCode::OutOfMemory ||
+													 decoded.error().code == ErrorCode::InternalError)) {
+						return decoded.error();
+					}
 				}
 			}
 		}
@@ -666,7 +734,7 @@ private:
 		case Op::Intent: {
 			if (operands.size() == 1u) {
 				if (const auto name = operands[0].as_name()) {
-					state_.rendering_intent = std::string(*name);
+					state_.rendering_intent = rendering_intent_named(*name);
 				}
 			}
 			return {};
@@ -691,7 +759,7 @@ private:
 				path_.move_to((*n)[0], (*n)[1]);
 				current_ = PdfPoint{(*n)[0], (*n)[1]};
 				subpath_start_ = current_;
-				after_rect_ = false;
+				closed_ = false;
 			}
 			return {};
 		}
@@ -740,7 +808,7 @@ private:
 				path_.rect((*n)[0], (*n)[1], (*n)[2], (*n)[3]);
 				current_ = PdfPoint{(*n)[0], (*n)[1]};
 				subpath_start_ = current_;
-				after_rect_ = true;
+				closed_ = true;
 			}
 			return {};
 		}
@@ -943,8 +1011,8 @@ private:
 		return resolved(*entry);
 	}
 
-	// `value` with an indirect reference resolved. A reference that does not resolve is damaged content and reads as
-	// missing; a failure that is not the content's fault is kept, and `dispatch` returns it after the operator.
+	// `value` with an indirect reference resolved. A damaged reference reads as missing; any other failure (memory, a
+	// decoder limit on the object stream holding it) is kept, and `dispatch` returns it after the operator.
 	[[nodiscard]] std::optional<PdfValue> resolved(const PdfValue& value)
 	{
 		auto r = document_.resolve_value(value);
@@ -997,8 +1065,18 @@ private:
 			}
 		}
 		if (const auto d = entry(gs, "D"); d.has_value()) {
+			// `[dash_array phase]`, any of whose elements may be indirect (ISO 32000-1 7.3.10).
 			if (const PdfArray* pair = d->as_array(); pair != nullptr && pair->size() == 2u) {
-				set_dash((*pair)[0], (*pair)[1]);
+				const auto dashes = resolved((*pair)[0]);
+				const auto phase = resolved((*pair)[1]);
+				if (dashes.has_value() && phase.has_value() && dashes->as_array() != nullptr) {
+					PdfArray direct;
+					direct.reserve(dashes->as_array()->size());
+					for (const PdfValue& element : *dashes->as_array()) {
+						direct.push_back(resolved(element).value_or(PdfValue{}));
+					}
+					set_dash(PdfValue{std::move(direct)}, *phase);
+				}
 			}
 		}
 		if (const auto ca = entry(gs, "CA"); ca.has_value()) {
@@ -1020,7 +1098,9 @@ private:
 				mode = blend_mode_named(*single);
 			} else if (const PdfArray* list = bm->as_array()) {
 				for (const PdfValue& item : *list) {
-					if (const auto n = item.as_name(); n.has_value() && (mode = blend_mode_named(*n)).has_value()) {
+					const auto element = resolved(item);
+					if (const auto n = element.has_value() ? element->as_name() : std::nullopt;
+						n.has_value() && (mode = blend_mode_named(*n)).has_value()) {
 						break;
 					}
 				}
@@ -1057,7 +1137,8 @@ private:
 			return device(*n).value_or(ColorFamily::Other);
 		}
 		if (const PdfArray* array = value->as_array(); array != nullptr && array->size() == 1u) {
-			if (const auto n = (*array)[0].as_name()) {
+			const auto element = resolved((*array)[0]);
+			if (const auto n = element.has_value() ? element->as_name() : std::nullopt) {
 				return device(*n).value_or(ColorFamily::Other);
 			}
 		}
@@ -1095,21 +1176,24 @@ private:
 
 	// Paints the current path, then intersects the pending clip (ISO 32000-1 8.5.4: the paint uses the clip in force
 	// before it), then ends the path. `n` paints nothing.
-	// A segment after `re` starts a new subpath at the rectangle's origin, so the recorded path says where it starts.
+	// A segment after a closed subpath (`h`, a closing paint's close or `re`) starts a new subpath at the closed one's
+	// start, so the recorded path says where it starts.
 	void begin_segment()
 	{
-		if (after_rect_) {
+		if (closed_) {
 			path_.move_to(*current_);
-			after_rect_ = false;
+			closed_ = false;
 		}
 	}
 
-	// `h` and the closing painting operators; a rectangle is already closed.
+	// `h` and the closing painting operators; a subpath already closed (by `h` or `re`) is not closed again (ISO 32000-1
+	// Table 59).
 	void close_subpath()
 	{
-		if (current_.has_value() && !after_rect_) {
+		if (current_.has_value() && !closed_) {
 			path_.close_subpath();
 			current_ = subpath_start_;
+			closed_ = true;
 		}
 	}
 
@@ -1145,7 +1229,7 @@ private:
 		path_.clear();
 		current_.reset();
 		subpath_start_.reset();
-		after_rect_ = false;
+		closed_ = false;
 	}
 
 	const Document& document_;
@@ -1162,7 +1246,7 @@ private:
 	std::optional<PdfPoint> subpath_start_{};
 	std::optional<FillRule> pending_clip_{};
 	std::optional<PdfError> resolve_failure_{};
-	bool after_rect_{false};
+	bool closed_{false};
 	bool skip_next_{false};
 };
 
