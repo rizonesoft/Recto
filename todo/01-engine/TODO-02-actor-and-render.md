@@ -92,7 +92,7 @@ track: M1
 | 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [ ] |
 | 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
-| 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [ ] |
+| 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [ ] |
 | 37 | §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains | §34 | [ ] |
 | 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
@@ -1051,6 +1051,9 @@ Every PDF Recto writes goes through one serializer of the object model (ISO 3200
 - [x] Commit: `pdf: add the canonical PdfValue serializer`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfSerialize.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-25 | §35 | c707b36e78b6a33c89ffe9fcc22257f037ec18e7
+> **Review:** `docs/reviews/d01-t02-s35.json`
 
 ## 36. Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)
 

@@ -1,0 +1,102 @@
+{
+  "ref": "D01 T02 \u00a735",
+  "title": "Canonical `PdfValue` serializer for indirect objects and streams",
+  "implementation_sha": "c707b36e78b6a33c89ffe9fcc22257f037ec18e7",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s35.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s35.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfSerialize.* -> 0 Warning(s), [  PASSED  ] 4 tests (PayloadLimit skipped under ASan)",
+    "build/build.ps1 -Platform x64 -Configuration Debug -TestFilter PdfSerialize.* -> [  PASSED  ] 5 tests, 134 corpus objects round-tripped",
+    ".\\build.cmd -> exit 0, 0 Warning(s), [  PASSED  ] 253 tests (Debug), [  PASSED  ] 254 tests (Release)",
+    "python -m unittest discover -s tests/scripts -> Ran 445 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s35.md",
+    "verdict": "filed",
+    "candidate": "2b10ae3dff7ef2fe2a4b687e7a4a15577b8897b6",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T03 \u00a713",
+      "D01 T02 \u00a75",
+      "D04 T02 \u00a72",
+      "D04 T02 \u00a71",
+      "D02 T01 \u00a78",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s35.md",
+    "candidate": "0c8a86d8c32e1f899cf1845ec9673d2fbeb1f365",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
