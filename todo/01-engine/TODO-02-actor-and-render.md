@@ -996,6 +996,8 @@ Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Index
 
 ## 34. Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)
 
+> **Started:** 2026-10-24T18:16Z
+
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s34.md`):** five gaps folded in. A round trip through `decode_flate` proves little because it accepts a missing Adler-32 trailer and recovers damaged headers, so the stream is checked strictly; memory, search work and allocation failure have stated bounds and tests; the ratio and speed fixtures are generated and identified, and speed has its own Release gate; `FlateLevel` has a defined contract; block selection is checked against the costs.
 
 Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function)
