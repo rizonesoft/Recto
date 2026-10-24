@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 93 | Checklist items: 559
+Sections: 93 | Checklist items: 560
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -108,7 +108,7 @@ Sections: 93 | Checklist items: 559
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 9     |
 | [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 9     |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
-| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 7     |
+| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 8     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
@@ -909,4 +909,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 70/838 verified sections, 35 ready to run now.
 
-Checklist: 437/6146 items completed (includes Commit items).
+Checklist: 444/6147 items completed (includes Commit items).

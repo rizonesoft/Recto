@@ -17,6 +17,7 @@
 #include "document.h"
 #include "display_list.h"
 #include "font.h"
+#include "interpreter.h"
 
 namespace recto::pdf {
 

@@ -44,6 +44,7 @@
     <ClCompile Include="error.cpp" />
     <ClCompile Include="filters.cpp" />
     <ClCompile Include="font.cpp" />
+    <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="lexer.cpp" />
     <ClCompile Include="object.cpp" />
     <ClCompile Include="parser.cpp" />
@@ -55,6 +56,7 @@
     <ClInclude Include="error.h" />
     <ClInclude Include="filters.h" />
     <ClInclude Include="font.h" />
+    <ClInclude Include="interpreter.h" />
     <ClInclude Include="lexer.h" />
     <ClInclude Include="object.h" />
     <ClInclude Include="parser.h" />
