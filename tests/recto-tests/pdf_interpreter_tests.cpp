@@ -232,7 +232,7 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(points_of(*r.list, draws[1].path_index), (std::vector<PdfPoint>{{40.0, 40.0}, {60.0, 40.0}}));
 
 	// An inline image's data is skipped to its `EI`, so the operators inside it are never read.
-	const auto inline_image = interpret("BI /W 4 /H 1 /BPC 8 /CS /G ID 0 0 m 5 5 l S EI 0 0 10 10 re f");
+	const auto inline_image = interpret("BI /W 13 /H 1 /BPC 8 /CS /G ID 0 0 m 5 5 l S EI 0 0 10 10 re f");
 	ASSERT_NE(inline_image.list, nullptr);
 	EXPECT_EQ(kinds(*inline_image.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_TRUE(all_of<DrawPathCommand>(*inline_image.list)[0].fill);
@@ -245,12 +245,10 @@ TEST(PdfInterpreter, OperatorDispatch)
 	ASSERT_NE(by_length.list, nullptr);
 	EXPECT_EQ(kinds(*by_length.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*by_length.list)[0].fill);
-	// A filtered image cannot be measured: the `EI` that ends it is the first one not followed by binary bytes.
-	const auto filtered = interpret(std::string("BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl ID \x01 EI \x80 0 0 100 100 re f \x90 EI\n") +
-		"0 0 10 10 re S");
-	ASSERT_NE(filtered.list, nullptr);
-	EXPECT_EQ(kinds(*filtered.list), (std::vector<K>{K::DrawPath}));
-	EXPECT_FALSE(all_of<DrawPathCommand>(*filtered.list)[0].fill);
+	// A writer that put CR LF after `ID` still has its data measured from the byte after the LF.
+	const auto crlf = interpret("BI /W 2 /H 1 /BPC 8 /CS /G ID\r\nab EI 0 0 10 10 re f");
+	ASSERT_NE(crlf.list, nullptr);
+	EXPECT_EQ(kinds(*crlf.list), (std::vector<K>{K::DrawPath}));
 
 	// A Flate image whose decoded pixels hold " EI " and `re f` is framed by decoding: the `EI` inside the data truncates
 	// the stream, so only the `EI` after it, where the data decodes to all 62 samples, ends the image.
@@ -366,6 +364,24 @@ TEST(PdfInterpreter, EntryContract)
 	const auto too_deep = interpret_page(**nested_doc, 0u);
 	ASSERT_FALSE(too_deep.has_value());
 	EXPECT_EQ(too_deep.error().code, ErrorCode::RecursionLimitExceeded);
+
+	// An inline image whose end cannot be verified refuses the page instead of guessing an `EI`, which could run its
+	// pixels as operators: filtered data that decodes at no `EI` (garbage, and the review's stored block with a broken
+	// checksum, whose embedded `EI` is followed by printable text), and an image whose size is unknown.
+	std::string damaged_checksum = stored_zlib(std::string(" EI 0 0 100 100 re f ") + std::string(40, ' ') + "\x80");
+	damaged_checksum.back() = static_cast<char>(damaged_checksum.back() ^ 1);
+	for (const std::string& content : {
+			 std::string("BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl ID \x01 EI \x80 0 0 100 100 re f \x90 EI\n0 0 10 10 re S"),
+			 "BI /W 62 /H 1 /BPC 8 /CS /G /F /Fl ID " + damaged_checksum + " EI 0 0 10 10 re S",
+			 std::string("BI /W 4 /H 1 /CS /G ID 0 0 m EI 0 0 10 10 re S"),
+		 }) {
+		const std::vector<uint8_t> unverified = one_page_pdf(content);
+		auto unverified_doc = Document::open_memory(unverified);
+		ASSERT_TRUE(unverified_doc.has_value());
+		const auto guessed = interpret_page(**unverified_doc, 0u);
+		ASSERT_FALSE(guessed.has_value()) << content.substr(0, 40);
+		EXPECT_EQ(guessed.error().code, ErrorCode::DamagedFormat);
+	}
 
 	// A filtered inline image whose end no candidate confirms within the 64 MiB decoding budget refuses the page, never
 	// falls back to an unchecked `EI`.

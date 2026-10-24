@@ -332,10 +332,11 @@ private:
 				}
 				const Op code = op_named(op->text.view());
 				if (code == Op::BeginInlineImage) {
-					RECTO_PDF_RETURN_IF_ERROR(skip_inline_image(parser));
+					auto skipped = skip_inline_image(parser);
 					if (resolve_failure_.has_value()) {
-						return *resolve_failure_; // a colour space the image named did not resolve
+						return *resolve_failure_; // a colour space the image named did not resolve, the cause of any refusal
 					}
+					RECTO_PDF_RETURN_IF_ERROR(skipped);
 					operands.clear();
 					skip_next_ = false;
 					continue;
@@ -379,24 +380,6 @@ private:
 	[[nodiscard]] static bool is_white(uint8_t b) noexcept
 	{
 		return b == 0x20u || b == 0x0Au || b == 0x0Du || b == 0x09u || b == 0x0Cu || b == 0x00u;
-	}
-
-	// Whether the `EI` at `at` ends the image: whitespace before it, whitespace or the end after it, and no binary byte
-	// in the 32 that follow (pixel data that happens to hold " EI " is followed by more binary data, an operator is not).
-	[[nodiscard]] static bool ends_image(std::span<const uint8_t> input, size_t at) noexcept
-	{
-		if (at + 2u > input.size() || input[at] != 'E' || input[at + 1u] != 'I' || at == 0u || !is_white(input[at - 1u]) ||
-			(at + 2u < input.size() && !is_white(input[at + 2u]))) {
-			return false;
-		}
-		const size_t end = std::min(input.size(), at + 2u + 32u);
-		for (size_t i = at + 2u; i < end; ++i) {
-			const uint8_t b = input[i];
-			if ((b < 0x20u || b > 0x7Eu) && b != 0x0Au && b != 0x0Du && b != 0x09u && b != 0x0Cu && b != 0x20u) {
-				return false;
-			}
-		}
-		return true;
 	}
 
 	// The components of an inline image's colour space (ISO 32000-1 Table 93 abbreviations, or a `/ColorSpace`
@@ -525,9 +508,8 @@ private:
 	// filtered one ends at the first `EI` before which the data decodes through its filters to the image's full size:
 	// an `EI` inside compressed data truncates it, so it cannot. Checking candidates may decode at most 64 MiB in all;
 	// past that the page is refused (`InlineImageFraming`), and a candidate the decoder refuses for any reason but
-	// damage refuses the page with that error, never framed unchecked. Only an image whose size is unknown, whose filter
-	// this build cannot decode, or whose data decodes at no candidate (damaged data), ends at the first `EI` with no
-	// binary byte after it.
+	// damage refuses the page with that error. An image whose end cannot be verified this way (its size unknown, its
+	// data damaged) refuses the page with `DamagedFormat`: no `EI` is ever taken on trust.
 	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
 	{
 		static constexpr size_t kMaxInlineEntries = 64u;
@@ -577,67 +559,73 @@ private:
 				entries.emplace_back(std::string(*name), std::move(*value));
 			}
 		}
-		size_t at = data_start.value_or(lexer.position());
-		if (data_start.has_value()) {
-			const auto samples = inline_sample_bytes(entries);
-			if (!inline_filtered(entries)) {
-				if (samples.has_value() && *samples <= input.size() - at) {
-					size_t after = at + *samples;
-					while (after < input.size() && is_white(input[after])) {
-						++after;
-					}
-					if (ei_candidate(input, after, after)) {
-						lexer.seek(after + 2u);
-						return {};
-					}
+		// An image whose end cannot be verified is never skipped by guessing, which could run its pixels as operators:
+		// the page is refused (`D01 T02 §19` keeps what was recorded before it).
+		const auto unframed = [](std::string_view why) {
+			return make_pdf_error(ErrorCode::DamagedFormat, why);
+		};
+		if (!data_start.has_value()) {
+			return unframed("An inline image's dictionary could not be read to its ID");
+		}
+		const auto samples = inline_sample_bytes(entries);
+		if (!samples.has_value()) {
+			return unframed("An inline image's size could not be determined, so its end could not be found");
+		}
+		if (!inline_filtered(entries)) {
+			// The data, then optional whitespace, then `EI`. A writer that put CR LF after `ID` gets its data from the
+			// byte after the LF.
+			for (size_t start : {*data_start, *data_start + 1u}) {
+				if (start > input.size() || *samples > input.size() - start) {
+					continue;
 				}
-			} else if (samples.has_value()) {
-				PdfDict filters;
-				filters.set("Filter", *inline_entry(entries, "F", "Filter"));
-				if (const PdfValue* parms = inline_entry(entries, "DP", "DecodeParms")) {
-					filters.set("DecodeParms", *parms);
+				if (start != *data_start && !(start >= 2u && input[start - 2u] == '\r' && input[start - 1u] == '\n')) {
+					continue;
 				}
-				size_t work = 0;
-				for (size_t end = *data_start; end + 2u <= input.size(); ++end) {
-					if (!ei_candidate(input, *data_start, end)) {
-						continue;
-					}
-					const size_t length = end - *data_start;
-					if (length > kMaxFramingWork - work) {
-						return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::InlineImageFraming,
-							static_cast<uint64_t>(work) + length, kMaxFramingWork,
-							"An inline image's end was not found within the decoding work limit");
-					}
-					work += length;
-					const auto data = input.subspan(*data_start, length);
-					// Room past the samples for padding a writer adds; data that decodes past it is refused with the
-					// decoder's limit, never framed unchecked.
-					auto decoded = decode_stream(data, filters, *samples + std::max<size_t>(*samples, 64u * 1024u));
-					if (decoded.has_value()) {
-						if (decoded->size() >= *samples) {
-							lexer.seek(end + 2u);
-							return {};
-						}
-						continue; // too short: this `EI` cuts the data
-					}
-					if (decoded.error().code == ErrorCode::UnsupportedFeature) {
-						break; // a filter this build cannot decode: no candidate can be checked
-					}
-					if (fatal(decoded.error())) {
-						return decoded.error(); // a decoder limit, memory or an internal error
-					}
-					// Damaged: this `EI` truncates the data.
+				size_t after = start + *samples;
+				while (after < input.size() && is_white(input[after])) {
+					++after;
+				}
+				if (ei_candidate(input, after, after)) {
+					lexer.seek(after + 2u);
+					return {};
 				}
 			}
+			return unframed("An inline image's data is not followed by EI where its size says it ends");
 		}
-		for (; at + 2u <= input.size(); ++at) {
-			if (ends_image(input, at)) {
-				lexer.seek(at + 2u);
-				return {};
+		PdfDict filters;
+		filters.set("Filter", *inline_entry(entries, "F", "Filter"));
+		if (const PdfValue* parms = inline_entry(entries, "DP", "DecodeParms")) {
+			filters.set("DecodeParms", *parms);
+		}
+		size_t work = 0;
+		for (size_t end = *data_start; end + 2u <= input.size(); ++end) {
+			if (!ei_candidate(input, *data_start, end)) {
+				continue;
 			}
+			const size_t length = end - *data_start;
+			if (length > kMaxFramingWork - work) {
+				return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::InlineImageFraming,
+					static_cast<uint64_t>(work) + length, kMaxFramingWork,
+					"An inline image's end was not found within the decoding work limit");
+			}
+			work += length;
+			const auto data = input.subspan(*data_start, length);
+			// Room past the samples for padding a writer adds; data that decodes past it is refused with the decoder's
+			// limit.
+			auto decoded = decode_stream(data, filters, *samples + std::max<size_t>(*samples, 64u * 1024u));
+			if (decoded.has_value()) {
+				if (decoded->size() >= *samples) {
+					lexer.seek(end + 2u);
+					return {};
+				}
+				continue; // too short: this `EI` cuts the data
+			}
+			if (fatal(decoded.error())) {
+				return decoded.error(); // a filter this build cannot decode, a decoder limit, memory or an internal error
+			}
+			// Damaged: this `EI` truncates the data.
 		}
-		lexer.seek(input.size());
-		return {};
+		return unframed("An inline image's data decodes at no EI after it, so its end could not be found");
 	}
 
 	[[nodiscard]] static std::optional<double> number(const PdfValue& v) noexcept
