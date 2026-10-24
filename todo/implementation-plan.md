@@ -712,7 +712,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 73 | Checklist items: 531
+Sections: 73 | Checklist items: 532
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
@@ -721,7 +721,7 @@ Sections: 73 | Checklist items: 531
 | [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host                        | 7     |
 | [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                | 6     |
 | [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                | 8     |
-| [ ]    | D06 T03 §13 | Interoperability sample set script for the cross-viewer check                            | windows-host                        | 9     |
+| [ ]    | D06 T03 §13 | Interoperability sample set script for the cross-viewer check                            | windows-host                        | 10    |
 | [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                        | 7     |
 | [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                        | 7     |
 | [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                        | 7     |
@@ -914,4 +914,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 72/843 verified sections, 37 ready to run now.
 
-Checklist: 454/6165 items completed (includes Commit items).
+Checklist: 454/6166 items completed (includes Commit items).

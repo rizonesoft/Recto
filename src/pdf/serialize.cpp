@@ -1,6 +1,8 @@
 // The canonical PdfValue serializer (ISO 32000-1 sections 7.3 and 7.5; D01 T02 section 35).
 #include "serialize.h"
 
+#include "parser.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -15,6 +17,7 @@ namespace recto::pdf {
 namespace {
 
 thread_local size_t t_fail_after_bytes = std::numeric_limits<size_t>::max();
+thread_local size_t t_bytes_examined = 0;
 
 // ISO 32000-1 7.2.2: the delimiter characters, which a name escapes along with whitespace and `#`.
 [[nodiscard]] constexpr bool is_delimiter(uint8_t b) noexcept
@@ -57,6 +60,48 @@ public:
 		put(std::string_view(&c, 1u));
 	}
 
+	// Whether `n` more bytes fit the budget; when they do not, the refusal is kept and nothing is written.
+	[[nodiscard]] bool room(size_t n)
+	{
+		if (failed()) {
+			return false;
+		}
+		const size_t written = out_.size() - start_;
+		if (n > max_ - std::min(max_, written)) {
+			error_ = make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, written + n, max_,
+				"Serialized object is larger than its output limit");
+			return false;
+		}
+		return true;
+	}
+
+	// The parser's per-object accounting (`Parser`'s value and byte ceilings), so nothing written fails to read back.
+	void count_value()
+	{
+		if (!failed() && ++values_ > kMaxParsedValues) {
+			error_ = make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectValues, values_, kMaxParsedValues,
+				"Object holds more values than the parser reads back");
+		}
+	}
+
+	void count_elements(size_t n)
+	{
+		if (!failed() && n > kMaxContainerElements) {
+			error_ = make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectValues, n, kMaxContainerElements,
+				"Container holds more elements than the parser reads back");
+		}
+	}
+
+	void count_bytes(size_t n)
+	{
+		if (!failed() && (n > kMaxParsedBytes || payload_ > kMaxParsedBytes - n)) {
+			error_ = make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectValues, payload_ + n, kMaxParsedBytes,
+				"Object holds more string and name bytes than the parser reads back");
+			return;
+		}
+		payload_ += n;
+	}
+
 	void fail(PdfError error) noexcept
 	{
 		if (!failed()) {
@@ -88,8 +133,15 @@ private:
 	std::string& out_;
 	size_t start_;
 	size_t max_;
+	size_t values_{0};
+	size_t payload_{0};
 	std::optional<PdfError> error_{};
 };
+
+[[nodiscard]] constexpr bool name_byte_escaped(uint8_t b) noexcept
+{
+	return b < 0x21u || b > 0x7Eu || b == '#' || is_delimiter(b);
+}
 
 void write_integer(Writer& w, int64_t v)
 {
@@ -122,16 +174,26 @@ void write_real(Writer& w, double v)
 
 void write_name(Writer& w, std::string_view name)
 {
+	w.count_bytes(name.size());
+	size_t escaped = 0;
+	for (const char c : name) {
+		escaped += name_byte_escaped(static_cast<uint8_t>(c)) ? 1u : 0u;
+	}
+	t_bytes_examined += name.size();
+	if (!w.room(1u + name.size() + 2u * escaped)) {
+		return;
+	}
 	w.put('/');
 	for (const char c : name) {
 		const auto b = static_cast<uint8_t>(c);
-		if (b < 0x21u || b > 0x7Eu || b == '#' || is_delimiter(b)) {
+		if (name_byte_escaped(b)) {
 			const std::array<char, 3> esc = {'#', kHexDigits[b >> 4u], kHexDigits[b & 0xFu]};
 			w.put(std::string_view(esc.data(), esc.size()));
 		} else {
 			w.put(c);
 		}
 	}
+	t_bytes_examined += name.size();
 }
 
 // A literal string with every delimiter and control byte escaped, or a hex string when it was written as one or
@@ -139,16 +201,31 @@ void write_name(Writer& w, std::string_view name)
 void write_string(Writer& w, const PdfString& s)
 {
 	const auto plain = [](uint8_t b) { return b >= 0x20u && b <= 0x7Eu; };
-	size_t binary = 0;
-	for (const uint8_t b : s.bytes) {
-		binary += plain(b) ? 0u : 1u;
+	w.count_bytes(s.bytes.size());
+	if (w.failed()) {
+		return;
 	}
-	if (s.is_hex || binary * 4u > s.bytes.size()) {
+	// One pass sizes both forms: a hex byte takes two characters, a literal one one, two for a backslash escape
+	// and four for an octal one.
+	size_t binary = 0;
+	size_t literal = 2u;
+	for (const uint8_t b : s.bytes) {
+		const bool named_escape = b == '(' || b == ')' || b == '\\' || b == '\n' || b == '\r' || b == '\t' || b == '\b' || b == '\f';
+		binary += plain(b) ? 0u : 1u;
+		literal += named_escape ? 2u : plain(b) ? 1u : 4u;
+	}
+	t_bytes_examined += s.bytes.size();
+	const bool as_hex = s.is_hex || binary * 4u > s.bytes.size();
+	if (!w.room(as_hex ? 2u + 2u * s.bytes.size() : literal)) {
+		return;
+	}
+	if (as_hex) {
 		w.put('<');
 		for (const uint8_t b : s.bytes) {
 			const std::array<char, 2> hex = {kHexDigits[b >> 4u], kHexDigits[b & 0xFu]};
 			w.put(std::string_view(hex.data(), hex.size()));
 		}
+		t_bytes_examined += s.bytes.size();
 		w.put('>');
 		return;
 	}
@@ -189,6 +266,7 @@ void write_string(Writer& w, const PdfString& s)
 			}
 		}
 	}
+	t_bytes_examined += s.bytes.size();
 	w.put(')');
 }
 
@@ -205,6 +283,7 @@ void write_value(Writer& w, const PdfValue& v, size_t depth);
 // A dictionary's entries; `skip_length` leaves out `/Length` (a stream writes its own).
 void write_dict(Writer& w, const PdfDict& d, size_t depth, bool skip_length)
 {
+	w.count_elements(d.size());
 	w.put("<<");
 	bool first = true;
 	for (const auto& [key, value] : d) {
@@ -236,6 +315,10 @@ void write_value(Writer& w, const PdfValue& v, size_t depth)
 		w.fail(make_pdf_error(ErrorCode::RecursionLimitExceeded, "Value nests deeper than a PDF object may"));
 		return;
 	}
+	w.count_value();
+	if (w.failed()) {
+		return;
+	}
 	if (v.is_null()) {
 		w.put("null");
 	} else if (const auto b = v.as_bool()) {
@@ -249,6 +332,7 @@ void write_value(Writer& w, const PdfValue& v, size_t depth)
 	} else if (const PdfString* s = v.as_string()) {
 		write_string(w, *s);
 	} else if (const PdfArray* a = v.as_array()) {
+		w.count_elements(a->size());
 		w.put('[');
 		for (size_t k = 0; k < a->size() && !w.failed(); ++k) {
 			if (k != 0u) {
@@ -281,6 +365,11 @@ ScopedSerializeAllocFailure::~ScopedSerializeAllocFailure() noexcept
 	t_fail_after_bytes = previous_;
 }
 
+size_t serialize_bytes_examined() noexcept
+{
+	return t_bytes_examined;
+}
+
 } // namespace detail
 
 PdfResult<void> serialize_value(const PdfValue& value, std::string& out, size_t max_bytes) noexcept
@@ -304,7 +393,9 @@ PdfResult<void> serialize_indirect(IndirectRef ref, const PdfValue& value, std::
 		write_integer(w, ref.gen_num);
 		w.put(" obj\n");
 		if (const PdfStream* stream = value.as_stream()) {
-			// The encoded bytes, which the dictionary's filters describe; the decoded cache is never written.
+			// The encoded bytes, which the dictionary's filters describe; the decoded cache is never written. The
+			// dictionary is a value to the parser, as in `write_value`.
+			w.count_value();
 			write_dict(w, stream->dict, 0u, true);
 			w.put(stream->dict.empty() || (stream->dict.size() == 1u && stream->dict.contains("Length")) ? "/Length " : " /Length ");
 			write_integer(w, static_cast<int64_t>(stream->raw_bytes.size()));

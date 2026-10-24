@@ -228,12 +228,61 @@ TEST(PdfSerialize, Failures)
 	EXPECT_EQ(out, "prefix ");
 	EXPECT_EQ(array, copy);
 
+	// The parser's value ceiling, counting the container itself: 999,999 integers in an array are 1,000,000 values
+	// and read back; one more is refused before anything is written, where it would have written and failed to reopen.
+	{
+		PdfArray at_limit(kMaxParsedValues - 1u, PdfValue{int64_t{1}});
+		std::string text;
+		ASSERT_TRUE(serialize_value(PdfValue{std::move(at_limit)}, text).has_value());
+		Parser parser(bytes_of(text));
+		EXPECT_TRUE(parser.parse_direct_object().has_value());
+		PdfArray past(kMaxParsedValues, PdfValue{int64_t{1}});
+		std::string kept = "prefix ";
+		const auto refused = serialize_value(PdfValue{std::move(past)}, kept);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(refused.error().refusal_reason, RefusalReason::ObjectValues);
+		EXPECT_EQ(kept, "prefix ");
+	}
+
+	// No work after a refusal: an array of a 1 MiB string that passes a 100-byte budget and a second string examines
+	// the first string's bytes once and none of the second's, however long it is.
+	for (const size_t second : {size_t{1} << 20u, size_t{8} << 20u}) {
+		const PdfValue pair{PdfArray{PdfValue{PdfString(std::string(size_t{1} << 20u, 'a'))},
+			PdfValue{PdfString(std::string(second, 'b'))}}};
+		std::string budgeted;
+		const size_t before = detail::serialize_bytes_examined();
+		const auto refused = serialize_value(pair, budgeted, 100u);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().refusal_reason, RefusalReason::WorkingBytes);
+		EXPECT_EQ(detail::serialize_bytes_examined() - before, size_t{1} << 20u) << second;
+		EXPECT_TRUE(budgeted.empty());
+	}
+
 	// A stream is an indirect object, never a direct value.
 	PdfStream stream;
 	const auto direct = serialize_value(PdfValue{stream}, out);
 	ASSERT_FALSE(direct.has_value());
 	EXPECT_EQ(direct.error().code, ErrorCode::InvalidArgument);
 	EXPECT_EQ(out, "prefix ");
+}
+
+TEST(PdfSerialize, PayloadLimit)
+{
+#if defined(__SANITIZE_ADDRESS__)
+	GTEST_SKIP() << "the 256 MiB payload ceiling needs about 400 MB, more than the ASan run should take";
+#else
+	// The parser's string, name and key byte ceiling over one object: two strings of half of it plus one byte are
+	// refused, before the second is written, with the first's output cut back.
+	const size_t half = kMaxParsedBytes / 2u + 1u;
+	const PdfValue pair{PdfArray{PdfValue{PdfString(std::string(half, 'a'))}, PdfValue{PdfString(std::string(half, 'b'))}}};
+	std::string out = "prefix ";
+	const auto refused = serialize_value(pair, out);
+	ASSERT_FALSE(refused.has_value());
+	EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
+	EXPECT_EQ(refused.error().refusal_reason, RefusalReason::ObjectValues);
+	EXPECT_EQ(out, "prefix ");
+#endif
 }
 
 TEST(PdfSerialize, IndirectAndStreams)

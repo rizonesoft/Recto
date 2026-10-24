@@ -725,6 +725,8 @@ enum class RefusalReason : uint16_t {
 	CompositeDepth,   // composite glyphs nested past the depth limit
 	// Appended (D01 T02 section 3): the content-stream interpreter.
 	InlineImageFraming, // a filtered inline image whose end was not found within the decoding work limit
+	// Appended (D01 T02 section 35): the canonical serializer.
+	ObjectValues, // an object with more values, elements or payload bytes than the parser reads back
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -780,6 +782,8 @@ enum class RefusalReason : uint16_t {
 		return "CompositeDepth";
 	case RefusalReason::InlineImageFraming:
 		return "InlineImageFraming";
+	case RefusalReason::ObjectValues:
+		return "ObjectValues";
 	}
 	return "UnknownReason";
 }
@@ -859,6 +863,10 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::InlineImageFraming:
 		return "The end of a compressed image inside the page's content could not be found within the decoding limit "
 			   "(observed and bound are bytes decoded); the page is not shown, and the file may be damaged";
+	case RefusalReason::ObjectValues:
+		return "An object to be written holds more values, entries or text than a PDF object can be read back with "
+			   "(observed and bound are values or bytes); nothing is written, and the edit that made it so large "
+			   "should be split";
 	}
 	return "";
 }

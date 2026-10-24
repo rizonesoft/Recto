@@ -61,7 +61,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 | 10 | §7 | Unicode authoring round-trip suite for every text-writing path | D03 T01 §9, D03 T03 §2, D03 T03 §6, D05 T01 §6, D05 T01 §8 | [ ] |
 | 11 | §9 | Printer driver compatibility and print failure isolation suite | D07 T01 §2, D07 T01 §3 | [ ] |
 | 12 | §12 | Installed-build release smoke and upgrade persistence proof on the build host | D07 T01 §6, D07 T01 §7, D07 T01 §8, D07 T01 §9, D05 T02 §10, D07 T02 §7, §8, §10 | [ ] |
-| 13 | §13 | Interoperability sample set script for the cross-viewer check | D03 T03 §5, D03 T03 §7, D05 T01 §8, D05 T01 §10, D04 T05 §6 | [ ] |
+| 13 | §13 | Interoperability sample set script for the cross-viewer check | D03 T03 §5, D03 T03 §7, D05 T01 §8, D05 T01 §10, D04 T05 §6, D04 T02 §2 | [ ] |
 
 ## 1. Hostile-input fixture pack from user-reported failure classes
 
@@ -395,6 +395,7 @@ The operator's cross-viewer check (`D99 T01 §13`) opens files Recto wrote in Ad
 - [ ] Write the true-redaction sample through `recto-cli redact` (`D05 T01 §10`). Done when: the redacted text is absent from the output's content streams (`recto-cli text` does not return it).
 - [ ] Write invisible and visible PAdES signature samples with the corpus test certificate through `recto-cli sign` (`D05 T01 §8`). Done when: `recto-cli verify` reports both signatures valid against the test root.
 - [ ] Write PDF/A-2b and PDF/A-3b with a Factur-X attachment through `recto-cli pdfa` (`D04 T05 §6`). Done when: Recto's own validator passes both.
+- [ ] Write a serializer stress sample through `recto-cli` and `PdfWriter` (`D04 T02 §2`): one page whose objects hold reals at the precision extremes (`0.0000001`, `100000000000000000000.0`, `-0.0`), names with every escape (`#20`, `#23`, `#28`, `#2F`, bytes over `0x7E`), literal strings with every backslash escape, binary hex strings, and a `FlateDecode` content stream from `D01 T02 §35`'s serializer and `D01 T02 §34`'s compressor, so the cross-viewer check (`D99 T01 §13`) reads them in independent readers. Done when: `recto-cli` reopens the sample with every value equal to what was written, and the manifest lists it. **Corrected 2026-10-24:** added from the `D01 T02 §35` completion review (independent-reader evidence for the serializer's output). -> XREF: D01 T02 §35
 - [ ] Write `manifest.json` (file name, feature, exact command line, SHA-256) through a temporary file and `Move-Item -Force` in the output folder. Done when: the manifest hashes match the files and a killed run leaves no partial manifest. Cheaper substitute: writing the manifest in place, which can leave a truncated file.
 - [ ] Add `tests/scripts/test_make_interop_samples.py` with a fake `recto-cli` (argument recording, refusal paths) and a real-build leg skipped only when no Release build exists. Done when: `python -m unittest tests.scripts.test_make_interop_samples` passes and fails when one sample command is removed from the script.
 - [ ] Commit: `quality: interoperability sample set script for the cross-viewer check`

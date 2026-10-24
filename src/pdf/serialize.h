@@ -22,8 +22,11 @@ inline constexpr size_t kMaxSerializedDepth = 64u;
 // or are mostly binary (7.3.4), arrays, dictionaries and references. A stream is not a direct value (7.3.8) and is
 // `InvalidArgument` here; `serialize_indirect` writes it. Nesting past `kMaxSerializedDepth` is
 // `RecursionLimitExceeded`, a non-finite real `InvalidArgument`, output past `max_bytes` `ResourceLimit`
-// (`RefusalReason::WorkingBytes`) and an allocation failure `OutOfMemory`; on every failure `out` is cut back to
-// its length before the call. `value` is never changed.
+// (`RefusalReason::WorkingBytes`), and an object the parser could not read back (more than `kMaxParsedValues`
+// values counting containers, a container past `kMaxContainerElements`, or more than `kMaxParsedBytes` of string,
+// name and key bytes) `ResourceLimit` (`RefusalReason::ObjectValues`); an allocation failure is `OutOfMemory`. On
+// every failure `out` is cut back to its length before the call. `value` is never changed. A scalar's output size
+// is known before it is written, so a refusal stops at the scalar that would pass the budget.
 [[nodiscard]] PdfResult<void> serialize_value(const PdfValue& value, std::string& out,
 	size_t max_bytes = kMaxSerializedBytes) noexcept;
 
@@ -47,6 +50,10 @@ public:
 private:
 	size_t previous_;
 };
+
+// Tests only: string, name and key bytes this thread's serializations have examined, the sizing pass and the
+// writing pass each counted, so a test can show no work follows a refusal.
+[[nodiscard]] size_t serialize_bytes_examined() noexcept;
 
 } // namespace detail
 

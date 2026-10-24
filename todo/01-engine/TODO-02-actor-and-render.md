@@ -1033,7 +1033,7 @@ Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer
 
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s35.md`):** three gaps folded in: typed results with an output budget, allocation failure and rollback of a failed call's partial output; streams written from their encoded `raw_bytes` with their filters, never the decoded cache `payload_bytes()` prefers; and stream framing, `/Length` and object headers asserted directly, since the parser's `endstream` scan would hide a wrong length.
 
-Every PDF Recto writes goes through one serializer of the object model (ISO 32000-1 sections 7.3 and 7.5), shared by `§5` and `D04 T02 §2`, so a value written is always a value read back the same. -> XREF: D04 T02 §2 (its `PdfWriter` writes every object through it)
+Every PDF Recto writes goes through one serializer of the object model (ISO 32000-1 sections 7.3 and 7.5), shared by `§5` and `D04 T02 §2`, so a value written is always a value read back the same. -> XREF: D04 T02 §2 (its `PdfWriter` writes every object through it) -> XREF: D06 T03 §13 (a serializer stress sample in the cross-viewer check)
 
 **Phase:** 1
 **Needs:** windows-host
