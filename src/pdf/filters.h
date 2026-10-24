@@ -305,6 +305,70 @@ private:
 // stream over.
 [[nodiscard]] uint64_t native_jpx_attempts() noexcept;
 
+// Tests only: inflates a zlib stream strictly (RFC 1950): a valid header without a preset dictionary, deflate blocks
+// ending in a final block, then exactly the four-byte Adler-32 of the inflated data and nothing after it. Any
+// departure is `DamagedFormat`; `decode_flate` instead recovers what readers recover.
+[[nodiscard]] PdfResult<std::vector<uint8_t>> inflate_zlib_strict(
+	std::span<const uint8_t> input,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+// Tests only: while alive, `flate_compress` on this thread fails its first allocation, so the `OutOfMemory` path runs.
+class ScopedFlateCompressAllocFailure {
+public:
+	ScopedFlateCompressAllocFailure() noexcept;
+	~ScopedFlateCompressAllocFailure() noexcept;
+	ScopedFlateCompressAllocFailure(const ScopedFlateCompressAllocFailure&) = delete;
+	ScopedFlateCompressAllocFailure& operator=(const ScopedFlateCompressAllocFailure&) = delete;
+
+private:
+	bool previous_{false};
+};
+
 } // namespace detail
+
+// How hard `flate_compress` searches for matches (D01 T02 section 34). Per position it follows at most 8, 32 or
+// 1,024 hash-chain links (a quarter of them once the match it holds is 8 or 32 bytes, for `Default` and `Best`),
+// stops at a match of 16, 128 or 258 bytes, and tries the next position for a longer match (lazy matching) never,
+// while the current match is under 32 bytes, or always up to 258.
+enum class FlateLevel : uint8_t {
+	Fast,
+	Default,
+	Best,
+};
+
+// The block types RFC 1951 3.2.3 defines, in BTYPE order.
+enum class FlateBlockType : uint8_t {
+	Stored = 0,
+	Fixed = 1,
+	Dynamic = 2,
+};
+
+// One block decision: the type written and what each type would have cost in bits. A stored block's cost is what
+// the bytes add to the stored run before them, which consecutive stored decisions share.
+struct FlateBlockStats {
+	FlateBlockType type{FlateBlockType::Stored};
+	uint64_t stored_bits{0};
+	uint64_t fixed_bits{0};
+	uint64_t dynamic_bits{0};
+	size_t input_bytes{0};
+};
+
+struct FlateCompressStats {
+	std::vector<FlateBlockStats> blocks{};
+	size_t stored_runs{0};         // stored blocks written (a run longer than 65,535 bytes takes several)
+	uint64_t chain_steps{0};       // hash-chain links followed, all positions together
+	uint32_t max_chain_steps{0};   // the most links followed for any one position
+	size_t working_bytes{0};       // memory the compressor held beside its output
+};
+
+// Compresses `input` into a zlib stream (RFC 1950) of deflate blocks (RFC 1951) for a `/FlateDecode` stream (ISO
+// 32000-1 7.4.4), with no external library (foundation plan D5, D7): LZ77 over a 32 KiB window through hash chains,
+// and each block written stored, fixed-Huffman or dynamic-Huffman, whichever costs fewest bits. Incompressible input
+// grows by at most 5 bytes per 65,535 (at least one block) plus 6; working memory beside the output is at most
+// 256 KiB. Input over `kMaxDecodedStreamBytes` is `ResourceLimit`; an allocation failure is `OutOfMemory`.
+[[nodiscard]] PdfResult<std::vector<uint8_t>> flate_compress(
+	std::span<const uint8_t> input,
+	FlateLevel level = FlateLevel::Default,
+	FlateCompressStats* stats = nullptr) noexcept;
 
 } // namespace recto::pdf

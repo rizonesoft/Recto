@@ -1136,6 +1136,35 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 	}
 }
 
+namespace detail {
+
+PdfResult<std::vector<uint8_t>> inflate_zlib_strict(std::span<const uint8_t> input, size_t max_decoded_bytes) noexcept
+{
+	try {
+		// RFC 1950 2.2: a valid CMF/FLG pair, and no preset dictionary (FDICT, bit 5 of FLG), which PDF never uses.
+		if (!has_valid_zlib_header(input) || (input[1] & 0x20u) != 0u) {
+			return make_pdf_error(ErrorCode::DamagedFormat, "zlib header is not valid for a strict inflate");
+		}
+		size_t consumed = 0;
+		RECTO_PDF_TRY(std::vector<uint8_t> body,
+			inflate_raw_deflate(input.subspan(2), std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes), &consumed));
+		if (input.size() != 2u + consumed + 4u) {
+			return make_pdf_error(ErrorCode::DamagedFormat, "zlib stream has no four-byte trailer right after its final block");
+		}
+		const std::span<const uint8_t> trailer = input.subspan(2u + consumed);
+		const uint32_t adler = (static_cast<uint32_t>(trailer[0]) << 24u) | (static_cast<uint32_t>(trailer[1]) << 16u) |
+			(static_cast<uint32_t>(trailer[2]) << 8u) | static_cast<uint32_t>(trailer[3]);
+		if (adler != compute_adler32(body)) {
+			return make_pdf_error(ErrorCode::DamagedFormat, "zlib trailer is not the Adler-32 of the inflated data");
+		}
+		return body;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory in a strict inflate");
+	}
+}
+
+} // namespace detail
+
 PdfResult<std::vector<uint8_t>> decode_lzw(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms,

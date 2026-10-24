@@ -12,6 +12,7 @@ import argparse
 import base64
 import functools
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -4139,6 +4140,8 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_openxml_structure(rel_path, data)
     elif rel_path.startswith("fonts/") and rel_path.endswith((".ttf", ".otf")):
         validate_font_structure(rel_path, data)
+    elif rel_path.startswith("flate/"):
+        validate_flate_fixture(rel_path, data)
     elif rel_path.startswith("images/dct-") and rel_path.endswith(".jpg"):
         validate_jpeg_baseline(rel_path, data, 16, 8, 4 if "-4c-" in rel_path else 3)
     else:
@@ -4506,6 +4509,125 @@ def _glyf_composite_records(components: list[dict], bbox: tuple[int, int, int, i
     return out
 
 
+# --- Flate compressor fixtures (D01 T02 section 34) ---------------------------------------------------------------
+# Inputs for `PdfFilters.FlateCompress*`: a page-content-like text sample and incompressible bytes, from xorshift32
+# with fixed seeds (not `random`, so the bytes never depend on the Python version), and the size Python's zlib gives
+# each at level 6, the ratio the native compressor is held to.
+
+FLATE_TEXT_BYTES = 1_048_576
+FLATE_RANDOM_BYTES = 65_536
+FLATE_WORDS = ("the", "page", "content", "stream", "Recto", "invoice", "total", "amount", "date", "section", "table",
+               "figure", "report", "summary", "of", "and", "in", "to", "for", "with", "PDF", "number", "item")
+
+
+class Xorshift32:
+    def __init__(self, seed: int) -> None:
+        self.state = seed & 0xFFFFFFFF or 1
+
+    def next(self) -> int:
+        x = self.state
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        self.state = x
+        return x
+
+    def below(self, n: int) -> int:
+        return self.next() % n
+
+
+def _flate_number(rng: Xorshift32, limit: int) -> str:
+    whole = rng.below(limit)
+    places = rng.below(3)
+    if places == 0:
+        return str(whole)
+    frac = rng.below(10 ** places)
+    return f"{whole}.{frac:0{places}d}".rstrip("0").rstrip(".")
+
+
+def build_flate_content_stream() -> bytes:
+    """1 MiB of page content operators as a producer writes them: paths, text objects, colours and states."""
+    rng = Xorshift32(0x5EC34)
+    lines: list[str] = []
+    size = 0
+    while size < FLATE_TEXT_BYTES:
+        kind = rng.below(10)
+        if kind == 0:
+            block = ["q", f"1 0 0 1 {_flate_number(rng, 612)} {_flate_number(rng, 792)} cm"]
+        elif kind == 1:
+            block = [f"{_flate_number(rng, 600)} {_flate_number(rng, 780)} m",
+                     f"{_flate_number(rng, 600)} {_flate_number(rng, 780)} l", "S"]
+        elif kind == 2:
+            block = [f"{_flate_number(rng, 600)} {_flate_number(rng, 780)} {_flate_number(rng, 200)} "
+                     f"{_flate_number(rng, 50)} re", "f"]
+        elif kind == 3:
+            block = [f"{_flate_number(rng, 2)} {_flate_number(rng, 2)} {_flate_number(rng, 2)} rg"]
+        elif kind == 4:
+            words = " ".join(FLATE_WORDS[rng.below(len(FLATE_WORDS))] for _ in range(1 + rng.below(8)))
+            block = ["BT", f"/F{1 + rng.below(4)} {8 + rng.below(10)} Tf",
+                     f"{_flate_number(rng, 600)} {_flate_number(rng, 780)} Td", f"({words}) Tj", "ET"]
+        elif kind == 5:
+            parts = " ".join(f"({FLATE_WORDS[rng.below(len(FLATE_WORDS))]}) -{rng.below(400)}" for _ in range(3))
+            block = ["BT", f"[{parts}] TJ", "ET"]
+        elif kind == 6:
+            block = [f"{_flate_number(rng, 4)} w"]
+        elif kind == 7:
+            block = [f"{_flate_number(rng, 600)} {_flate_number(rng, 780)} {_flate_number(rng, 600)} "
+                     f"{_flate_number(rng, 780)} {_flate_number(rng, 600)} {_flate_number(rng, 780)} c"]
+        elif kind == 8:
+            block = ["Q"]
+        else:
+            block = [f"/GS{rng.below(3)} gs", f"/Im{rng.below(5)} Do"]
+        text = "\n".join(block) + "\n"
+        lines.append(text)
+        size += len(text)
+    data = "".join(lines).encode("ascii")[:FLATE_TEXT_BYTES]
+    return data[:-1] + b"\n"
+
+
+def build_flate_random() -> bytes:
+    rng = Xorshift32(0xF1A7E)
+    out = bytearray()
+    while len(out) < FLATE_RANDOM_BYTES:
+        out += rng.next().to_bytes(4, "little")
+    return bytes(out[:FLATE_RANDOM_BYTES])
+
+
+def build_flate_reference_sizes(files: dict[str, bytes]) -> bytes:
+    """`tests/corpus/flate/reference-sizes.json`: for each compressor input, its SHA-256, size and zlib level-6 size."""
+    entries = []
+    for rel_path in sorted(files):
+        if rel_path.startswith("flate/") and rel_path != "flate/reference-sizes.json" or \
+                rel_path.startswith("fonts/") and rel_path.endswith((".ttf", ".otf")):
+            data = files[rel_path]
+            entries.append({"path": rel_path, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+                            "zlib6": len(zlib.compress(data, 6))})
+    return (json.dumps({"zlib_level": 6, "files": entries}, indent=2, sort_keys=True) + "\n").encode("ascii")
+
+
+def validate_flate_fixture(rel_path: str, data: bytes, files: dict[str, bytes] | None = None) -> None:
+    if rel_path == "flate/content-stream.txt":
+        if len(data) != FLATE_TEXT_BYTES or not data.endswith(b"\n") or any(b > 0x7E for b in data):
+            raise ValueError(f"{rel_path}: expected {FLATE_TEXT_BYTES} ASCII bytes ending in a line feed")
+        validate_content_stream_syntax(rel_path, data)
+    elif rel_path == "flate/random.bin":
+        if len(data) != FLATE_RANDOM_BYTES or len(zlib.compress(data, 9)) < len(data):
+            raise ValueError(f"{rel_path}: expected {FLATE_RANDOM_BYTES} incompressible bytes")
+    elif rel_path == "flate/reference-sizes.json":
+        listed = json.loads(data)
+        if listed.get("zlib_level") != 6 or not listed.get("files"):
+            raise ValueError(f"{rel_path}: expected zlib level 6 and a file list")
+        if files is not None:
+            for entry in listed["files"]:
+                content = files.get(entry["path"])
+                if content is None or hashlib.sha256(content).hexdigest() != entry["sha256"]:
+                    raise ValueError(f"{rel_path}: {entry['path']} is missing or changed")
+                if entry["zlib6"] != len(zlib.compress(content, 6)) or entry["bytes"] != len(content):
+                    raise ValueError(f"{rel_path}: {entry['path']} sizes do not match")
+    else:
+        raise ValueError(f"unrecognized flate fixture {rel_path}")
+
+
 # Glyphs for `fonts/truetype-composites.ttf`, each with its expected placement stated:
 # 1 the triangle (100, 0), (500, 700), (900, 0), advance 1000, lsb 100 (= xMin);
 # 2 the triangle (200, 0), (400, 500), (600, 0) whose hmtx lsb is 150, not its xMin 200: it is drawn 50 to the left;
@@ -4647,7 +4769,10 @@ CORPUS_PURPOSES: dict[str, str] = {
     "fonts/truetype-subset-short-loca.ttf": "TrueType subset DirectWrite refuses: broken cmap header, no OS/2, name or post",
     "fonts/truetype-hostile-budgets.ttf": "TrueType whose composites exceed the 65,535-point and 4,096-visit outline budgets",
     "fonts/opentype-cff.otf": "Minimal OpenType font with CFF outlines: .notdef and a 500 by 700 box with advance 600",
-    "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
+        "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
+    "flate/content-stream.txt": "1 MiB of generated page content operators, the Flate compressor's ratio and speed sample",
+    "flate/random.bin": "64 KiB of incompressible bytes from a fixed seed, the Flate compressor's stored-block sample",
+    "flate/reference-sizes.json": "SHA-256, size and Python zlib level-6 size of each Flate compressor input",
 }
 
 
@@ -4703,7 +4828,10 @@ def expected_corpus_files() -> dict[str, bytes]:
         "fonts/truetype-hostile-budgets.ttf": build_truetype_hostile_budgets(),
         "fonts/opentype-cff.otf": build_opentype_cff_font(),
         "fonts/truetype-composites.ttf": build_truetype_composites(),
+        "flate/content-stream.txt": build_flate_content_stream(),
+        "flate/random.bin": build_flate_random(),
     }
+    files["flate/reference-sizes.json"] = build_flate_reference_sizes(files)
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
         missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))
         extra = sorted(set(CORPUS_PURPOSES.keys()) - set(files.keys()))
@@ -4713,6 +4841,7 @@ def expected_corpus_files() -> dict[str, bytes]:
     for rel_path, content in files.items():
         total_bytes += len(content)
         validate_corpus_entry(rel_path, content)
+    validate_flate_fixture("flate/reference-sizes.json", files["flate/reference-sizes.json"], files)
 
     if total_bytes >= MAX_CORPUS_TOTAL_BYTES:
         raise ValueError(

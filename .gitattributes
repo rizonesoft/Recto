@@ -23,4 +23,6 @@ LICENSE text eol=lf
 *.bin binary
 *.ttf binary
 *.otf binary
+# Byte-exact compressor fixtures (their SHA-256 is recorded in reference-sizes.json).
+tests/corpus/flate/*.txt binary
 scripts/hooks/* text eol=lf

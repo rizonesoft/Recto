@@ -43,6 +43,7 @@
     <ClCompile Include="document.cpp" />
     <ClCompile Include="error.cpp" />
     <ClCompile Include="filters.cpp" />
+    <ClCompile Include="flate_compress.cpp" />
     <ClCompile Include="font.cpp" />
     <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="lexer.cpp" />

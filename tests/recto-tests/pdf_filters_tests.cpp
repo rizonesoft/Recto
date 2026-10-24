@@ -14,8 +14,11 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
+#include <iterator>
 #include <atomic>
 #include <bit>
 #include <cstdint>
@@ -6791,6 +6794,296 @@ TEST(PdfFilters, WicFailureClasses)
 			}
 		}
 	}
+}
+
+
+// Native Flate compressor (D01 T02 section 34). Every output is checked by `detail::inflate_zlib_strict`, which takes
+// the exact RFC 1950 framing (header, final block, Adler-32 trailer, nothing after), not `decode_flate`'s recovery.
+namespace {
+
+std::vector<uint8_t> flate_fixture(std::string_view name)
+{
+	std::ifstream in(recto::test::corpus_path(std::string(name)), std::ios::binary);
+	EXPECT_TRUE(in.good()) << name;
+	return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// Checks `compressed` is a strict zlib stream of `input` and returns its header pair.
+void expect_strict(std::span<const uint8_t> compressed, std::span<const uint8_t> input, std::string_view what)
+{
+	ASSERT_GE(compressed.size(), 6u) << what;
+	EXPECT_EQ(static_cast<unsigned>(compressed[0]), 0x78u) << what;
+	EXPECT_EQ((compressed[0] * 256u + compressed[1]) % 31u, 0u) << what << ": FCHECK";
+	EXPECT_EQ(compressed[1] & 0x20u, 0u) << what << ": no preset dictionary";
+	auto inflated = detail::inflate_zlib_strict(compressed);
+	ASSERT_TRUE(inflated.has_value()) << what << ": " << inflated.error().message.view();
+	EXPECT_TRUE(std::ranges::equal(*inflated, input)) << what;
+}
+
+std::vector<uint8_t> repetitive(size_t n)
+{
+	std::vector<uint8_t> out(n);
+	for (size_t i = 0; i < n; ++i) {
+		out[i] = static_cast<uint8_t>("abcabcabd"[i % 9u]);
+	}
+	return out;
+}
+
+std::vector<uint8_t> pseudo_random(size_t n, uint32_t seed)
+{
+	std::vector<uint8_t> out(n);
+	uint32_t x = seed;
+	for (size_t i = 0; i < n; ++i) {
+		x ^= x << 13u;
+		x ^= x >> 17u;
+		x ^= x << 5u;
+		out[i] = static_cast<uint8_t>(x);
+	}
+	return out;
+}
+
+constexpr std::array<FlateLevel, 3> kLevels = {FlateLevel::Fast, FlateLevel::Default, FlateLevel::Best};
+
+} // namespace
+
+TEST(PdfFilters, FlateCompressStrict)
+{
+	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
+	const std::vector<std::pair<std::string_view, std::vector<uint8_t>>> inputs = {
+		{"empty", {}},
+		{"one byte", {0x42u}},
+		{"repetitive", repetitive(100'000u)},
+		{"random", pseudo_random(100'000u, 7u)},
+		{"content stream", text},
+		{"skewed", [] {
+			 // Symbol i appears Fibonacci(i) times, shuffled: a Huffman tree 25 deep, so the 15-bit limit must act.
+			 std::vector<uint8_t> out;
+			 uint32_t f0 = 1;
+			 uint32_t f1 = 1;
+			 for (uint8_t s = 0; s < 25u; ++s) {
+				 out.insert(out.end(), f0, s);
+				 const uint32_t next = f0 + f1;
+				 f0 = f1;
+				 f1 = next;
+			 }
+			 uint32_t x = 99u;
+			 for (size_t i = out.size(); i > 1u; --i) {
+				 x ^= x << 13u;
+				 x ^= x >> 17u;
+				 x ^= x << 5u;
+				 std::swap(out[i - 1u], out[x % i]);
+			 }
+			 return out;
+		 }()},
+	};
+	for (const auto& [what, input] : inputs) {
+		for (const FlateLevel level : kLevels) {
+			auto compressed = flate_compress(input, level);
+			ASSERT_TRUE(compressed.has_value()) << what;
+			expect_strict(*compressed, input, what);
+			// FLEVEL says which level wrote it (RFC 1950 2.2).
+			EXPECT_EQ(static_cast<unsigned>((*compressed)[1]) >> 6u, static_cast<unsigned>(level) + 1u) << what;
+		}
+	}
+	// The strict inflater refuses what `decode_flate` recovers: a missing trailer, a wrong one, and bytes after it.
+	auto good = flate_compress(text);
+	ASSERT_TRUE(good.has_value());
+	std::vector<uint8_t> no_trailer(good->begin(), good->end() - 4);
+	std::vector<uint8_t> wrong_trailer = *good;
+	wrong_trailer.back() ^= 1u;
+	std::vector<uint8_t> trailing = *good;
+	trailing.push_back(0u);
+	for (const auto* bad : {&no_trailer, &wrong_trailer, &trailing}) {
+		EXPECT_FALSE(detail::inflate_zlib_strict(*bad).has_value());
+	}
+	EXPECT_TRUE(decode_flate(no_trailer).has_value()); // the lenient reader still recovers it
+}
+
+TEST(PdfFilters, FlateCompressBlocks)
+{
+	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
+	// Text (dynamic blocks), random bytes (stored), and a short input (fixed).
+	std::vector<uint8_t> mixed(text.begin(), text.begin() + 200'000);
+	const std::vector<uint8_t> noise = pseudo_random(150'000u, 11u); // several 65,535-byte stored blocks
+	mixed.insert(mixed.end(), noise.begin(), noise.end());
+	mixed.insert(mixed.end(), text.begin(), text.begin() + 50'000); // matches reaching back across blocks and the window
+	const std::vector<uint8_t> short_text(text.begin(), text.begin() + 60);
+	std::array<bool, 3> seen{};
+	for (const std::vector<uint8_t>* input : std::array<const std::vector<uint8_t>*, 2>{&mixed, &short_text}) {
+		FlateCompressStats stats;
+		auto compressed = flate_compress(*input, FlateLevel::Default, &stats);
+		ASSERT_TRUE(compressed.has_value());
+		expect_strict(*compressed, *input, "mixed");
+		ASSERT_FALSE(stats.blocks.empty());
+		size_t covered = 0;
+		uint64_t chosen_total = 0;
+		for (const FlateBlockStats& b : stats.blocks) {
+			const uint64_t chosen = b.type == FlateBlockType::Stored ? b.stored_bits
+				: b.type == FlateBlockType::Fixed                    ? b.fixed_bits
+																	 : b.dynamic_bits;
+			EXPECT_LE(chosen, b.stored_bits);
+			EXPECT_LE(chosen, b.fixed_bits);
+			EXPECT_LE(chosen, b.dynamic_bits);
+			seen[static_cast<size_t>(b.type)] = true;
+			covered += b.input_bytes;
+			chosen_total += chosen;
+		}
+		EXPECT_EQ(covered, input->size());
+		// The costs are exact, not estimates: header and trailer (48 bits) and the chosen blocks are the stream, short
+		// of the last byte's padding.
+		const uint64_t written = 8u * compressed->size();
+		EXPECT_LE(chosen_total + 48u, written);
+		EXPECT_LT(written - (chosen_total + 48u), 8u);
+		if (input == &mixed) {
+			EXPECT_GE(stats.stored_runs, 3u); // 150,000 random bytes need three stored blocks
+		}
+	}
+	EXPECT_TRUE(seen[0] && seen[1] && seen[2]);
+
+	// A match across the 32 KiB window boundary and back into an earlier block: 40,000 random bytes repeated.
+	std::vector<uint8_t> echo = pseudo_random(20'000u, 3u);
+	echo.insert(echo.end(), echo.begin(), echo.end());
+	FlateCompressStats echo_stats;
+	auto echoed = flate_compress(echo, FlateLevel::Default, &echo_stats);
+	ASSERT_TRUE(echoed.has_value());
+	expect_strict(*echoed, echo, "echo");
+	EXPECT_LT(echoed->size(), 21'000u); // the second copy is matches, not bytes
+}
+
+TEST(PdfFilters, FlateCompressLevels)
+{
+	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
+	constexpr std::array<uint64_t, 3> kChainBudget = {8u, 32u, 1'024u};
+	std::array<size_t, 3> sizes{};
+	for (const FlateLevel level : kLevels) {
+		FlateCompressStats stats;
+		auto compressed = flate_compress(text, level, &stats);
+		ASSERT_TRUE(compressed.has_value());
+		expect_strict(*compressed, text, "content stream");
+		const size_t i = static_cast<size_t>(level);
+		sizes[i] = compressed->size();
+		EXPECT_LE(stats.chain_steps, kChainBudget[i] * text.size()) << i;
+		EXPECT_LE(stats.max_chain_steps, kChainBudget[i]) << i; // per position, not only on average
+		EXPECT_GE(stats.max_chain_steps, kChainBudget[i] / 4u) << i; // and the search does reach its budget
+		EXPECT_GT(stats.chain_steps, 0u) << i;
+	}
+	EXPECT_LE(sizes[2], sizes[1]);
+	EXPECT_LE(sizes[1], sizes[0]);
+	EXPECT_LT(sizes[1], sizes[0]); // the levels differ in what they find, not only in name
+}
+
+TEST(PdfFilters, FlateCompressBounds)
+{
+	const std::vector<uint8_t> noise = flate_fixture("flate/random.bin");
+	for (const FlateLevel level : kLevels) {
+		auto compressed = flate_compress(noise, level);
+		ASSERT_TRUE(compressed.has_value());
+		const size_t blocks = std::max<size_t>(1u, (noise.size() + 65'534u) / 65'535u);
+		EXPECT_LE(compressed->size(), noise.size() + 5u * blocks + 6u);
+	}
+	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
+	for (const std::vector<uint8_t>* input : {&noise, &text}) {
+		const std::vector<uint8_t> zeros(300'000u, 0u);
+		for (const std::vector<uint8_t>* in : {input, &zeros}) {
+			FlateCompressStats stats;
+			ASSERT_TRUE(flate_compress(*in, FlateLevel::Best, &stats).has_value());
+			EXPECT_GT(stats.working_bytes, 0u);
+			EXPECT_LE(stats.working_bytes, 256u * 1024u);
+		}
+	}
+	// Input larger than a stream may be is refused before any work.
+	const std::span<const uint8_t> oversized(noise.data(), kMaxDecodedStreamBytes + 1u); // never read
+	auto refused = flate_compress(oversized);
+	ASSERT_FALSE(refused.has_value());
+	EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
+	EXPECT_EQ(refused.error().refusal_reason, RefusalReason::WorkingBytes);
+	{
+		detail::ScopedFlateCompressAllocFailure fail;
+		auto starved = flate_compress(noise);
+		ASSERT_FALSE(starved.has_value());
+		EXPECT_EQ(starved.error().code, ErrorCode::OutOfMemory);
+	}
+	EXPECT_TRUE(flate_compress(noise).has_value());
+}
+
+TEST(PdfFilters, FlateCompressRatio)
+{
+	const std::vector<uint8_t> listing = flate_fixture("flate/reference-sizes.json");
+	const std::string json(listing.begin(), listing.end());
+	// The listing is written by `scripts/build-corpus.py` with sorted keys: per file "bytes", "path", "sha256", "zlib6".
+	const auto field = [&](size_t from, std::string_view key) -> std::pair<std::string, size_t> {
+		const size_t k = json.find("\"" + std::string(key) + "\": ", from);
+		EXPECT_NE(k, std::string::npos) << key;
+		size_t v = k + key.size() + 4u;
+		const bool quoted = json[v] == '"';
+		v += quoted ? 1u : 0u;
+		const size_t end = json.find_first_of(quoted ? "\"" : ",\n}", v);
+		return {json.substr(v, end - v), end};
+	};
+	size_t at = json.find("\"files\"");
+	ASSERT_NE(at, std::string::npos);
+	size_t checked = 0;
+	while ((at = json.find("\"bytes\": ", at)) != std::string::npos) {
+		const auto [bytes, a] = field(at, "bytes");
+		const auto [path, b] = field(a, "path");
+		const auto [sha, c] = field(b, "sha256");
+		const auto [zlib6, d] = field(c, "zlib6");
+		at = d;
+		const std::vector<uint8_t> data = flate_fixture(path);
+		ASSERT_EQ(data.size(), std::stoull(bytes)) << path << " is missing or changed";
+		ASSERT_EQ(recto::test::sha256_hex(data), sha) << path << " changed since reference-sizes.json was written";
+		auto compressed = flate_compress(data);
+		ASSERT_TRUE(compressed.has_value()) << path;
+		const double ratio = static_cast<double>(compressed->size()) / static_cast<double>(std::stoull(zlib6));
+		EXPECT_LE(ratio, 1.05) << path << ": " << compressed->size() << " bytes against zlib's " << zlib6;
+		RecordProperty(std::string("ratio:") + path, std::to_string(ratio));
+		std::printf("flate_compress Default: %s %zu -> %zu bytes, %.4f of zlib level 6 (%s)\n", path.c_str(), data.size(),
+			compressed->size(), ratio, zlib6.c_str());
+		++checked;
+	}
+	EXPECT_GE(checked, 8u); // the two samples and the six font fixtures
+}
+
+TEST(PdfFilters, FlateCompressSpeed)
+{
+#if defined(__SANITIZE_ADDRESS__) || defined(_DEBUG)
+	GTEST_SKIP() << "throughput is measured in Release without ASan";
+#else
+	// Shared CI runners are not a measurement environment (their throughput varies with the host they land on): there
+	// the figure is reported, not held to, and the gate is the Windows host the checkpoint names. Per-machine
+	// throughput baselines belong to D06 T01 section 7.
+	char ci[8]{};
+	const bool on_ci = GetEnvironmentVariableA("GITHUB_ACTIONS", ci, sizeof(ci)) > 0u;
+	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
+	double best = 1e9;
+	for (int run = 0; run < 5; ++run) {
+		const auto start = std::chrono::steady_clock::now();
+		auto compressed = flate_compress(text);
+		const auto stop = std::chrono::steady_clock::now();
+		ASSERT_TRUE(compressed.has_value());
+		best = std::min(best, std::chrono::duration<double>(stop - start).count());
+	}
+	const double mb_per_s = static_cast<double>(text.size()) / 1e6 / best;
+	RecordProperty("flate_default_mb_per_s", std::to_string(mb_per_s));
+	for (const FlateLevel other : {FlateLevel::Fast, FlateLevel::Best}) {
+		double other_best = 1e9;
+		for (int run = 0; run < 3; ++run) {
+			const auto start = std::chrono::steady_clock::now();
+			ASSERT_TRUE(flate_compress(text, other).has_value());
+			other_best = std::min(other_best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+		}
+		std::printf("flate_compress %s: %.1f MB/s\n", other == FlateLevel::Fast ? "Fast" : "Best",
+			static_cast<double>(text.size()) / 1e6 / other_best);
+	}
+	FlateCompressStats stats;
+	ASSERT_TRUE(flate_compress(text, FlateLevel::Default, &stats).has_value());
+	std::printf("flate_compress Default: %.1f MB/s on %zu bytes, %.1f chain links per byte, %zu blocks\n", mb_per_s,
+		text.size(), static_cast<double>(stats.chain_steps) / static_cast<double>(text.size()), stats.blocks.size());
+	if (on_ci) {
+		GTEST_SKIP() << "measured " << mb_per_s << " MB/s on a shared CI runner, not held to the 20 MB/s floor";
+	}
+	EXPECT_GE(mb_per_s, 20.0);
+#endif
 }
 
 } // namespace

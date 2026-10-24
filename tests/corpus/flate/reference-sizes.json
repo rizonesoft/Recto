@@ -1,0 +1,53 @@
+{
+  "files": [
+    {
+      "bytes": 1048576,
+      "path": "flate/content-stream.txt",
+      "sha256": "1085977c5e5c0040ee6cce8f8da1784ff67b7a7bb14746e95a6ac411d6310db7",
+      "zlib6": 363179
+    },
+    {
+      "bytes": 65536,
+      "path": "flate/random.bin",
+      "sha256": "cf9bb0ad75eaaf3c9719f796c3b75b12addfb3b0a2f9ea4f9c09fe0a89899f5b",
+      "zlib6": 65564
+    },
+    {
+      "bytes": 704,
+      "path": "fonts/opentype-cff.otf",
+      "sha256": "4ff96f294222f339506dc135a5394bb46c97ebe36cd28e11adf1fdefcbb4c97d",
+      "zlib6": 415
+    },
+    {
+      "bytes": 1108,
+      "path": "fonts/truetype-composites.ttf",
+      "sha256": "414302459c7b96a05e2d37a222b533a06c70f34d711745e9671710c86249bd43",
+      "zlib6": 593
+    },
+    {
+      "bytes": 912,
+      "path": "fonts/truetype-full-long-loca.ttf",
+      "sha256": "956210102694bdfca1240e94efc52144f0735f721e00482d0736d144f20c4b10",
+      "zlib6": 511
+    },
+    {
+      "bytes": 896,
+      "path": "fonts/truetype-full-short-loca.ttf",
+      "sha256": "a162c9cc44e5cb00c43f19ecd59dc50e563b44bde9f1092307a105161b92087f",
+      "zlib6": 507
+    },
+    {
+      "bytes": 141308,
+      "path": "fonts/truetype-hostile-budgets.ttf",
+      "sha256": "23d41fef3f0b5c0dab44cb1ad2e6b8dc6ef35eeaa461d0c7779ca535713c84ee",
+      "zlib6": 1338
+    },
+    {
+      "bytes": 556,
+      "path": "fonts/truetype-subset-short-loca.ttf",
+      "sha256": "4adac32ed4464e14fd893571e99626b31bb724ebec4637044a7685a158ec9e6b",
+      "zlib6": 346
+    }
+  ],
+  "zlib_level": 6
+}
