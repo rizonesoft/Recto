@@ -298,11 +298,13 @@ enum class DiagnosticId : uint16_t {
 		return "The operation failed and some original files could not be put back; their contents are kept in backup "
 			   "files beside them";
 	case DiagnosticId::RecoveredDamagedRows:
-		return "A fax image had damaged rows, each replaced by the row above (or white at the top) so the page still opens; "
-			   "count is the rows replaced and first the zero-based first one";
+		return "A fax image had damaged rows, so the page still opens with each replaced by the row above when that row "
+			   "decoded cleanly and by white when it was damaged too or is the top; count is the rows replaced and first "
+			   "the zero-based first one";
 	case DiagnosticId::RecoveredJpxCodeBlocks:
-		return "A JPEG 2000 image had damaged code-blocks whose last bitplane was dropped, so those areas are slightly less "
-			   "precise; count is the code-blocks, first the zero-based ordinal of the first in its tile and component";
+		return "A JPEG 2000 image had damaged code-blocks, each kept only down to the bitplane above its damage, so those "
+			   "areas lose detail, up to all of it when the top bitplane is damaged; count is the code-blocks, first the "
+			   "zero-based ordinal of the first in its tile and component";
 	case DiagnosticId::RecoveredJpxEmptyComponents:
 		return "A JPEG 2000 tile had no sample of a subsampled component, which the standard allows, so it was filled with "
 			   "the mid value; count is such tile-components, with the tile and component of the first";

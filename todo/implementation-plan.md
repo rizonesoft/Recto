@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 86 | Checklist items: 514
+Sections: 86 | Checklist items: 515
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -118,7 +118,7 @@ Sections: 86 | Checklist items: 514
 | [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host                 | 7     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host                 | 8     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host                 | 10    |
-| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host                 | 6     |
+| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host                 | 7     |
 | [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host                 | 8     |
 | [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host                 | 4     |
 | [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host                 | 6     |
@@ -700,7 +700,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 73 | Checklist items: 529
+Sections: 73 | Checklist items: 531
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
@@ -750,7 +750,7 @@ Sections: 73 | Checklist items: 529
 | [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                        | 7     |
 | [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session       | 8     |
 | [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                        | 7     |
-| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session       | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session       | 8     |
 | [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                        | 5     |
 | [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session       | 6     |
 | [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                        | 6     |
@@ -764,7 +764,7 @@ Sections: 73 | Checklist items: 529
 | [ ]    | D07 T01 §25 | Downgrade warning and silent downgrade refusal (`/ALLOWDOWNGRADE=1`)                     | windows-host, display-session       | 9     |
 | [ ]    | D07 T01 §26 | Writer version in settings, recents and session files and newer-writer notes             | windows-host                        | 5     |
 | [ ]    | D07 T02 §21 | Version surfaces: `recto-cli --version --json`, `recto-mcp` server info and crash JSON   | windows-host                        | 5     |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session       | 8     |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session       | 9     |
 | [ ]    | D07 T03 §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers              | none                                | 9     |
 | [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session       | 8     |
 | [ ]    | D07 T03 §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion                  | windows-host                        | 9     |
@@ -902,4 +902,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 66/831 verified sections, 28 ready to run now.
 
-Checklist: 413/6099 items completed (includes Commit items).
+Checklist: 413/6102 items completed (includes Commit items).

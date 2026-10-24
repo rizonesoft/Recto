@@ -2663,7 +2663,7 @@ struct EncodedJ2kBlock {
 
 [[nodiscard]] EncodedJ2kBlock encode_j2k_block(
 	std::span<const int32_t> coeffs, uint32_t w, uint32_t h, uint32_t mb_total, uint8_t cb_style,
-	bool wrong_last_symbol = false)
+	int32_t wrong_symbol_bitplane = -1)
 {
 	const bool bypass = (cb_style & 0x01u) != 0u;
 	const bool reset = (cb_style & 0x02u) != 0u;
@@ -2908,8 +2908,8 @@ struct EncodedJ2kBlock {
 			}
 		}
 		if (segsym) {
-			// 1010, or 1011 on the last cleanup pass when the test asks for a damaged one.
-			const uint8_t last = (wrong_last_symbol && bp == 0) ? 1u : 0u;
+			// 1010, or 1011 on the cleanup pass of `wrong_symbol_bitplane` when the test asks for a damaged one.
+			const uint8_t last = (bp == wrong_symbol_bitplane) ? 1u : 0u;
 			for (const uint8_t bit : {uint8_t{1u}, uint8_t{0u}, uint8_t{1u}, last}) {
 				mq->encode(ctxs[18], bit);
 			}
@@ -2963,7 +2963,7 @@ struct J2kTestOptions {
 		}
 		const uint32_t mb = comp.depth + (ci == 0u ? opt.roi_shift : 0u); // one guard bit + epsilon - 1, plus the shift
 		const EncodedJ2kBlock block =
-			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ((opt.wrong_symbol_components >> ci) & 1u) != 0u);
+			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ((opt.wrong_symbol_components >> ci) & 1u) != 0u ? 0 : -1);
 		TestBitWriter bw;
 		if (block.num_passes == 0u) {
 			bw.write_bit(0u); // an empty packet
@@ -3083,6 +3083,129 @@ struct J2kTestOptions {
 	u8(1u);
 	u16(0xFF93u); // SOD
 	cs.insert(cs.end(), packets.begin(), packets.end());
+	u16(0xFFD9u); // EOC
+	return cs;
+}
+
+// A 16 x 4, 8-bit, one-component codestream in two 8 x 4 tiles, each with no decomposition and two 4 x 4 code-blocks
+// in its LL band (so a code-block's ordinal in its tile-component is 0 or 1), segmentation symbols on, one layer.
+// `damage` names the (tile, code-block, bitplane) whose cleanup pass ends with the wrong symbol 1011.
+struct J2kBlockDamage {
+	uint32_t tile = 0u;
+	uint32_t block = 0u;
+	int32_t bitplane = 0;
+};
+
+[[nodiscard]] std::vector<uint8_t> make_j2k_two_tile_codestream(
+	std::span<const uint8_t> samples, std::span<const J2kBlockDamage> damage)
+{
+	constexpr uint32_t kMb = 8u;
+	std::vector<uint8_t> cs = {0xFFu, 0x4Fu};
+	const auto u8 = [&cs](uint32_t v) { cs.push_back(static_cast<uint8_t>(v)); };
+	const auto u16 = [&cs](uint32_t v) {
+		cs.push_back(static_cast<uint8_t>(v >> 8u));
+		cs.push_back(static_cast<uint8_t>(v));
+	};
+	const auto u32 = [&u16](uint32_t v) {
+		u16(v >> 16u);
+		u16(v & 0xFFFFu);
+	};
+	u16(0xFF51u); // SIZ: 16 x 4 from the origin, 8 x 4 tiles, one 8-bit component
+	u16(41u);
+	u16(0u);
+	u32(16u);
+	u32(4u);
+	u32(0u);
+	u32(0u);
+	u32(8u);
+	u32(4u);
+	u32(0u);
+	u32(0u);
+	u16(1u);
+	u8(7u);
+	u8(1u);
+	u8(1u);
+	u16(0xFF52u); // COD: LRCP, one layer, no MCT, no decomposition, 4 x 4 code-blocks, segmentation symbols, 5-3
+	u16(12u);
+	u8(0u);
+	u8(0u);
+	u16(1u);
+	u8(0u);
+	u8(0u);
+	u8(0u);
+	u8(0u);
+	u8(0x20u);
+	u8(1u);
+	u16(0xFF5Cu); // QCD: one guard bit, no quantization, epsilon 8
+	u16(4u);
+	u8(0x20u);
+	u8(8u << 3u);
+	for (uint32_t tile = 0; tile < 2u; ++tile) {
+		std::array<EncodedJ2kBlock, 2> blocks;
+		for (uint32_t b = 0; b < 2u; ++b) {
+			std::vector<int32_t> coeffs;
+			for (uint32_t y = 0; y < 4u; ++y) {
+				for (uint32_t x = 0; x < 4u; ++x) {
+					coeffs.push_back(static_cast<int32_t>(samples[y * 16u + tile * 8u + b * 4u + x]) - 128);
+				}
+			}
+			int32_t wrong = -1;
+			for (const J2kBlockDamage& d : damage) {
+				if (d.tile == tile && d.block == b) {
+					wrong = d.bitplane;
+				}
+			}
+			blocks[b] = encode_j2k_block(coeffs, 4u, 4u, kMb, 0x20u, wrong);
+			EXPECT_GT(blocks[b].num_passes, 0u); // every code-block is included, so the tag trees below hold
+			EXPECT_EQ(blocks[b].segments.size(), 1u);
+		}
+		// Packet header (T.800 B.10): per code-block its inclusion and zero-bitplane tag trees over a 2 x 1 grid under
+		// one root, its pass count, its Lblock and its segment length.
+		TestBitWriter bw;
+		bw.write_bit(1u);
+		const uint32_t root_zero = std::min(blocks[0].zero_bitplanes, blocks[1].zero_bitplanes);
+		for (uint32_t b = 0; b < 2u; ++b) {
+			if (b == 0u) {
+				bw.write_bit(1u); // inclusion root: 0, below layer 1
+			}
+			bw.write_bit(1u); // inclusion leaf: 0
+			if (b == 0u) {
+				for (uint32_t z = 0; z < root_zero; ++z) {
+					bw.write_bit(0u);
+				}
+				bw.write_bit(1u);
+			}
+			for (uint32_t z = root_zero; z < blocks[b].zero_bitplanes; ++z) {
+				bw.write_bit(0u);
+			}
+			bw.write_bit(1u);
+			bw.encode_num_passes(blocks[b].num_passes);
+			const size_t len = blocks[b].segments[0].bytes.size();
+			const uint32_t extra = blocks[b].num_passes <= 1u ? 0u : static_cast<uint32_t>(std::bit_width(blocks[b].num_passes) - 1u);
+			uint32_t lblock = 3u;
+			while (static_cast<uint32_t>(std::bit_width(len)) > lblock + extra) {
+				++lblock;
+			}
+			for (uint32_t i = 3u; i < lblock; ++i) {
+				bw.write_bit(1u);
+			}
+			bw.write_bit(0u);
+			bw.write_bits(static_cast<uint32_t>(len), lblock + extra);
+		}
+		bw.flush_aligned();
+		std::vector<uint8_t> packet = bw.bytes();
+		for (const EncodedJ2kBlock& block : blocks) {
+			packet.insert(packet.end(), block.segments[0].bytes.begin(), block.segments[0].bytes.end());
+		}
+		u16(0xFF90u); // SOT
+		u16(10u);
+		u16(tile);
+		u32(static_cast<uint32_t>(12u + 2u + packet.size()));
+		u8(0u);
+		u8(1u);
+		u16(0xFF93u); // SOD
+		cs.insert(cs.end(), packet.begin(), packet.end());
+	}
 	u16(0xFFD9u); // EOC
 	return cs;
 }
@@ -6126,6 +6249,11 @@ TEST(PdfFilters, CcittRecoveryReachesRingAndEtw)
 		auto decoded = decode_ccitt_fax(pack_bitstring(two_damaged), &parms);
 		set_etw_capture_for_testing(false);
 		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		// Row 1 follows a clean row, so it repeats it; row 2 follows a damaged row, so it is white (the message says so).
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+		const std::string_view says = diagnostic_id_message(DiagnosticId::RecoveredDamagedRows);
+		EXPECT_NE(says.find("by the row above when that row decoded cleanly"), std::string_view::npos) << says;
+		EXPECT_NE(says.find("by white when it was damaged too"), std::string_view::npos) << says;
 		const auto tail = diagnostics_tail(10);
 		const auto captured = captured_etw_events_for_testing();
 		ASSERT_EQ(tail.size(), 1u);
@@ -6289,6 +6417,82 @@ TEST(PdfFilters, JpxRecoveryReachesRingAndEtw)
 		EXPECT_EQ(captured[0].tile_index, 0u) << d.name;
 		EXPECT_TRUE(captured[0].has_component) << d.name;
 		EXPECT_EQ(captured[0].component_index, d.component) << d.name;
+	}
+
+	// Two tiles of two code-blocks each: the first damaged code-block's tile and ordinal are not zero, and damage at a
+	// code-block's top bitplane loses all of its detail (every sample mid-grey), not only a little precision.
+	{
+		std::vector<uint8_t> grid(64u);
+		for (size_t i = 0; i < grid.size(); ++i) {
+			grid[i] = static_cast<uint8_t>((i * 53u + 7u) % 256u);
+		}
+		for (uint32_t block = 0; block < 4u; ++block) {
+			grid[block * 4u] = 0u; // magnitude 128: every code-block's top bitplane is 7
+		}
+		struct Case {
+			const char* name;
+			std::vector<J2kBlockDamage> damage;
+			uint64_t count;
+			uint64_t first;
+			uint32_t tile;
+		};
+		const std::array<Case, 3> cases = {{
+			{"intact", {}, 0u, 0u, 0u},
+			{"tile 1 block 1 at the top", {{1u, 1u, 7}}, 1u, 1u, 1u},
+			{"tile 0 block 1 low, tile 1 block 0 top", {{0u, 1u, 0}, {1u, 0u, 7}}, 2u, 1u, 0u},
+		}};
+		const std::string_view says = diagnostic_id_message(DiagnosticId::RecoveredJpxCodeBlocks);
+		EXPECT_NE(says.find("up to all of it when the top bitplane is damaged"), std::string_view::npos) << says;
+		EXPECT_EQ(says.find("slightly"), std::string_view::npos) << says;
+		for (const Case& k : cases) {
+			start();
+			auto img = decode_jpx_image(make_j2k_two_tile_codestream(grid, k.damage));
+			set_etw_capture_for_testing(false);
+			ASSERT_TRUE(img.has_value()) << k.name << ": " << img.error().message.view();
+			ASSERT_EQ(img->pixels.size(), grid.size()) << k.name;
+			for (size_t i = 0; i < grid.size(); ++i) {
+				const uint32_t tile = static_cast<uint32_t>((i % 16u) / 8u);
+				const uint32_t block = static_cast<uint32_t>((i % 8u) / 4u);
+				int32_t plane = -1;
+				for (const J2kBlockDamage& d : k.damage) {
+					if (d.tile == tile && d.block == block) {
+						plane = d.bitplane;
+					}
+				}
+				const int diff = std::abs(int{img->pixels[i]} - int{grid[i]});
+				if (plane == 7) {
+					EXPECT_EQ(img->pixels[i], 128u) << k.name << " at " << i;
+				} else if (plane == 0) {
+					EXPECT_LE(diff, 1) << k.name << " at " << i;
+				} else {
+					EXPECT_EQ(diff, 0) << k.name << " at " << i;
+				}
+			}
+			const auto tail = diagnostics_tail(10);
+			const auto captured = captured_etw_events_for_testing();
+			if (k.count == 0u) {
+				EXPECT_TRUE(tail.empty()) << k.name;
+				EXPECT_TRUE(captured.empty()) << k.name;
+				continue;
+			}
+			ASSERT_EQ(tail.size(), 1u) << k.name;
+			ASSERT_EQ(captured.size(), 1u) << k.name;
+			EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::RecoveredJpxCodeBlocks) << k.name;
+			EXPECT_EQ(tail[0].recovered_count, k.count) << k.name;
+			EXPECT_EQ(tail[0].first_recovered, std::optional<uint64_t>(k.first)) << k.name;
+			EXPECT_EQ(tail[0].tile_index, std::optional<uint32_t>(k.tile)) << k.name;
+			EXPECT_EQ(tail[0].component_index, std::optional<uint32_t>(0u)) << k.name;
+			const std::string expected = " [recovered=" + std::to_string(k.count) + " first=" + std::to_string(k.first) +
+				" tile=" + std::to_string(k.tile) + " component=0]";
+			EXPECT_NE(tail[0].format().find(expected), std::string::npos) << k.name << ": " << tail[0].format();
+			EXPECT_EQ(captured[0].recovered_count, k.count) << k.name;
+			EXPECT_TRUE(captured[0].has_first_recovered) << k.name;
+			EXPECT_EQ(captured[0].first_recovered, k.first) << k.name;
+			EXPECT_TRUE(captured[0].has_tile) << k.name;
+			EXPECT_EQ(captured[0].tile_index, k.tile) << k.name;
+			EXPECT_TRUE(captured[0].has_component) << k.name;
+			EXPECT_EQ(captured[0].component_index, 0u) << k.name;
+		}
 	}
 
 	// C1's 1 x 1 image at origin 1: both 2 x 2 subsampled components are empty in the one tile.
