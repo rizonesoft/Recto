@@ -137,6 +137,8 @@ Implement the thread-safe, immutable display-list representation in `src/pdf/dis
 
 ## 2. DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback
 
+> **Started:** 2026-10-24T12:38Z
+
 > **Corrected 2026-10-24:** split before the build (AGENTS.md: small, single-responsibility sections). The section had six large items, one of which could not be built here: Type 3 `/CharProcs` are content streams and need the interpreter of `§3` and `§4`. It now covers loading and glyph metrics only; the Standard 14 metrics moved to `§27`, encodings and `/ToUnicode` to `§28`, Type 1 and CFF charstrings to `§29`, CID fonts to `§30` and Type 3 to `§31`. Two facts the old text missed: DirectWrite cannot load a bare CFF program (`/FontFile3 /Type1C` or `/CIDFontType0C`; `§29` reads those), and it refuses many embedded TrueType subsets that lack tables it requires (`OS/2`, `name`, `post`), which every other reader tolerates, so this section reads `glyf` outlines itself when DirectWrite refuses a font. Windows 11 provides the in-memory loader (`IDWriteFactory5::CreateInMemoryFontFileLoader`), so no custom `IDWriteFontFileLoader` is written.
 
 Load embedded font programs into immutable `LoadedFont` objects in `src/pdf/font.h` and `src/pdf/font.cpp` (ISO 32000-1 sections 9.6.3, 9.8 and 9.9) that the interpreter (`§4`) asks for glyph advances, ink boxes and outlines, and that the rasterizer (`§6`) draws through DirectWrite or as paths.
