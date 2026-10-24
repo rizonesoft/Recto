@@ -6885,6 +6885,33 @@ TEST(PdfFilters, FlateCompressStrict)
 			EXPECT_EQ(static_cast<unsigned>((*compressed)[1]) >> 6u, static_cast<unsigned>(level) + 1u) << what;
 		}
 	}
+	// Every single byte at every level: a one-byte stream is a fixed block, so this covers each fixed literal code,
+	// the 9-bit ones for 0x90 to 0xFF among them (RFC 1951 3.2.6 builds them over 288 symbols).
+	for (const FlateLevel level : kLevels) {
+		for (unsigned v = 0; v < 256u; ++v) {
+			const std::array<uint8_t, 1> one = {static_cast<uint8_t>(v)};
+			FlateCompressStats stats;
+			auto compressed = flate_compress(one, level, &stats);
+			ASSERT_TRUE(compressed.has_value()) << v;
+			ASSERT_EQ(stats.blocks.size(), 1u);
+			EXPECT_EQ(stats.blocks[0].type, FlateBlockType::Fixed) << v;
+			expect_strict(*compressed, one, "single byte");
+		}
+	}
+	// A short run of high bytes with matches in it, also fixed: 9-bit literals beside length and distance codes.
+	std::vector<uint8_t> high;
+	for (int r = 0; r < 3; ++r) {
+		for (unsigned v = 0xF0u; v <= 0xFFu; ++v) {
+			high.push_back(static_cast<uint8_t>(v));
+		}
+	}
+	FlateCompressStats high_stats;
+	auto high_compressed = flate_compress(high, FlateLevel::Default, &high_stats);
+	ASSERT_TRUE(high_compressed.has_value());
+	ASSERT_EQ(high_stats.blocks.size(), 1u);
+	EXPECT_EQ(high_stats.blocks[0].type, FlateBlockType::Fixed);
+	expect_strict(*high_compressed, high, "high bytes");
+
 	// The strict inflater refuses what `decode_flate` recovers: a missing trailer, a wrong one, and bytes after it.
 	auto good = flate_compress(text);
 	ASSERT_TRUE(good.has_value());
@@ -7044,6 +7071,7 @@ TEST(PdfFilters, FlateCompressRatio)
 		ASSERT_EQ(recto::test::sha256_hex(data), sha) << path << " changed since reference-sizes.json was written";
 		auto compressed = flate_compress(data);
 		ASSERT_TRUE(compressed.has_value()) << path;
+		expect_strict(*compressed, data, path); // every size counted is of a stream that reads back
 		const double ratio = static_cast<double>(compressed->size()) / static_cast<double>(std::stoull(zlib6));
 		EXPECT_LE(ratio, 1.05) << path << ": " << compressed->size() << " bytes against zlib's " << zlib6;
 		RecordProperty(std::string("ratio:") + path, std::to_string(ratio));

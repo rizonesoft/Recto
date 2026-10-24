@@ -396,16 +396,20 @@ void build_dynamic(const std::array<uint32_t, kLitLenCodes>& lit_freq, const std
 	trees.header_bits = bits;
 }
 
-// RFC 1951 3.2.6: the fixed literal/length and distance code lengths.
-constexpr std::array<uint8_t, kLitLenCodes> kFixedLitLengths = [] {
-	std::array<uint8_t, kLitLenCodes> lengths{};
-	for (size_t s = 0; s < kLitLenCodes; ++s) {
+// RFC 1951 3.2.6: the fixed literal/length and distance code lengths, over the full 288 and 32 symbols. The reserved
+// symbols 286, 287, 30 and 31 are never written but take part in the canonical codes: built from 286 literal/length
+// lengths, the 8-bit count is two short and every 9-bit literal (bytes 0x90 to 0xFF) shifts.
+constexpr size_t kFixedLitLenSymbols = 288u;
+constexpr size_t kFixedDistSymbols = 32u;
+constexpr std::array<uint8_t, kFixedLitLenSymbols> kFixedLitLengths = [] {
+	std::array<uint8_t, kFixedLitLenSymbols> lengths{};
+	for (size_t s = 0; s < kFixedLitLenSymbols; ++s) {
 		lengths[s] = s < 144u ? 8u : s < 256u ? 9u : s < 280u ? 7u : 8u;
 	}
 	return lengths;
 }();
-constexpr std::array<uint8_t, kDistCodes> kFixedDistLengths = [] {
-	std::array<uint8_t, kDistCodes> lengths{};
+constexpr std::array<uint8_t, kFixedDistSymbols> kFixedDistLengths = [] {
+	std::array<uint8_t, kFixedDistSymbols> lengths{};
 	lengths.fill(5u);
 	return lengths;
 }();
@@ -803,8 +807,8 @@ private:
 		bits_.put(final ? 1u : 0u, 1u);
 		if (type == FlateBlockType::Fixed) {
 			bits_.put(1u, 2u);
-			std::array<uint16_t, kLitLenCodes> lit_codes{};
-			std::array<uint16_t, kDistCodes> dist_codes{};
+			std::array<uint16_t, kFixedLitLenSymbols> lit_codes{};
+			std::array<uint16_t, kFixedDistSymbols> dist_codes{};
 			build_codes(kFixedLitLengths, lit_codes);
 			build_codes(kFixedDistLengths, dist_codes);
 			write_symbols(lit_codes, kFixedLitLengths, dist_codes, kFixedDistLengths);
