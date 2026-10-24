@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 91 | Checklist items: 550
+Sections: 93 | Checklist items: 558
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -84,13 +84,15 @@ Sections: 91 | Checklist items: 550
 | [x]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host              | 5     |
 | [x]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host              | 17    |
 | [x]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 7     |
-| [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host              | 9     |
+| [ ]    | D01 T02 §3  | Content-stream interpreter: graphics state, paths, painting, clipping and device colour  | windows-host              | 7     |
 | [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 7     |
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 9     |
 | [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 5     |
 | [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
 | [ ]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 5     |
 | [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 4     |
+| [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 5     |
+| [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 5     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
@@ -104,7 +106,7 @@ Sections: 91 | Checklist items: 550
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 9     |
-| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 8     |
+| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 9     |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 7     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
@@ -905,6 +907,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 70/836 verified sections, 35 ready to run now.
+Progress: 70/838 verified sections, 35 ready to run now.
 
-Checklist: 437/6137 items completed (includes Commit items).
+Checklist: 437/6145 items completed (includes Commit items).

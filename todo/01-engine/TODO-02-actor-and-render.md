@@ -60,8 +60,8 @@ track: M1
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
-| 3 | §3 | Content-stream graphics state machine, path construction/clipping and colour spaces | §1 | [ ] |
-| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, D06 T05 §32, D06 T05 §33 | [ ] |
+| 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [ ] |
+| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
@@ -89,6 +89,8 @@ track: M1
 | 29 | §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines) | §2 | [ ] |
 | 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [ ] |
 | 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
+| 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [ ] |
+| 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -168,34 +170,31 @@ Load embedded font programs into immutable `LoadedFont` objects in `src/pdf/font
 > **Verified:** 2026-10-24 | §2 | 25694b1ae97d7a52982d44ea761474dc2108b8d1
 > **Review:** `docs/reviews/d01-t02-s2.json`
 
-## 3. Content-stream graphics state machine, path construction/clipping and colour spaces
+## 3. Content-stream interpreter: graphics state, paths, painting, clipping and device colour
 
-Implement the graphics-state, colour-space, and vector-path half of the content-stream interpreter in `src/pdf/interpreter.h` and `src/pdf/interpreter.cpp` (ISO 32000-1 section 8):
-- Graphics state stack (`q` push capped at depth 64, `Q` pop ignoring underflow, `cm` CTM concatenation, `w` line width, `J` line cap, `j` line join, `M` miter limit, `d` dash array and phase, `ri` rendering intent, `i` flatness, `gs` `/ExtGState` dictionary applying `/LW`, `/LC`, `/LJ`, `/ML`, `/D`, `/CA` stroke alpha, `/ca` fill alpha, `/BM` blend mode, `/SMask`).
-- Path construction (`m` moveto, `l` lineto, `c` cubic bezier, `v` initial-point cubic, `y` final-point cubic, `h` closepath, `re` rectangle) and path painting/clipping (`S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*`, `n` no-op paint, `W` non-zero clip, `W*` even-odd clip applied when the current path finishes).
-- Colour spaces and operators (`g`/`G` `DeviceGray`, `rg`/`RG` `DeviceRGB`, `k`/`K` `DeviceCMYK`, `cs`/`CS`/`sc`/`SC`/`scn`/`SCN` supporting `/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK`, `/CalGray`, `/CalRGB`, `/Lab`, `/ICCBased` with `/Alternate` fallback, `/Indexed` palette lookup up to 256 entries, `/Separation` and `/DeviceN` tint transform functions `/FunctionType 0, 2, 3, 4`, and `/Pattern` tiling/shading fills `sh`).
+> **Corrected 2026-10-24:** split before the build (AGENTS.md: small, single-responsibility sections). Two items could not be built here: `sh` and pattern fills need the `FillShading` and `FillTilingPattern` commands `§16` adds (moved to `§16`), and the `/ExtGState /SMask` belongs to `§15`, which already parses it. The colour spaces beyond the device ones moved to `§32` (CalGray, CalRGB, Lab, `ICCBased`, calibrated CMYK and image profiles) and `§33` (`Indexed`, `Separation`, `DeviceN` and PDF functions). This section is the interpreter's core.
+
+Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/pdf/interpreter.h` and `src/pdf/interpreter.cpp` (ISO 32000-1 sections 7.8 and 8): operator dispatch over the lexer's tokens, the graphics state, paths, painting, clipping and the device colour spaces. Text, images and Form XObjects are `§4`, the ceilings on hostile streams `§19`.
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that `Interpreter` mutates only its stack-allocated `GraphicsState` stack and `DisplayListBuilder`, never mutating shared resource dictionaries in `pdf::Document`.
+**Freeze check:** Verify that `Interpreter` mutates only its own graphics state stack and its `DisplayListBuilder`, never the `pdf::Document`'s objects or resource dictionaries, and runs on the `DocumentActor` thread that owns the document.
 
 **Build order:**
 
-1. Implement `src/pdf/interpreter.h` and the graphics-state, colour-space/function evaluator, and path construction/painting/clipping operators in `src/pdf/interpreter.cpp`. Done when: `interpreter.cpp` compiles cleanly on `x64` and `ARM64`.
-2. Add `tests/recto-tests/pdf_interpreter_tests.cpp` testing `q`/`Q`/`cm`, path operators (`m`/`l`/`c`/`v`/`y`/`h`/`re`), painting/clipping (`S`/`f`/`f*`/`B`/`W`/`W*`/`n`), `/ExtGState` alpha, and colour spaces (`DeviceGray`/`RGB`/`CMYK`, `/Indexed`, `/Separation` with Type 2 exponential tint function). Done when: `PdfInterpreter.PathsAndColors` passes under ASan.
+1. Implement `src/pdf/interpreter.h` and `src/pdf/interpreter.cpp`: `interpret_page` over `Document::decoded_page_contents` and `page_resources`, the operand stack, operator dispatch, and the graphics-state, path and device-colour operators. Done when: `interpreter.cpp` compiles cleanly on `x64` and `ARM64`.
+2. Add `tests/recto-tests/pdf_interpreter_tests.cpp` with the tests named below. Done when: they pass under ASan.
 
-- [ ] Implement the PDF graphics state stack (`q` / `Q` capped at 64 saved states, ignoring unbalanced extra `Q` operators in sloppy PDFs without crashing) and `cm` (`[a b c d e f]`) affine matrix concatenation. Done when: `PdfInterpreter.GraphicsStateStack` verifies `q`/`Q` restoration and caps deep `q` stacks at 64.
-- [ ] Implement stroke and `/ExtGState` (`gs`) operators (`w`, `J`, `j`, `M`, `d [array] phase`, `/CA` stroke opacity, `/ca` fill opacity, `/BM` blend mode). Done when: `PdfInterpreter.ExtGState` records stroke styles and alpha values into `DisplayList`.
-- [ ] Implement all path construction operators (`m`, `l`, `c`, `v`, `y`, `h`, `re`) converting `v` and `y` shorthand Beziers into full cubic Beziers `(cp1, cp2, end)`. Done when: `PdfInterpreter.PathOperators` records exact control points for `m`/`l`/`c`/`v`/`y`/`h`/`re`.
-- [ ] Implement all path painting and clipping combinations (`S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*`, `n`, `W`, `W*`) applying pending `W`/`W*` clip paths before clearing the current path. Done when: `W n` pushes a clip path without stroking or filling it in `PdfInterpreter.ClippingPaths`.
-- [ ] Implement colour operators (`g`/`G`, `rg`/`RG`, `k`/`K`, `cs`/`CS`, `sc`/`SC`, `scn`/`SCN`) and colour-space resolvers for `DeviceGray`, `DeviceRGB`, `DeviceCMYK` (calibrated CMYK-to-sRGB conversion), `CalGray`, `CalRGB`, `Lab`, and `ICCBased`. Done when: `PdfInterpreter.ColorSpaces` converts grayscale, RGB, CMYK, and Lab colours to expected sRGB values.
-- [ ] Implement `/Indexed` (`[/Indexed base hival lookup]`) palette lookup and `/Separation` / `/DeviceN` tint transform evaluation (`/FunctionType 0` sampled, `2` exponential interpolation, `3` stitching, and bounded `4` PostScript calculator subset). Done when: `PdfInterpreter.IndexedAndSeparation` resolves indexed palette indices and spot-colour tints.
-- [ ] Support axial (`/ShadingType 2`) and radial (`/ShadingType 3`) gradient shadings (`sh` operator and `/PatternType 2` shading patterns) plus `/PatternType 1` tiling patterns (capped at recursion depth 8). Done when: `PdfInterpreter.ShadingAndPatterns` records gradient/pattern fills into `DisplayList`.
-- [ ] Use an image's own ICC profile (`WicDecodedImage::icc_profile`, from a JPX colr box) for its colour space when the image dictionary names none, through the same colour management as ICCBased. Done when: a JPX image with a restricted ICC profile renders through that profile. **Corrected 2026-10-23:** (`D06 T05 §32` completion review: filed here).
-- [ ] Commit: `pdf: implement content-stream state machine, path operators and colour spaces`
+- [ ] `interpret_page(const Document&, size_t page_index)` returning `PdfResult<std::shared_ptr<const DisplayList>>`, reading the page's decoded contents and resources and the page box (`D01 T02 §1` convention, `/CropBox` in default user space), with an operand stack of numbers, names, strings, arrays and dictionaries from the lexer and parser; an unknown operator is skipped with its operands, an operator given the wrong operands is skipped, and neither stops the page (ISO 32000-1 7.8.2, Annex A). Done when: `PdfInterpreter.OperatorDispatch` interprets a stream mixing known, unknown and malformed operators and records exactly the well-formed ones.
+- [ ] The graphics state stack: `q` saves (at most 64 deep; a `q` past that is ignored and its matching `Q` too, so the state stays balanced), `Q` restores and ignores underflow, `cm` concatenates the CTM. Done when: `PdfInterpreter.GraphicsStateStack` checks restoration of every field, the 64-level cap with balanced recovery, and an unmatched `Q`.
+- [ ] Stroke parameters and `/ExtGState` through `gs`: `w`, `J`, `j`, `M`, `d [array] phase` (ISO 32000-1 8.4.3.6, recorded per `D01 T02 §1`), `ri` and `i` kept in the state, and `/LW`, `/LC`, `/LJ`, `/ML`, `/D`, `/CA`, `/ca` and `/BM` from the named dictionary (an unknown `/BM` name is `Normal`; `/SMask` is `§15`). Done when: `PdfInterpreter.ExtGState` records the stroke styles and alphas into the `DisplayList` and an `/ExtGState` missing from the resources is skipped.
+- [ ] Path construction `m`, `l`, `c`, `v`, `y`, `h`, `re`, with `v` and `y` expanded to full cubics and a segment without a current point skipped. Done when: `PdfInterpreter.PathOperators` records exact control points for each operator.
+- [ ] Painting and clipping `S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*`, `n`, with a pending `W` or `W*` applied when the path is painted or ended (ISO 32000-1 8.5.4), then the path cleared. Done when: `PdfInterpreter.ClippingPaths` checks that `W n` pushes a clip without painting, `W* f` clips with the even-odd rule and fills, and each painting operator records the fill and stroke it names.
+- [ ] Device colour: `g`/`G`, `rg`/`RG`, `k`/`K`, and `cs`/`CS` with `sc`/`SC`/`scn`/`SCN` for `DeviceGray`, `DeviceRGB` and `DeviceCMYK`, with the initial colour of each space and DeviceCMYK converted by ISO 32000-1 10.4.2 (calibrated conversion is `§32`); a colour space this section does not read leaves black, noted for `§32` and `§33`. Done when: `PdfInterpreter.DeviceColors` checks each operator's recorded colour and the initial colours after `cs`.
+- [ ] Commit: `pdf: interpret content-stream graphics state, paths, painting, clipping and device colour`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Graphics*:PdfInterpreter.Path*:PdfInterpreter.Clip*:PdfInterpreter.Color*:PdfInterpreter.Indexed*:PdfInterpreter.Shading*` passes under ASan.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.OperatorDispatch:PdfInterpreter.Graphics*:PdfInterpreter.ExtGState:PdfInterpreter.Path*:PdfInterpreter.Clip*:PdfInterpreter.DeviceColors` passes under ASan with 0 warnings.
 
 ## 4. Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects
 
@@ -555,6 +554,7 @@ Gradients, patterns and clipped text are common in brochures, maps and CAD expor
 2. Replay shadings, patterns and clips in `src/pdf/rasterizer.cpp`. Done when: `PdfRasterizer.Shading*`, `PdfRasterizer.TilingPattern*` and `PdfRasterizer.TextClip*` pass under ASan.
 
 - [ ] Add `FillShading { shading, matrix, bbox, background, alpha }` and `FillTilingPattern { cell_list, bbox, matrix, xstep, ystep, paint_type, color }` to `DisplayCommand` in `src/pdf/display_list.h`. Done when: `PdfDisplayList.ShadingAndPatternCommands` records both and reads them from 8 threads under ASan.
+- [ ] Record `sh` and `/Pattern` colour fills from the interpreter: `sh /Name` as `FillShading` clipped to the current clip, `scn` with a pattern name for `/PatternType 2` (shading) and `/PatternType 1` (tiling, the cell recorded as a sub-list, nested at most 8 levels) fills and strokes. Done when: `PdfInterpreter.ShadingAndPatterns` records each into the `DisplayList`. **Corrected 2026-10-24:** moved here from `D01 T02 §3`, which cannot record these before this section adds the commands.
 - [ ] Parse `/ShadingType` 1 (function), 2 (axial), 3 (radial, with `/Extend`), and 4, 5, 6, 7 (free-form, lattice, Coons and tensor meshes with `/BitsPerCoordinate`, `/BitsPerFlag`, `/Decode`) in `src/pdf/shading.cpp`, refusing a mesh over `kMaxMeshPatches = 100000` or with bit sizes outside ISO 32000-1 Table 83 with a typed `PdfError`. Done when: `PdfShading.ParseAllTypes` parses one fixture of each type and `PdfShading.HostileMeshRefused` refuses an oversized patch count and a `/BitsPerCoordinate 40` in under 50 ms. (ISO 32000-1 8.7.4.5)
 - [ ] Replay types 2 and 3 through `ID2D1LinearGradientBrush` and `ID2D1RadialGradientBrush` with the `/Function` sampled to at most 256 stops, honouring `/Extend`, `/Domain` and `/Background`. Done when: `PdfRasterizer.ShadingAxialRadial` finds probe pixels at 0, 25, 50, 75 and 100 percent within 1 LSB of the function's value. Cheaper substitute: a two-colour gradient that ignores the `/Function`.
 - [ ] Rasterize types 1, 4, 5, 6 and 7 on the CPU into the tile bitmap (function evaluation per pixel for type 1, Gouraud triangles for types 4 and 5, Coons and tensor patches subdivided to at most 16 by 16 triangles each), clipped to the tile. Done when: `PdfRasterizer.ShadingMeshAndFunction` matches probe pixels computed in `scripts/build-corpus.py` for each type and is pixel-identical at 1 and 8 workers.
@@ -936,6 +936,49 @@ A Type 3 font draws each glyph with its own content stream (ISO 32000-1 section 
 - [ ] Commit: `pdf: Type 3 fonts as per-glyph sub-display-lists`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Type3*` passes under ASan with 0 warnings.
+
+## 32. Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour
+
+Calibrated and ICC-based colour (ISO 32000-1 sections 8.6.5 and 8.6.5.5) so colours from scanners, cameras and print workflows render as their authors saw them, through the Windows Color System (`mscms.dll`: `OpenColorProfileW`, `CreateMultiProfileTransform`, `TranslateColors`) rather than an approximation.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that colour transforms are built on the `DocumentActor` thread and cached per document only in immutable form, and that no colour state is shared across documents.
+
+**Build order:**
+
+1. Implement `src/pdf/color.h` and `src/pdf/color.cpp` and wire them into `cs`/`CS`/`sc`/`SC`/`scn`/`SCN` in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below. Done when: they pass under ASan.
+
+- [ ] `CalGray` and `CalRGB` (`/WhitePoint`, `/BlackPoint`, `/Gamma`, `/Matrix`) and `Lab` (`/WhitePoint`, `/Range`) converted to sRGB with the CIE formulas of ISO 32000-1 8.6.5.2 to 8.6.5.4 and Bradford adaptation to D65. Done when: `PdfInterpreter.CalibratedColors` matches reference sRGB values to within 1/255 per channel.
+- [ ] `ICCBased` streams (`/N`, `/Alternate`, `/Range`) through Windows Color System transforms to sRGB, built once per profile per document, with the `/Alternate` (or the device space for `/N`) when the profile does not load, and bounded profile size. Done when: `PdfInterpreter.IccBasedColors` converts through an embedded sRGB and a CMYK profile, and falls back on a damaged profile.
+- [ ] Calibrated `DeviceCMYK`: through a CMYK output profile (the document's `/OutputIntents` `/DestOutputProfile` when present, else a recorded default) instead of the `§3` formula. Done when: `PdfInterpreter.CalibratedCmyk` checks a CMYK colour against the profile's sRGB result and the `§3` formula is used only when no profile loads.
+- [ ] An image's own ICC profile (from a JPX colr box, `WicDecodedImage::icc_profile`) when its dictionary names no colour space, through the same transforms. **Corrected 2026-10-24:** moved here from `§3` (it was filed there by the `D06 T05 §32` completion review). Done when: a JPX image with a restricted ICC profile renders through that profile in `PdfInterpreter.JpxIccProfile`.
+- [ ] Commit: `pdf: calibrated, Lab and ICC-based colour through Windows colour management`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Calibrated*:PdfInterpreter.IccBased*:PdfInterpreter.JpxIccProfile` passes under ASan with 0 warnings.
+
+## 33. Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4
+
+Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Indexed`, `Separation` and `DeviceN` colour spaces with the four PDF function types their tint transforms use.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that parsed functions and colour spaces are immutable once built and evaluated without shared mutable state.
+
+**Build order:**
+
+1. Implement PDF functions in `src/pdf/function.h` and `src/pdf/function.cpp` and the three colour spaces in `src/pdf/color.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below. Done when: they pass under ASan.
+
+- [ ] PDF functions: type 0 (sampled, 1 to 32 bits per sample, `/Encode`, `/Decode`, multilinear interpolation, bounded sample table size), type 2 (exponential), type 3 (stitching, nested at most 8 levels), type 4 (PostScript calculator: the ISO 32000-1 7.10.5 operator set, a 100-entry stack and a bounded operation count per evaluation), each clipping inputs to `/Domain` and outputs to `/Range`. Done when: `PdfInterpreter.Functions` checks each type against hand-computed values and refuses malformed and over-budget functions with typed errors.
+- [ ] `Indexed` (`[/Indexed base hival lookup]` with `hival` at most 255 and the lookup as a string or stream of the needed length) over any base space `§3` and `§32` read. Done when: `PdfInterpreter.IndexedColors` resolves palette indices, clamps out-of-range ones and refuses a short lookup.
+- [ ] `Separation` and `DeviceN` (with `/Attributes`, `/Process` and `/Colorants` read but colourants drawn through the tint transform) with `/None` painting nothing and `/All` painting every separation. Done when: `PdfInterpreter.SeparationAndDeviceN` resolves spot tints through type 2 and type 4 tint transforms and handles `/None` and `/All`.
+- [ ] Commit: `pdf: Indexed, Separation and DeviceN colour with PDF functions`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Functions:PdfInterpreter.IndexedColors:PdfInterpreter.SeparationAndDeviceN` passes under ASan with 0 warnings.
 
 ## Verification
 
