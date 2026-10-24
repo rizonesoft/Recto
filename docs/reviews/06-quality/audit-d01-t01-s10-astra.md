@@ -69,3 +69,27 @@ OVERALL: needs-attention
 - Finding 2 (P1, shared non-link annotations read once per page): correct. A page whose `/Annots` names an array already read (by the reference it names or the object that resolves to) copies that page's links through the link budget, and an annotation object found not to be a link is not read again on any page. The same class in page-tree validation is fixed too: another indirect page entry is validated once per object, not once per page. `PdfDocument.SharedAnnotationsAreReadOnce`: 1,000 pages sharing one array of 1,001 annotations and 300 pages listing 300 of them directly; 13,192,954,915 bytes allocated on the code before the fix, and with only the validation hunk removed the baseline allocates 2,258,237,779 bytes against 243,390,211.
 
 Gates after the round 2 fixes: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 129 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 210 tests.` in Debug and Release.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-24T09:57:14Z
+- Effort: low
+- Lenses: adversarial
+- Lines: 8
+- Digest: afe5494001c01ae6
+
+### adversarial: needs-attention
+
+1. **P1: Name-tree traversal retains gigabytes outside its memory budget.** `src/pdf/document.cpp:3074` recurses while each ancestor’s complete `resolved_node_val` remains alive. Reproduce by opening a one-page PDF whose `/Names /Dests` tree has 64 nodes linked through `/Kids`, each containing a direct 128 MiB `/Pad` string and stored in a separate Flate-compressed object stream. Each object fits the 256 MiB parser and decode limits, and the tree fits the depth and node limits, but traversal retains **8 GiB of padding alone**, potentially exhausting memory. The named-destination budget counts extracted destinations, not these live dictionaries. Release unused node payload before descending or enforce an aggregate traversal-memory budget. The outline repair does not cover this separate traversal.
+
+Static finding against `29df9ea`; reproduction and ASan tests were not executed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P1, name-tree ancestors kept alive): correct. Three rounds running found one more traversal holding resolved values across its descent (page dictionaries, outlines, the name tree), so every traversal in `src/pdf/document.cpp` was checked and fixed as a whole rather than this one alone: the `/Names /Dests` tree is walked with an explicit stack whose frames hold only their node's `/Kids` array (charged to a live traversal budget of `kMaxDecodedStreamBytes`) and release each node's dictionary once its `/Names` are read; the Form XObject font scan is walked with an explicit stack whose frames hold only the XObjects' references, releasing each stream before its `/Resources` are scanned; and the page-tree stack charges every open level's `/Kids` array to the same kind of budget, refusing with `ResourceLimit`. The action-chain walker was already iterative and holds only parts of the current object, so it is unchanged. No recursive traversal of document objects is left (only the in-memory size estimator recurses, bounded by the parser's depth). Tests, each failing on `29df9ea`: `PdfDocument.NameTreeTraversalHoldsOneNodeAtATime` (peak 89,278,469 bytes before against a bound of 10,244,868), `PdfDocument.FormXObjectFontScanHoldsOneStreamAtATime` (134,327,716 against 83,891,961), `PdfDocument.OpenPageTreeLevelsShareOneBudget` (`DamagedFormat` before, `ResourceLimit` after).
+
+Gates after the round 3 fixes: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 132 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 213 tests.` in Debug and Release.

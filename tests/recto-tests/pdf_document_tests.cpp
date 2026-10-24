@@ -837,6 +837,105 @@ TEST(PdfDocument, SharedAnnotationsAreReadOnce)
 	}
 }
 
+// The /Names /Dests tree is read one node at a time: 64 nested nodes with a 10,000-element /Pad array each open within
+// a few nodes' memory, without recursion, and the leaf's destination still resolves (D06 T05 section 24, audit round 3).
+TEST(PdfDocument, NameTreeTraversalHoldsOneNodeAtATime)
+{
+	constexpr uint32_t kLevels = 64u;
+	std::string pad;
+	for (size_t i = 0u; i < 10'000u; ++i) {
+		pad += "0 ";
+	}
+	std::vector<std::pair<uint32_t, std::string>> objects = {
+		{1, "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R /Names << /Dests 10 0 R >> >>"},
+		{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 100 100] /Kids [3 0 R 4 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R >>"},
+		{4, "<< /Type /Page /Parent 2 0 R >>"},
+		{5, "<< /Type /Outlines /First 6 0 R /Last 6 0 R /Count 1 >>"},
+		{6, "<< /Title (Deep) /Parent 5 0 R /Dest (target) >>"},
+	};
+	for (uint32_t level = 0u; level < kLevels; ++level) {
+		const uint32_t num = 10u + level;
+		std::string node = "<< /Pad [" + pad + "]";
+		node += level + 1u < kLevels ? " /Kids [" + std::to_string(num + 1u) + " 0 R]" : " /Names [(target) [4 0 R /Fit]]";
+		objects.emplace_back(num, node + " >>");
+	}
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+	const size_t one_node_bytes = 10'000u * sizeof(PdfValue);
+
+	const test::ScopedHeapMeter meter;
+	auto doc = Document::open_memory(bytes);
+	const size_t peak = meter.peak_bytes();
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	ASSERT_EQ((*doc)->outline().size(), 1u);
+	EXPECT_EQ((*doc)->outline()[0].page_index, 1);
+	if (test::ScopedHeapMeter::available()) {
+		// The file's own copy plus a few nodes; every ancestor kept alive would be 64 nodes.
+		EXPECT_LT(peak, bytes.size() + 8u * one_node_bytes);
+	}
+}
+
+// Nested Form XObjects are scanned for fonts one stream at a time: 32 levels of forms with a 2 MiB stream each open
+// within the file's own copy and a few streams, and the font of the deepest form is found (D06 T05 section 24, audit
+// round 3).
+TEST(PdfDocument, FormXObjectFontScanHoldsOneStreamAtATime)
+{
+	constexpr uint32_t kLevels = 32u;
+	const std::string body(2u * 1024u * 1024u, ' ');
+	std::vector<std::pair<uint32_t, std::string>> objects = {
+		{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+		{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R /Resources << /XObject << /X 10 0 R >> >> >>"},
+		{4, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"},
+	};
+	for (uint32_t level = 0u; level < kLevels; ++level) {
+		const uint32_t num = 10u + level;
+		const std::string resources = level + 1u < kLevels
+			? "<< /XObject << /X " + std::to_string(num + 1u) + " 0 R >> >>"
+			: std::string("<< /Font << /F1 4 0 R >> >>");
+		objects.emplace_back(
+			num,
+			"<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources " + resources + " /Length " +
+				std::to_string(body.size()) + " >>\nstream\n" + body + "\nendstream");
+	}
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+
+	const test::ScopedHeapMeter meter;
+	auto doc = Document::open_memory(bytes);
+	const size_t peak = meter.peak_bytes();
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	ASSERT_EQ((*doc)->fonts().size(), 1u);
+	EXPECT_EQ((*doc)->fonts()[0].name, "Courier");
+	if (test::ScopedHeapMeter::available()) {
+		// The file's own copy plus a few streams; every ancestor stream kept alive would be 32 of them.
+		EXPECT_LT(peak, bytes.size() + 8u * body.size());
+	}
+}
+
+// Every open level of the page tree keeps its /Kids array, so the arrays on the stack share one budget: 64 nested
+// /Pages nodes whose /Kids each carry a 40,000-element array besides the next node are refused with ResourceLimit
+// while they are open, instead of holding them all (D06 T05 section 24, audit round 3).
+TEST(PdfDocument, OpenPageTreeLevelsShareOneBudget)
+{
+	static_assert(64u * 40'000u * sizeof(PdfValue) > kMaxDecodedStreamBytes);
+	constexpr uint32_t kLevels = 64u;
+	std::string filler = "[";
+	for (size_t i = 0u; i < 40'000u; ++i) {
+		filler += "0 ";
+	}
+	filler += "]";
+	std::vector<std::pair<uint32_t, std::string>> objects = {{1, "<< /Type /Catalog /Pages 10 0 R >>"}};
+	for (uint32_t level = 0u; level < kLevels; ++level) {
+		const uint32_t num = 10u + level;
+		const std::string kid = level + 1u < kLevels ? std::to_string(num + 1u) + " 0 R" : std::string("200 0 R");
+		objects.emplace_back(num, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [" + kid + " " + filler + "] >>");
+	}
+	objects.emplace_back(200u, "<< /Type /Page /Parent 73 0 R >>");
+	auto doc = Document::open_memory(build_synthetic_pdf_from_objects("1.7", objects));
+	ASSERT_FALSE(doc.has_value());
+	EXPECT_EQ(doc.error().code, ErrorCode::ResourceLimit);
+}
+
 TEST(PdfDocument, PageTreeAndRotatedPages)
 {
 	// 1. `render/rotated-pages.pdf` has 4 pages with rotations 0, 90, 180, 270

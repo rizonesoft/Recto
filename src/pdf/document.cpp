@@ -2316,12 +2316,16 @@ PdfResult<void> Document::load_document_structure()
 	// Objects the pages' other entries name, each validated once however many pages share it.
 	std::unordered_set<uint64_t> validated_page_entry_objs;
 
+	// Every open level of the page tree keeps its /Kids array until its last kid is read, so the arrays on the stack
+	// share one budget of live traversal bytes, released as each level closes.
 	struct ActivePagesFrame {
 		PdfValue kids_val{};
 		size_t next_index{0};
 		InheritedPageAttrs attrs{};
 		size_t depth{0};
+		size_t kids_bytes{0};
 	};
+	size_t live_page_kids_bytes = 0u;
 
 	auto process_page_tree_node = [&](const PdfValue& node_val,
 									  const InheritedPageAttrs& parent_attrs,
@@ -2434,11 +2438,23 @@ PdfResult<void> Document::load_document_structure()
 					current_ref.obj_num,
 					current_ref.gen_num);
 			}
+			const size_t kids_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, resolved_kids, 0u);
+			if (kids_bytes > kMaxDecodedStreamBytes - live_page_kids_bytes) {
+				return make_doc_error(
+					ErrorCode::ResourceLimit,
+					DiagnosticId::ResourceLimit,
+					"/Pages tree /Kids arrays exceed the live traversal budget",
+					std::nullopt,
+					current_ref.obj_num,
+					current_ref.gen_num);
+			}
+			live_page_kids_bytes += kids_bytes;
 			return std::optional<ActivePagesFrame>(ActivePagesFrame{
 				std::move(resolved_kids),
 				0u,
 				std::move(current_attrs),
-				depth});
+				depth,
+				kids_bytes});
 		}
 
 		if (node_type == "Page" || (node_type.empty() && !has_kids)) {
@@ -2564,6 +2580,7 @@ PdfResult<void> Document::load_document_structure()
 	while (!page_stack.empty()) {
 		const PdfArray* top_kids = page_stack.back().kids_val.as_array();
 		if (top_kids == nullptr || page_stack.back().next_index >= top_kids->size()) {
+			live_page_kids_bytes -= page_stack.back().kids_bytes;
 			page_stack.pop_back();
 			continue;
 		}
@@ -2996,9 +3013,19 @@ PdfResult<void> Document::load_document_structure()
 					std::unordered_set<uint64_t> visited_name_nodes;
 					size_t total_name_nodes = 0u;
 					constexpr size_t kMaxNameTreeNodes = 4096u;
-					auto walk_name_tree = [&](auto& self,
-											  const PdfValue& node_v,
-											  size_t depth) -> PdfResult<void> {
+					// The tree is walked with an explicit stack: a frame holds only its node's /Kids array, charged
+					// to a budget of live traversal bytes, and each node's dictionary is released once its /Names
+					// are read, so a deep tree holds one node's dictionary at a time.
+					struct NameTreeFrame {
+						PdfValue kids{};
+						size_t next{0};
+						size_t depth{0};
+						size_t bytes{0};
+					};
+					std::vector<NameTreeFrame> name_tree_stack;
+					name_tree_stack.reserve(kMaxNameTreeDepth + 2u);
+					size_t live_kids_bytes = 0u;
+					auto visit_name_node = [&](const PdfValue& node_v, size_t depth) -> PdfResult<void> {
 						if (depth > kMaxNameTreeDepth) {
 							return make_doc_error(
 								ErrorCode::RecursionLimitExceeded,
@@ -3068,19 +3095,38 @@ PdfResult<void> Document::load_document_structure()
 
 						if (const PdfValue* kids_v = tree_dict->get("Kids")) {
 							auto kids_res = resolve_value(*kids_v);
-							if (kids_res.has_value()) {
-								if (const PdfArray* kids_arr = kids_res->as_array()) {
-									for (const PdfValue& kid : *kids_arr) {
-										RECTO_PDF_RETURN_IF_ERROR(self(self, kid, depth + 1u));
-									}
+							if (kids_res.has_value() && kids_res->as_array() != nullptr &&
+								!kids_res->as_array()->empty()) {
+								const size_t bytes =
+									estimate_pdf_value_bytes(estimate_pdf_value_bytes, *kids_res, 0u);
+								if (bytes > kMaxDecodedStreamBytes - live_kids_bytes) {
+									return make_doc_error(
+										ErrorCode::ResourceLimit,
+										DiagnosticId::ResourceLimit,
+										"/Names /Dests tree /Kids arrays exceed the live traversal budget");
 								}
+								live_kids_bytes += bytes;
+								name_tree_stack.push_back(NameTreeFrame{std::move(*kids_res), 0u, depth, bytes});
 							}
 						}
 						return {};
 					};
 
-					RECTO_PDF_RETURN_IF_ERROR(
-						walk_name_tree(walk_name_tree, *dests_tree_val, 0u));
+					RECTO_PDF_RETURN_IF_ERROR(visit_name_node(*dests_tree_val, 0u));
+					while (!name_tree_stack.empty()) {
+						NameTreeFrame& frame = name_tree_stack.back();
+						const PdfArray& kids = *frame.kids.as_array();
+						if (frame.next >= kids.size()) {
+							live_kids_bytes -= frame.bytes;
+							name_tree_stack.pop_back();
+							continue;
+						}
+						// A copy, since visiting the kid may grow the stack; a kid is a reference in a valid tree.
+						const size_t kid_index = frame.next++;
+						const size_t child_depth = frame.depth + 1u;
+						RECTO_PDF_TRY(const PdfValue kid, kids[kid_index].deep_clone());
+						RECTO_PDF_RETURN_IF_ERROR(visit_name_node(kid, child_depth));
+					}
 				}
 			}
 		}
@@ -4200,9 +4246,17 @@ PdfResult<void> Document::load_document_structure()
 	};
 
 	constexpr size_t kMaxResourceEntriesPerDict = 16'384u;
-	auto scan_resources_for_fonts = [&](auto& self,
-										const PdfDict& resources,
-										size_t depth) -> PdfResult<void> {
+	// Form XObjects are scanned with an explicit stack: a frame holds only the references of one resource dictionary's
+	// XObjects, and each XObject stream is released once its own /Resources are read, so nested forms hold no stream
+	// bytes or dictionaries while their children are scanned.
+	struct FormScanFrame {
+		std::vector<IndirectRef> xobjects{};
+		size_t next{0};
+		size_t depth{0};
+	};
+	std::vector<FormScanFrame> form_scan_stack;
+	form_scan_stack.reserve(kMaxFormResourceDepth + 2u);
+	auto open_resources_for_fonts = [&](const PdfDict& resources, size_t depth) -> PdfResult<void> {
 		if (depth > kMaxFormResourceDepth) {
 			return make_doc_error(
 				ErrorCode::RecursionLimitExceeded,
@@ -4259,6 +4313,7 @@ PdfResult<void> Document::load_document_structure()
 			}
 		}
 
+		FormScanFrame frame{{}, 0u, depth};
 		if (const PdfValue* xobj_map_val = resources.get("XObject");
 			xobj_map_val != nullptr && !xobj_map_val->is_null()) {
 			auto xobj_map_res = resolve_value(*xobj_map_val);
@@ -4271,50 +4326,64 @@ PdfResult<void> Document::load_document_structure()
 							"/Resources /XObject dictionary exceeds maximum entry count");
 					}
 					for (const auto& [x_key, x_val] : *xobj_map) {
-						PdfValue resolved_x;
+						// An XObject is a stream, and a stream is always an indirect object (ISO 32000-1 7.3.8).
 						if (const auto x_ref = x_val.as_ref()) {
-							if (!visited_xobj_objs.insert(make_ref_cache_key(*x_ref)).second) {
-								continue;
-							}
-							std::vector<IndirectRef> hop_refs;
-							hop_refs.reserve(kMaxIndirectRefDepth);
-							auto x_res = resolve_object_with_visited(*x_ref, hop_refs);
-							if (!x_res.has_value()) {
-								continue;
-							}
-							bool duplicate_alias = false;
-							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_xobj_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
-									duplicate_alias = true;
-									break;
-								}
-							}
-							if (duplicate_alias) {
-								continue;
-							}
-							resolved_x = std::move(*x_res);
-						} else {
-							auto x_res = resolve_value(x_val);
-							if (!x_res.has_value()) {
-								continue;
-							}
-							resolved_x = std::move(*x_res);
-						}
-						if (const PdfStream* x_stm = resolved_x.as_stream()) {
-							if (entry_name(x_stm->dict, "Subtype").value_or("") == "Form") {
-								if (const PdfValue* form_res_v = x_stm->dict.get("Resources")) {
-									auto form_res = resolve_value(*form_res_v);
-									if (form_res.has_value()) {
-										if (const PdfDict* form_res_dict = form_res->as_dict()) {
-											RECTO_PDF_RETURN_IF_ERROR(
-												self(self, *form_res_dict, depth + 1u));
-										}
-									}
-								}
-							}
+							frame.xobjects.push_back(*x_ref);
 						}
 					}
 				}
+			}
+		}
+		if (!frame.xobjects.empty()) {
+			form_scan_stack.push_back(std::move(frame));
+		}
+		return {};
+	};
+
+	auto scan_resources_for_fonts = [&](const PdfDict& resources) -> PdfResult<void> {
+		RECTO_PDF_RETURN_IF_ERROR(open_resources_for_fonts(resources, 0u));
+		while (!form_scan_stack.empty()) {
+			FormScanFrame& frame = form_scan_stack.back();
+			if (frame.next >= frame.xobjects.size()) {
+				form_scan_stack.pop_back();
+				continue;
+			}
+			const IndirectRef x_ref = frame.xobjects[frame.next++];
+			const size_t child_depth = frame.depth + 1u;
+			if (!visited_xobj_objs.insert(make_ref_cache_key(x_ref)).second) {
+				continue;
+			}
+			PdfValue form_resources;
+			{
+				std::vector<IndirectRef> hop_refs;
+				hop_refs.reserve(kMaxIndirectRefDepth);
+				auto x_res = resolve_object_with_visited(x_ref, hop_refs);
+				if (!x_res.has_value()) {
+					continue;
+				}
+				bool duplicate_alias = false;
+				for (size_t h = 1u; h < hop_refs.size(); ++h) {
+					if (!visited_xobj_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
+						duplicate_alias = true;
+						break;
+					}
+				}
+				if (duplicate_alias) {
+					continue;
+				}
+				if (const PdfStream* x_stm = x_res->as_stream();
+					x_stm != nullptr && entry_name(x_stm->dict, "Subtype").value_or("") == "Form") {
+					if (const PdfValue* form_res_v = x_stm->dict.get("Resources")) {
+						auto form_res = resolve_value(*form_res_v);
+						if (form_res.has_value()) {
+							form_resources = std::move(*form_res);
+						}
+					}
+				}
+			} // the XObject stream is released here, before its resources are scanned
+			if (const PdfDict* form_res_dict = form_resources.as_dict()) {
+				// `frame` is not used again: opening the form's resources may grow the stack.
+				RECTO_PDF_RETURN_IF_ERROR(open_resources_for_fonts(*form_res_dict, child_depth));
 			}
 		}
 		return {};
@@ -4325,7 +4394,7 @@ PdfResult<void> Document::load_document_structure()
 		if (page_rec.resources != nullptr &&
 			scanned_resource_dicts.insert(page_rec.resources.get()).second) {
 			RECTO_PDF_RETURN_IF_ERROR(
-				scan_resources_for_fonts(scan_resources_for_fonts, *page_rec.resources, 0u));
+				scan_resources_for_fonts(*page_rec.resources));
 		}
 	}
 
@@ -4339,7 +4408,7 @@ PdfResult<void> Document::load_document_structure()
 					if (dr_res.has_value()) {
 						if (const PdfDict* dr_dict = dr_res->as_dict()) {
 							RECTO_PDF_RETURN_IF_ERROR(
-								scan_resources_for_fonts(scan_resources_for_fonts, *dr_dict, 0u));
+								scan_resources_for_fonts(*dr_dict));
 						}
 					}
 				}
