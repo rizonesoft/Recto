@@ -1151,10 +1151,11 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			entry.thread_id = slot.thread_id;
 			entry.code = slot.code;
 			entry.diagnostic_id = slot.diagnostic_id;
-			// A refusal reads as its reason (cause, units, remedy), a decoder failure as what it means for an image, anything
-			// else as its diagnostic.
+			// A refusal reads as its reason (cause, units, remedy), a decoder failure as what it means for an image or a
+			// font, anything else as its diagnostic.
 			entry.message = std::string(slot.refusal_reason != RefusalReason::None
 					? refusal_reason_description(slot.refusal_reason)
+					: is_font_step(slot.decoder.step)        ? font_failure_message(slot.code)
 					: slot.decoder.step != DecoderStep::None ? decoder_failure_message(slot.code)
 															: diagnostic_id_message(slot.diagnostic_id));
 			if (slot.has_byte_offset) {

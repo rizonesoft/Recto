@@ -16,6 +16,7 @@
 #include "crypto.h"
 #include "document.h"
 #include "display_list.h"
+#include "font.h"
 
 namespace recto::pdf {
 

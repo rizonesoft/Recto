@@ -4137,6 +4137,8 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_pdf_structure(rel_path, data)
     elif rel_path.endswith((".docx", ".xlsx")):
         validate_openxml_structure(rel_path, data)
+    elif rel_path.startswith("fonts/") and rel_path.endswith((".ttf", ".otf")):
+        validate_font_structure(rel_path, data)
     elif rel_path.startswith("images/dct-") and rel_path.endswith(".jpg"):
         validate_jpeg_baseline(rel_path, data, 16, 8, 4 if "-4c-" in rel_path else 3)
     else:
@@ -4157,6 +4159,334 @@ def validate_openxml_structure(rel_path: str, data: bytes) -> None:
                 raise ValueError(f"{rel_path}: missing xl/workbook.xml")
     except zipfile.BadZipFile as exc:
         raise ValueError(f"{rel_path}: bad zip archive: {exc}") from exc
+
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Synthetic fonts for `D01 T02 §2` (`tests/corpus/fonts/`). Every font is written here from first principles (the
+# OpenType `sfnt` container, TrueType `glyf` outlines, a minimal CFF table) so its geometry is known exactly and the
+# corpus carries no third-party font. Units per em are 1000 throughout.
+# ---------------------------------------------------------------------------------------------------------------------
+
+FONT_UNITS_PER_EM = 1000
+
+# Simple glyphs as contours of (x, y, on_curve) points, composites as component lists. Glyph 1 is a triangle, glyph 2
+# is empty with an advance, glyph 3 is a contour of off-curve points only (implied on-curve midpoints), glyph 4 is
+# glyph 1 at half scale moved by (50, 100), glyph 5 is glyph 1 twice with the second copy attached by point matching
+# (its point 0 on the first copy's point 2), glyph 6 has a negative left side bearing and overhangs its advance.
+FONT_GLYPHS: list[dict] = [
+    {"name": ".notdef", "advance": 500, "contours": [[(50, 0, True), (50, 700, True), (450, 700, True), (450, 0, True)]]},
+    {"name": "A", "advance": 1000, "contours": [[(100, 0, True), (500, 700, True), (900, 0, True)]]},
+    {"name": "space", "advance": 250, "contours": []},
+    {"name": "O", "advance": 1000, "contours": [[(500, 0, False), (1000, 500, False), (500, 1000, False), (0, 500, False)]]},
+    {"name": "B", "advance": 600, "components": [{"glyph": 1, "dx": 50, "dy": 100, "scale": 0.5}]},
+    {"name": "C", "advance": 600, "components": [{"glyph": 1, "dx": 0, "dy": 0}, {"glyph": 1, "match": (2, 0)}]},
+    {"name": "D", "advance": 600, "contours": [[(-50, 0, True), (300, 500, True), (700, 0, True)]]},
+]
+FONT_CMAP = {0x41: 1, 0x20: 2, 0x4F: 3, 0x42: 4, 0x43: 5, 0x44: 6}
+
+
+def _sfnt(tables: dict[bytes, bytes], cff: bool = False) -> bytes:
+    """An sfnt container with tables in tag order, 4-byte aligned, checksums and the head checksum adjustment set."""
+    tags = sorted(tables)
+    num = len(tags)
+    entry_selector = num.bit_length() - 1
+    search_range = (1 << entry_selector) * 16
+    header = struct.pack(">4sHHHH", b"OTTO" if cff else b"\x00\x01\x00\x00", num, search_range, entry_selector,
+                         num * 16 - search_range)
+
+    def checksum(data: bytes) -> int:
+        padded = data + b"\0" * (-len(data) % 4)
+        return sum(struct.unpack(f">{len(padded) // 4}I", padded)) & 0xFFFFFFFF
+
+    offset = 12 + 16 * num
+    directory = b""
+    body = b""
+    head_offset = None
+    for tag in tags:
+        data = tables[tag]
+        if tag == b"head":
+            head_offset = offset
+        directory += struct.pack(">4sIII", tag, checksum(data), offset, len(data))
+        padded = data + b"\0" * (-len(data) % 4)
+        body += padded
+        offset += len(padded)
+    font = bytearray(header + directory + body)
+    if head_offset is not None:
+        adjustment = (0xB1B0AFBA - checksum(bytes(font))) & 0xFFFFFFFF
+        struct.pack_into(">I", font, head_offset + 8, adjustment)
+    return bytes(font)
+
+
+def _f2dot14(value: float) -> int:
+    return int(round(value * 16384)) & 0xFFFF
+
+
+def _glyf_simple(contours: list[list[tuple[int, int, bool]]]) -> bytes:
+    if not contours:
+        return b""
+    points = [p for c in contours for p in c]
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    out = struct.pack(">hhhhh", len(contours), min(xs), min(ys), max(xs), max(ys))
+    end = -1
+    for c in contours:
+        end += len(c)
+        out += struct.pack(">H", end)
+    out += struct.pack(">H", 0)  # no instructions
+    out += bytes(0x01 if on else 0x00 for (_, _, on) in points)  # every coordinate as a signed 16-bit delta
+    prev = 0
+    for x in xs:
+        out += struct.pack(">h", x - prev)
+        prev = x
+    prev = 0
+    for y in ys:
+        out += struct.pack(">h", y - prev)
+        prev = y
+    return out
+
+
+def _glyph_points(index: int) -> list[tuple[int, int]]:
+    glyph = FONT_GLYPHS[index]
+    return [(x, y) for c in glyph.get("contours", []) for (x, y, _) in c]
+
+
+def _glyf_composite(components: list[dict], bbox: tuple[int, int, int, int]) -> bytes:
+    out = struct.pack(">hhhhh", -1, *bbox)
+    for i, comp in enumerate(components):
+        flags = 0x0001  # ARG_1_AND_2_ARE_WORDS
+        if "match" in comp:
+            arg1, arg2 = comp["match"]
+        else:
+            flags |= 0x0002  # ARGS_ARE_XY_VALUES
+            arg1, arg2 = comp["dx"], comp["dy"]
+        if "scale" in comp:
+            flags |= 0x0008  # WE_HAVE_A_SCALE
+        if i + 1 < len(components):
+            flags |= 0x0020  # MORE_COMPONENTS
+        out += struct.pack(">HH", flags, comp["glyph"])
+        out += struct.pack(">hh" if flags & 0x0002 else ">HH", arg1, arg2)
+        if "scale" in comp:
+            out += struct.pack(">H", _f2dot14(comp["scale"]))
+    return out
+
+
+def _font_name_table() -> bytes:
+    records = [(1, "Recto Test"), (2, "Regular"), (4, "Recto Test Regular"), (6, "RectoTest-Regular")]
+    strings = b""
+    entries = b""
+    for name_id, text in records:
+        data = text.encode("utf-16-be")
+        entries += struct.pack(">HHHHHH", 3, 1, 0x0409, name_id, len(data), len(strings))
+        strings += data
+    return struct.pack(">HHH", 0, len(records), 6 + 12 * len(records)) + entries + strings
+
+
+def _font_os2_table() -> bytes:
+    # Version 4, regular weight, the Unicode basic Latin range, ascender 800 and descender -200.
+    return struct.pack(
+        ">HhHHHhhhhhhhhhhh10s4I4sHHHhhhHHII HHHHH".replace(" ", ""),
+        4, 600, 400, 5, 0, 650, 700, 0, 140, 650, 700, 0, 480, 50, 250, 0,
+        b"\x02\x0b\x05\x03\x02\x02\x04\x02\x02\x04", 1, 0, 0, 0, b"RCTO", 0x0040, 0x20, 0x4F,
+        800, -200, 200, 1000, 200, 1, 0, 500, 700, 0, 0x20, 1)
+
+
+def _font_post_table() -> bytes:
+    return struct.pack(">IihhIIIII", 0x00030000, 0, -100, 50, 0, 0, 0, 0, 0)
+
+
+def _font_cmap_table(mapping: dict[int, int]) -> bytes:
+    """A (3,1) format 4 subtable with one segment per code plus the closing 0xFFFF segment."""
+    codes = sorted(mapping)
+    seg_count = len(codes) + 1
+    ends = codes + [0xFFFF]
+    starts = codes + [0xFFFF]
+    deltas = [(mapping[c] - c) & 0xFFFF for c in codes] + [1]
+    entry_selector = seg_count.bit_length() - 1
+    search_range = 2 * (1 << entry_selector)
+    sub = struct.pack(">HHHHHHH", 4, 0, 0, seg_count * 2, search_range, entry_selector, seg_count * 2 - search_range)
+    sub += struct.pack(f">{seg_count}H", *ends) + struct.pack(">H", 0)
+    sub += struct.pack(f">{seg_count}H", *starts) + struct.pack(f">{seg_count}H", *deltas)
+    sub += struct.pack(f">{seg_count}H", *([0] * seg_count))
+    sub = sub[:2] + struct.pack(">H", len(sub)) + sub[4:]
+    return struct.pack(">HHHHI", 0, 1, 3, 1, 12) + sub
+
+
+def build_truetype_font(long_loca: bool, stripped: bool, glyphs: list[dict] | None = None,
+                        cmap: dict[int, int] | None = None, num_hmetrics: int | None = None) -> bytes:
+    """A TrueType font. `stripped` makes it a subset as PDFs often embed them, which DirectWrite refuses: no OS/2, name
+    or post, and a cmap whose header claims more subtables than it holds (DirectWrite tolerates the missing tables but
+    not the broken cmap)."""
+    glyphs = _font_composite_boxes() if glyphs is None else glyphs
+    cmap = FONT_CMAP if cmap is None else cmap
+    glyf = b""
+    offsets = []
+    max_points = 0
+    max_contours = 0
+    lsbs = []
+    boxes = []
+    for i, glyph in enumerate(glyphs):
+        offsets.append(len(glyf))
+        if "components" in glyph:
+            box = glyph.get("bbox", (0, 0, 0, 0))
+            data = _glyf_composite(glyph["components"], box)
+            lsbs.append(box[0])
+            boxes.append(box)
+        else:
+            data = _glyf_simple(glyph["contours"])
+            pts = [p for c in glyph["contours"] for p in c]
+            max_points = max(max_points, len(pts))
+            max_contours = max(max_contours, len(glyph["contours"]))
+            lsbs.append(min((p[0] for p in pts), default=0))
+            if pts:
+                boxes.append((min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts)))
+        glyf += data + b"\0" * (-len(data) % 4)
+    offsets.append(len(glyf))
+    loca = struct.pack(f">{len(offsets)}I", *offsets) if long_loca else struct.pack(f">{len(offsets)}H", *[o // 2 for o in offsets])
+    x_min = min(b[0] for b in boxes)
+    y_min = min(b[1] for b in boxes)
+    x_max = max(b[2] for b in boxes)
+    y_max = max(b[3] for b in boxes)
+    head = struct.pack(">IIIIHHqqhhhhHHhhh", 0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0x000B, FONT_UNITS_PER_EM,
+                       0, 0, x_min, y_min, x_max, y_max, 0, 8, 2, 1 if long_loca else 0, 0)
+    n_hm = len(glyphs) if num_hmetrics is None else num_hmetrics
+    hmtx = b"".join(struct.pack(">Hh", g["advance"], lsbs[i]) for i, g in enumerate(glyphs[:n_hm]))
+    hmtx += b"".join(struct.pack(">h", lsbs[i]) for i in range(n_hm, len(glyphs)))
+    max_advance = max(g["advance"] for g in glyphs)
+    hhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00010000, 800, -200, 0, max_advance, min(lsbs), 0, x_max, 1, 0, 0,
+                       0, 0, 0, 0, 0, n_hm)
+    maxp = struct.pack(">IHHHHHHHHHHHHHH", 0x00010000, len(glyphs), max(max_points, 1), max(max_contours, 1),
+                       min(max(max_points, 1) * 4, 0xFFFF), min(max(max_contours, 1) * 4, 0xFFFF), 1, 0, 0, 0, 0, 0, 0, 4, 16)
+    tables = {b"head": head, b"hhea": hhea, b"maxp": maxp, b"hmtx": hmtx, b"loca": loca, b"glyf": glyf,
+              b"cmap": _font_cmap_table(cmap)}
+    if stripped:
+        broken = bytearray(tables[b"cmap"])
+        struct.pack_into(">H", broken, 2, 40)  # numTables: 40 encoding records, one present
+        tables[b"cmap"] = bytes(broken)
+    else:
+        tables[b"OS/2"] = _font_os2_table()
+        tables[b"name"] = _font_name_table()
+        tables[b"post"] = _font_post_table()
+    return _sfnt(tables)
+
+
+def _font_composite_boxes() -> list[dict]:
+    """FONT_GLYPHS with the composites' header boxes filled in from their expanded points."""
+    glyphs = [dict(g) for g in FONT_GLYPHS]
+    glyphs[4]["bbox"] = (100, 100, 500, 450)   # glyph 1 at half scale, moved by (50, 100)
+    glyphs[5]["bbox"] = (100, 0, 1700, 700)    # glyph 1 and its copy moved by (800, 0)
+    return glyphs
+
+
+def build_truetype_hostile_budgets() -> bytes:
+    """Glyph 1 is a 20,000-point simple glyph; glyph 2 holds four copies of it (80,000 points, past 65,535); glyphs 3 to
+    16 form a binary tree of two copies of the level below, from glyph 4 (a triangle) up, so glyph 16 expands to 4,096
+    triangles after 8,190 component visits at 12 levels of nesting (past the 4,096-visit budget, within 16 levels)."""
+    big = [(i % 200 * 5, i // 200 * 5, True) for i in range(20_000)]
+    glyphs: list[dict] = [
+        {"name": ".notdef", "advance": 500, "contours": [[(0, 0, True), (0, 500, True), (500, 0, True)]]},
+        {"name": "big", "advance": 1000, "contours": [big]},
+        {"name": "many", "advance": 1000, "components": [{"glyph": 1, "dx": 0, "dy": 0}] * 4, "bbox": (0, 0, 995, 495)},
+        {"name": "pad", "advance": 500, "contours": []},
+        {"name": "tri", "advance": 500, "contours": [[(0, 0, True), (250, 500, True), (500, 0, True)]]},
+    ]
+    for level in range(5, 17):
+        glyphs.append({"name": f"tree{level}", "advance": 500,
+                       "components": [{"glyph": level - 1, "dx": 0, "dy": 0}, {"glyph": level - 1, "dx": 0, "dy": 0}],
+                       "bbox": (0, 0, 500, 500)})
+    return build_truetype_font(long_loca=True, stripped=False, glyphs=glyphs, cmap={0x41: 1, 0x42: 2, 0x43: 16})
+
+
+def _cff_index(items: list[bytes]) -> bytes:
+    if not items:
+        return struct.pack(">H", 0)
+    offsets = [1]
+    for item in items:
+        offsets.append(offsets[-1] + len(item))
+    return struct.pack(">HB", len(items), 4) + b"".join(struct.pack(">I", o) for o in offsets) + b"".join(items)
+
+
+def _cff_int(value: int) -> bytes:
+    """A DICT integer: the 1-byte form for small values, else the 5-byte form, so offsets can be fixed in place."""
+    if -107 <= value <= 107:
+        return bytes([value + 139])
+    return b"\x1d" + struct.pack(">i", value)
+
+
+def _cff_charstring_int(value: int) -> bytes:
+    if -107 <= value <= 107:
+        return bytes([value + 139])
+    return b"\x1c" + struct.pack(">h", value)
+
+
+def build_cff_table() -> bytes:
+    """A name-keyed CFF with .notdef and one glyph, a 500 by 700 box at (100, 0) with advance 600 (nominalWidthX 0)."""
+    notdef = _cff_charstring_int(500) + b"\x0e"  # width 500, endchar
+    box = (_cff_charstring_int(600) + _cff_charstring_int(100) + _cff_charstring_int(0) + b"\x15"  # width, rmoveto
+           + _cff_charstring_int(500) + _cff_charstring_int(0) + b"\x05"                            # rlineto
+           + _cff_charstring_int(0) + _cff_charstring_int(700) + b"\x05"
+           + _cff_charstring_int(-500) + _cff_charstring_int(0) + b"\x05" + b"\x0e")
+    charstrings = _cff_index([notdef, box])
+    charset = b"\x00" + struct.pack(">H", 34)  # format 0: glyph 1 is the standard string "A" (SID 34)
+    private = _cff_int(0) + b"\x15"            # nominalWidthX 0
+
+    def top_dict(charset_off: int, charstrings_off: int, private_off: int) -> bytes:
+        return (b"\x1d" + struct.pack(">i", charset_off) + b"\x0f"
+                + b"\x1d" + struct.pack(">i", charstrings_off) + b"\x11"
+                + _cff_int(len(private)) + b"\x1d" + struct.pack(">i", private_off) + b"\x12")
+
+    header = bytes([1, 0, 4, 4])
+    name_index = _cff_index([b"RectoTestCFF"])
+    string_index = _cff_index([])
+    gsubr_index = _cff_index([])
+    top_len = len(_cff_index([top_dict(0, 0, 0)]))
+    base = len(header) + len(name_index) + top_len + len(string_index) + len(gsubr_index)
+    charset_off = base
+    charstrings_off = charset_off + len(charset)
+    private_off = charstrings_off + len(charstrings)
+    top_index = _cff_index([top_dict(charset_off, charstrings_off, private_off)])
+    assert len(top_index) == top_len
+    return header + name_index + top_index + string_index + gsubr_index + charset + charstrings + private
+
+
+def build_opentype_cff_font() -> bytes:
+    head = struct.pack(">IIIIHHqqhhhhHHhhh", 0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0x000B, FONT_UNITS_PER_EM,
+                       0, 0, 0, 0, 600, 700, 0, 8, 2, 0, 0)
+    hhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00010000, 800, -200, 0, 600, 0, 0, 600, 1, 0, 0, 0, 0, 0, 0, 0, 2)
+    hmtx = struct.pack(">HhHh", 500, 0, 600, 100)
+    maxp = struct.pack(">IH", 0x00005000, 2)
+    tables = {b"CFF ": build_cff_table(), b"head": head, b"hhea": hhea, b"hmtx": hmtx, b"maxp": maxp,
+              b"cmap": _font_cmap_table({0x41: 1}), b"OS/2": _font_os2_table(), b"name": _font_name_table(),
+              b"post": _font_post_table()}
+    return _sfnt(tables, cff=True)
+
+
+def validate_font_structure(rel_path: str, data: bytes) -> None:
+    """Every font is a well-formed sfnt: a known version tag, a sorted table directory inside the file, table checksums
+    that match, and the head checksum adjustment that makes the whole file sum to 0xB1B0AFBA."""
+    if len(data) < 12:
+        raise ValueError(f"{rel_path}: shorter than an sfnt header")
+    version, num = struct.unpack(">4sH", data[:6])
+    if version not in (b"\x00\x01\x00\x00", b"OTTO"):
+        raise ValueError(f"{rel_path}: unknown sfnt version {version!r}")
+    tags = []
+    for i in range(num):
+        tag, checksum, offset, length = struct.unpack(">4sIII", data[12 + 16 * i: 28 + 16 * i])
+        if offset + length > len(data):
+            raise ValueError(f"{rel_path}: table {tag!r} runs past the end of the file")
+        table = data[offset: offset + length]
+        padded = table + b"\0" * (-len(table) % 4)
+        total = sum(struct.unpack(f">{len(padded) // 4}I", padded)) & 0xFFFFFFFF
+        if tag == b"head":
+            total = (total - struct.unpack(">I", table[8:12])[0]) & 0xFFFFFFFF
+        if total != checksum:
+            raise ValueError(f"{rel_path}: table {tag!r} checksum mismatch")
+        tags.append(tag)
+    if tags != sorted(tags):
+        raise ValueError(f"{rel_path}: table directory not sorted")
+    padded = data + b"\0" * (-len(data) % 4)
+    if sum(struct.unpack(f">{len(padded) // 4}I", padded)) & 0xFFFFFFFF != 0xB1B0AFBA:
+        raise ValueError(f"{rel_path}: head checksum adjustment does not balance the file")
 
 
 CORPUS_PURPOSES: dict[str, str] = {
@@ -4203,6 +4533,11 @@ CORPUS_PURPOSES: dict[str, str] = {
     "seeds/seed-filter-08-dct.bin": "Selector 0x08 raw libFuzzer seed for DCTDecode baseline JPEG 8x8 grayscale stream",
     "seeds/seed-filter-09-jpx.bin": "Selector 0x09 raw libFuzzer seed for JPXDecode minimal JPEG 2000 codestream",
     "seeds/seed-filter-0a-chain-a85-flate.bin": "Selector 0x0A raw libFuzzer seed for chained ASCII85Decode + FlateDecode pipeline",
+    "fonts/truetype-full-short-loca.ttf": "TrueType with short loca: simple, empty, off-curve-only, scaled and point-matched glyphs",
+    "fonts/truetype-full-long-loca.ttf": "The same TrueType glyphs with a long (32-bit) loca table",
+    "fonts/truetype-subset-short-loca.ttf": "TrueType subset DirectWrite refuses: broken cmap header, no OS/2, name or post",
+    "fonts/truetype-hostile-budgets.ttf": "TrueType whose composites exceed the 65,535-point and 4,096-visit outline budgets",
+    "fonts/opentype-cff.otf": "Minimal OpenType font with CFF outlines: .notdef and a 500 by 700 box with advance 600",
 }
 
 
@@ -4252,6 +4587,11 @@ def expected_corpus_files() -> dict[str, bytes]:
         "images/dct-3c-adobe-rgb.jpg": make_dc_only_jpeg(2, DCT_THREE, 0),
         "images/dct-4c-adobe-cmyk.jpg": make_dc_only_jpeg(2, DCT_FOUR, 0),
         "images/dct-4c-adobe-ycck.jpg": make_dc_only_jpeg(2, DCT_FOUR, 2),
+        "fonts/truetype-full-short-loca.ttf": build_truetype_font(long_loca=False, stripped=False),
+        "fonts/truetype-full-long-loca.ttf": build_truetype_font(long_loca=True, stripped=False),
+        "fonts/truetype-subset-short-loca.ttf": build_truetype_font(long_loca=False, stripped=True, num_hmetrics=5),
+        "fonts/truetype-hostile-budgets.ttf": build_truetype_hostile_budgets(),
+        "fonts/opentype-cff.otf": build_opentype_cff_font(),
     }
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
         missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))

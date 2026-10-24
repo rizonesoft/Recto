@@ -718,6 +718,11 @@ enum class RefusalReason : uint16_t {
 	DamagedRowAllowance,   // more consecutive damaged rows than /DamagedRowsBeforeError allows
 	DamagedRowNoSync,      // no end-of-line code after the damaged row to resume at
 	DamagedRowRecoveryOff, // recovery needs /EndOfLine true and K not negative
+	// Appended (D01 T02 section 2): the ceilings on embedded font programs and their glyph outlines.
+	FontProgramBytes, // an embedded font program over its byte limit
+	GlyphPoints,      // a glyph outline over its point limit
+	ComponentVisits,  // composite glyph components visited past the limit
+	CompositeDepth,   // composite glyphs nested past the depth limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -763,6 +768,14 @@ enum class RefusalReason : uint16_t {
 		return "DamagedRowNoSync";
 	case RefusalReason::DamagedRowRecoveryOff:
 		return "DamagedRowRecoveryOff";
+	case RefusalReason::FontProgramBytes:
+		return "FontProgramBytes";
+	case RefusalReason::GlyphPoints:
+		return "GlyphPoints";
+	case RefusalReason::ComponentVisits:
+		return "ComponentVisits";
+	case RefusalReason::CompositeDepth:
+		return "CompositeDepth";
 	}
 	return "UnknownReason";
 }
@@ -827,6 +840,18 @@ enum class RefusalReason : uint16_t {
 		return "A fax image has a damaged row and its decode settings do not allow damaged rows to be replaced: "
 			   "/EndOfLine is false or the image is Group 4 (observed is the zero-based row, bound the "
 			   "/DamagedRowsBeforeError allowance); scan the page again or ask for the original";
+	case RefusalReason::FontProgramBytes:
+		return "An embedded font program is larger than its limit (observed and bound are bytes); its text is drawn "
+			   "with a substitute font";
+	case RefusalReason::GlyphPoints:
+		return "A glyph outline holds more points than its limit (observed and bound are points); that glyph is not "
+			   "drawn, and the file may be damaged";
+	case RefusalReason::ComponentVisits:
+		return "A composite glyph uses more components than its limit (observed and bound are components visited); "
+			   "that glyph is not drawn, and the file may be damaged";
+	case RefusalReason::CompositeDepth:
+		return "Composite glyphs nest deeper than their limit (observed and bound are levels); that glyph is not "
+			   "drawn, and the file may be damaged";
 	}
 	return "";
 }
@@ -841,7 +866,36 @@ enum class DecoderStep : uint16_t {
 	WicConvertFormat, // a format converter
 	WicCopyPixels,    // copying the pixels out
 	NativeJpx,        // Recto's own JPEG 2000 decoder
+	// Font loading (D01 T02 section 2).
+	DWriteFactory,       // the shared DirectWrite factory
+	DWriteFontLoader,    // the in-memory font file loader and its registration
+	DWriteFontReference, // the in-memory font file reference over the font program
+	DWriteFontFace,      // the DirectWrite font face
+	NativeGlyf,          // Recto's own TrueType glyf outline reader
 };
+
+// True for the font-loading steps, whose failures concern a font, not an image.
+[[nodiscard]] constexpr bool is_font_step(DecoderStep step) noexcept
+{
+	return step == DecoderStep::DWriteFactory || step == DecoderStep::DWriteFontLoader ||
+		step == DecoderStep::DWriteFontReference || step == DecoderStep::DWriteFontFace ||
+		step == DecoderStep::NativeGlyf;
+}
+
+// What a font-loading failure means to a person reading the log, by its code (D01 T02 section 2).
+[[nodiscard]] constexpr std::string_view font_failure_message(ErrorCode code) noexcept
+{
+	switch (code) {
+	case ErrorCode::OutOfMemory:
+		return "Windows ran out of memory while loading a font; close other documents or try fewer pages";
+	case ErrorCode::DamagedFormat:
+		return "An embedded font program is damaged and was not used";
+	case ErrorCode::ResourceLimit:
+		return "A glyph in an embedded font needed more work than its limit allows; the file may be fine";
+	default:
+		return "Windows DirectWrite failed while loading a font";
+	}
+}
 
 // What a decoder failure means to a person reading the log, by its code, when a decoder step is known: the ring uses it
 // in place of the diagnostic's general message, which speaks of documents and configured limits (D01 T02 section 25).
@@ -880,6 +934,16 @@ enum class DecoderStep : uint16_t {
 		return "WicCopyPixels";
 	case DecoderStep::NativeJpx:
 		return "NativeJpx";
+	case DecoderStep::DWriteFactory:
+		return "DWriteFactory";
+	case DecoderStep::DWriteFontLoader:
+		return "DWriteFontLoader";
+	case DecoderStep::DWriteFontReference:
+		return "DWriteFontReference";
+	case DecoderStep::DWriteFontFace:
+		return "DWriteFontFace";
+	case DecoderStep::NativeGlyf:
+		return "NativeGlyf";
 	}
 	return "UnknownStep";
 }
