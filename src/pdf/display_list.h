@@ -558,7 +558,7 @@ public:
 	}
 
 	// Bounding-box-device content bounds in the same space as `page_box_pt()`
-	// (the contract of MuPDF's `fz_bbox_device`): the union over painted
+	// (the contract a bounding-box rendering device keeps): the union over painted
 	// primitives of each primitive's exact page-space box (analytic cubic
 	// extrema; strokes widened by half the line width, projecting caps and
 	// miter joins up to the miter limit; glyph ink boxes; the opaque-pixel box

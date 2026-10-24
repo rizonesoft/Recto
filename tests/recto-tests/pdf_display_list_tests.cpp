@@ -1,8 +1,8 @@
 // Unit tests for `recto::pdf::DisplayList` and `recto::pdf::DisplayListBuilder`
 // (D01 T02 section 1).
 //
-// Bounds contract under test (the bounding-box-device contract of MuPDF's
-// `fz_bbox_device`): `content_bounds_pt` contains every painted point and is
+// Bounds contract under test (the contract a bounding-box rendering device
+// keeps): `content_bounds_pt` contains every painted point and is
 // the union of each painted primitive's exact page-space box, intersected
 // with the bounding boxes of the active clips and with `page_box_pt`. It is
 // tight for unclipped primitives and under rectangular clips, and a superset
