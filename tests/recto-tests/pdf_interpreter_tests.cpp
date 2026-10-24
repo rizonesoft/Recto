@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <optional>
@@ -71,17 +72,24 @@ std::vector<uint8_t> pdf_from_objects(const std::vector<std::string>& objects)
 	return std::vector<uint8_t>(out.begin(), out.end());
 }
 
-// `data` as a zlib stream of one stored (uncompressed) deflate block (RFC 1950 and 1951), so the bytes inside it stay
-// as written: a FlateDecode payload that holds " EI " and operator text.
+// `data` as a zlib stream of stored (uncompressed) deflate blocks of at most 65,535 bytes (RFC 1950 and 1951), so
+// the bytes inside it stay as written: a FlateDecode payload that holds " EI " and operator text.
 std::string stored_zlib(std::string_view data)
 {
-	std::string out = "\x78\x01\x01";
-	const auto len = static_cast<uint16_t>(data.size());
-	out += static_cast<char>(len & 0xFFu);
-	out += static_cast<char>(len >> 8);
-	out += static_cast<char>(~len & 0xFFu);
-	out += static_cast<char>((~len >> 8) & 0xFFu);
-	out += data;
+	std::string out = "\x78\x01";
+	size_t at = 0;
+	do {
+		const size_t chunk = std::min<size_t>(data.size() - at, 65'535u);
+		const bool last = at + chunk == data.size();
+		out += static_cast<char>(last ? 0x01 : 0x00);
+		const auto len = static_cast<uint16_t>(chunk);
+		out += static_cast<char>(len & 0xFFu);
+		out += static_cast<char>(len >> 8);
+		out += static_cast<char>(~len & 0xFFu);
+		out += static_cast<char>((~len >> 8) & 0xFFu);
+		out += data.substr(at, chunk);
+		at += chunk;
+	} while (at < data.size());
 	uint32_t a = 1;
 	uint32_t b = 0;
 	for (const char c : data) {
@@ -267,6 +275,14 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(kinds(*many.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*many.list)[0].fill);
 
+	// Data longer than its dictionary says (5,062 bytes for one sample) still frames by decoding, inside the padding
+	// allowance, so the false `EI` in it is not taken.
+	const std::string long_pixels = std::string(" EI 0 0 100 100 re f ") + std::string(40, ' ') + "\x80" + std::string(5'000, 'x');
+	const auto padded = interpret("BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(long_pixels) + " EI 0 0 10 10 re S");
+	ASSERT_NE(padded.list, nullptr);
+	EXPECT_EQ(kinds(*padded.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_FALSE(all_of<DrawPathCommand>(*padded.list)[0].fill);
+
 	// An operator that takes no operands, given one, is skipped like any operator with the wrong operands: each case
 	// below would add a save, a restore, a close, a clip or a paint before the `2 w S` if it ran.
 	for (const std::string_view op : {"q", "Q", "h", "W", "W*", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}) {
@@ -364,6 +380,16 @@ TEST(PdfInterpreter, EntryContract)
 	ASSERT_FALSE(refused.has_value());
 	EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
 	EXPECT_EQ(refused.error().refusal_reason, RefusalReason::InlineImageFraming);
+
+	// Data that decodes past the padding allowance (70,000 bytes for one sample) refuses the page with the decoder's
+	// limit instead of framing the image unchecked.
+	const std::vector<uint8_t> overlong = one_page_pdf("BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(70'000, 'x')) +
+		" EI 0 0 10 10 re S");
+	auto overlong_doc = Document::open_memory(overlong);
+	ASSERT_TRUE(overlong_doc.has_value());
+	const auto over = interpret_page(**overlong_doc, 0u);
+	ASSERT_FALSE(over.has_value());
+	EXPECT_EQ(over.error().code, ErrorCode::DecompressionLimitExceeded);
 
 	// A resource that fails to resolve for a reason other than damage (nesting past the parser's depth) stops the page,
 	// whether `gs` names it or an inline image's colour space does.

@@ -524,8 +524,10 @@ private:
 	// as operators. The dictionary is parsed to find `ID`. An unfiltered image's data is skipped by its length. A
 	// filtered one ends at the first `EI` before which the data decodes through its filters to the image's full size:
 	// an `EI` inside compressed data truncates it, so it cannot. Checking candidates may decode at most 64 MiB in all;
-	// past that the page is refused (`InlineImageFraming`), never framed unchecked. Only an image whose size is unknown,
-	// or whose data decodes at no candidate (damaged data), ends at the first `EI` with no binary byte after it.
+	// past that the page is refused (`InlineImageFraming`), and a candidate the decoder refuses for any reason but
+	// damage refuses the page with that error, never framed unchecked. Only an image whose size is unknown, whose filter
+	// this build cannot decode, or whose data decodes at no candidate (damaged data), ends at the first `EI` with no
+	// binary byte after it.
 	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
 	{
 		static constexpr size_t kMaxInlineEntries = 64u;
@@ -608,15 +610,23 @@ private:
 					}
 					work += length;
 					const auto data = input.subspan(*data_start, length);
-					auto decoded = decode_stream(data, filters, *samples + 4'096u);
-					if (decoded.has_value() && decoded->size() >= *samples) {
-						lexer.seek(end + 2u);
-						return {};
+					// Room past the samples for padding a writer adds; data that decodes past it is refused with the
+					// decoder's limit, never framed unchecked.
+					auto decoded = decode_stream(data, filters, *samples + std::max<size_t>(*samples, 64u * 1024u));
+					if (decoded.has_value()) {
+						if (decoded->size() >= *samples) {
+							lexer.seek(end + 2u);
+							return {};
+						}
+						continue; // too short: this `EI` cuts the data
 					}
-					if (!decoded.has_value() && (decoded.error().code == ErrorCode::OutOfMemory ||
-													 decoded.error().code == ErrorCode::InternalError)) {
-						return decoded.error();
+					if (decoded.error().code == ErrorCode::UnsupportedFeature) {
+						break; // a filter this build cannot decode: no candidate can be checked
 					}
+					if (fatal(decoded.error())) {
+						return decoded.error(); // a decoder limit, memory or an internal error
+					}
+					// Damaged: this `EI` truncates the data.
 				}
 			}
 		}
