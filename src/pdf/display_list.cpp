@@ -286,24 +286,49 @@ void expand_cubic_1d_bounds(
 	inout_min = std::min({inout_min, p0, p3});
 	inout_max = std::max({inout_max, p0, p3});
 
+	// A cubic lies inside the hull of its control points, so when the extremum
+	// arithmetic overflows (finite coordinates near the double range) the hull
+	// keeps the box a superset instead of falling back to the endpoints.
+	const auto include_hull = [&]() noexcept {
+		inout_min = std::min({inout_min, p1, p2});
+		inout_max = std::max({inout_max, p1, p2});
+	};
+	const auto include_value = [&](double t) noexcept {
+		const double val = eval_cubic_1d(p0, p1, p2, p3, t);
+		if (!std::isfinite(val)) {
+			include_hull();
+			return;
+		}
+		inout_min = std::min(inout_min, val);
+		inout_max = std::max(inout_max, val);
+	};
+
 	const double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
 	const double b = p0 - 2.0 * p1 + p2;
 	const double c = p1 - p0;
+	if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+		include_hull();
+		return;
+	}
 
 	constexpr double kEps = 1e-12;
 	if (std::abs(a) <= kEps) {
 		if (std::abs(b) > kEps) {
 			const double t = -c / (2.0 * b);
-			if (t > 0.0 && t < 1.0) {
-				const double val = eval_cubic_1d(p0, p1, p2, p3, t);
-				inout_min = std::min(inout_min, val);
-				inout_max = std::max(inout_max, val);
+			if (!std::isfinite(t)) {
+				include_hull();
+			} else if (t > 0.0 && t < 1.0) {
+				include_value(t);
 			}
 		}
 		return;
 	}
 
 	const double disc = b * b - a * c;
+	if (!std::isfinite(disc)) {
+		include_hull();
+		return;
+	}
 	if (disc < 0.0) {
 		return;
 	}
@@ -311,10 +336,10 @@ void expand_cubic_1d_bounds(
 	const double t1 = (-b - sqrt_disc) / a;
 	const double t2 = (-b + sqrt_disc) / a;
 	for (double t : {t1, t2}) {
-		if (t > 0.0 && t < 1.0) {
-			const double val = eval_cubic_1d(p0, p1, p2, p3, t);
-			inout_min = std::min(inout_min, val);
-			inout_max = std::max(inout_max, val);
+		if (!std::isfinite(t)) {
+			include_hull();
+		} else if (t > 0.0 && t < 1.0) {
+			include_value(t);
 		}
 	}
 }
@@ -383,6 +408,9 @@ struct StrokeGeometry {
 	LineCap cap{LineCap::Butt};
 	LineJoin join{LineJoin::Miter};
 	double miter_limit{10.0};
+	// A dash pattern is active: every dash end carries a cap (ISO 32000-1
+	// 8.4.3.6), so caps can stand out past joins anywhere along the path.
+	bool dashed{false};
 };
 
 // Widening for a stroke whose outline is known only by its box (glyph runs):
@@ -423,7 +451,11 @@ struct StrokeGeometry {
 // Every vertex is transformed exactly, so a polyline's box is exact under any
 // affine CTM (rotation and shear included); a curve's box is exact where its
 // extremum's normal is axis-aligned and a superset elsewhere. Dash patterns
-// are ignored: a dashed stroke paints a subset of the solid one. A hairline
+// change only the caps: a dashed stroke paints the solid one's body and joins
+// at most, plus a cap at every dash end, which can fall anywhere. So with round
+// or projecting caps every line segment also gets its caps at both ends (a cap
+// inside a segment stays inside its body or reaches past one of its ends), and
+// a curve's disk is widened by `sqrt(2)` for projecting caps. A hairline
 // (`r == 0`) gives the path's own box; its device-pixel width belongs to the
 // renderer and is absorbed by the consumer's padding.
 class StrokeBoundsWalker {
@@ -495,8 +527,10 @@ public:
 		double y_max = q0.y;
 		expand_cubic_1d_bounds(q0.x, q1.x, q2.x, q3.x, x_min, x_max);
 		expand_cubic_1d_bounds(q0.y, q1.y, q2.y, q3.y, y_min, y_max);
-		acc_.include(PdfPoint{x_min - disk_x_, y_min - disk_y_});
-		acc_.include(PdfPoint{x_max + disk_x_, y_max + disk_y_});
+		const double reach =
+			g_.dashed && g_.cap == LineCap::ProjectingSquare ? std::numbers::sqrt2 : 1.0;
+		acc_.include(PdfPoint{x_min - disk_x_ * reach, y_min - disk_y_ * reach});
+		acc_.include(PdfPoint{x_max + disk_x_ * reach, y_max + disk_y_ * reach});
 		last_tangent_ = *t_end;
 		cur_ = p3;
 	}
@@ -589,6 +623,10 @@ private:
 		include_user(a, n, -r);
 		include_user(b, n, r);
 		include_user(b, n, -r);
+		if (g_.dashed && g_.cap != LineCap::Butt) {
+			include_cap(b, *t);
+			include_cap(a, PdfPoint{-t->x, -t->y});
+		}
 		last_tangent_ = *t;
 	}
 
@@ -777,17 +815,14 @@ private:
 	size_t capacity,
 	size_t extra,
 	size_t max_elements,
-	bool geometric) noexcept
+	double growth) noexcept
 {
 	const size_t needed = size + extra;
 	if (needed <= capacity) {
 		return capacity;
 	}
-	if (!geometric) {
-		return needed;
-	}
-	const size_t doubled = capacity > max_elements / 2u ? max_elements : capacity * 2u;
-	return std::max(needed, doubled);
+	const size_t doubled = std::max(needed, capacity > max_elements / 2u ? max_elements : capacity * 2u);
+	return needed + static_cast<size_t>(growth * static_cast<double>(doubled - needed));
 }
 
 // Allocator for the `std::shared_ptr<const DisplayList>` control block that
@@ -1251,7 +1286,7 @@ PdfResult<void> DisplayListBuilder::reserve_growth(Growth<Ts>... growths) noexce
 	}
 
 	const size_t used = current_pool_bytes();
-	const auto peak_fits = [&](bool geometric) noexcept {
+	const auto peak_fits = [&](double growth) noexcept {
 		size_t peak = used;
 		bool ok = true;
 		const auto add = [&](const auto& g) noexcept {
@@ -1261,7 +1296,7 @@ PdfResult<void> DisplayListBuilder::reserve_growth(Growth<Ts>... growths) noexce
 				g.pool->capacity(),
 				g.extra,
 				g.max_elements,
-				geometric);
+				growth);
 			if (capacity > g.pool->capacity()) {
 				size_t bytes = 0u;
 				ok = ok && checked_mul_size(capacity, sizeof(Element), bytes) &&
@@ -1271,14 +1306,23 @@ PdfResult<void> DisplayListBuilder::reserve_growth(Growth<Ts>... growths) noexce
 		(add(growths), ...);
 		return ok && peak <= limits_.max_total_bytes;
 	};
-	bool geometric = true;
-	if (!peak_fits(true)) {
-		if (!peak_fits(false)) {
+	// Doubling when it fits; otherwise the largest growth toward doubling that
+	// fits, so a pool near the budget reallocates once more at most instead of
+	// once per append (a pool past half the remaining budget cannot grow again).
+	double growth = 1.0;
+	if (!peak_fits(1.0)) {
+		if (!peak_fits(0.0)) {
 			return make_pdf_error(
 				ErrorCode::ResourceLimit,
 				"DisplayListBuilder total byte budget exceeded");
 		}
-		geometric = false;
+		double low = 0.0;
+		double high = 1.0;
+		for (int step = 0; step < 32; ++step) {
+			const double mid = 0.5 * (low + high);
+			(peak_fits(mid) ? low : high) = mid;
+		}
+		growth = low;
 	}
 	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok;
@@ -1289,7 +1333,7 @@ PdfResult<void> DisplayListBuilder::reserve_growth(Growth<Ts>... growths) noexce
 			 growths.pool->capacity(),
 			 growths.extra,
 			 growths.max_elements,
-			 geometric)),
+			 growth)),
 		 ...);
 		return {};
 	} catch (const std::bad_alloc&) {
@@ -1524,6 +1568,7 @@ PdfResult<void> DisplayListBuilder::set_stroke_style(
 	current_state_.line_cap = line_cap;
 	current_state_.line_join = line_join;
 	current_state_.miter_limit = miter_limit;
+	current_state_.dashed = !recorded_dashes.empty();
 	return {};
 }
 
@@ -1657,6 +1702,7 @@ PdfResult<void> DisplayListBuilder::draw_path(
 		geometry.cap = current_state_.line_cap;
 		geometry.join = current_state_.line_join;
 		geometry.miter_limit = static_cast<double>(current_state_.miter_limit);
+		geometry.dashed = current_state_.dashed;
 		const BoxAccumulator stroke_box =
 			compute_stroke_box(verbs, points, current_state_.ctm, geometry);
 		if (stroke_box.overflowed) {

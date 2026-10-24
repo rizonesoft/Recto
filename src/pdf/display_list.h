@@ -825,6 +825,7 @@ private:
 		LineCap line_cap{LineCap::Butt};
 		LineJoin line_join{LineJoin::Miter};
 		float miter_limit{10.0f};
+		bool dashed{false}; // a dash pattern is set (caps at every dash end)
 		float stroke_alpha{1.0f};
 		float fill_alpha{1.0f};
 		// Intersection of `page_box_pt_` and the exact page-space boxes of every

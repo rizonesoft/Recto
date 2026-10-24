@@ -2015,7 +2015,8 @@ TEST(PdfDisplayList, DashPatternRecording)
 	EXPECT_FLOAT_EQ(style(5).dash_phase, -4.0f);
 	EXPECT_EQ(dl->dash_values().size(), 6u);
 
-	// Bounds ignore dashes: a dashed stroke's box is the solid stroke's.
+	// With butt caps a dashed stroke's box is the solid stroke's (dash caps:
+	// `DashCapsStayInsideBounds`).
 	PathBuilder line;
 	line.move_to(10.0, 10.0);
 	line.line_to(100.0, 10.0);
@@ -2194,6 +2195,96 @@ TEST(PdfDisplayList, FinishControlBlockFailurePublishesNothing)
 	const auto mutate = builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), false, true);
 	ASSERT_FALSE(mutate.has_value());
 	EXPECT_EQ(mutate.error().code, ErrorCode::InternalError);
+}
+
+TEST(PdfDisplayList, DashCapsStayInsideBounds)
+{
+	// Completion review G1: a dash end inside a segment carries a cap (ISO
+	// 32000-1 8.4.3.6). The first dash of `[140 1000]` on the polyline
+	// (100,100) -> (200,200) -> (100,300), width 100, ends 1.4 before the
+	// corner, and its projecting cap reaches x = 100 + 190 / sqrt(2) +
+	// 50 / sqrt(2) = 269.706, past the bevel the solid stroke would have there.
+	PathBuilder corner;
+	corner.move_to(100.0, 100.0);
+	corner.line_to(200.0, 200.0);
+	corner.line_to(100.0, 300.0);
+	const float dashes[] = {140.0f, 1000.0f};
+	const double reach_x = 100.0 + 190.0 / std::numbers::sqrt2 + 50.0 / std::numbers::sqrt2;
+	const double reach_y = 100.0 + 190.0 / std::numbers::sqrt2 - 50.0 / std::numbers::sqrt2;
+	const PdfRect solid = stroke_bounds(corner, 100.0f, LineCap::ProjectingSquare, LineJoin::Bevel, 10.0f);
+	EXPECT_LT(solid.x_max, reach_x - 1.0); // the solid stroke alone would cut the cap
+	const PdfRect dashed =
+		stroke_bounds(corner, 100.0f, LineCap::ProjectingSquare, LineJoin::Bevel, 10.0f, PdfMatrix::identity(), dashes);
+	EXPECT_GE(dashed.x_max, reach_x - 1e-9);
+
+	// The same under a rotation and shear: the cap corner's image stays inside.
+	const PdfMatrix ctm{0.8, 0.6, -0.3, 0.9, 50.0, -20.0};
+	const PdfRect transformed =
+		stroke_bounds(corner, 100.0f, LineCap::ProjectingSquare, LineJoin::Bevel, 10.0f, ctm, dashes);
+	const PdfPoint cap_corner = transform_point(ctm, PdfPoint{reach_x, reach_y});
+	EXPECT_GE(transformed.x_max, cap_corner.x - 1e-9);
+	EXPECT_LE(transformed.y_min, cap_corner.y + 1e-9);
+
+	// Round caps: the dash end's disk at (198.995, 198.995) reaches x = 248.995.
+	const PdfRect round =
+		stroke_bounds(corner, 100.0f, LineCap::Round, LineJoin::Bevel, 10.0f, PdfMatrix::identity(), dashes);
+	EXPECT_GE(round.x_max, 100.0 + 140.0 / std::numbers::sqrt2 + 50.0 - 1e-9);
+
+	// Butt caps add nothing beyond the solid stroke.
+	EXPECT_EQ(
+		stroke_bounds(corner, 100.0f, LineCap::Butt, LineJoin::Bevel, 10.0f, PdfMatrix::identity(), dashes),
+		stroke_bounds(corner, 100.0f, LineCap::Butt, LineJoin::Bevel, 10.0f));
+}
+
+TEST(PdfDisplayList, CubicExtremaOverflowKeepsTheHull)
+{
+	// Completion review G2: finite control points whose extremum arithmetic
+	// overflows (x = [100, 1e200, -1e200, 100]) still give a box containing the
+	// curve, which crosses the whole page, instead of the endpoints' box.
+	PathBuilder wide;
+	wide.move_to(100.0, 50.0);
+	wide.cubic_bezier_to(PdfPoint{1e200, 50.0}, PdfPoint{-1e200, 60.0}, PdfPoint{100.0, 60.0});
+	wide.close_subpath();
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+	const auto pid = builder.add_path(wide);
+	ASSERT_TRUE(pid.has_value());
+	ASSERT_TRUE(builder.draw_path(*pid, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	const auto dl = finish_ok(builder);
+	ASSERT_TRUE(dl->has_content_bounds());
+	EXPECT_EQ(dl->content_bounds_pt(), (PdfRect{0.0, 50.0, 200.0, 60.0}));
+}
+
+TEST(PdfDisplayList, GrowthNearTheBudgetStaysAmortized)
+{
+	// Completion review G4: once doubling no longer fits `max_total_bytes`,
+	// the pools grow to the largest capacity that fits instead of one slot at
+	// a time. With room for 5 x 1024 command slots (a command and its bounds),
+	// doubling from 2048 to 4096 no longer fits but growing does: the earlier
+	// code then grew one slot per command up to 2560 (524 reallocations); now
+	// one reallocation reaches 3072 and the next command is refused.
+	const size_t slot = sizeof(DisplayCommand) + sizeof(CommandBounds);
+	DisplayListLimits limits{};
+	limits.max_total_bytes = 5u * 1024u * slot;
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 100.0, 100.0}, limits);
+	size_t recorded = 0u;
+	size_t growths = 0u;
+	size_t last_bytes = builder.retained_bytes();
+	for (;;) {
+		const auto res = builder.concat_matrix(PdfMatrix::identity());
+		if (!res.has_value()) {
+			EXPECT_EQ(res.error().code, ErrorCode::ResourceLimit);
+			break;
+		}
+		++recorded;
+		if (builder.retained_bytes() != last_bytes) {
+			++growths;
+			last_bytes = builder.retained_bytes();
+		}
+		ASSERT_LT(recorded, 1'000'000u);
+	}
+	EXPECT_EQ(recorded, 3072u);
+	EXPECT_LE(growths, 14u) << recorded << " commands";
+	EXPECT_LE(builder.retained_bytes(), limits.max_total_bytes);
 }
 
 } // namespace
