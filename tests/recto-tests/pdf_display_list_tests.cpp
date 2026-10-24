@@ -2287,5 +2287,105 @@ TEST(PdfDisplayList, GrowthNearTheBudgetStaysAmortized)
 	EXPECT_LE(builder.retained_bytes(), limits.max_total_bytes);
 }
 
+TEST(PdfDisplayList, HugeFiniteSegmentKeepsItsStroke)
+{
+	// Round 1 finding 1: a finite segment whose length overflows `hypot`
+	// ((-8e307, -8e307) to (8e307, 8e307)) keeps its direction, so under a
+	// 1e-306 scale its hairline stays the page line (70, 70) to (230, 230).
+	PathBuilder line;
+	line.move_to(-8e307, -8e307);
+	line.line_to(8e307, 8e307);
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 300.0, 300.0});
+	const auto pid = builder.add_path(line);
+	ASSERT_TRUE(pid.has_value());
+	ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1e-306, 0.0, 0.0, 1e-306, 150.0, 150.0}).has_value());
+	ASSERT_TRUE(builder.set_stroke_style(0.0f).has_value());
+	ASSERT_TRUE(builder.draw_path(*pid, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+	const auto dl = finish_ok(builder);
+	ASSERT_TRUE(dl->has_content_bounds());
+	const PdfRect& box = dl->content_bounds_pt();
+	EXPECT_NEAR(box.x_min, 70.0, 1e-9);
+	EXPECT_NEAR(box.y_min, 70.0, 1e-9);
+	EXPECT_NEAR(box.x_max, 230.0, 1e-9);
+	EXPECT_NEAR(box.y_max, 230.0, 1e-9);
+}
+
+TEST(PdfDisplayList, Type3GlyphsPaintByTheirOwnProcedure)
+{
+	// Round 1 finding 2: a Type 3 glyph's procedure sets its own colours and
+	// state (ISO 32000-1 9.6.5), so its sub-list counts under `Tr 1` with the
+	// run's stroke alpha at 0; only `Tr 3` paints nothing.
+	DisplayListBuilder glyph_builder(PdfRect{0.0, 0.0, 100.0, 100.0});
+	PathBuilder square;
+	square.rect(10.0, 10.0, 80.0, 80.0);
+	const auto sid = glyph_builder.add_path(square);
+	ASSERT_TRUE(sid.has_value());
+	ASSERT_TRUE(glyph_builder.draw_path(*sid, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	const auto glyph = finish_ok(glyph_builder);
+	ASSERT_EQ(glyph->content_bounds_pt(), (PdfRect{10.0, 10.0, 90.0, 90.0}));
+
+	const auto run_bounds = [&](TextRenderMode mode) -> std::optional<PdfRect> {
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		EXPECT_TRUE(builder.set_alpha_and_blend(0.0f, 1.0f).has_value());
+		const PositionedGlyph glyphs[] = {PositionedGlyph{1u, 0x41u, PdfPoint{0.0, 0.0}, 100.0}};
+		EXPECT_TRUE(builder
+						.draw_glyph_run(glyphs, 1.0, mode, ColorRgba::black(), ColorRgba::black(), PdfMatrix::identity(),
+							std::nullopt, nullptr, glyph)
+						.has_value());
+		const auto dl = finish_ok(builder);
+		return dl->has_content_bounds() ? std::optional<PdfRect>(dl->content_bounds_pt()) : std::nullopt;
+	};
+	EXPECT_EQ(run_bounds(TextRenderMode::Stroke), (std::optional<PdfRect>(PdfRect{10.0, 10.0, 90.0, 90.0})));
+	EXPECT_EQ(run_bounds(TextRenderMode::Fill), (std::optional<PdfRect>(PdfRect{10.0, 10.0, 90.0, 90.0})));
+	EXPECT_EQ(run_bounds(TextRenderMode::Invisible), std::nullopt);
+}
+
+TEST(PdfDisplayList, CurveStrokesWidenOnlyByTheirNormals)
+{
+	// Round 1 finding 3: `100 w 0 J 100 100 m 125 100 175 100 200 100 c S`, a
+	// straight cubic with butt caps, paints exactly [100, 50, 200, 150], as
+	// the same line would.
+	PathBuilder straight;
+	straight.move_to(100.0, 100.0);
+	straight.cubic_bezier_to(PdfPoint{125.0, 100.0}, PdfPoint{175.0, 100.0}, PdfPoint{200.0, 100.0});
+	EXPECT_EQ(stroke_bounds(straight, 100.0f, LineCap::Butt, LineJoin::Miter, 10.0f), (PdfRect{100.0, 50.0, 200.0, 150.0}));
+
+	// A curved stroke under a rotation and shear contains every point of its
+	// swept normals and is within 1% of their box.
+	PathBuilder arch;
+	arch.move_to(0.0, 0.0);
+	arch.cubic_bezier_to(PdfPoint{30.0, 80.0}, PdfPoint{120.0, 90.0}, PdfPoint{150.0, 10.0});
+	const PdfMatrix ctm{0.8, 0.6, -0.3, 0.9, 50.0, -20.0};
+	const double r = 10.0;
+	double x_min = 1e300;
+	double y_min = 1e300;
+	double x_max = -1e300;
+	double y_max = -1e300;
+	for (int i = 0; i <= 4000; ++i) {
+		const double t = static_cast<double>(i) / 4000.0;
+		const double u = 1.0 - t;
+		const PdfPoint c{
+			u * u * u * 0.0 + 3.0 * u * u * t * 30.0 + 3.0 * u * t * t * 120.0 + t * t * t * 150.0,
+			u * u * u * 0.0 + 3.0 * u * u * t * 80.0 + 3.0 * u * t * t * 90.0 + t * t * t * 10.0};
+		const double dx = 3.0 * u * u * 30.0 + 6.0 * u * t * (120.0 - 30.0) + 3.0 * t * t * (150.0 - 120.0);
+		const double dy = 3.0 * u * u * 80.0 + 6.0 * u * t * (90.0 - 80.0) + 3.0 * t * t * (10.0 - 90.0);
+		const double len = std::hypot(dx, dy);
+		for (const double s : {-r, r}) {
+			const PdfPoint q = transform_point(ctm, PdfPoint{c.x - s * dy / len, c.y + s * dx / len});
+			x_min = std::min(x_min, q.x);
+			y_min = std::min(y_min, q.y);
+			x_max = std::max(x_max, q.x);
+			y_max = std::max(y_max, q.y);
+		}
+	}
+	const PdfRect box = stroke_bounds(arch, static_cast<float>(2.0 * r), LineCap::Butt, LineJoin::Miter, 10.0f, ctm);
+	EXPECT_LE(box.x_min, x_min + 1e-9);
+	EXPECT_LE(box.y_min, y_min + 1e-9);
+	EXPECT_GE(box.x_max, x_max - 1e-9);
+	EXPECT_GE(box.y_max, y_max - 1e-9);
+	EXPECT_LT(box.width(), 1.01 * (x_max - x_min));
+	EXPECT_LT(box.height(), 1.01 * (y_max - y_min));
+}
+
 } // namespace
 } // namespace recto::pdf

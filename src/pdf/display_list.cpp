@@ -367,6 +367,138 @@ void include_point_in_bounds(
 	}
 }
 
+// Appends the parameters in `(0, 1)` where the cubic `p0..p3` has a 1D
+// extremum (roots of its derivative) to `cuts`. False when the arithmetic
+// overflows, which the caller answers with a looser box.
+[[nodiscard]] bool collect_cubic_extremum_ts(
+	double p0,
+	double p1,
+	double p2,
+	double p3,
+	std::array<double, 16>& cuts,
+	size_t& cut_count) noexcept
+{
+	const double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+	const double b = p0 - 2.0 * p1 + p2;
+	const double c = p1 - p0;
+	if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+		return false;
+	}
+	const auto add = [&](double t) noexcept {
+		if (std::isfinite(t) && t > 0.0 && t < 1.0 && cut_count < cuts.size()) {
+			cuts[cut_count++] = t;
+		}
+	};
+	constexpr double kEps = 1e-12;
+	if (std::abs(a) <= kEps) {
+		if (std::abs(b) > kEps) {
+			add(-c / (2.0 * b));
+		}
+		return true;
+	}
+	const double disc = b * b - a * c;
+	if (!std::isfinite(disc)) {
+		return false;
+	}
+	if (disc >= 0.0) {
+		const double sqrt_disc = std::sqrt(disc);
+		add((-b - sqrt_disc) / a);
+		add((-b + sqrt_disc) / a);
+	}
+	return true;
+}
+
+// The control points of the part of the cubic `p0..p3` between `ta` and `tb`
+// (`0 <= ta < tb <= 1`), by de Casteljau splitting.
+[[nodiscard]] std::array<PdfPoint, 4> cubic_sub_curve(
+	PdfPoint p0,
+	PdfPoint p1,
+	PdfPoint p2,
+	PdfPoint p3,
+	double ta,
+	double tb) noexcept
+{
+	const auto lerp = [](PdfPoint u, PdfPoint v, double t) noexcept {
+		return PdfPoint{u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t};
+	};
+	// The part up to `tb`, then that part's tail from `ta / tb`.
+	const auto split_head = [&](std::array<PdfPoint, 4> q, double t) noexcept {
+		const PdfPoint a = lerp(q[0], q[1], t);
+		const PdfPoint b = lerp(q[1], q[2], t);
+		const PdfPoint c = lerp(q[2], q[3], t);
+		const PdfPoint d = lerp(a, b, t);
+		const PdfPoint e = lerp(b, c, t);
+		return std::array<PdfPoint, 4>{q[0], a, d, lerp(d, e, t)};
+	};
+	const auto split_tail = [&](std::array<PdfPoint, 4> q, double t) noexcept {
+		const PdfPoint a = lerp(q[0], q[1], t);
+		const PdfPoint b = lerp(q[1], q[2], t);
+		const PdfPoint c = lerp(q[2], q[3], t);
+		const PdfPoint d = lerp(a, b, t);
+		const PdfPoint e = lerp(b, c, t);
+		return std::array<PdfPoint, 4>{lerp(d, e, t), e, c, q[3]};
+	};
+	const std::array<PdfPoint, 4> head = split_head({p0, p1, p2, p3}, tb);
+	return ta > 0.0 ? split_tail(head, ta / tb) : head;
+}
+
+// The interval `[lo, hi]` of tangent angles the cubic `q` can have (the cone
+// of its non-zero control-polygon legs), or none when the legs span a quarter
+// turn or more, are all zero, or do not give finite angles.
+[[nodiscard]] std::optional<std::pair<double, double>> tangent_cone(
+	const std::array<PdfPoint, 4>& q) noexcept
+{
+	std::optional<double> base;
+	double lo = 0.0;
+	double hi = 0.0;
+	for (size_t i = 0u; i < 3u; ++i) {
+		const double dx = q[i + 1u].x - q[i].x;
+		const double dy = q[i + 1u].y - q[i].y;
+		if (!std::isfinite(dx) || !std::isfinite(dy)) {
+			return std::nullopt;
+		}
+		if (dx == 0.0 && dy == 0.0) {
+			continue;
+		}
+		const double angle = std::atan2(dy, dx);
+		if (!base.has_value()) {
+			base = angle;
+			continue;
+		}
+		double delta = angle - *base;
+		while (delta > std::numbers::pi) {
+			delta -= 2.0 * std::numbers::pi;
+		}
+		while (delta <= -std::numbers::pi) {
+			delta += 2.0 * std::numbers::pi;
+		}
+		lo = std::min(lo, delta);
+		hi = std::max(hi, delta);
+	}
+	if (!base.has_value() || hi - lo >= 0.5 * std::numbers::pi) {
+		return std::nullopt;
+	}
+	return std::pair<double, double>{*base + lo, *base + hi};
+}
+
+// `max |p cos a + q sin a|` for `a` in `[lo, hi]`: the ends, and the stationary
+// points `a = atan2(q, p) + k pi` that fall inside.
+[[nodiscard]] double max_abs_trig(double p, double q, double lo, double hi) noexcept
+{
+	const auto value = [&](double a) noexcept {
+		return std::abs(p * std::cos(a) + q * std::sin(a));
+	};
+	double best = std::max(value(lo), value(hi));
+	const double stationary = std::atan2(q, p);
+	for (int k = -3; k <= 3; ++k) {
+		const double a = stationary + static_cast<double>(k) * std::numbers::pi;
+		if (a > lo && a < hi) {
+			best = std::max(best, value(a));
+		}
+	}
+	return best;
+}
+
 // Running axis-aligned box of page-space points. `overflowed` records a
 // non-finite point, which the caller refuses as transformed-coordinate
 // overflow rather than dropping ink.
@@ -521,16 +653,21 @@ public:
 			acc_.overflowed = true;
 			return;
 		}
-		double x_min = q0.x;
-		double x_max = q0.x;
-		double y_min = q0.y;
-		double y_max = q0.y;
-		expand_cubic_1d_bounds(q0.x, q1.x, q2.x, q3.x, x_min, x_max);
-		expand_cubic_1d_bounds(q0.y, q1.y, q2.y, q3.y, y_min, y_max);
-		const double reach =
-			g_.dashed && g_.cap == LineCap::ProjectingSquare ? std::numbers::sqrt2 : 1.0;
-		acc_.include(PdfPoint{x_min - disk_x_ * reach, y_min - disk_y_ * reach});
-		acc_.include(PdfPoint{x_max + disk_x_ * reach, y_max + disk_y_ * reach});
+		if (g_.dashed && g_.cap != LineCap::Butt) {
+			// Dash caps can sit anywhere on the curve: the whole pen disk, and
+			// for projecting caps the square's corner, `sqrt(2)` times as far.
+			double x_min = q0.x;
+			double x_max = q0.x;
+			double y_min = q0.y;
+			double y_max = q0.y;
+			expand_cubic_1d_bounds(q0.x, q1.x, q2.x, q3.x, x_min, x_max);
+			expand_cubic_1d_bounds(q0.y, q1.y, q2.y, q3.y, y_min, y_max);
+			const double reach = g_.cap == LineCap::ProjectingSquare ? std::numbers::sqrt2 : 1.0;
+			acc_.include(PdfPoint{x_min - disk_x_ * reach, y_min - disk_y_ * reach});
+			acc_.include(PdfPoint{x_max + disk_x_ * reach, y_max + disk_y_ * reach});
+		} else {
+			include_cubic_body(p0, c1, c2, p3, q0, q1, q2, q3);
+		}
 		last_tangent_ = *t_end;
 		cur_ = p3;
 	}
@@ -574,16 +711,98 @@ private:
 			acc_.overflowed = true;
 			return std::nullopt;
 		}
-		const double len = std::hypot(dx, dy);
-		if (!(len > 0.0) || !std::isfinite(len)) {
+		// Scaled by the larger component first, so a finite segment whose
+		// length overflows a double keeps its direction.
+		const double scale = std::max(std::abs(dx), std::abs(dy));
+		if (!(scale > 0.0)) {
 			return std::nullopt;
 		}
-		return PdfPoint{dx / len, dy / len};
+		const double ux = dx / scale;
+		const double uy = dy / scale;
+		const double len = std::hypot(ux, uy);
+		return PdfPoint{ux / len, uy / len};
 	}
 
 	[[nodiscard]] static constexpr PdfPoint left_normal(PdfPoint t) noexcept
 	{
 		return PdfPoint{-t.y, t.x};
+	}
+
+	// The body of a stroked cubic (its ends belong to caps and joins): the
+	// points `C(t) + s n(t)`, `|s| <= r`, `n` the unit normal. The curve is cut
+	// at its page-space extrema and into eight even pieces, so each piece is
+	// monotone on the page and its centre line spans exactly its endpoints;
+	// each piece then widens by the largest page reach of `r n` over the
+	// tangents it can have, which lie in the cone of its control-polygon legs
+	// (the derivative is their non-negative combination). A straight curve
+	// widens only across itself, as its line would; a piece whose tangents
+	// turn by a quarter turn or more takes the whole disk.
+	void include_cubic_body(
+		PdfPoint p0,
+		PdfPoint p1,
+		PdfPoint p2,
+		PdfPoint p3,
+		PdfPoint q0,
+		PdfPoint q1,
+		PdfPoint q2,
+		PdfPoint q3) noexcept
+	{
+		std::array<double, 16> cuts{};
+		size_t cut_count = 0u;
+		for (int i = 1; i < 8; ++i) {
+			cuts[cut_count++] = static_cast<double>(i) / 8.0;
+		}
+		bool extrema_ok = collect_cubic_extremum_ts(q0.x, q1.x, q2.x, q3.x, cuts, cut_count) &&
+			collect_cubic_extremum_ts(q0.y, q1.y, q2.y, q3.y, cuts, cut_count);
+		if (!extrema_ok) {
+			// Extremum arithmetic overflowed: the hull box and the whole disk.
+			double x_min = q0.x;
+			double x_max = q0.x;
+			double y_min = q0.y;
+			double y_max = q0.y;
+			expand_cubic_1d_bounds(q0.x, q1.x, q2.x, q3.x, x_min, x_max);
+			expand_cubic_1d_bounds(q0.y, q1.y, q2.y, q3.y, y_min, y_max);
+			acc_.include(PdfPoint{x_min - disk_x_, y_min - disk_y_});
+			acc_.include(PdfPoint{x_max + disk_x_, y_max + disk_y_});
+			return;
+		}
+		std::sort(cuts.begin(), cuts.begin() + static_cast<std::ptrdiff_t>(cut_count));
+		double t_prev = 0.0;
+		for (size_t i = 0u; i <= cut_count; ++i) {
+			const double t_next = i < cut_count ? cuts[i] : 1.0;
+			if (t_next > t_prev) {
+				include_cubic_piece(p0, p1, p2, p3, t_prev, t_next);
+			}
+			t_prev = std::max(t_prev, t_next);
+		}
+	}
+
+	void include_cubic_piece(
+		PdfPoint p0,
+		PdfPoint p1,
+		PdfPoint p2,
+		PdfPoint p3,
+		double ta,
+		double tb) noexcept
+	{
+		const std::array<PdfPoint, 4> piece = cubic_sub_curve(p0, p1, p2, p3, ta, tb);
+		const PdfPoint a = transform_point(ctm_, piece[0]);
+		const PdfPoint b = transform_point(ctm_, piece[3]);
+		if (!is_finite_point(a) || !is_finite_point(b)) {
+			acc_.overflowed = true;
+			return;
+		}
+		const double r = g_.half_width;
+		double reach_x = disk_x_;
+		double reach_y = disk_y_;
+		if (const auto cone = tangent_cone(piece)) {
+			// `r n` with `n = (-sin a, cos a)` reaches `r |c cos a - a' sin a|`
+			// across x (`a'` the CTM's `a`) and `r |d cos a - b sin a|` across y.
+			reach_x = r * max_abs_trig(ctm_.c, -ctm_.a, cone->first, cone->second);
+			reach_y = r * max_abs_trig(ctm_.d, -ctm_.b, cone->first, cone->second);
+		}
+		acc_.include(PdfPoint{std::min(a.x, b.x) - reach_x, std::min(a.y, b.y) - reach_y});
+		acc_.include(PdfPoint{std::max(a.x, b.x) + reach_x, std::max(a.y, b.y) + reach_y});
 	}
 
 	void include_user(PdfPoint base, PdfPoint dir, double scale) noexcept
@@ -1813,9 +2032,15 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 		render_mode == TextRenderMode::FillAndStroke ||
 		render_mode == TextRenderMode::StrokeAndClip ||
 		render_mode == TextRenderMode::FillStrokeAndClip;
-	const bool visible_fill =
-		mode_fills && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
-	const bool visible_stroke =
+	// A Type 3 glyph paints by its own procedure (ISO 32000-1 9.6.5), whose
+	// colours and graphics state it can set itself, so its sub-list counts
+	// whatever the run's colours and alphas; only an invisible run (`Tr 3`)
+	// paints nothing. Its sub-list's bounds already hold its own strokes.
+	const bool is_type3 = type3_sub_list != nullptr;
+	const bool visible_fill = is_type3
+		? render_mode != TextRenderMode::Invisible
+		: mode_fills && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
+	const bool visible_stroke = !is_type3 &&
 		mode_strokes && (current_state_.stroke_alpha > 0.0f) && (stroke_color.a > 0.0f);
 
 	StrokeGeometry geometry{};
