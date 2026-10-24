@@ -597,6 +597,109 @@ TEST(PdfDocument, NamedDestinationSpacesStayApart)
 	EXPECT_EQ(outline[1].page_index, 1);
 }
 
+// A name-tree key is a string compared byte for byte, so <41> and <FEFF0041>, which both read as "A", name two
+// destinations (ISO 32000-1 sections 7.9.6 and 12.3.2.3; D06 T05 section 24, audit round 1).
+TEST(PdfDocument, NameTreeKeysCompareAsBytes)
+{
+	const auto bytes = build_synthetic_pdf_from_objects(
+		"1.7",
+		{
+			{1,
+			 "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R "
+			 "/Names << /Dests << /Names [<41> [3 0 R /Fit] <FEFF0041> [4 0 R /Fit]] >> >> >>"},
+			{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 100 100] /Kids [3 0 R 4 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R >>"},
+			{4, "<< /Type /Page /Parent 2 0 R >>"},
+			{5, "<< /Type /Outlines /First 6 0 R /Last 7 0 R /Count 2 >>"},
+			{6, "<< /Title (Bytes) /Parent 5 0 R /Next 7 0 R /Dest <41> >>"},
+			{7, "<< /Title (UTF-16) /Parent 5 0 R /Prev 6 0 R /Dest <FEFF0041> >>"},
+		});
+	auto doc_res = Document::open_memory(bytes);
+	ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
+	const auto& outline = (*doc_res)->outline();
+	ASSERT_EQ(outline.size(), 2u);
+	EXPECT_EQ(outline[0].page_index, 0);
+	EXPECT_EQ(outline[1].page_index, 1);
+}
+
+// Any value may be indirect unless its entry says otherwise (ISO 32000-1 section 7.3.10): an annotation's /Subtype, an
+// action's /S and a font's /Subtype and /BaseFont are read through their references, so the link is found, the GoTo
+// is followed, a Launch reached by reference is still refused, and the font is named (D06 T05 section 24, round 1).
+TEST(PdfDocument, IndirectNamesInAnnotationsActionsAndFonts)
+{
+	const auto bytes = build_synthetic_pdf_from_objects(
+		"1.7",
+		{
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 100 100] /Kids [3 0 R 10 0 R] >>"},
+			{3,
+			 "<< /Type /Page /Parent 2 0 R /Annots [4 0 R 6 0 R 8 0 R] "
+			 "/Resources << /Font << /F1 11 0 R >> >> >>"},
+			{4, "<< /Type /Annot /Subtype 5 0 R /Rect [0 0 10 10] /Dest [10 0 R /Fit] >>"},
+			{5, "/Link"},
+			{6, "<< /Type /Annot /Subtype /Link /Rect [20 0 30 10] /A << /S 7 0 R /D [10 0 R /Fit] >> >>"},
+			{7, "/GoTo"},
+			{8, "<< /Type /Annot /Subtype /Link /Rect [40 0 50 10] /A << /S 9 0 R /F (calc.exe) >> >>"},
+			{9, "/Launch"},
+			{10, "<< /Type /Page /Parent 2 0 R >>"},
+			{11, "<< /Type /Font /Subtype 12 0 R /BaseFont 13 0 R >>"},
+			{12, "/Type1"},
+			{13, "/Helvetica"},
+		});
+	auto doc_res = Document::open_memory(bytes);
+	ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
+	auto links = (*doc_res)->page_links(0);
+	ASSERT_TRUE(links.has_value()) << links.error().message.view();
+	ASSERT_EQ(links->size(), 3u);
+	EXPECT_EQ((*links)[0].kind, LinkKind::Internal);
+	EXPECT_EQ((*links)[0].page_index, 1);
+	EXPECT_EQ((*links)[1].kind, LinkKind::Internal);
+	EXPECT_EQ((*links)[1].page_index, 1);
+	EXPECT_EQ((*links)[2].kind, LinkKind::RefusedAction);
+	EXPECT_TRUE((*links)[2].is_inert);
+
+	const auto& fonts = (*doc_res)->fonts();
+	ASSERT_EQ(fonts.size(), 1u);
+	EXPECT_EQ(fonts[0].name, "Helvetica");
+	EXPECT_EQ(fonts[0].subtype, "Type1");
+}
+
+// `pages` pages, each with a direct /Pad array of `elements` zeros: every element is one retained PdfValue, so a small
+// file builds large page dictionaries.
+std::vector<uint8_t> pages_with_padding_arrays(uint32_t pages, size_t elements)
+{
+	std::string pad;
+	pad.reserve(elements * 2u);
+	for (size_t i = 0u; i < elements; ++i) {
+		pad += "0 ";
+	}
+	std::vector<std::pair<uint32_t, std::string>> objects = {{1, "<< /Type /Catalog /Pages 2 0 R >>"}};
+	std::string kids;
+	for (uint32_t p = 0u; p < pages; ++p) {
+		kids += std::to_string(10u + p) + " 0 R ";
+		objects.emplace_back(10u + p, "<< /Type /Page /Parent 2 0 R /Pad [" + pad + "] >>");
+	}
+	objects.emplace_back(
+		2u, "<< /Type /Pages /Count " + std::to_string(pages) + " /MediaBox [0 0 100 100] /Kids [" + kids + "] >>");
+	return build_synthetic_pdf_from_objects("1.7", objects);
+}
+
+// Every page keeps its own dictionary, so the copies share one budget (kMaxDecodedStreamBytes in all): 400 pages with
+// a 20,000-element /Pad array each (a 16 MiB file) are refused with ResourceLimit before they are retained, while the
+// same file with 100-element arrays opens. Peak memory is about the budget (D06 T05 section 24, round 1).
+TEST(PdfDocument, RetainedPageDictionariesShareOneBudget)
+{
+	static_assert(400u * 20'000u * sizeof(PdfValue) > kMaxDecodedStreamBytes);
+	{
+		auto small = Document::open_memory(pages_with_padding_arrays(400u, 100u));
+		ASSERT_TRUE(small.has_value()) << small.error().message.view();
+		EXPECT_EQ((*small)->page_count(), 400u);
+	}
+	auto large = Document::open_memory(pages_with_padding_arrays(400u, 20'000u));
+	ASSERT_FALSE(large.has_value());
+	EXPECT_EQ(large.error().code, ErrorCode::ResourceLimit);
+}
+
 TEST(PdfDocument, PageTreeAndRotatedPages)
 {
 	// 1. `render/rotated-pages.pdf` has 4 pages with rotations 0, 90, 180, 270

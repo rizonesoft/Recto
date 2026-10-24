@@ -417,6 +417,11 @@ private:
 		IndirectRef ref,
 		std::vector<IndirectRef>& visited_refs) const;
 
+	// The name a dictionary entry holds, directly or through indirect references (ISO 32000-1 section 7.3.10: a value
+	// may be indirect unless its entry says otherwise), or none when the entry is absent, does not resolve or is not
+	// a name.
+	[[nodiscard]] std::optional<std::string> entry_name(const PdfDict& dict, std::string_view key) const;
+
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_page_contents_from_dict(
 		const PdfDict& page_dict) const;
 

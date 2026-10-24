@@ -1697,6 +1697,28 @@ PdfResult<PdfValue> Document::resolve_value(const PdfValue& value) const noexcep
 	}
 }
 
+std::optional<std::string> Document::entry_name(const PdfDict& dict, std::string_view key) const
+{
+	const PdfValue* value = dict.get(key);
+	if (value == nullptr) {
+		return std::nullopt;
+	}
+	if (const auto name = value->as_name()) {
+		return std::string(*name);
+	}
+	if (!value->as_ref().has_value()) {
+		return std::nullopt;
+	}
+	auto resolved = resolve_value(*value);
+	if (!resolved.has_value()) {
+		return std::nullopt;
+	}
+	if (const auto name = resolved->as_name()) {
+		return std::string(*name);
+	}
+	return std::nullopt;
+}
+
 PdfResult<std::vector<uint8_t>> Document::decode_stream(
 	const PdfStream& stream,
 	size_t max_decoded_bytes) const noexcept
@@ -1977,7 +1999,7 @@ PdfResult<void> Document::load_document_structure()
 			root_ref_opt->obj_num,
 			root_ref_opt->gen_num);
 	}
-	if (const auto root_type = root_dict->get_name("Type");
+	if (const auto root_type = entry_name(*root_dict, "Type");
 		root_type.has_value() && *root_type != "Catalog") {
 		return make_doc_error(
 			ErrorCode::DamagedFormat,
@@ -2287,6 +2309,10 @@ PdfResult<void> Document::load_document_structure()
 	std::unordered_set<int> visited_page_nodes;
 	size_t visited_page_tree_nodes = 0u;
 	constexpr size_t kMaxPageTreeNodes = kMaxDocumentPages * 2u;
+	// The retained page dictionaries together hold no more than one decoded stream may (kMaxDecodedStreamBytes): an
+	// ordinary page dictionary estimates at a few hundred bytes to a few KiB, so a document at the page cap fits.
+	constexpr size_t kMaxTotalPageDictBytes = kMaxDecodedStreamBytes;
+	size_t total_retained_page_dict_bytes = 0u;
 
 	struct ActivePagesFrame {
 		PdfValue kids_val{};
@@ -2372,7 +2398,7 @@ PdfResult<void> Document::load_document_structure()
 		RECTO_PDF_RETURN_IF_ERROR(extract_rotation_attr(*node_dict, current_attrs.rotation));
 		RECTO_PDF_RETURN_IF_ERROR(merge_resources_attr(*node_dict, current_attrs.resources));
 
-		const auto node_type = node_dict->get_name("Type").value_or("");
+		const std::string node_type = entry_name(*node_dict, "Type").value_or("");
 		const bool has_kids = node_dict->contains("Kids");
 
 		if (node_type == "Pages" || (node_type.empty() && has_kids)) {
@@ -2456,6 +2482,20 @@ PdfResult<void> Document::load_document_structure()
 			page_desc.rotation_deg = current_attrs.rotation;
 			page_desc.width_pt = crop_box.width();
 			page_desc.height_pt = crop_box.height();
+
+			// Each page keeps its own dictionary, so the copies are charged to one budget before they are made: a page
+			// count under the cap can otherwise retain gigabytes of direct page values inflated from object streams.
+			const size_t page_dict_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, resolved_node, 0u);
+			if (page_dict_bytes > kMaxTotalPageDictBytes - total_retained_page_dict_bytes) {
+				return make_doc_error(
+					ErrorCode::ResourceLimit,
+					DiagnosticId::ResourceLimit,
+					"/Page dictionaries exceed the document's retained page budget",
+					std::nullopt,
+					current_ref.obj_num,
+					current_ref.gen_num);
+			}
+			total_retained_page_dict_bytes += page_dict_bytes;
 
 			ResolvedPageRecord rec{};
 			rec.description = page_desc;
@@ -3006,12 +3046,11 @@ PdfResult<void> Document::load_document_structure()
 										if (!k_res.has_value()) {
 											continue;
 										}
+										// A name-tree key is a string compared byte for byte (ISO 32000-1 section 7.9.6), so it
+										// is kept as its bytes: <41> and <FEFF0041> are two keys, though both read as "A".
 										std::string dest_name;
 										if (const PdfString* ks = k_res->as_string()) {
-											auto utf8_res = pdf_string_to_utf8(ks->span());
-											dest_name = utf8_res.has_value()
-												? std::move(*utf8_res)
-												: std::string(ks->as_byte_view());
+											dest_name = std::string(ks->as_byte_view());
 										} else if (const auto kn = k_res->as_name()) {
 											dest_name = std::string(*kn);
 										}
@@ -3053,8 +3092,7 @@ PdfResult<void> Document::load_document_structure()
 			if (const auto nm = dval.as_name()) {
 				name_key = "/" + std::string(*nm);
 			} else if (const PdfString* s = dval.as_string()) {
-				auto utf8_res = pdf_string_to_utf8(s->span());
-				name_key = "(" + (utf8_res.has_value() ? std::move(*utf8_res) : std::string(s->as_byte_view()));
+				name_key = "(" + std::string(s->as_byte_view());
 			}
 			if (name_key.size() > 1u) {
 				const auto it = named_dests_.find(name_key);
@@ -3245,7 +3283,7 @@ PdfResult<void> Document::load_document_structure()
 							auto act_res = resolve_value(*act_v);
 							if (act_res.has_value()) {
 								if (const PdfDict* act_dict = act_res->as_dict()) {
-									const auto s_name = act_dict->get_name("S").value_or("");
+									const std::string s_name = entry_name(*act_dict, "S").value_or("");
 									if (s_name == "GoTo") {
 										if (const PdfValue* d_v = act_dict->get("D")) {
 											RECTO_PDF_TRY(const ParsedDest pd, resolve_dest_value(*d_v));
@@ -3353,7 +3391,7 @@ PdfResult<void> Document::load_document_structure()
 		size_t inspected_nodes = 0u;
 
 		auto is_single_action_unsafe = [&](const PdfDict& act_dict) -> bool {
-			const auto s_name = act_dict.get_name("S").value_or("");
+			const std::string s_name = entry_name(act_dict, "S").value_or("");
 			if (s_name.empty()) {
 				return true;
 			}
@@ -3545,7 +3583,7 @@ PdfResult<void> Document::load_document_structure()
 										 std::optional<uint64_t> act_ref_key) -> PdfResult<CachedActionSummary> {
 		CachedActionSummary out{};
 		std::string s_type;
-		if (const auto s_name = act_dict.get_name("S")) {
+		if (const auto s_name = entry_name(act_dict, "S")) {
 			if (s_name->size() > kMaxLinkActionTypeBytes) {
 				return make_doc_error(
 					ErrorCode::DamagedFormat,
@@ -3656,7 +3694,7 @@ PdfResult<void> Document::load_document_structure()
 				}
 			}
 		} else if (s_type == "Named") {
-			if (const auto n_name = act_dict.get_name("N")) {
+			if (const auto n_name = entry_name(act_dict, "N")) {
 				if (n_name->size() > kMaxLinkUriBytes) {
 					return make_doc_error(
 						ErrorCode::DamagedFormat,
@@ -3749,7 +3787,7 @@ PdfResult<void> Document::load_document_structure()
 			if (annot_dict == nullptr) {
 				continue;
 			}
-			const auto subtype = annot_dict->get_name("Subtype").value_or("");
+			const std::string subtype = entry_name(*annot_dict, "Subtype").value_or("");
 			if (subtype != "Link") {
 				continue;
 			}
@@ -3791,8 +3829,8 @@ PdfResult<void> Document::load_document_structure()
 									*sub_dict,
 									sub_ref ? std::optional<uint64_t>(make_ref_cache_key(*sub_ref)) : std::nullopt)) {
 								aa_has_refused = true;
-								const std::string_view sub_s =
-									sub_dict->get_name("S").value_or("AdditionalAction");
+								const std::string sub_s =
+									entry_name(*sub_dict, "S").value_or("AdditionalAction");
 								link.action_type = std::string(
 									sub_s.substr(0u, std::min(sub_s.size(), kMaxLinkActionTypeBytes)));
 								break;
@@ -3941,7 +3979,7 @@ PdfResult<void> Document::load_document_structure()
 
 	auto inspect_font_dict = [&](const PdfDict& font_dict, std::string_view fallback_key) -> PdfResult<void> {
 		FontSummary summary{};
-		const std::string_view subtype_sv = font_dict.get_name("Subtype").value_or("");
+		const std::string subtype_sv = entry_name(font_dict, "Subtype").value_or("");
 		if (subtype_sv.size() > kMaxFontStringBytes) {
 			return make_doc_error(
 				ErrorCode::DamagedFormat,
@@ -3950,7 +3988,7 @@ PdfResult<void> Document::load_document_structure()
 		}
 		summary.subtype = std::string(subtype_sv);
 
-		if (const auto bf_name = font_dict.get_name("BaseFont")) {
+		if (const auto bf_name = entry_name(font_dict, "BaseFont")) {
 			if (bf_name->size() > kMaxFontStringBytes) {
 				return make_doc_error(
 					ErrorCode::DamagedFormat,
@@ -3969,7 +4007,7 @@ PdfResult<void> Document::load_document_structure()
 			summary.name = utf8_res.has_value()
 				? std::move(*utf8_res)
 				: std::string(bf_str->as_byte_view());
-		} else if (const auto nm = font_dict.get_name("Name")) {
+		} else if (const auto nm = entry_name(font_dict, "Name")) {
 			if (nm->size() > kMaxFontStringBytes) {
 				return make_doc_error(
 					ErrorCode::DamagedFormat,
@@ -4002,7 +4040,7 @@ PdfResult<void> Document::load_document_structure()
 					summary.encoding = std::string(*enc_name);
 				} else if (const PdfDict* enc_dict = enc_res->as_dict()) {
 					summary.has_differences = enc_dict->contains("Differences");
-					if (const auto base_enc = enc_dict->get_name("BaseEncoding")) {
+					if (const auto base_enc = entry_name(*enc_dict, "BaseEncoding")) {
 						if (base_enc->size() > kMaxFontStringBytes) {
 							return make_doc_error(
 								ErrorCode::DamagedFormat,
@@ -4041,7 +4079,7 @@ PdfResult<void> Document::load_document_structure()
 								summary.is_embedded = true;
 							}
 							if (summary.name.empty()) {
-								if (const auto cid_bf = cid_dict->get_name("BaseFont")) {
+								if (const auto cid_bf = entry_name(*cid_dict, "BaseFont")) {
 									if (cid_bf->size() > kMaxFontStringBytes) {
 										return make_doc_error(
 											ErrorCode::DamagedFormat,
@@ -4194,7 +4232,7 @@ PdfResult<void> Document::load_document_structure()
 							resolved_x = std::move(*x_res);
 						}
 						if (const PdfStream* x_stm = resolved_x.as_stream()) {
-							if (x_stm->dict.get_name("Subtype").value_or("") == "Form") {
+							if (entry_name(x_stm->dict, "Subtype").value_or("") == "Form") {
 								if (const PdfValue* form_res_v = x_stm->dict.get("Resources")) {
 									auto form_res = resolve_value(*form_res_v);
 									if (form_res.has_value()) {
