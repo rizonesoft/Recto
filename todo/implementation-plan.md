@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 93 | Checklist items: 558
+Sections: 93 | Checklist items: 559
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -91,7 +91,7 @@ Sections: 93 | Checklist items: 558
 | [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
 | [ ]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 5     |
 | [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 4     |
-| [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 5     |
+| [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
 | [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 5     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
@@ -909,4 +909,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 70/838 verified sections, 35 ready to run now.
 
-Checklist: 437/6145 items completed (includes Commit items).
+Checklist: 437/6146 items completed (includes Commit items).
