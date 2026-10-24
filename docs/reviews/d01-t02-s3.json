@@ -1,0 +1,120 @@
+{
+  "ref": "D01 T02 \u00a73",
+  "title": "Content-stream interpreter: graphics state, paths, painting, clipping and device colour",
+  "implementation_sha": "4253e3bae1fab95c230b7b4b4b5f630d0ab8c045",
+  "date": "2026-10-24",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s3.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfInterpreter.OperatorDispatch:PdfInterpreter.EntryContract:PdfInterpreter.Graphics*:PdfInterpreter.ExtGState:PdfInterpreter.Path*:PdfInterpreter.Clip*:PdfInterpreter.PaintingOperators:PdfInterpreter.DeviceColors -> 0 Warning(s), [  PASSED  ] 8 tests.",
+    ".\\build.cmd -> exit 0, 0 Warning(s), [  PASSED  ] 243 tests.",
+    "python -m unittest discover -s tests/scripts -> Ran 444 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s3.md",
+    "verdict": "filed",
+    "candidate": "4f67eec1384458c69095d412c507d51f32b50e60",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a74",
+      "D01 T02 \u00a76",
+      "D01 T02 \u00a715",
+      "D01 T02 \u00a716",
+      "D01 T02 \u00a732",
+      "D01 T02 \u00a733",
+      "D01 T02 \u00a719",
+      "D06 T03 \u00a72",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 5,
+  "round_cap": 33,
+  "cap_outcome": "Round 5 found one P3 (a colour-space reset test that reset nothing), fixed in 4253e3b; the loop ends on an all-P3 round from round 4.",
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s3.md",
+    "candidate": "29318788648c2cec970d04192cb83e9379c218a1",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 3,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

@@ -60,7 +60,7 @@ track: M1
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
-| 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [ ] |
+| 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
 | 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
@@ -199,6 +199,9 @@ Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/p
 - [x] Commit: `pdf: interpret content-stream graphics state, paths, painting, clipping and device colour`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.OperatorDispatch:PdfInterpreter.EntryContract:PdfInterpreter.Graphics*:PdfInterpreter.ExtGState:PdfInterpreter.Path*:PdfInterpreter.Clip*:PdfInterpreter.PaintingOperators:PdfInterpreter.DeviceColors` passes under ASan with 0 warnings. **Corrected 2026-10-24:** the filter now names `EntryContract` and `PaintingOperators`, which the plan review added and the earlier filter did not match.
+
+> **Verified:** 2026-10-24 | §3 | 4253e3bae1fab95c230b7b4b4b5f630d0ab8c045
+> **Review:** `docs/reviews/d01-t02-s3.json`
 
 ## 4. Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects
 
