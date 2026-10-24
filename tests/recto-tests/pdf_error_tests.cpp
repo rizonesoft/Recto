@@ -505,7 +505,7 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 // 23).
 TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 {
-	constexpr std::array<std::string_view, 17> kNamesByValue = {
+	constexpr std::array<std::string_view, 20> kNamesByValue = {
 		"None",
 		"CommandCount",
 		"ChangeSetSize",
@@ -523,6 +523,9 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 		"EmptyResult",
 		"PackageInvalid",
 		"RelationshipMissing",
+		"DamagedRowAllowance",
+		"DamagedRowNoSync",
+		"DamagedRowRecoveryOff",
 	};
 	static_assert(noexcept(refusal_reason_name(RefusalReason::None)));
 	static_assert(refusal_reason_name(RefusalReason::OutputUnwritable) == "OutputUnwritable");
@@ -840,6 +843,75 @@ TEST(PdfError, ConversionAndRollbackCodesRecordOnlyWhenLogged)
 	clear_captured_etw_events_for_testing();
 }
 
+// A recovery outcome prints only the fields it has: a present zero prints as zero, an absent field is left out, and an
+// entry with no recovery prints no recovery suffix at all. The three outcome ids have fixed names and messages, and
+// their context reaches the ring and the ETW event (D01 T02 section 26).
+TEST(PdfError, RecoveryContextFormatsOnlyPresentFields)
+{
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::RecoveredDamagedRows), "RecoveredDamagedRows");
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::RecoveredJpxCodeBlocks), "RecoveredJpxCodeBlocks");
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::RecoveredJpxEmptyComponents), "RecoveredJpxEmptyComponents");
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::RecoveredDamagedRows).find("row above"), std::string_view::npos);
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::RecoveredJpxCodeBlocks).find("bitplane"), std::string_view::npos);
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::RecoveredJpxEmptyComponents).find("mid value"), std::string_view::npos);
+
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::RecoveredJpxCodeBlocks, std::nullopt, std::nullopt, 0,
+		RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt, RecoveryContext{1u, 0u, 0u, 0u});
+	record_diagnostic(ErrorCode::Ok, DiagnosticId::RecoveredJpxEmptyComponents, std::nullopt, std::nullopt, 0,
+		RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt,
+		RecoveryContext{2u, std::nullopt, 0u, 1u});
+	record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::RecoveredDamagedRows, std::nullopt, std::nullopt, 0,
+		RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt,
+		RecoveryContext{3u, 7u, std::nullopt, std::nullopt});
+	record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, std::nullopt, std::nullopt, 0);
+	set_etw_capture_for_testing(false);
+
+	const auto tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 4u);
+	EXPECT_EQ(tail[0].recovered_count, 1u);
+	EXPECT_EQ(tail[0].first_recovered, std::optional<uint64_t>(0u));
+	EXPECT_EQ(tail[0].tile_index, std::optional<uint32_t>(0u));
+	EXPECT_EQ(tail[0].component_index, std::optional<uint32_t>(0u));
+	EXPECT_NE(tail[0].format().find(" [recovered=1 first=0 tile=0 component=0]"), std::string::npos) << tail[0].format();
+	EXPECT_EQ(tail[1].code, ErrorCode::Ok);
+	EXPECT_FALSE(tail[1].first_recovered.has_value());
+	EXPECT_NE(tail[1].format().find(" [recovered=2 tile=0 component=1]"), std::string::npos) << tail[1].format();
+	EXPECT_EQ(tail[1].format().find("first="), std::string::npos) << tail[1].format();
+	EXPECT_NE(tail[2].format().find(" [recovered=3 first=7]"), std::string::npos) << tail[2].format();
+	EXPECT_EQ(tail[2].format().find("tile="), std::string::npos) << tail[2].format();
+	EXPECT_EQ(tail[2].format().find("component="), std::string::npos) << tail[2].format();
+	EXPECT_EQ(tail[3].recovered_count, 0u);
+	EXPECT_EQ(tail[3].format().find(" [recovered="), std::string::npos) << tail[3].format();
+
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(captured.size(), 4u);
+	EXPECT_EQ(captured[0].diagnostic_id_name, "RecoveredJpxCodeBlocks");
+	EXPECT_EQ(captured[0].recovered_count, 1u);
+	EXPECT_TRUE(captured[0].has_first_recovered);
+	EXPECT_EQ(captured[0].first_recovered, 0u);
+	EXPECT_TRUE(captured[0].has_tile);
+	EXPECT_EQ(captured[0].tile_index, 0u);
+	EXPECT_TRUE(captured[0].has_component);
+	EXPECT_EQ(captured[0].component_index, 0u);
+	EXPECT_EQ(captured[1].error_code, static_cast<uint32_t>(ErrorCode::Ok));
+	EXPECT_EQ(captured[1].recovered_count, 2u);
+	EXPECT_FALSE(captured[1].has_first_recovered);
+	EXPECT_EQ(captured[1].component_index, 1u);
+	EXPECT_EQ(captured[2].first_recovered, 7u);
+	EXPECT_FALSE(captured[2].has_tile);
+	EXPECT_FALSE(captured[2].has_component);
+	EXPECT_EQ(captured[3].recovered_count, 0u);
+	EXPECT_FALSE(captured[3].has_first_recovered);
+	EXPECT_FALSE(captured[3].has_tile);
+	EXPECT_FALSE(captured[3].has_component);
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+}
+
 // ResourceLimit is a bound reached on document content and records itself like the other limits; InvalidArgument is
 // a caller's error and records only when logged. Both read back from the ring with their names.
 TEST(PdfError, DiagnosticRingRecordsNewCodes)
@@ -1118,7 +1190,14 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 		"HasPriorPlatformStatus",
 		"PriorPlatformStatus",
 		"HasPageIndex",
-		"PageIndex"};
+		"PageIndex",
+		"RecoveredCount",
+		"HasFirstRecovered",
+		"FirstRecovered",
+		"HasTile",
+		"Tile",
+		"HasComponent",
+		"Component"};
 	EXPECT_EQ(captured[1].field_names, expected_diag_fields);
 	// The event as D01 T02 section 23 left it keeps every field's position; section 25's fields come after it.
 	const std::vector<std::string> original_diag_fields = {"Sequence", "ErrorCode", "ErrorCodeName", "DiagnosticId",

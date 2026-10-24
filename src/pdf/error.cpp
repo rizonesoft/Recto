@@ -111,6 +111,7 @@ struct DiagnosticSlot {
 	DecoderContext decoder{};
 	bool has_page_index{false};
 	uint32_t page_index{0};
+	RecoveryContext recovery{};
 };
 
 SRWLOCK g_ring_lock = SRWLOCK_INIT;
@@ -125,7 +126,7 @@ std::atomic<uint64_t> g_etw_diagnostic_events{0};
 std::atomic<uint64_t> g_etw_span_events{0};
 
 constexpr size_t kMaxCapturedEtwEvents = 128;
-constexpr size_t kMaxCapturedFields = 32;
+constexpr size_t kMaxCapturedFields = 48;
 constexpr size_t kMaxCapturedNameLen = 31;
 
 struct CapturedEtwSlot {
@@ -160,6 +161,13 @@ struct CapturedEtwSlot {
 	uint32_t prior_status{0};
 	bool has_diagnostic_page{false};
 	uint32_t diagnostic_page_index{0};
+	uint64_t recovered_count{0};
+	bool has_first_recovered{false};
+	uint64_t first_recovered{0};
+	bool has_tile{false};
+	uint32_t tile_index{0};
+	bool has_component{false};
+	uint32_t component_index{0};
 	std::array<char, kMaxCapturedNameLen + 1> phase{};
 	uint64_t duration_us{0};
 	uint64_t document_id{0};
@@ -297,6 +305,35 @@ void append_decoder_suffix(std::string& out, DecoderStep step, const std::option
 		const int n = std::snprintf(hex, sizeof(hex), "0x%08X", *status);
 		out += " hresult=";
 		out.append(hex, n > 0 ? static_cast<size_t>(n) : 0u);
+	}
+	out += ']';
+}
+
+// A recovery outcome's count and, when known, its zero-based first unit, tile and component (D01 T02 section 26):
+// " [recovered=3 first=7 tile=0 component=1]". Nothing for an entry that is no recovery.
+void append_recovery_suffix(
+	std::string& out,
+	uint64_t count,
+	const std::optional<uint64_t>& first,
+	const std::optional<uint32_t>& tile,
+	const std::optional<uint32_t>& component)
+{
+	if (count == 0u && !first.has_value() && !tile.has_value() && !component.has_value()) {
+		return;
+	}
+	out += " [recovered=";
+	out += std::to_string(count);
+	if (first.has_value()) {
+		out += " first=";
+		out += std::to_string(*first);
+	}
+	if (tile.has_value()) {
+		out += " tile=";
+		out += std::to_string(*tile);
+	}
+	if (component.has_value()) {
+		out += " component=";
+		out += std::to_string(*component);
 	}
 	out += ']';
 }
@@ -541,6 +578,15 @@ void process_tlg_write_transfer(
 			slot.has_diagnostic_page = read_descriptor_scalar<uint8_t>(user_data[27]) != 0;
 			slot.diagnostic_page_index = read_descriptor_scalar<uint32_t>(user_data[28]);
 		}
+		if (user_data_count >= 36) {
+			slot.recovered_count = read_descriptor_scalar<uint64_t>(user_data[29]);
+			slot.has_first_recovered = read_descriptor_scalar<uint8_t>(user_data[30]) != 0;
+			slot.first_recovered = read_descriptor_scalar<uint64_t>(user_data[31]);
+			slot.has_tile = read_descriptor_scalar<uint8_t>(user_data[32]) != 0;
+			slot.tile_index = read_descriptor_scalar<uint32_t>(user_data[33]);
+			slot.has_component = read_descriptor_scalar<uint8_t>(user_data[34]) != 0;
+			slot.component_index = read_descriptor_scalar<uint32_t>(user_data[35]);
+		}
 	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
 		read_descriptor_cstr_into(slot.phase, user_data[2]);
 		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
@@ -645,6 +691,7 @@ std::string DiagnosticEntry::format() const noexcept
 		append_refusal_suffix(out, refusal_reason, observed, bound, page_index);
 		append_decoder_suffix(out, decoder_step, platform_status, "");
 		append_decoder_suffix(out, prior_step, prior_status, "after ");
+		append_recovery_suffix(out, recovered_count, first_recovered, tile_index, component_index);
 		return out;
 	} catch (...) {
 		return {};
@@ -899,6 +946,13 @@ std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 			ev.prior_status = s.prior_status;
 			ev.has_diagnostic_page = s.has_diagnostic_page;
 			ev.diagnostic_page_index = s.diagnostic_page_index;
+			ev.recovered_count = s.recovered_count;
+			ev.has_first_recovered = s.has_first_recovered;
+			ev.first_recovered = s.first_recovered;
+			ev.has_tile = s.has_tile;
+			ev.tile_index = s.tile_index;
+			ev.has_component = s.has_component;
+			ev.component_index = s.component_index;
 			ev.phase = s.phase.data();
 			ev.duration_us = s.duration_us;
 			ev.document_id = s.document_id;
@@ -922,7 +976,8 @@ void record_diagnostic(
 	std::optional<uint64_t> observed,
 	std::optional<uint64_t> bound,
 	const DecoderContext& decoder,
-	std::optional<uint32_t> page_index) noexcept
+	std::optional<uint32_t> page_index,
+	const RecoveryContext& recovery) noexcept
 {
 	ensure_etw_provider_registered();
 
@@ -952,6 +1007,7 @@ void record_diagnostic(
 		slot.decoder = decoder;
 		slot.has_page_index = page_index.has_value();
 		slot.page_index = page_index.value_or(0u);
+		slot.recovery = recovery;
 
 		g_ring_write_index = (g_ring_write_index + 1) % kDiagnosticRingCapacity;
 		if (g_ring_count < kDiagnosticRingCapacity) {
@@ -983,6 +1039,13 @@ void record_diagnostic(
 	const uint32_t prior_val = decoder.prior_status.value_or(0u);
 	const uint8_t has_page = page_index.has_value() ? 1u : 0u;
 	const uint32_t page_val = page_index.value_or(0u);
+	const uint64_t recovered_val = recovery.count;
+	const uint8_t has_first = recovery.first_unit.has_value() ? 1u : 0u;
+	const uint64_t first_val = recovery.first_unit.value_or(0u);
+	const uint8_t has_tile = recovery.tile.has_value() ? 1u : 0u;
+	const uint32_t tile_val = recovery.tile.value_or(0u);
+	const uint8_t has_component = recovery.component.has_value() ? 1u : 0u;
+	const uint32_t component_val = recovery.component.value_or(0u);
 
 	TraceLoggingWrite(
 		g_recto_etw_provider,
@@ -1016,7 +1079,15 @@ void record_diagnostic(
 		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"),
 		// Appended after section 25's fields (D01 T02 section 24): zero-based, as the span events keep pages.
 		TraceLoggingUInt8(has_page, "HasPageIndex"),
-		TraceLoggingUInt32(page_val, "PageIndex"));
+		TraceLoggingUInt32(page_val, "PageIndex"),
+		// Appended after section 24's page (D01 T02 section 26): a recovery outcome, numbers only.
+		TraceLoggingUInt64(recovered_val, "RecoveredCount"),
+		TraceLoggingUInt8(has_first, "HasFirstRecovered"),
+		TraceLoggingUInt64(first_val, "FirstRecovered"),
+		TraceLoggingUInt8(has_tile, "HasTile"),
+		TraceLoggingUInt32(tile_val, "Tile"),
+		TraceLoggingUInt8(has_component, "HasComponent"),
+		TraceLoggingUInt32(component_val, "Component"));
 }
 
 void record_diagnostic(
@@ -1107,6 +1178,10 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			if (slot.has_page_index) {
 				entry.page_index = slot.page_index;
 			}
+			entry.recovered_count = slot.recovery.count;
+			entry.first_recovered = slot.recovery.first_unit;
+			entry.tile_index = slot.recovery.tile;
+			entry.component_index = slot.recovery.component;
 			result.push_back(std::move(entry));
 		}
 		return result;

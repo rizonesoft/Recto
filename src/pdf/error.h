@@ -135,6 +135,9 @@ enum class DiagnosticId : uint16_t {
 	InvalidArgument,
 	ConversionFailed,
 	RollbackIncomplete,
+	RecoveredDamagedRows,
+	RecoveredJpxCodeBlocks,
+	RecoveredJpxEmptyComponents,
 };
 
 [[nodiscard]] constexpr std::string_view diagnostic_id_name(DiagnosticId id) noexcept
@@ -210,6 +213,12 @@ enum class DiagnosticId : uint16_t {
 		return "ConversionFailed";
 	case DiagnosticId::RollbackIncomplete:
 		return "RollbackIncomplete";
+	case DiagnosticId::RecoveredDamagedRows:
+		return "RecoveredDamagedRows";
+	case DiagnosticId::RecoveredJpxCodeBlocks:
+		return "RecoveredJpxCodeBlocks";
+	case DiagnosticId::RecoveredJpxEmptyComponents:
+		return "RecoveredJpxEmptyComponents";
 	}
 	return "GenericStatus";
 }
@@ -288,6 +297,15 @@ enum class DiagnosticId : uint16_t {
 	case DiagnosticId::RollbackIncomplete:
 		return "The operation failed and some original files could not be put back; their contents are kept in backup "
 			   "files beside them";
+	case DiagnosticId::RecoveredDamagedRows:
+		return "A fax image had damaged rows, each replaced by the row above (or white at the top) so the page still opens; "
+			   "count is the rows replaced and first the zero-based first one";
+	case DiagnosticId::RecoveredJpxCodeBlocks:
+		return "A JPEG 2000 image had damaged code-blocks whose last bitplane was dropped, so those areas are slightly less "
+			   "precise; count is the code-blocks, first the zero-based ordinal of the first in its tile and component";
+	case DiagnosticId::RecoveredJpxEmptyComponents:
+		return "A JPEG 2000 tile had no sample of a subsampled component, which the standard allows, so it was filled with "
+			   "the mid value; count is such tile-components, with the tile and component of the first";
 	}
 	return "Engine diagnostic event";
 }
@@ -671,7 +689,8 @@ private:
 };
 
 // Which bound, argument or conversion check a ResourceLimit, InvalidArgument or ConversionFailed refusal is about (D01
-// T02 sections 23 and 24). A closed catalogue of numbers and names, so support can see what stopped the work without the ring or ETW ever holding a path, a
+// T02 sections 23 and 24), or why an image decoder refused damaged data it could not recover (DamagedFormat, D01 T02
+// section 26). A closed catalogue of numbers and names, so support can see what stopped the work without the ring or ETW ever holding a path, a
 // password or document text. Values are only ever appended.
 enum class RefusalReason : uint16_t {
 	None = 0,
@@ -693,6 +712,10 @@ enum class RefusalReason : uint16_t {
 	EmptyResult,         // a page or the whole output came out empty
 	PackageInvalid,      // the written package or file breaks its format's structure
 	RelationshipMissing, // an undeclared relationship id or a missing relationship target
+	// Appended (D01 T02 section 26): why a CCITT fax decode refused a damaged row instead of substituting it.
+	DamagedRowAllowance,   // more consecutive damaged rows than /DamagedRowsBeforeError allows
+	DamagedRowNoSync,      // no end-of-line code after the damaged row to resume at
+	DamagedRowRecoveryOff, // recovery needs /EndOfLine true and K not negative
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -732,6 +755,12 @@ enum class RefusalReason : uint16_t {
 		return "PackageInvalid";
 	case RefusalReason::RelationshipMissing:
 		return "RelationshipMissing";
+	case RefusalReason::DamagedRowAllowance:
+		return "DamagedRowAllowance";
+	case RefusalReason::DamagedRowNoSync:
+		return "DamagedRowNoSync";
+	case RefusalReason::DamagedRowRecoveryOff:
+		return "DamagedRowRecoveryOff";
 	}
 	return "UnknownReason";
 }
@@ -786,6 +815,15 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::RelationshipMissing:
 		return "The converted file refers to a part it does not contain and was not kept; convert again, and report "
 			   "it if it repeats";
+	case RefusalReason::DamagedRowAllowance:
+		return "A fax image has more damaged rows in a row than the file allows to be replaced (observed is the zero-based "
+			   "row, bound the /DamagedRowsBeforeError allowance); scan the page again or ask for the original";
+	case RefusalReason::DamagedRowNoSync:
+		return "A fax image has a damaged row with no end-of-line code after it to resume at (observed is the zero-based "
+			   "row, bound the /DamagedRowsBeforeError allowance); scan the page again or ask for the original";
+	case RefusalReason::DamagedRowRecoveryOff:
+		return "A fax image has a damaged row and its encoding gives no end-of-line codes to resume at (observed is the "
+			   "zero-based row, bound the /DamagedRowsBeforeError allowance); scan the page again or ask for the original";
 	}
 	return "";
 }
@@ -1299,6 +1337,12 @@ struct DiagnosticEntry {
 	DecoderStep prior_step{DecoderStep::None};
 	std::optional<uint32_t> prior_status{std::nullopt};
 	std::optional<uint32_t> page_index{std::nullopt};
+	// A recovery outcome (D01 T02 section 26): how many units were recovered (0 when the entry is not one), the zero-based
+	// first, and the tile and component it sits in.
+	uint64_t recovered_count{0};
+	std::optional<uint64_t> first_recovered{std::nullopt};
+	std::optional<uint32_t> tile_index{std::nullopt};
+	std::optional<uint32_t> component_index{std::nullopt};
 
 	[[nodiscard]] std::string format() const noexcept;
 };
@@ -1311,6 +1355,16 @@ struct DecoderContext {
 	std::optional<uint32_t> prior_status{std::nullopt};
 };
 
+// A recovery outcome a diagnostic carries (D01 T02 section 26): the units a decoder recovered instead of refusing (fax
+// rows replaced, JPEG 2000 code-blocks whose damaged bitplane was dropped, tile-components filled with the mid value),
+// the zero-based first such unit, and its tile and component. Numbers only, never document bytes. count 0 is no outcome.
+struct RecoveryContext {
+	uint64_t count{0};
+	std::optional<uint64_t> first_unit{std::nullopt};
+	std::optional<uint32_t> tile{std::nullopt};
+	std::optional<uint32_t> component{std::nullopt};
+};
+
 // Maps an ErrorCode and optional diagnostic hint/tag to a closed DiagnosticId
 // without retaining caller-supplied bytes.
 [[nodiscard]] DiagnosticId classify_diagnostic_id(
@@ -1320,7 +1374,8 @@ struct DecoderContext {
 // Records an engine warning or error in the fixed-capacity 256-slot diagnostic
 // ring buffer without heap allocation and emits a structured ETW TraceLogging
 // event containing only error code, diagnostic ID, offsets, object ID, and
-// sequence metadata (zero document byte payloads), and a refusal's reason, observed value, bound and zero-based page.
+// sequence metadata (zero document byte payloads), a refusal's reason, observed value, bound and zero-based page, and a
+// recovery's count, first unit, tile and component.
 void record_diagnostic(
 	ErrorCode code,
 	DiagnosticId diagnostic_id,
@@ -1331,7 +1386,8 @@ void record_diagnostic(
 	std::optional<uint64_t> observed = std::nullopt,
 	std::optional<uint64_t> bound = std::nullopt,
 	const DecoderContext& decoder = {},
-	std::optional<uint32_t> page_index = std::nullopt) noexcept;
+	std::optional<uint32_t> page_index = std::nullopt,
+	const RecoveryContext& recovery = {}) noexcept;
 
 void record_diagnostic(
 	ErrorCode code,
@@ -1435,6 +1491,14 @@ struct CapturedEtwEvent {
 	// A Diagnostic event's zero-based page (D01 T02 section 24), separate from a span's page_index below.
 	bool has_diagnostic_page{false};
 	uint32_t diagnostic_page_index{0};
+	// A Diagnostic event's recovery outcome (D01 T02 section 26).
+	uint64_t recovered_count{0};
+	bool has_first_recovered{false};
+	uint64_t first_recovered{0};
+	bool has_tile{false};
+	uint32_t tile_index{0};
+	bool has_component{false};
+	uint32_t component_index{0};
 	std::string phase;
 	uint64_t duration_us{0};
 	uint64_t document_id{0};

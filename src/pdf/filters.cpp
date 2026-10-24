@@ -2267,6 +2267,9 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		reserve_ccitt_transitions(ref_changes, cur_changes, params.columns);
 		uint64_t decoded_rows = 0;
 		int32_t consecutive_damaged_rows = 0;
+		// Rows Table 11 recovery replaced, and the zero-based first, for the recovery outcome a successful decode records.
+		uint64_t substituted_rows = 0;
+		std::optional<uint64_t> first_substituted_row;
 
 		auto append_current_row = [&]() -> PdfResult<void> {
 			const uint64_t next_rows = decoded_rows + 1ULL;
@@ -2306,23 +2309,36 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		// K non-negative, its end is found at the next EOL after where the row began (a failed 2D row may already have
 		// read that EOL, so the search starts from the row's own start) and it is replaced by the previous row if that row
 		// was good, or by a white row if it was damaged too, up to /DamagedRowsBeforeError rows in a row. Otherwise the
-		// stream is refused with why recovery stopped, the row and the allowance.
+		// stream is refused with why recovery stopped (a RefusalReason), the zero-based row (observed) and the allowance
+		// (bound), and the refusal is recorded once in the ring and ETW (D01 T02 section 26): filter errors are not
+		// recorded on their own, and a refusal's cause would otherwise live only in its message, which neither keeps.
+		// Group 4 (K negative) has no EOLs at all, so its damaged row is refused through here too, as recovery-off.
+		const auto refuse_damaged_row = [&](RefusalReason reason, const char* why) -> PdfError {
+			char text[200];
+			const int n = std::snprintf(text, sizeof(text),
+				"CCITTFaxDecode row %llu is damaged and %s (/DamagedRowsBeforeError %d, %d damaged in a row)",
+				static_cast<unsigned long long>(decoded_rows), why, params.damaged_rows_before_error,
+				consecutive_damaged_rows + 1);
+			const uint64_t offset = reader.bit_pos >> 3u;
+			const uint64_t allowance = static_cast<uint64_t>(params.damaged_rows_before_error); // never negative
+			PdfError err = make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+				std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u),
+				offset);
+			err.refusal_reason = reason;
+			err.observed = decoded_rows;
+			err.bound = allowance;
+			record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, offset, std::nullopt, 0, reason,
+				decoded_rows, allowance);
+			return err;
+		};
 		const auto recover_damaged_row = [&](size_t row_start) -> PdfResult<void> {
-			const auto refuse = [&](const char* why) -> PdfError {
-				char text[200];
-				const int n = std::snprintf(text, sizeof(text),
-					"CCITTFaxDecode row %llu is damaged and %s (/DamagedRowsBeforeError %d, %d damaged in a row)",
-					static_cast<unsigned long long>(decoded_rows), why, params.damaged_rows_before_error,
-					consecutive_damaged_rows + 1);
-				return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
-					std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u),
-					reader.bit_pos >> 3u);
-			};
+			const auto& refuse = refuse_damaged_row;
 			if (!params.end_of_line || params.k < 0) {
-				return refuse("Table 11 recovery needs /EndOfLine true and K non-negative");
+				return refuse(RefusalReason::DamagedRowRecoveryOff,
+					"Table 11 recovery needs /EndOfLine true and K non-negative");
 			}
 			if (consecutive_damaged_rows >= params.damaged_rows_before_error) {
-				return refuse("the allowance of damaged rows is used up");
+				return refuse(RefusalReason::DamagedRowAllowance, "the allowance of damaged rows is used up");
 			}
 			reader.bit_pos = row_start;
 			bool found_sync = false;
@@ -2336,7 +2352,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				++reader.bit_pos;
 			}
 			if (!found_sync) {
-				return refuse("no EOL follows it to resynchronize at");
+				return refuse(RefusalReason::DamagedRowNoSync, "no EOL follows it to resynchronize at");
 			}
 			if (consecutive_damaged_rows == 0) {
 				cur_changes = ref_changes; // the previous row, which was good (or the white line before the first row)
@@ -2344,6 +2360,10 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				cur_changes.clear(); // a white row: the previous row was damaged too
 			}
 			++consecutive_damaged_rows;
+			if (!first_substituted_row.has_value()) {
+				first_substituted_row = decoded_rows;
+			}
+			++substituted_rows;
 			return append_current_row();
 		};
 
@@ -2461,11 +2481,8 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 							break;
 						}
 					}
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Corrupt 2D codeword in CCITTFaxDecode Group 4 stream",
-						reader.bit_pos >> 3u);
+					return refuse_damaged_row(RefusalReason::DamagedRowRecoveryOff,
+						"Group 4 (K negative) has no end-of-line codes to resume at after a corrupt 2D codeword");
 				}
 				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
 			} else if (params.k == 0) {
@@ -2566,6 +2583,12 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				"Truncated CCITTFaxDecode stream: insufficient scanlines decoded");
 		}
 
+		// The page opens, but with replaced rows: say so, with numbers only (D01 T02 section 26). Never on a refusal.
+		if (substituted_rows > 0u) {
+			record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::RecoveredDamagedRows, std::nullopt, std::nullopt, 0,
+				RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt,
+				RecoveryContext{substituted_rows, first_substituted_row, std::nullopt, std::nullopt});
+		}
 		return out;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
@@ -7868,7 +7891,8 @@ private:
 
 // Decode a single EBCOT Tier-1 code-block into signed wavelet coefficients. `segments` divides `cb_data` into its
 // codeword segments (at least one, covering `num_passes`); each starts a fresh MQ or raw decoder (T.800 D.4.1).
-void decode_j2k_codeblock(
+// Returns whether a wrong segmentation symbol dropped a damaged bitplane (D01 T02 section 26).
+[[nodiscard]] bool decode_j2k_codeblock(
 	std::span<const uint8_t> cb_data,
 	uint32_t cb_w,
 	uint32_t cb_h,
@@ -7883,8 +7907,9 @@ void decode_j2k_codeblock(
 	const size_t total = static_cast<size_t>(cb_w) * cb_h;
 	out_coeffs.assign(total, 0);
 	if (cb_data.empty() || num_passes == 0u || cb_w == 0u || cb_h == 0u || segments.empty()) {
-		return;
+		return false;
 	}
+	bool dropped_bitplane = false;
 
 	const int32_t w = static_cast<int32_t>(cb_w);
 	const int32_t h = static_cast<int32_t>(cb_h);
@@ -8071,6 +8096,7 @@ void decode_j2k_codeblock(
 							sig[i] = 0u;
 						}
 					}
+					dropped_bitplane = true;
 					break;
 				}
 			}
@@ -8082,6 +8108,7 @@ void decode_j2k_codeblock(
 	for (size_t i = 0; i < total; ++i) {
 		out_coeffs[i] = sgn[i] ? -mag[i] : mag[i];
 	}
+	return dropped_bitplane;
 }
 
 // 1D 5-3 reversible inverse discrete wavelet synthesis filter (ITU-T T.800 §F.3.8.1).
@@ -9507,6 +9534,11 @@ struct Jp2Palette {
 	};
 
 	std::vector<int32_t> cb_coeffs;
+	// Recovery outcomes, recorded only if the image is returned (D01 T02 section 26): code-blocks whose damaged bitplane
+	// was dropped, with the first one's tile, component and ordinal in Tier-1 order within its tile-component (resolution,
+	// subband, then code-block), and tile-components subsampling left with no sample, filled with the mid value.
+	RecoveryContext dropped_blocks{};
+	RecoveryContext empty_components{};
 	for (uint32_t ty = 0; ty < num_tiles_y; ++ty) {
 		for (uint32_t tx = 0; tx < num_tiles_x; ++tx) {
 			const uint32_t tile_idx = ty * num_tiles_x + tx;
@@ -10270,6 +10302,7 @@ struct Jp2Palette {
 				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
 				const uint8_t c_wavelet = comp_cod[c].wavelet_type;
 				const uint8_t c_cb_style = comp_cod[c].cb_style;
+				uint64_t cb_ordinal = 0u;
 				for (uint8_t r = 0; r <= c_levels; ++r) {
 					for (SubbandState& sb : comps[c].resolutions[r].subbands) {
 						if (c_wavelet == 1u) {
@@ -10282,12 +10315,13 @@ struct Jp2Palette {
 							1.0f + static_cast<float>(sb.mu) / 2048.0f,
 							rb - static_cast<int32_t>(sb.eps));
 						for (const auto& cb : sb.cbs) {
+							const uint64_t this_ordinal = cb_ordinal++;
 							const std::span<const uint8_t> cb_bytes =
 								cb.compressed.empty() ? cb.single_segment : std::span<const uint8_t>(cb.compressed);
 							if (!cb.included_once || cb.total_passes == 0u || cb_bytes.empty()) {
 								continue;
 							}
-							decode_j2k_codeblock(
+							const bool dropped = decode_j2k_codeblock(
 								cb_bytes,
 								cb.w,
 								cb.h,
@@ -10298,6 +10332,14 @@ struct Jp2Palette {
 								c_cb_style,
 								cb.segments,
 								cb_coeffs);
+							if (dropped) {
+								if (dropped_blocks.count == 0u) {
+									dropped_blocks.first_unit = this_ordinal;
+									dropped_blocks.tile = tile_idx;
+									dropped_blocks.component = c;
+								}
+								++dropped_blocks.count;
+							}
 							for (uint32_t y = 0; y < cb.h; ++y) {
 								for (uint32_t x = 0; x < cb.w; ++x) {
 									int32_t q = cb_coeffs[static_cast<size_t>(y) * cb.w + x];
@@ -10455,6 +10497,16 @@ struct Jp2Palette {
 				}
 			}
 
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				const ComponentState& comp = comps[c];
+				if (comp.x1 <= comp.x0 || comp.y1 <= comp.y0 || comp.spatial.empty()) {
+					if (empty_components.count == 0u) {
+						empty_components.tile = tile_idx;
+						empty_components.component = c;
+					}
+					++empty_components.count; // once per tile-component, not per pixel
+				}
+			}
 			const uint32_t dst_x0 = tx0 - xosiz;
 			const uint32_t dst_y0 = ty0 - yosiz;
 			for (uint32_t y = 0; y < tile_h; ++y) {
@@ -10643,6 +10695,16 @@ struct Jp2Palette {
 		out_img.bgra_pixels[p * 4u + 1u] = g;
 		out_img.bgra_pixels[p * 4u + 2u] = r;
 		out_img.bgra_pixels[p * 4u + 3u] = a;
+	}
+	// The image is returned, so its recoveries are outcomes, never part of a refusal (D01 T02 section 26).
+	if (dropped_blocks.count > 0u) {
+		record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::RecoveredJpxCodeBlocks, std::nullopt, std::nullopt, 0,
+			RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt, dropped_blocks);
+	}
+	if (empty_components.count > 0u) {
+		// T.800 B.2 permits a tile with no sample of a component, so this is no damage: Ok, for the record only.
+		record_diagnostic(ErrorCode::Ok, DiagnosticId::RecoveredJpxEmptyComponents, std::nullopt, std::nullopt, 0,
+			RefusalReason::None, std::nullopt, std::nullopt, DecoderContext{}, std::nullopt, empty_components);
 	}
 	return out_img;
 }

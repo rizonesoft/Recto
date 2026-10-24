@@ -2937,8 +2937,8 @@ struct J2kTestOptions {
 	uint8_t levels = 0u;         // decomposition levels; above 0 only for 1 x 1 components (every other band empty)
 	uint8_t roi_shift = 0u;      // Maxshift for component 0, with `roi` marking its region-of-interest samples
 	std::vector<uint8_t> roi;
-	bool wrong_last_symbol = false; // component 0's last segmentation symbol reads 1011
-	uint32_t origin = 0u;           // XOsiz and YOsiz: the image area starts here on the reference grid
+	uint32_t wrong_symbol_components = 0u; // bit i set: component i's last segmentation symbol reads 1011
+	uint32_t origin = 0u;                   // XOsiz and YOsiz: the image area starts here on the reference grid
 };
 
 // A one-tile, one-layer LRCP JPEG 2000 codestream of reversible components with no decomposition (each component's
@@ -2963,7 +2963,7 @@ struct J2kTestOptions {
 		}
 		const uint32_t mb = comp.depth + (ci == 0u ? opt.roi_shift : 0u); // one guard bit + epsilon - 1, plus the shift
 		const EncodedJ2kBlock block =
-			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ci == 0u && opt.wrong_last_symbol);
+			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ((opt.wrong_symbol_components >> ci) & 1u) != 0u);
 		TestBitWriter bw;
 		if (block.num_passes == 0u) {
 			bw.write_bit(0u); // an empty packet
@@ -5444,7 +5444,7 @@ TEST(PdfFilters, JpxComponentsAndCodingStyles)
 			J2kTestComponent{std::vector<uint16_t>(samples.begin(), samples.end()), 16u, 16u, 8u, 1u, 1u}};
 		J2kTestOptions opt;
 		opt.cb_style = 0x20u;
-		opt.wrong_last_symbol = true;
+		opt.wrong_symbol_components = 1u;
 		auto damaged = decode_jpx_image(make_j2k_codestream(comps, 16u, 16u, opt));
 		ASSERT_TRUE(damaged.has_value()) << damaged.error().message.view();
 		int max_diff = 0;
@@ -6090,6 +6090,287 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
 		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0x0Fu, 0xF0u, 0x0Fu, 0xF0u}));
 	}
+}
+
+// A recovered fax stream records one outcome with the rows replaced and the first of them, an intact one none, and
+// every refusal cause (the allowance spent, no EOL to resume at, /EndOfLine false, Group 4) records exactly one entry
+// with its reason, row and allowance in the PdfError, the ring and ETW alike; a stream that recovers a row and is then
+// refused records only the refusal (D01 T02 section 26).
+TEST(PdfFilters, CcittRecoveryReachesRingAndEtw)
+{
+	const std::string eol = "000000000001";
+	const std::string good = "1011" "000101" "1011";
+	const std::string damaged = "00000001";
+	const std::string white = "101010";
+	const auto parms_for = [](int64_t k, int64_t rows, int64_t allowance, bool end_of_line = true) {
+		PdfDict parms;
+		parms.set("K", PdfValue(k));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		parms.set("Rows", PdfValue(rows));
+		parms.set("EndOfLine", PdfValue(end_of_line));
+		parms.set("DamagedRowsBeforeError", PdfValue(allowance));
+		return parms;
+	};
+	const auto start = [] {
+		force_enable_etw_provider_for_testing();
+		clear_diagnostics();
+		clear_captured_etw_events_for_testing();
+		set_etw_capture_for_testing(true);
+	};
+	const std::string two_damaged = eol + good + eol + damaged + eol + damaged + eol + white + eol + eol;
+
+	// Recovered: rows 1 and 2 replaced.
+	{
+		start();
+		const PdfDict parms = parms_for(0, 4, 2);
+		auto decoded = decode_ccitt_fax(pack_bitstring(two_damaged), &parms);
+		set_etw_capture_for_testing(false);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		const auto tail = diagnostics_tail(10);
+		const auto captured = captured_etw_events_for_testing();
+		ASSERT_EQ(tail.size(), 1u);
+		ASSERT_EQ(captured.size(), 1u);
+		EXPECT_EQ(tail[0].code, ErrorCode::DamagedFormat);
+		EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::RecoveredDamagedRows);
+		EXPECT_EQ(tail[0].refusal_reason, RefusalReason::None);
+		EXPECT_EQ(tail[0].recovered_count, 2u);
+		EXPECT_EQ(tail[0].first_recovered, std::optional<uint64_t>(1u));
+		EXPECT_FALSE(tail[0].tile_index.has_value());
+		EXPECT_FALSE(tail[0].component_index.has_value());
+		EXPECT_NE(tail[0].format().find("RecoveredDamagedRows"), std::string::npos) << tail[0].format();
+		EXPECT_NE(tail[0].format().find(" [recovered=2 first=1]"), std::string::npos) << tail[0].format();
+		EXPECT_EQ(captured[0].diagnostic_id_name, "RecoveredDamagedRows");
+		EXPECT_EQ(captured[0].recovered_count, 2u);
+		EXPECT_TRUE(captured[0].has_first_recovered);
+		EXPECT_EQ(captured[0].first_recovered, 1u);
+		EXPECT_FALSE(captured[0].has_tile);
+		EXPECT_FALSE(captured[0].has_component);
+	}
+	// Intact: nothing at all.
+	{
+		start();
+		const PdfDict parms = parms_for(0, 2, 2);
+		auto decoded = decode_ccitt_fax(pack_bitstring(eol + good + eol + good + eol + eol), &parms);
+		set_etw_capture_for_testing(false);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_TRUE(diagnostics_tail(10).empty());
+		EXPECT_TRUE(captured_etw_events_for_testing().empty());
+	}
+
+	struct Refusal {
+		const char* name;
+		std::string bits;
+		PdfDict parms;
+		RefusalReason reason;
+		uint64_t row;
+		uint64_t allowance;
+	};
+	const std::array<Refusal, 4> refusals = {{
+		// Row 1 is replaced, then row 2 spends the allowance of 1: recover-then-fail records only the refusal.
+		{"allowance", two_damaged, parms_for(0, 4, 1), RefusalReason::DamagedRowAllowance, 2u, 1u},
+		{"no sync", eol + good + eol + damaged, parms_for(0, 2, 1), RefusalReason::DamagedRowNoSync, 1u, 1u},
+		{"end of line false", two_damaged, parms_for(0, 4, 2, false), RefusalReason::DamagedRowRecoveryOff, 1u, 2u},
+		// Group 4: a white first row (V0), then a 2D extension code the decoder does not take.
+		{"group 4", "1" "0000001000" "1111111111", parms_for(-1, 2, 3), RefusalReason::DamagedRowRecoveryOff, 1u, 3u},
+	}};
+	for (const Refusal& r : refusals) {
+		start();
+		auto decoded = decode_ccitt_fax(pack_bitstring(r.bits), &r.parms);
+		set_etw_capture_for_testing(false);
+		ASSERT_FALSE(decoded.has_value()) << r.name;
+		EXPECT_EQ(decoded.error().code, ErrorCode::DamagedFormat) << r.name;
+		EXPECT_EQ(decoded.error().refusal_reason, r.reason) << r.name << ": " << decoded.error().message.view();
+		EXPECT_EQ(decoded.error().observed, std::optional<uint64_t>(r.row)) << r.name;
+		EXPECT_EQ(decoded.error().bound, std::optional<uint64_t>(r.allowance)) << r.name;
+		EXPECT_NE(decoded.error().message.view().find("row " + std::to_string(r.row)), std::string_view::npos)
+			<< r.name << ": " << decoded.error().message.view();
+		const auto tail = diagnostics_tail(10);
+		const auto captured = captured_etw_events_for_testing();
+		ASSERT_EQ(tail.size(), 1u) << r.name;
+		ASSERT_EQ(captured.size(), 1u) << r.name;
+		EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::DamagedStream) << r.name;
+		EXPECT_EQ(tail[0].refusal_reason, r.reason) << r.name;
+		EXPECT_EQ(tail[0].observed, std::optional<uint64_t>(r.row)) << r.name;
+		EXPECT_EQ(tail[0].bound, std::optional<uint64_t>(r.allowance)) << r.name;
+		EXPECT_EQ(tail[0].recovered_count, 0u) << r.name;
+		const std::string line = tail[0].format();
+		const std::string expected = "[reason=" + std::string(refusal_reason_name(r.reason)) + " observed=" +
+			std::to_string(r.row) + " bound=" + std::to_string(r.allowance) + "]";
+		EXPECT_NE(line.find(expected), std::string::npos) << r.name << ": " << line;
+		EXPECT_EQ(line.find(" [recovered="), std::string::npos) << r.name << ": " << line;
+		EXPECT_EQ(captured[0].refusal_reason, static_cast<uint16_t>(r.reason)) << r.name;
+		EXPECT_EQ(captured[0].refusal_reason_name, refusal_reason_name(r.reason)) << r.name;
+		EXPECT_TRUE(captured[0].has_observed) << r.name;
+		EXPECT_EQ(captured[0].observed, r.row) << r.name;
+		EXPECT_TRUE(captured[0].has_bound) << r.name;
+		EXPECT_EQ(captured[0].bound, r.allowance) << r.name;
+		EXPECT_EQ(captured[0].recovered_count, 0u) << r.name;
+		const std::string_view why = refusal_reason_description(r.reason);
+		EXPECT_NE(why.find("zero-based"), std::string_view::npos) << r.name;
+		EXPECT_NE(why.find("/DamagedRowsBeforeError"), std::string_view::npos) << r.name;
+		EXPECT_NE(why.find("scan the page again or ask for the original"), std::string_view::npos) << r.name;
+	}
+	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowAllowance).find("more damaged rows"), std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowNoSync).find("no end-of-line code after"),
+		std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowRecoveryOff).find("gives no end-of-line codes"),
+		std::string_view::npos);
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+}
+
+// Recto's own JPEG 2000 decoder records what it recovered when it returns the image: code-blocks whose damaged bitplane
+// was dropped (the count, and the first one's tile, component and ordinal) and tile-components left empty by
+// subsampling (Ok, since the standard allows them); an intact decode records nothing, and a decode refused after its
+// tiles decoded records only the refusal (D01 T02 section 26).
+TEST(PdfFilters, JpxRecoveryReachesRingAndEtw)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	const std::vector<uint8_t> samples = j2k_style_samples();
+	const auto start = [] {
+		force_enable_etw_provider_for_testing();
+		clear_diagnostics();
+		clear_captured_etw_events_for_testing();
+		set_etw_capture_for_testing(true);
+	};
+	const auto recoveries = [](const std::vector<DiagnosticEntry>& tail) {
+		size_t n = 0;
+		for (const DiagnosticEntry& e : tail) {
+			n += (e.diagnostic_id == DiagnosticId::RecoveredJpxCodeBlocks ||
+					 e.diagnostic_id == DiagnosticId::RecoveredJpxEmptyComponents)
+				? 1u
+				: 0u;
+		}
+		return n;
+	};
+	const J2kTestComponent full{std::vector<uint16_t>(samples.begin(), samples.end()), 16u, 16u, 8u, 1u, 1u};
+
+	struct Dropped {
+		const char* name;
+		size_t components;
+		uint32_t mask;
+		uint64_t count;
+		uint32_t component;
+	};
+	for (const Dropped& d : {Dropped{"one component", 1u, 1u, 1u, 0u}, Dropped{"components 1 and 2", 3u, 6u, 2u, 1u}}) {
+		const std::vector<J2kTestComponent> comps(d.components, full);
+		J2kTestOptions opt;
+		opt.cb_style = 0x20u;
+		opt.wrong_symbol_components = d.mask;
+		start();
+		auto img = decode_jpx_image(make_j2k_codestream(comps, 16u, 16u, opt));
+		set_etw_capture_for_testing(false);
+		ASSERT_TRUE(img.has_value()) << d.name << ": " << img.error().message.view();
+		if (d.components == 1u) {
+			int max_diff = 0;
+			for (size_t i = 0; i < samples.size(); ++i) {
+				max_diff = std::max(max_diff, std::abs(int{img->pixels[i]} - int{samples[i]}));
+			}
+			EXPECT_EQ(max_diff, 1);
+		}
+		const auto tail = diagnostics_tail(10);
+		const auto captured = captured_etw_events_for_testing();
+		ASSERT_EQ(tail.size(), 1u) << d.name;
+		ASSERT_EQ(captured.size(), 1u) << d.name;
+		EXPECT_EQ(tail[0].code, ErrorCode::DamagedFormat) << d.name;
+		EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::RecoveredJpxCodeBlocks) << d.name;
+		EXPECT_EQ(tail[0].recovered_count, d.count) << d.name;
+		EXPECT_EQ(tail[0].first_recovered, std::optional<uint64_t>(0u)) << d.name;
+		EXPECT_EQ(tail[0].tile_index, std::optional<uint32_t>(0u)) << d.name;
+		EXPECT_EQ(tail[0].component_index, std::optional<uint32_t>(d.component)) << d.name;
+		const std::string expected =
+			" [recovered=" + std::to_string(d.count) + " first=0 tile=0 component=" + std::to_string(d.component) + "]";
+		EXPECT_NE(tail[0].format().find(expected), std::string::npos) << d.name << ": " << tail[0].format();
+		EXPECT_EQ(captured[0].diagnostic_id_name, "RecoveredJpxCodeBlocks") << d.name;
+		EXPECT_EQ(captured[0].recovered_count, d.count) << d.name;
+		EXPECT_TRUE(captured[0].has_first_recovered) << d.name;
+		EXPECT_EQ(captured[0].first_recovered, 0u) << d.name;
+		EXPECT_TRUE(captured[0].has_tile) << d.name;
+		EXPECT_EQ(captured[0].tile_index, 0u) << d.name;
+		EXPECT_TRUE(captured[0].has_component) << d.name;
+		EXPECT_EQ(captured[0].component_index, d.component) << d.name;
+	}
+
+	// C1's 1 x 1 image at origin 1: both 2 x 2 subsampled components are empty in the one tile.
+	{
+		const std::array<J2kTestComponent, 3> comps = {J2kTestComponent{{90u}, 1u, 1u, 8u, 1u, 1u},
+			J2kTestComponent{{}, 0u, 0u, 8u, 2u, 2u}, J2kTestComponent{{}, 0u, 0u, 8u, 2u, 2u}};
+		J2kTestOptions opt;
+		opt.origin = 1u;
+		start();
+		auto img = decode_jpx_image(make_j2k_codestream(comps, 1u, 1u, opt));
+		set_etw_capture_for_testing(false);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(img->pixels, (std::vector<uint8_t>{90u, 128u, 128u}));
+		const auto tail = diagnostics_tail(10);
+		const auto captured = captured_etw_events_for_testing();
+		ASSERT_EQ(tail.size(), 1u);
+		ASSERT_EQ(captured.size(), 1u);
+		EXPECT_EQ(tail[0].code, ErrorCode::Ok);
+		EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::RecoveredJpxEmptyComponents);
+		EXPECT_EQ(tail[0].recovered_count, 2u);
+		EXPECT_FALSE(tail[0].first_recovered.has_value());
+		EXPECT_EQ(tail[0].tile_index, std::optional<uint32_t>(0u));
+		EXPECT_EQ(tail[0].component_index, std::optional<uint32_t>(1u));
+		EXPECT_NE(tail[0].format().find(" [recovered=2 tile=0 component=1]"), std::string::npos) << tail[0].format();
+		EXPECT_EQ(captured[0].error_code, static_cast<uint32_t>(ErrorCode::Ok));
+		EXPECT_EQ(captured[0].diagnostic_id_name, "RecoveredJpxEmptyComponents");
+		EXPECT_EQ(captured[0].recovered_count, 2u);
+		EXPECT_FALSE(captured[0].has_first_recovered);
+		EXPECT_EQ(captured[0].tile_index, 0u);
+		EXPECT_EQ(captured[0].component_index, 1u);
+	}
+
+	// Intact: nothing at all.
+	{
+		start();
+		auto img = decode_jpx_image(make_j2k_gray_codestream(samples, 16u, 16u, 0x20u));
+		set_etw_capture_for_testing(false);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(img->pixels, samples);
+		EXPECT_TRUE(diagnostics_tail(10).empty());
+		EXPECT_TRUE(captured_etw_events_for_testing().empty());
+	}
+
+	// The damaged three-component codestream in a JP2 whose channel definition gives two channels the same colour: the
+	// tiles decode (dropping two bitplanes) and the image is then refused, so no recovery outcome is recorded.
+	{
+		const std::vector<J2kTestComponent> comps(3u, full);
+		J2kTestOptions opt;
+		opt.cb_style = 0x20u;
+		opt.wrong_symbol_components = 6u;
+		const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+		const std::vector<uint8_t> cdef = {0u, 3u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 1u, 0u, 2u, 0u, 0u, 0u, 3u};
+		const std::vector<uint8_t> codestream = make_j2k_codestream(comps, 16u, 16u, opt);
+		// The control: the same JP2 with a valid channel definition returns the image and records the recovery.
+		{
+			const std::vector<uint8_t> valid = {0u, 3u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 2u, 0u, 0u, 0u, 3u};
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> ok_boxes = {
+				{{"colr", enum_srgb}, {"cdef", valid}}};
+			start();
+			auto ok = decode_jpx_image(make_jp2(codestream, 16u, 16u, 3u, ok_boxes));
+			set_etw_capture_for_testing(false);
+			ASSERT_TRUE(ok.has_value()) << ok.error().message.view();
+			const auto tail = diagnostics_tail(10);
+			ASSERT_EQ(recoveries(tail), 1u);
+			EXPECT_EQ(tail.back().recovered_count, 2u);
+		}
+		const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
+		start();
+		auto img = decode_jpx_image(make_jp2(codestream, 16u, 16u, 3u, boxes));
+		set_etw_capture_for_testing(false);
+		ASSERT_FALSE(img.has_value());
+		EXPECT_EQ(img.error().code, ErrorCode::DamagedFormat);
+		EXPECT_NE(img.error().message.view().find("cdef"), std::string_view::npos) << img.error().message.view();
+		EXPECT_EQ(recoveries(diagnostics_tail(10)), 0u);
+		for (const CapturedEtwEvent& e : captured_etw_events_for_testing()) {
+			EXPECT_NE(e.diagnostic_id_name, "RecoveredJpxCodeBlocks");
+			EXPECT_NE(e.diagnostic_id_name, "RecoveredJpxEmptyComponents");
+			EXPECT_EQ(e.recovered_count, 0u);
+		}
+	}
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
 }
 
 // The DCT ceiling is charged with what the representation needs before any WIC work, and a refusal says so: an 8 x 8 RGB
