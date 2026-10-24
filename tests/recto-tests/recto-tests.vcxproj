@@ -68,6 +68,7 @@
     <ClCompile Include="pdf_display_list_tests.cpp" />
     <ClCompile Include="pdf_font_tests.cpp" />
     <ClCompile Include="pdf_interpreter_tests.cpp" />
+    <ClCompile Include="pdf_serialize_tests.cpp" />
     <ClCompile Include="pdf_document_tests.cpp" />
     <ClCompile Include="pdf_error_tests.cpp" />
     <ClCompile Include="pdf_filters_tests.cpp" />
