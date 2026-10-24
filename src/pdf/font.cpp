@@ -558,10 +558,12 @@ struct LoadedFont::GlyfTables {
 	uint16_t units_per_em{1000};
 	uint16_t glyph_count{0};
 	uint16_t h_metrics{0};
-	int16_t ascender{0};  // hhea, for the vertical phantom points
+	int16_t ascender{0};  // hhea, for the vertical phantom points without vmtx
 	int16_t descender{0};
+	uint16_t v_metrics{0}; // vhea numOfLongVerMetrics, 0 without vertical metrics
 	bool long_loca{false};
 	TableSpan hmtx{};
+	TableSpan vmtx{};
 	TableSpan loca{};
 	TableSpan glyf{};
 };
@@ -570,8 +572,9 @@ namespace {
 
 [[nodiscard]] PdfResult<std::unique_ptr<const LoadedFont::GlyfTables>> parse_glyf_tables(const ByteReader& font) noexcept;
 
-// The glyph's data inside `glyf`, from `loca`, checked at load to run forwards and stay inside `glyf`.
-[[nodiscard]] std::span<const uint8_t> glyph_data(
+// The glyph's data inside `glyf`, from `loca`, or none when its `loca` range runs backwards or past `glyf`: each glyph
+// is checked as it is read, so one broken entry costs that glyph, not the font.
+[[nodiscard]] std::optional<std::span<const uint8_t>> glyph_data(
 	const ByteReader& font,
 	const LoadedFont::GlyfTables& t,
 	uint16_t glyph) noexcept
@@ -588,6 +591,9 @@ namespace {
 		(void)font.u16(t.loca.offset + 2u * (glyph + 1u), e);
 		start = 2u * static_cast<uint32_t>(s);
 		end = 2u * static_cast<uint32_t>(e);
+	}
+	if (end < start || end > t.glyf.length) {
+		return std::nullopt;
 	}
 	return font.sub(t.glyf.offset + start, end - start);
 }
@@ -615,22 +621,40 @@ void hmtx_entry(const ByteReader& font, const LoadedFont::GlyfTables& t, uint16_
 	}
 }
 
-// The phantom points of `glyph` from its own metrics: the origin sits `lsb` to the left of `x_min`.
+// The phantom points of `glyph` from its own metrics: the origin sits `lsb` to the left of `x_min`, and the top sits
+// the glyph's `vmtx` top side bearing above `y_max`, its advance height above the bottom; a font without vertical
+// metrics puts them at the `hhea` ascender and descender.
 [[nodiscard]] PhantomPoints own_phantoms(
 	const ByteReader& font,
 	const LoadedFont::GlyfTables& t,
 	uint16_t glyph,
-	double x_min) noexcept
+	double x_min,
+	double y_max) noexcept
 {
 	uint16_t advance = 0;
 	int16_t lsb = 0;
 	hmtx_entry(font, t, glyph, advance, lsb);
 	const double origin = x_min - static_cast<double>(lsb);
+	double top = static_cast<double>(t.ascender);
+	double bottom = static_cast<double>(t.descender);
+	if (t.v_metrics != 0u) {
+		const size_t record = std::min<size_t>(glyph, static_cast<size_t>(t.v_metrics) - 1u);
+		uint16_t advance_height = 0;
+		int16_t tsb = 0;
+		(void)font.u16(t.vmtx.offset + 4u * record, advance_height);
+		if (glyph < t.v_metrics) {
+			(void)font.i16(t.vmtx.offset + 4u * glyph + 2u, tsb);
+		} else {
+			(void)font.i16(t.vmtx.offset + 4u * t.v_metrics + 2u * (static_cast<size_t>(glyph) - t.v_metrics), tsb);
+		}
+		top = y_max + static_cast<double>(tsb);
+		bottom = top - static_cast<double>(advance_height);
+	}
 	return PhantomPoints{
 		GlyfPoint{origin, 0.0, true},
 		GlyfPoint{origin + static_cast<double>(advance), 0.0, true},
-		GlyfPoint{0.0, static_cast<double>(t.ascender), true},
-		GlyfPoint{0.0, static_cast<double>(t.descender), true}};
+		GlyfPoint{0.0, top, true},
+		GlyfPoint{0.0, bottom, true}};
 }
 
 [[nodiscard]] PdfResult<void> expand_glyph(
@@ -851,8 +875,10 @@ struct ComponentRecord {
 	PhantomPoints& phantoms) noexcept
 {
 	int16_t x_min = 0;
+	int16_t y_max = 0;
 	(void)data.i16(2u, x_min);
-	phantoms = own_phantoms(font, t, glyph, static_cast<double>(x_min));
+	(void)data.i16(8u, y_max);
+	phantoms = own_phantoms(font, t, glyph, static_cast<double>(x_min), static_cast<double>(y_max));
 	const size_t composite_base = out.points.size();
 	size_t at = 10u;
 	for (;;) {
@@ -939,22 +965,27 @@ PdfResult<void> expand_glyph(
 		error.bound = kMaxCompositeDepth;
 		return error;
 	}
-	const ByteReader data(glyph_data(font, t, glyph));
+	const auto span = glyph_data(font, t, glyph);
+	if (!span.has_value()) {
+		return glyf_error(ErrorCode::DamagedFormat, "Glyph loca range runs backwards or past the glyf table");
+	}
+	const ByteReader data(*span);
 	if (data.size() == 0u) {
 		// An empty glyph, such as a space: its origin is where its bearing puts it from nothing, at 0.
 		uint16_t advance = 0;
 		int16_t lsb = 0;
 		hmtx_entry(font, t, glyph, advance, lsb);
-		phantoms = own_phantoms(font, t, glyph, static_cast<double>(lsb));
+		phantoms = own_phantoms(font, t, glyph, static_cast<double>(lsb), 0.0);
 		return {};
 	}
 	int16_t contours = 0;
 	int16_t x_min = 0;
-	if (data.size() < 10u || !data.i16(0u, contours) || !data.i16(2u, x_min)) {
+	int16_t y_max = 0;
+	if (data.size() < 10u || !data.i16(0u, contours) || !data.i16(2u, x_min) || !data.i16(8u, y_max)) {
 		return glyf_error(ErrorCode::DamagedFormat, "Glyph header is truncated");
 	}
 	if (contours >= 0) {
-		phantoms = own_phantoms(font, t, glyph, static_cast<double>(x_min));
+		phantoms = own_phantoms(font, t, glyph, static_cast<double>(x_min), static_cast<double>(y_max));
 		return expand_simple(data, contours, budget, out);
 	}
 	return expand_composite(font, t, data, glyph, depth, budget, out, phantoms);
@@ -978,11 +1009,24 @@ PdfResult<void> expand_glyph(
 }
 
 // The glyph whose metrics a glyph uses: itself, or the component a composite marks USE_MY_METRICS, followed through
-// nested composites (at most `kMaxCompositeDepth` levels, past which the glyph's own metrics stand).
-[[nodiscard]] uint16_t metrics_glyph(const ByteReader& font, const LoadedFont::GlyfTables& t, uint16_t glyph) noexcept
+// nested composites. The records read count against the same per-call budgets as an expansion (`ResourceLimit` past
+// them), so a composite of millions of records cannot make a metrics query long.
+[[nodiscard]] PdfResult<uint16_t> metrics_glyph(const ByteReader& font, const LoadedFont::GlyfTables& t, uint16_t glyph) noexcept
 {
-	for (size_t depth = 0; depth < kMaxCompositeDepth; ++depth) {
-		const ByteReader data(glyph_data(font, t, glyph));
+	size_t visits = 0;
+	for (size_t depth = 0;; ++depth) {
+		if (depth > kMaxCompositeDepth) {
+			PdfError error = glyf_error(ErrorCode::ResourceLimit, "Composite glyphs nest deeper than their limit");
+			error.refusal_reason = RefusalReason::CompositeDepth;
+			error.observed = depth;
+			error.bound = kMaxCompositeDepth;
+			return error;
+		}
+		const auto span = glyph_data(font, t, glyph);
+		if (!span.has_value()) {
+			return glyf_error(ErrorCode::DamagedFormat, "Glyph loca range runs backwards or past the glyf table");
+		}
+		const ByteReader data(*span);
 		int16_t contours = 0;
 		if (data.size() < 10u || !data.i16(0u, contours) || contours >= 0) {
 			return glyph;
@@ -990,14 +1034,18 @@ PdfResult<void> expand_glyph(
 		size_t at = 10u;
 		std::optional<uint16_t> next;
 		for (;;) {
-			auto r = read_component(data, at);
-			if (!r.has_value()) {
-				return glyph;
+			if (++visits > kMaxComponentVisits) {
+				PdfError error = glyf_error(ErrorCode::ResourceLimit, "Composite glyph visits more components than its limit");
+				error.refusal_reason = RefusalReason::ComponentVisits;
+				error.observed = visits;
+				error.bound = kMaxComponentVisits;
+				return error;
 			}
-			if ((r->flags & kUseMyMetrics) != 0u && r->glyph < t.glyph_count) {
-				next = r->glyph;
+			RECTO_PDF_TRY(const ComponentRecord r, read_component(data, at));
+			if ((r.flags & kUseMyMetrics) != 0u && r.glyph < t.glyph_count) {
+				next = r.glyph;
 			}
-			if ((r->flags & kMoreComponents) == 0u) {
+			if ((r.flags & kMoreComponents) == 0u) {
 				break;
 			}
 		}
@@ -1006,7 +1054,6 @@ PdfResult<void> expand_glyph(
 		}
 		glyph = *next;
 	}
-	return glyph;
 }
 
 PdfResult<std::unique_ptr<const LoadedFont::GlyfTables>> parse_glyf_tables(const ByteReader& font) noexcept
@@ -1033,34 +1080,34 @@ PdfResult<std::unique_ptr<const LoadedFont::GlyfTables>> parse_glyf_tables(const
 		t.h_metrics == 0u) {
 		return glyf_error(ErrorCode::DamagedFormat, "Font head, maxp or hhea values are out of range");
 	}
-	// A `numberOfHMetrics` past the glyph count (DirectWrite refuses it) names records no glyph uses: the first
-	// `glyph_count` are read.
-	t.h_metrics = std::min(t.h_metrics, glyph_count);
-	t.glyph_count = glyph_count;
+	// A `numberOfHMetrics` past the glyph count (DirectWrite refuses it) names records no glyph uses: the first ones
+	// are read (clamped below, once the glyph count `loca` can hold is known).
 	t.long_loca = loca_format == 1;
 	t.hmtx = hmtx;
 	t.loca = loca;
 	t.glyf = glyf;
-	const size_t hmtx_needed = 4u * t.h_metrics + 2u * (static_cast<size_t>(glyph_count) - t.h_metrics);
-	const size_t loca_needed = (t.long_loca ? 4u : 2u) * (static_cast<size_t>(glyph_count) + 1u);
-	if (hmtx.length < hmtx_needed || loca.length < loca_needed) {
-		return glyf_error(ErrorCode::DamagedFormat, "Font hmtx or loca table is shorter than its glyph count needs");
+	// A maxp count past the glyphs `loca` can hold (DirectWrite accepts it) reads the glyphs that exist; each glyph's
+	// `loca` range is checked when it is read.
+	const size_t loca_glyphs = loca.length / (t.long_loca ? 4u : 2u);
+	if (loca_glyphs < 2u) {
+		return glyf_error(ErrorCode::DamagedFormat, "Font loca table holds no glyph");
 	}
-	// Every glyph's data runs forwards and stays inside `glyf`, so later reads need no checks of their own.
-	uint32_t previous = 0;
-	for (size_t i = 0; i <= glyph_count; ++i) {
-		uint32_t offset = 0;
-		if (t.long_loca) {
-			(void)font.u32(loca.offset + 4u * i, offset);
-		} else {
-			uint16_t half = 0;
-			(void)font.u16(loca.offset + 2u * i, half);
-			offset = 2u * static_cast<uint32_t>(half);
+	t.glyph_count = static_cast<uint16_t>(std::min<size_t>(glyph_count, loca_glyphs - 1u));
+	t.h_metrics = std::min(t.h_metrics, t.glyph_count);
+	const size_t hmtx_needed = 4u * t.h_metrics + 2u * (static_cast<size_t>(t.glyph_count) - t.h_metrics);
+	if (hmtx.length < hmtx_needed) {
+		return glyf_error(ErrorCode::DamagedFormat, "Font hmtx table is shorter than its glyph count needs");
+	}
+	// Vertical metrics, when both tables are there and hold what `vhea` says.
+	RECTO_PDF_TRY(const TableSpan vhea, find_table(font, "vhea"));
+	RECTO_PDF_TRY(const TableSpan vmtx, find_table(font, "vmtx"));
+	uint16_t v_metrics = 0;
+	if (vhea.present && vmtx.present && vhea.length >= 36u && font.u16(vhea.offset + 34u, v_metrics) && v_metrics != 0u) {
+		v_metrics = std::min(v_metrics, t.glyph_count);
+		if (vmtx.length >= 4u * v_metrics + 2u * (static_cast<size_t>(t.glyph_count) - v_metrics)) {
+			t.v_metrics = v_metrics;
+			t.vmtx = vmtx;
 		}
-		if (offset < previous || offset > glyf.length) {
-			return glyf_error(ErrorCode::DamagedFormat, "Font loca offsets run backwards or past the glyf table");
-		}
-		previous = offset;
 	}
 	try {
 		return std::unique_ptr<const LoadedFont::GlyfTables>(new LoadedFont::GlyfTables(t));
@@ -1235,8 +1282,9 @@ PdfResult<double> LoadedFont::advance(uint16_t glyph) const noexcept
 		}
 		const double scale = 1.0 / static_cast<double>(units_per_em_);
 		if (dwrite_ != nullptr) {
+			RECTO_PDF_TRY(const uint16_t metrics_of, dwrite_metrics_glyph(glyph));
 			DWRITE_GLYPH_METRICS metrics{};
-			const HRESULT hr = dwrite_->face->GetDesignGlyphMetrics(&glyph, 1u, &metrics, FALSE);
+			const HRESULT hr = dwrite_->face->GetDesignGlyphMetrics(&metrics_of, 1u, &metrics, FALSE);
 			if (FAILED(hr)) {
 				return dwrite_failure(hr, "GetDesignGlyphMetrics", DecoderStep::DWriteFontFace);
 			}
@@ -1244,9 +1292,10 @@ PdfResult<double> LoadedFont::advance(uint16_t glyph) const noexcept
 		}
 		// The `hmtx` advance of the glyph whose metrics this one uses (USE_MY_METRICS).
 		const ByteReader font(*program_);
+		RECTO_PDF_TRY(const uint16_t metrics, metrics_glyph(font, *glyf_, glyph));
 		uint16_t width = 0;
 		int16_t lsb = 0;
-		hmtx_entry(font, *glyf_, metrics_glyph(font, *glyf_, glyph), width, lsb);
+		hmtx_entry(font, *glyf_, metrics, width, lsb);
 		return static_cast<double>(width) * scale;
 	}());
 }
@@ -1306,6 +1355,16 @@ namespace {
 
 } // namespace
 
+PdfResult<uint16_t> LoadedFont::dwrite_metrics_glyph(uint16_t glyph) const noexcept
+{
+	// The advance follows USE_MY_METRICS on both routes (the OpenType glyf rule; DirectWrite itself keeps the
+	// composite's own hmtx value), so a font gives the same advance however it loaded.
+	if (glyf_ == nullptr || glyph >= glyf_->glyph_count) {
+		return glyph;
+	}
+	return metrics_glyph(ByteReader(*program_), *glyf_, glyph);
+}
+
 PdfResult<std::optional<PdfRect>> LoadedFont::ink_box(uint16_t glyph) const noexcept
 {
 	return recorded([&]() noexcept -> PdfResult<std::optional<PdfRect>> {
@@ -1321,17 +1380,28 @@ PdfResult<std::optional<PdfRect>> LoadedFont::ink_box(uint16_t glyph) const noex
 	}());
 }
 
+PdfResult<void> LoadedFont::glyf_check(uint16_t glyph) const noexcept
+{
+	// The glyf expansion with its budgets, before DirectWrite or a renderer expands the glyph itself. A glyph the
+	// glyf tables do not hold (DirectWrite counted more) cannot be bounded, so it is refused.
+	if (glyf_ == nullptr) {
+		return {};
+	}
+	if (glyph >= glyf_->glyph_count) {
+		return font_error(ErrorCode::DamagedFormat, "Glyph past the glyphs the font's loca table holds", DecoderStep::NativeGlyf);
+	}
+	RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(ByteReader(*program_), *glyf_, glyph));
+	(void)placed;
+	return {};
+}
+
 PdfResult<void> LoadedFont::check_glyph(uint16_t glyph) const noexcept
 {
 	return recorded([&]() noexcept -> PdfResult<void> {
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
 		}
-		if (glyf_ != nullptr) {
-			// The glyf expansion with its budgets, before DirectWrite or a renderer expands the glyph itself.
-			RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(ByteReader(*program_), *glyf_, glyph));
-			(void)placed;
-		}
+		RECTO_PDF_RETURN_IF_ERROR(glyf_check(glyph));
 		return {};
 	}());
 }
@@ -1343,10 +1413,7 @@ PdfResult<GlyphOutline> LoadedFont::outline(uint16_t glyph) const noexcept
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
 		}
 		if (dwrite_ != nullptr) {
-			if (glyf_ != nullptr) {
-				RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(ByteReader(*program_), *glyf_, glyph));
-				(void)placed;
-			}
+			RECTO_PDF_RETURN_IF_ERROR(glyf_check(glyph));
 			return dwrite_outline(dwrite_->face.Get(), glyph, units_per_em_);
 		}
 		RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(ByteReader(*program_), *glyf_, glyph));
@@ -1363,25 +1430,24 @@ PdfResult<GlyphShape> LoadedFont::shape(uint16_t glyph) const noexcept
 		const double scale = 1.0 / static_cast<double>(units_per_em_);
 		GlyphShape shape{};
 		if (dwrite_ != nullptr) {
+			RECTO_PDF_TRY(const uint16_t metrics_of, dwrite_metrics_glyph(glyph));
 			DWRITE_GLYPH_METRICS metrics{};
-			const HRESULT hr = dwrite_->face->GetDesignGlyphMetrics(&glyph, 1u, &metrics, FALSE);
+			const HRESULT hr = dwrite_->face->GetDesignGlyphMetrics(&metrics_of, 1u, &metrics, FALSE);
 			if (FAILED(hr)) {
 				return dwrite_failure(hr, "GetDesignGlyphMetrics", DecoderStep::DWriteFontFace);
 			}
 			shape.advance = static_cast<double>(metrics.advanceWidth) * scale;
 			RECTO_PDF_TRY(shape.ink_box, dwrite_ink_box(dwrite_->face.Get(), glyph, scale));
-			if (glyf_ != nullptr) {
-				RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(ByteReader(*program_), *glyf_, glyph));
-				(void)placed;
-			}
+			RECTO_PDF_RETURN_IF_ERROR(glyf_check(glyph));
 			RECTO_PDF_TRY(shape.outline, dwrite_outline(dwrite_->face.Get(), glyph, units_per_em_));
 			return shape;
 		}
 		// One expansion gives the ink box and the outline.
 		const ByteReader font(*program_);
+		RECTO_PDF_TRY(const uint16_t metrics, metrics_glyph(font, *glyf_, glyph));
 		uint16_t width = 0;
 		int16_t lsb = 0;
-		hmtx_entry(font, *glyf_, metrics_glyph(font, *glyf_, glyph), width, lsb);
+		hmtx_entry(font, *glyf_, metrics, width, lsb);
 		shape.advance = static_cast<double>(width) * scale;
 		RECTO_PDF_TRY(const ExpandedGlyph placed, expand_placed(font, *glyf_, glyph));
 		shape.ink_box = points_box(placed, scale);
@@ -1498,15 +1564,13 @@ PdfResult<std::shared_ptr<const LoadedFont>> load_embedded_font(
 		const UINT16 glyph_count = face->GetGlyphCount();
 		const LoadedFontKind kind =
 			face->GetType() == DWRITE_FONT_FACE_TYPE_CFF ? LoadedFontKind::OpenType : LoadedFontKind::TrueType;
-		// A TrueType face keeps its validated glyf tables too, so `check_glyph` and `outline` can bound a glyph before
-		// DirectWrite expands it. A program DirectWrite accepts but the glyf reader cannot validate draws without
-		// that check.
+		// A TrueType face keeps its glyf tables too, so `check_glyph` and `outline` can bound a glyph before DirectWrite
+		// expands it.
 		std::unique_ptr<const LoadedFont::GlyfTables> glyf_tables;
 		if (kind == LoadedFontKind::TrueType) {
-			auto parsed = parse_glyf_tables(ByteReader(*program));
-			if (parsed.has_value()) {
-				glyf_tables = std::move(*parsed);
-			}
+			// Every TrueType glyph is bounded before DirectWrite expands it, so a program whose glyf tables cannot be
+			// read is refused, whatever DirectWrite thinks of it; a broken `loca` entry costs only its own glyph.
+			RECTO_PDF_TRY(glyf_tables, parse_glyf_tables(ByteReader(*program)));
 		}
 		try {
 			state->face = std::move(face);

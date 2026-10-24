@@ -141,6 +141,11 @@ private:
 		std::unique_ptr<const DWriteState> dwrite,
 		std::unique_ptr<const GlyfTables> glyf) noexcept;
 
+	// The glyph whose metrics a DirectWrite TrueType glyph takes (USE_MY_METRICS), from the glyf tables.
+	[[nodiscard]] PdfResult<uint16_t> dwrite_metrics_glyph(uint16_t glyph) const noexcept;
+	// The glyf budget check without recording (the public functions record).
+	[[nodiscard]] PdfResult<void> glyf_check(uint16_t glyph) const noexcept;
+
 	const LoadedFontKind kind_;
 	const std::shared_ptr<const std::vector<uint8_t>> program_;
 	const uint16_t units_per_em_;

@@ -4329,7 +4329,7 @@ def build_truetype_font(long_loca: bool, stripped: bool, glyphs: list[dict] | No
         offsets.append(len(glyf))
         if "components" in glyph:
             box = glyph.get("bbox", (0, 0, 0, 0))
-            data = _glyf_composite(glyph["components"], box)
+            data = _glyf_composite_records(glyph["components"], box)
             lsbs.append(box[0])
             boxes.append(box)
         else:
@@ -4397,6 +4397,9 @@ def build_truetype_hostile_budgets() -> bytes:
     # Glyph 17: a well-formed glyph whose contour ends repeat (2, 2, 2), two contours of no points.
     glyphs.append({"name": "repeat_ends", "advance": 500,
                    "contours": [[(0, 0, True), (250, 500, True), (500, 0, True)], [], []]})
+    # Glyph 18: 5,000 component records, the last marking USE_MY_METRICS: a metrics query past the 4,096-visit budget.
+    glyphs.append({"name": "many_records", "advance": 777, "bbox": (0, 0, 500, 500),
+                   "components": [{"glyph": 4, "dx": 0, "dy": 0}] * 4_999 + [{"glyph": 0, "dx": 0, "dy": 0, "use_my_metrics": True}]})
     return build_truetype_font(long_loca=True, stripped=False, glyphs=glyphs, cmap={0x41: 1, 0x42: 2, 0x43: 16})
 
 
@@ -4512,7 +4515,10 @@ def _glyf_composite_records(components: list[dict], bbox: tuple[int, int, int, i
 # 5 glyph 1 at half scale with its offset (100, 100) scaled too (SCALED_COMPONENT_OFFSET): (100, 50), (300, 400), (500, 50);
 # 6 glyph 2 with USE_MY_METRICS: advance 700 and glyph 2's placement, though its own hmtx says 999;
 # 7 glyph 1, then glyph 1 again with its phantom point 1 (its advance point, (1000, 0)) on the composite's phantom
-#   point 0 (its origin, (0, 0)): the copy moves by (-1000, 0) to (-900, 0), (-500, 700), (-100, 0).
+#   point 0 (its origin, (0, 0)): the copy moves by (-1000, 0) to (-900, 0), (-500, 700), (-100, 0);
+# 8 glyph 1, then glyph 1 again with its phantom point 2 (its top: yMax 700 plus its vmtx top side bearing 200, so
+#   (0, 900)) on the composite's point 0, (100, 0): the copy moves by (100, -900) to (200, -900), (600, -200),
+#   (1000, -900). Every glyph's vmtx entry is advance height 1200, top side bearing 200.
 COMPOSITE_FONT_GLYPHS: list[dict] = [
     {"name": ".notdef", "advance": 500, "contours": [[(50, 0, True), (50, 700, True), (450, 700, True), (450, 0, True)]]},
     {"name": "tri", "advance": 1000, "contours": [[(100, 0, True), (500, 700, True), (900, 0, True)]]},
@@ -4527,6 +4533,8 @@ COMPOSITE_FONT_GLYPHS: list[dict] = [
      "components": [{"glyph": 2, "dx": 0, "dy": 0, "use_my_metrics": True}]},
     {"name": "phantom", "advance": 1000, "bbox": (-900, 0, 900, 700),
      "components": [{"glyph": 1, "dx": 0, "dy": 0}, {"glyph": 1, "match": (3, 4)}]},
+    {"name": "vphantom", "advance": 1100, "bbox": (100, -900, 1000, 700),
+     "components": [{"glyph": 1, "dx": 0, "dy": 0}, {"glyph": 1, "match": (0, 5)}]},
 ]
 
 
@@ -4548,14 +4556,17 @@ def build_truetype_composites() -> bytes:
     offsets.append(len(glyf))
     loca = struct.pack(f">{len(offsets)}I", *offsets)
     head = struct.pack(">IIIIHHqqhhhhHHhhh", 0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0x000B, FONT_UNITS_PER_EM,
-                       0, 0, -900, -20, 900, 1030, 0, 8, 2, 1, 0)
+                       0, 0, -900, -900, 1000, 1030, 0, 8, 2, 1, 0)
     hmtx = b"".join(struct.pack(">Hh", g["advance"], lsbs[i]) for i, g in enumerate(glyphs))
     hhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00010000, 800, -200, 0, 1000, min(lsbs), 0, 900, 1, 0, 0,
                        0, 0, 0, 0, 0, len(glyphs))
     maxp = struct.pack(">IHHHHHHHHHHHHHH", 0x00010000, len(glyphs), 4, 1, 12, 2, 1, 0, 0, 0, 0, 0, 0, 2, 1)
+    vhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00011000, 600, -600, 0, 1200, 200, 0, 1000, 0, 1, 0,
+                       0, 0, 0, 0, 0, len(glyphs))
+    vmtx = b"".join(struct.pack(">Hh", 1200, 200) for _ in glyphs)
     tables = {b"head": head, b"hhea": hhea, b"maxp": maxp, b"hmtx": hmtx, b"loca": loca, b"glyf": glyf,
               b"cmap": _font_cmap_table({0x41 + i: i for i in range(1, len(glyphs))}), b"OS/2": _font_os2_table(),
-              b"name": _font_name_table(), b"post": _font_post_table()}
+              b"name": _font_name_table(), b"post": _font_post_table(), b"vhea": vhea, b"vmtx": vmtx}
     return _sfnt(tables)
 
 

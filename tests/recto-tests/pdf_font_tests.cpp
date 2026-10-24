@@ -364,9 +364,9 @@ TEST(PdfFont, GlyphMetricsInTextSpace)
 
 // Every component encoding the glyf reader reads, and placement by the glyph's origin (its first phantom point): the
 // glyphs of `fonts/truetype-composites.ttf` (COMPOSITE_FONT_GLYPHS in scripts/build-corpus.py), whose placements are
-// stated there. DirectWrite reads the same program, and its advances and ink boxes agree, except for glyph 6:
-// DirectWrite keeps a USE_MY_METRICS composite's own hmtx advance and bearing, where the OpenType glyf specification
-// says the component's metrics apply and any other hmtx value is ignored, which the glyf reader follows.
+// stated there. DirectWrite reads the same program: the advances agree on both routes (both apply USE_MY_METRICS),
+// and the ink boxes agree except glyph 6's, since DirectWrite draws a USE_MY_METRICS composite at its own hmtx bearing
+// where the OpenType glyf specification places it by the component's, which the glyf reader follows.
 TEST(PdfFont, CompositeEncodingsAndPlacement)
 {
 	const auto glyf = load_through_glyf(font_bytes("truetype-composites.ttf"));
@@ -389,16 +389,20 @@ TEST(PdfFont, CompositeEncodingsAndPlacement)
 	ASSERT_EQ(phantom.verbs.size(), 8u);
 	expect_polygon(phantom, 0u, 0u, {{0.1, 0.0}, {0.5, 0.7}, {0.9, 0.0}});
 	expect_polygon(phantom, 4u, 3u, {{-0.9, 0.0}, {-0.5, 0.7}, {-0.1, 0.0}});
+	// 8: the second copy's top phantom point (yMax 700 plus vmtx top side bearing 200) on the composite's point 0.
+	const auto vphantom_result = glyf->outline(8);
+	ASSERT_TRUE(vphantom_result.has_value()) << vphantom_result.error().message.view();
+	expect_polygon(*vphantom_result, 4u, 3u, {{0.2, -0.9}, {0.6, -0.2}, {1.0, -0.9}});
 
 	const auto dwrite = load_ok(font_bytes("truetype-composites.ttf"));
 	ASSERT_NE(dwrite, nullptr);
 	ASSERT_EQ(dwrite->kind(), LoadedFontKind::TrueType);
 	for (uint16_t g = 1; g < glyf->glyph_count(); ++g) {
+		EXPECT_NEAR(*glyf->advance(g), *dwrite->advance(g), 1e-12) << "glyph " << g;
+		EXPECT_NEAR(dwrite->shape(g)->advance, *dwrite->advance(g), 1e-12) << "glyph " << g;
 		if (g == 6u) {
-			EXPECT_NEAR(*dwrite->advance(g), 0.999, 1e-12);
 			continue;
 		}
-		EXPECT_NEAR(*glyf->advance(g), *dwrite->advance(g), 1e-12) << "glyph " << g;
 		const auto ours = *glyf->ink_box(g);
 		const auto theirs = *dwrite->ink_box(g);
 		ASSERT_TRUE(ours.has_value() && theirs.has_value()) << "glyph " << g;
@@ -444,6 +448,30 @@ TEST(PdfFont, DirectWriteRouteKeepsTheBudgets)
 	}
 	EXPECT_TRUE(font->check_glyph(1).has_value());
 	EXPECT_TRUE(font->outline(1).has_value());
+	// A broken loca entry DirectWrite accepts costs its own glyph, not the checks: the last glyph's range runs past
+	// glyf, the font still loads through DirectWrite, the other glyphs keep their budgets and that one is refused.
+	{
+		std::vector<uint8_t> bytes = *font_bytes("truetype-hostile-budgets.ttf");
+		const size_t loca = table_of(bytes, "loca").first;
+		const size_t last = loca + 4u * 19u;
+		bytes[last] = 0x7F;
+		auto broken = load_ok(std::make_shared<const std::vector<uint8_t>>(bytes));
+		ASSERT_NE(broken, nullptr);
+		EXPECT_EQ(broken->kind(), LoadedFontKind::TrueType);
+		const auto tree = broken->check_glyph(16);
+		ASSERT_FALSE(tree.has_value());
+		EXPECT_EQ(tree.error().refusal_reason, RefusalReason::ComponentVisits);
+		EXPECT_TRUE(broken->check_glyph(1).has_value());
+		const auto last_glyph = broken->check_glyph(18);
+		ASSERT_FALSE(last_glyph.has_value());
+		EXPECT_EQ(last_glyph.error().code, ErrorCode::DamagedFormat);
+	}
+	// A metrics query is bounded too: 5,000 component records before the USE_MY_METRICS one.
+	for (const auto& route : {font, load_through_glyf(font_bytes("truetype-hostile-budgets.ttf"))}) {
+		const auto advance = route->advance(18);
+		ASSERT_FALSE(advance.has_value());
+		EXPECT_EQ(advance.error().refusal_reason, RefusalReason::ComponentVisits);
+	}
 }
 
 TEST(PdfFont, HostileFontProgramsRefused)
@@ -488,19 +516,15 @@ TEST(PdfFont, HostileFontProgramsRefused)
 		}
 		refused(bad, ErrorCode::DamagedFormat, "table outside the program");
 	}
-	// loca offsets that run backwards.
+	// loca ranges that run backwards or past glyf cost their own glyph, checked as it is read; the font loads.
 	{
 		std::vector<uint8_t> bad = font;
 		const size_t loca = table_of(bad, "loca").first;
-		put_u16(bad, loca + 2u * 2u, 0u); // glyph 2 starts before glyph 1 ends
-		refused(bad, ErrorCode::DamagedFormat, "loca backwards");
-	}
-	// loca offsets past the end of glyf.
-	{
-		std::vector<uint8_t> bad = font;
-		const size_t loca = table_of(bad, "loca").first;
-		put_u16(bad, loca + 2u * 7u, 0xFFFFu); // the end of the last glyph, far past glyf
-		refused(bad, ErrorCode::DamagedFormat, "loca past glyf");
+		put_u16(bad, loca + 2u * 2u, 0u); // glyph 1 now ends before it starts
+		glyph_refused(bad, 1, ErrorCode::DamagedFormat, "loca backwards");
+		std::vector<uint8_t> past = font;
+		put_u16(past, table_of(past, "loca").first + 2u * 7u, 0xFFFFu); // the end of the last glyph, far past glyf
+		glyph_refused(past, 6, ErrorCode::DamagedFormat, "loca past glyf");
 	}
 	// A component naming a glyph past numGlyphs, and one naming its own composite (nesting past 16 levels).
 	{
