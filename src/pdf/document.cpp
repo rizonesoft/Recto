@@ -3434,17 +3434,22 @@ PdfResult<void> Document::load_document_structure()
 		}
 	};
 
-	auto action_chain_contains_refused = [this, &record_refused_action_diagnostic](
+	auto action_chain_contains_refused = [this, &record_refused_action_diagnostic, &estimate_pdf_value_bytes](
 											 const PdfDict& root_action,
 											 std::optional<uint64_t> root_ref_key = std::nullopt) -> bool {
 		constexpr size_t kMaxActionChainDepth = 64u;
 		constexpr size_t kMaxActionChainNodes = 256u;
+		// Pending /Next values are copies held until they are inspected, so their bytes share one small budget: an
+		// action chain past it fails closed, like one past the node or depth limit.
+		constexpr size_t kMaxPendingActionBytes = 1u * 1024u * 1024u;
 
 		struct ActionFrame {
 			PdfValue value{};
 			size_t depth{0};
 			bool from_array{false};
+			size_t bytes{0};
 		};
+		size_t pending_action_bytes = 0u;
 
 		std::unordered_set<uint64_t> visited_actions;
 		if (root_ref_key.has_value()) {
@@ -3505,12 +3510,17 @@ PdfResult<void> Document::load_document_structure()
 				if (budget_used >= kMaxActionChainNodes) {
 					return false;
 				}
+				const size_t elem_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, elem, 0u);
+				if (elem_bytes > kMaxPendingActionBytes - pending_action_bytes) {
+					return false;
+				}
 				auto cloned_elem = elem.deep_clone();
 				if (!cloned_elem.has_value()) {
 					return false;
 				}
 				++budget_used;
-				stack.push_back(ActionFrame{std::move(*cloned_elem), elem_depth, /*from_array=*/true});
+				pending_action_bytes += elem_bytes;
+				stack.push_back(ActionFrame{std::move(*cloned_elem), elem_depth, /*from_array=*/true, elem_bytes});
 			}
 			return true;
 		};
@@ -3529,12 +3539,17 @@ PdfResult<void> Document::load_document_structure()
 			if (budget_used >= kMaxActionChainNodes) {
 				return false;
 			}
+			const size_t next_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, next_item, 0u);
+			if (next_bytes > kMaxPendingActionBytes - pending_action_bytes) {
+				return false;
+			}
 			auto cloned_next = next_item.deep_clone();
 			if (!cloned_next.has_value()) {
 				return false;
 			}
 			++budget_used;
-			stack.push_back(ActionFrame{std::move(*cloned_next), child_depth, /*from_array=*/false});
+			pending_action_bytes += next_bytes;
+			stack.push_back(ActionFrame{std::move(*cloned_next), child_depth, /*from_array=*/false, next_bytes});
 			return true;
 		};
 
@@ -3553,6 +3568,7 @@ PdfResult<void> Document::load_document_structure()
 		while (!stack.empty()) {
 			ActionFrame frame = std::move(stack.back());
 			stack.pop_back();
+			pending_action_bytes -= frame.bytes;
 
 			if (frame.depth > kMaxActionChainDepth ||
 				++inspected_nodes > kMaxActionChainNodes) {

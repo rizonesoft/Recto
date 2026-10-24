@@ -936,6 +936,48 @@ TEST(PdfDocument, OpenPageTreeLevelsShareOneBudget)
 	EXPECT_EQ(doc.error().code, ErrorCode::ResourceLimit);
 }
 
+// An action chain's pending /Next values are copies held until inspected, so they share one small budget: a link
+// whose 32 chained GoTo actions each leave a padded direct sibling pending fails closed (inert), while the same chain
+// with small siblings stays a working internal link (D06 T05 section 24, audit round 4).
+TEST(PdfDocument, PendingActionSiblingsShareOneBudget)
+{
+	const auto link_for = [](size_t pad_elements) {
+		std::string pad;
+		for (size_t i = 0u; i < pad_elements; ++i) {
+			pad += "0 ";
+		}
+		std::vector<std::pair<uint32_t, std::string>> objects = {
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R] >>"},
+			{4, "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 10 0 R >>"},
+		};
+		constexpr uint32_t kChain = 32u;
+		for (uint32_t i = 0u; i < kChain; ++i) {
+			std::string action = "<< /S /GoTo /D [3 0 R /Fit]";
+			if (i + 1u < kChain) {
+				action += " /Next [" + std::to_string(11u + i) + " 0 R << /S /GoTo /D [3 0 R /Fit] /Pad [" + pad + "] >>]";
+			}
+			objects.emplace_back(10u + i, action + " >>");
+		}
+		auto doc = Document::open_memory(build_synthetic_pdf_from_objects("1.7", objects));
+		EXPECT_TRUE(doc.has_value());
+		auto links = doc.has_value() ? (*doc)->page_links(0) : PdfResult<std::vector<PageLink>>(std::vector<PageLink>{});
+		EXPECT_TRUE(links.has_value());
+		return links.has_value() && links->size() == 1u ? std::optional<PageLink>((*links)[0]) : std::nullopt;
+	};
+
+	const auto small = link_for(1u);
+	ASSERT_TRUE(small.has_value());
+	EXPECT_EQ(small->kind, LinkKind::Internal);
+	EXPECT_FALSE(small->is_inert);
+
+	const auto padded = link_for(2'000u);
+	ASSERT_TRUE(padded.has_value());
+	EXPECT_EQ(padded->kind, LinkKind::RefusedAction);
+	EXPECT_TRUE(padded->is_inert);
+}
+
 TEST(PdfDocument, PageTreeAndRotatedPages)
 {
 	// 1. `render/rotated-pages.pdf` has 4 pages with rotations 0, 90, 180, 270

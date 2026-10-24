@@ -93,3 +93,27 @@ OVERALL: needs-attention
 - Finding 1 (P1, name-tree ancestors kept alive): correct. Three rounds running found one more traversal holding resolved values across its descent (page dictionaries, outlines, the name tree), so every traversal in `src/pdf/document.cpp` was checked and fixed as a whole rather than this one alone: the `/Names /Dests` tree is walked with an explicit stack whose frames hold only their node's `/Kids` array (charged to a live traversal budget of `kMaxDecodedStreamBytes`) and release each node's dictionary once its `/Names` are read; the Form XObject font scan is walked with an explicit stack whose frames hold only the XObjects' references, releasing each stream before its `/Resources` are scanned; and the page-tree stack charges every open level's `/Kids` array to the same kind of budget, refusing with `ResourceLimit`. The action-chain walker was already iterative and holds only parts of the current object, so it is unchanged. No recursive traversal of document objects is left (only the in-memory size estimator recurses, bounded by the parser's depth). Tests, each failing on `29df9ea`: `PdfDocument.NameTreeTraversalHoldsOneNodeAtATime` (peak 89,278,469 bytes before against a bound of 10,244,868), `PdfDocument.FormXObjectFontScanHoldsOneStreamAtATime` (134,327,716 against 83,891,961), `PdfDocument.OpenPageTreeLevelsShareOneBudget` (`DamagedFormat` before, `ResourceLimit` after).
 
 Gates after the round 3 fixes: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 132 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 213 tests.` in Debug and Release.
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-24T10:13:12Z
+- Effort: medium
+- Lenses: adversarial
+- Lines: 8
+- Digest: 98dcc5f55578f95c
+
+### adversarial: needs-attention
+
+1. **P1: Pending action siblings bypass aggregate memory limits.** `src/pdf/document.cpp:3508` deep-clones each `/Next` array element into the traversal stack at `:3513`. Only node count and depth are bounded, not retained bytes. Reproduce by opening a one-page PDF with a link whose action starts 32 chained `/GoTo` dictionaries, each containing `/Next [next_ref << /S /GoTo /D [page_ref /Fit] /Pad (128 MiB of repeated text) >>]`, stored in separate Flate-compressed object streams. Reverse enqueue order visits `next_ref` first, leaving each padded sibling pending. This retains **4 GiB of padding alone**, within the 256-node, 64-level and individual parser/decode limits, potentially exhausting memory. Object-stream cache eviction cannot release these clones. Bound aggregate pending-action bytes before cloning.
+
+Static finding against `874ef18`; reproduction and ASan tests were not executed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P1, pending action siblings unbudgeted): correct, and a miss in the round 3 sweep, which judged the action-chain walker safe because it is iterative: its pending `/Next` values are copies that outlive the object they came from while the walk follows a reference sibling. Pending copies now share a 1 MiB budget, charged before each copy and released as each is inspected; a chain past it fails closed (the link is inert), like one past the walker's node and depth limits. `PdfDocument.PendingActionSiblingsShareOneBudget`: 32 chained GoTo actions each leaving a direct sibling with a 2,000-element `/Pad` array pending give an inert link (an `Internal` link on `874ef18`), and the same chain with one-element pads stays `Internal`.
+
+Gates after the round 4 fix: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 133 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 214 tests.` in Debug and Release.
