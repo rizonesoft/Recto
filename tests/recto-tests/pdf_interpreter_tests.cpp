@@ -709,8 +709,8 @@ TEST(PdfInterpreter, DeviceColors)
 		{"0 0 0 1 k", false, {0.0f, 0.0f, 0.0f}},
 		{"1 0 0 0 K", true, {0.0f, 1.0f, 1.0f}},           // cyan: 1 - min(1, c + k) per channel
 		{"0.25 0.5 0 0.25 k", false, {0.5f, 0.25f, 0.75f}}, // magenta and black together
-		{"0.5 rg /DeviceRGB cs", false, {0.0f, 0.0f, 0.0f}}, // `cs` sets the space's initial colour
-		{"/DeviceCMYK cs", false, {0.0f, 0.0f, 0.0f}},       // CMYK starts at 0 0 0 1
+		{"0.5 0.5 0.5 rg /DeviceRGB cs", false, {0.0f, 0.0f, 0.0f}}, // `cs` resets to the space's initial colour
+		{"0 1 0 rg /DeviceCMYK cs", false, {0.0f, 0.0f, 0.0f}},     // CMYK starts at 0 0 0 1
 		{"/DeviceGray CS 0.7 SC", true, {0.7f, 0.7f, 0.7f}},
 		{"/DeviceRGB cs 0.1 0.2 0.3 scn", false, {0.1f, 0.2f, 0.3f}},
 		{"/DeviceRGB cs 0.1 0.2 sc", false, {0.0f, 0.0f, 0.0f}}, // the wrong number of components is skipped
