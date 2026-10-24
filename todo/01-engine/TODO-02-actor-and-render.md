@@ -83,7 +83,7 @@ track: M1
 | 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [x] |
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [x] |
 | 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [x] |
-| 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [ ] |
+| 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [x] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -796,6 +796,9 @@ The completion review of `D06 T05 §34` (`docs/reviews/06-quality/D06-T05-s34.md
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.Ccitt*:PdfFilters.JpxRecovery*` passes under ASan, including `PdfFilters.CcittRecoveryReachesRingAndEtw` and `PdfFilters.JpxRecoveryReachesRingAndEtw`. **Corrected 2026-10-24:** the filter gains `PdfFilters.JpxRecovery*`, since item 3 had no test in the checkpoint. **Corrected 2026-10-24 (plan review gap 5):** the filter also gains `PdfFilters.JpxComponentsAndCodingStyles`, which holds the dropped-bitplane pixel check and the empty-component mid values in the code item 3 changes, so correct diagnostics over wrong pixels cannot pass: `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.Ccitt*:PdfFilters.JpxRecovery*:PdfFilters.JpxComponentsAndCodingStyles`.
 
 **Ambition (2026-10-24):** Acrobat Pro's documented support path (Acrobat Diagnostics: start, reproduce, stop, share the logs) hands logs to support, but nothing published says whether those logs record a substituted fax row or a dropped JPEG 2000 bitplane, so that is unknown, not an observed absence (**Corrected 2026-10-24, completion review excellence 2:** this line claimed both vendors recover silently, which was never measured). Recto's bar is measured by its own tests instead: every recovery and every refusal cause reaches the ring and ETW with its count and location, and each refusal names a next step. Showing the recovery to the user is the recovered-content page notice's job (`D06 T03 §3`), not this section's: Surface is no.
+
+> **Verified:** 2026-10-24 | §26 | f78e3d7be5df1fcda3132913be36f874dbfebeb9
+> **Review:** `docs/reviews/d01-t02-s26.json`
 
 ## Verification
 

@@ -1,0 +1,47 @@
+{
+  "ref": "D01 T02 \u00a726",
+  "title": "Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes",
+  "implementation_sha": "f78e3d7be5df1fcda3132913be36f874dbfebeb9",
+  "date": "2026-10-24",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s26.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s26.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s26.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.Ccitt*:PdfFilters.JpxRecovery*:PdfFilters.JpxComponentsAndCodingStyles (ASan x64 Debug) -> [  PASSED  ] 24 tests.",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 205 tests.",
+    "python scripts/todo-graph.py validate -> valid: 831 sections"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s26.md",
+    "verdict": "filed",
+    "candidate": "dfc28e84e1023b87a3343f460bbc0ed5042e30db",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T03 \u00a72",
+      "D07 T03 \u00a72",
+      "D07 T02 \u00a74"
+    ]
+  },
+  "rounds_spent": 4,
+  "round_cap": 33
+}
