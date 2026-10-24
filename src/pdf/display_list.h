@@ -255,6 +255,17 @@ private:
 	std::span<const PdfPoint> points,
 	const PdfMatrix& transform = PdfMatrix::identity()) noexcept;
 
+// Half-open box of pixel cells `[x_min, x_max) x [y_min, y_max)` in a
+// `DecodedBitmap`'s column and row indices.
+struct PixelBox {
+	uint32_t x_min{0};
+	uint32_t y_min{0};
+	uint32_t x_max{0};
+	uint32_t y_max{0};
+
+	constexpr bool operator==(const PixelBox&) const noexcept = default;
+};
+
 // Immutable decoded image bitmap shared zero-copy across `DisplayList` commands
 // and `RenderPool` worker threads via `std::shared_ptr<const DecodedBitmap>`.
 // Construction is restricted to the validated `DecodedBitmap::create()` factory.
@@ -266,6 +277,9 @@ public:
 	const std::vector<uint8_t> pixels; // Premultiplied BGRA8888 (4 bytes/pixel)
 	const bool is_monochrome_mask{false};
 	const bool has_non_transparent_pixels{false};
+	// Smallest box of pixel cells holding every pixel whose alpha is non-zero,
+	// computed once by `create()`; `std::nullopt` for a fully transparent bitmap.
+	const std::optional<PixelBox> opaque_pixel_box;
 
 	DecodedBitmap() = delete;
 	DecodedBitmap(const DecodedBitmap&) = delete;
@@ -273,10 +287,10 @@ public:
 	DecodedBitmap(DecodedBitmap&&) = delete;
 	DecodedBitmap& operator=(DecodedBitmap&&) = delete;
 
-	// Validates dimensions, stride (`stride >= width * 4`), and pixel buffer
-	// size (`pixels.size() == stride * (height - 1) + width * 4` or
-	// `stride * height` within `kMaxDecodedStreamBytes`) before constructing
-	// an immutable shared `DecodedBitmap`.
+	// Validates dimensions (`1..65536`), stride (`stride >= width * 4`), and
+	// pixel buffer size (exactly `stride * (height - 1) + width * 4`, the last
+	// row unpadded, or `stride * height`, every row padded, within 256 MiB)
+	// before constructing an immutable shared `DecodedBitmap`.
 	[[nodiscard]] static PdfResult<std::shared_ptr<const DecodedBitmap>> create(
 		uint32_t width,
 		uint32_t height,
@@ -301,13 +315,14 @@ private:
 		uint32_t row_stride,
 		std::vector<uint8_t>&& bgra_pixels,
 		bool monochrome_mask,
-		bool non_transparent) noexcept
+		std::optional<PixelBox> opaque_box) noexcept
 		: width(w)
 		, height(h)
 		, stride(row_stride)
 		, pixels(std::move(bgra_pixels))
 		, is_monochrome_mask(monochrome_mask)
-		, has_non_transparent_pixels(non_transparent)
+		, has_non_transparent_pixels(opaque_box.has_value())
+		, opaque_pixel_box(opaque_box)
 	{
 	}
 };
@@ -319,11 +334,15 @@ struct PositionedGlyph {
 	PdfPoint origin_pt{}; // Glyph origin in text/user space
 	double advance_pt{0.0};
 	// Glyph outline ink bounding box relative to `origin_pt` in text space
-	// (`[left_bearing, descender, right_bearing, ascender]`). May have negative
-	// `x_min` (negative left side bearing), negative `y_min` (descender below
-	// baseline), or `x_max > advance_pt` (right overhang). Omit when `is_blank`
-	// is true or when `type3_sub_list` is supplied (or for single-glyph runs
-	// using run-level `local_bounds_pt`).
+	// (`[left_bearing, descender, right_bearing, ascender]`), in the same
+	// text-space points as `origin_pt` and `advance_pt`: the caller has already
+	// scaled the glyph-space outline box by the font matrix, font size and
+	// horizontal scaling, so only `text_matrix` and the CTM remain to map it to
+	// the page. May have negative `x_min` (negative left side bearing), negative
+	// `y_min` (descender below baseline), or `x_max > advance_pt` (right
+	// overhang). Omit when `is_blank` is true or when `type3_sub_list` is
+	// supplied; a run whose visible glyphs lack it falls back to the run-level
+	// `local_bounds_pt`, a conservative box for the whole run.
 	std::optional<PdfRect> ink_bounds_pt{};
 	bool is_blank{false};
 
@@ -430,6 +449,12 @@ struct RecordedGlyphRun {
 
 using DrawGlyphRunCommand = RecordedGlyphRun;
 
+// Pixel cell `(column c, row r)` of an `width x height` bitmap (or soft mask)
+// covers `[c / width, (c + 1) / width] x [1 - (r + 1) / height, 1 - r / height]`
+// of the unit square, which `dest_transform` maps to user space: row 0 is the
+// image's first row, at the top (ISO 32000-1 section 8.9.4). With `interpolate`
+// the painted footprint of a cell may reach half a cell beyond it (bilinear
+// sampling), clamped to the unit square.
 struct DrawImageCommand {
 	std::shared_ptr<const DecodedBitmap> bitmap;
 	PdfMatrix dest_transform{}; // Maps unit square `[0,1]x[0,1]` to user space
@@ -487,6 +512,17 @@ struct DisplayCommand {
 	}
 };
 
+// Page-space box a recorded command paints, entry `i` of
+// `DisplayList::command_bounds()` describing `DisplayList::commands()[i]`.
+// `has_bounds` is false for state commands and for draws that paint nothing
+// (invisible, fully transparent or fully clipped).
+struct CommandBounds {
+	PdfRect bounds_pt{};
+	bool has_bounds{false};
+
+	constexpr bool operator==(const CommandBounds&) const noexcept = default;
+};
+
 // Immutable, reference-counted display list for a single PDF page (or Type 3
 // glyph / Form XObject sub-list).
 //
@@ -505,27 +541,45 @@ public:
 	DisplayList(DisplayList&&) = delete;
 	DisplayList& operator=(DisplayList&&) = delete;
 
-	// The page box (`/CropBox` or `/MediaBox` in points) for which this display
-	// list was recorded.
+	// The page box for which this display list was recorded, exactly as the
+	// caller passed it: the page's crop box in unrotated default user space
+	// (points), non-zero origins kept. `/Rotate` is applied by the consumer;
+	// `/UserUnit` belongs to D01 T02 section 21.
 	[[nodiscard]] const PdfRect& page_box_pt() const noexcept
 	{
 		return page_box_pt_;
 	}
 
-	// True if at least one visible path, glyph run, or image contributed ink
-	// inside the active clip bounds.
+	// True if at least one visible path, glyph run, or image contributed a box
+	// inside the active clip boxes and the page box.
 	[[nodiscard]] bool has_content_bounds() const noexcept
 	{
 		return has_content_bounds_;
 	}
 
-	// Tight bounding box of all painted ink in page space (clipped to the
-	// active clip stack and `page_box_pt`). Used by `Auto-Detect White Margins`
-	// in `D05 T01 §4`. Returns an empty `PdfRect{}` when `has_content_bounds()`
-	// is false.
+	// Bounding-box-device content bounds in the same space as `page_box_pt()`
+	// (the contract of MuPDF's `fz_bbox_device`): the union over painted
+	// primitives of each primitive's exact page-space box (analytic cubic
+	// extrema; strokes widened by half the line width, projecting caps and
+	// miter joins up to the miter limit; glyph ink boxes; the opaque-pixel box
+	// of an image intersected with its soft mask's), each intersected with the
+	// bounding boxes of the active clips and with `page_box_pt()`. It contains
+	// every painted point (it never cuts ink); it is tight under rectangular
+	// clips and looser under curved clips and dashes. Used by `Auto-Detect
+	// White Margins` in `D05 T01 §4`. Returns an empty `PdfRect{}` when
+	// `has_content_bounds()` is false.
 	[[nodiscard]] const PdfRect& content_bounds_pt() const noexcept
 	{
 		return content_bounds_pt_;
+	}
+
+	// Per-command painted boxes under the same contract as
+	// `content_bounds_pt()`, parallel to `commands()`; their union is
+	// `content_bounds_pt()`. Lets `D05 T01 §4` leave out a full-page background
+	// fill when detecting margins.
+	[[nodiscard]] std::span<const CommandBounds> command_bounds() const noexcept
+	{
+		return command_bounds_;
 	}
 
 	[[nodiscard]] size_t command_count() const noexcept
@@ -629,6 +683,7 @@ private:
 		PdfRect content_bounds_pt,
 		bool has_content_bounds,
 		std::vector<DisplayCommand>&& commands,
+		std::vector<CommandBounds>&& command_bounds,
 		std::vector<RecordedPath>&& paths,
 		std::vector<PathVerb>&& path_verbs,
 		std::vector<PdfPoint>&& path_points,
@@ -639,6 +694,7 @@ private:
 	const PdfRect content_bounds_pt_;
 	const bool has_content_bounds_{false};
 	const std::vector<DisplayCommand> commands_;
+	const std::vector<CommandBounds> command_bounds_;
 	const std::vector<RecordedPath> paths_;
 	const std::vector<PathVerb> path_verbs_;
 	const std::vector<PdfPoint> path_points_;
@@ -648,7 +704,9 @@ private:
 
 // Configurable resource budgets for `DisplayListBuilder` to bound memory,
 // clip/save nesting depth, and computational geometry work against hostile
-// content streams.
+// content streams. Every count limit and the byte budget is checked before the
+// pool it guards grows; a call that would pass one returns
+// `ErrorCode::ResourceLimit` and records nothing.
 struct DisplayListLimits {
 	size_t max_commands{1'000'000u};
 	size_t max_paths{250'000u};
@@ -658,15 +716,21 @@ struct DisplayListLimits {
 	size_t max_dash_values{250'000u};
 	size_t max_save_depth{64u};
 	size_t max_clip_depth{64u};
+	// Path verbs, points and glyphs walked by bounds computation, summed over
+	// every clip and draw (a hostile stream can draw one huge path many times).
 	size_t max_geometry_work_ops{100'000'000u};
+	// Heap the builder's pools hold by capacity, including the old buffer a
+	// growing pool still holds while it reallocates.
 	size_t max_total_bytes{256ull * 1024ull * 1024ull};
 	// Optional deterministic fault-injection counter (`0` = disabled): when
-	// non-zero, the N-th internal builder allocation step fails with
+	// non-zero, the N-th mutating builder call (each charges one step before it
+	// allocates, `finish()` included) and every later one fail with
 	// `ErrorCode::OutOfMemory`.
 	size_t fail_allocation_after_ops{0u};
 	// Optional deterministic fault injection specifically targeting the
 	// `std::shared_ptr<const DisplayList>` control-block allocation in `finish()`
-	// after the `DisplayList` object itself has been constructed.
+	// after the `DisplayList` object itself has been constructed and the
+	// builder's storage moved into it.
 	bool fail_finish_control_block_allocation{false};
 };
 
@@ -742,71 +806,52 @@ public:
 	[[nodiscard]] size_t command_count() const noexcept { return commands_.size(); }
 	[[nodiscard]] size_t path_count() const noexcept { return paths_.size(); }
 
+	// Heap bytes the builder's pools hold by capacity (commands, command
+	// bounds, paths, verbs, points, glyphs, dash values, saved states), the
+	// figure `DisplayListLimits::max_total_bytes` bounds.
+	[[nodiscard]] size_t retained_bytes() const noexcept { return current_pool_bytes(); }
+
 	// Seals the builder (one-shot) and returns the immutable `DisplayList`.
 	// Subsequent calls to `finish()` or any mutation method after `finish()`
 	// return `ErrorCode::InternalError`.
 	[[nodiscard]] PdfResult<std::shared_ptr<const DisplayList>> finish() noexcept;
 
 private:
-	struct ClipEdge {
-		PdfPoint p0{};
-		PdfPoint p1{};
-	};
-
-	struct ClipCubic {
-		PdfPoint p0{};
-		PdfPoint p1{};
-		PdfPoint p2{};
-		PdfPoint p3{};
-	};
-
-	struct ClipRegion {
-		std::vector<ClipEdge> edges;
-		std::vector<ClipEdge> linear_edges;
-		std::vector<ClipCubic> cubics;
-		FillRule fill_rule{FillRule::NonZero};
-		PdfRect bbox{};
-		bool has_bbox{false};
-	};
-
-	struct BoundsAccumulator {
-		PdfRect bounds{};
-		bool has_bounds{false};
-
-		void include(const PdfRect& r) noexcept;
-	};
-
+	// Graphics state the builder tracks for bounds. Fixed size, so a saved
+	// state costs exactly one `state_stack_` slot.
 	struct TrackingState {
 		PdfMatrix ctm{PdfMatrix::identity()};
 		float line_width{1.0f};
 		LineCap line_cap{LineCap::Butt};
 		LineJoin line_join{LineJoin::Miter};
 		float miter_limit{10.0f};
-		std::vector<float> dash_array;
-		float dash_phase{0.0f};
 		float stroke_alpha{1.0f};
 		float fill_alpha{1.0f};
-		std::vector<std::shared_ptr<const ClipRegion>> clips;
+		// Intersection of `page_box_pt_` and the exact page-space boxes of every
+		// pushed clip path; `clip_is_empty` once that intersection has no area.
+		PdfRect clip_box_pt{};
+		bool clip_is_empty{false};
+		size_t clip_depth{0u};
+	};
+
+	// One pool's planned growth for `reserve_growth()`: append `extra`
+	// elements to `*pool` without passing `max_elements`.
+	template <typename T>
+	struct Growth {
+		std::vector<T>* pool{nullptr};
+		size_t extra{0u};
+		size_t max_elements{0u};
 	};
 
 	[[nodiscard]] size_t current_pool_bytes() const noexcept;
 	[[nodiscard]] PdfResult<void> check_can_mutate() const noexcept;
-	[[nodiscard]] PdfResult<void> check_additional_bytes(size_t extra_bytes) const noexcept;
 	[[nodiscard]] PdfResult<void> charge_allocation_op() noexcept;
 	[[nodiscard]] PdfResult<void> charge_geometry_work(size_t ops) noexcept;
-
-	[[nodiscard]] PdfResult<void> accumulate_clipped_region(
-		std::span<const ClipEdge> shape_edges,
-		FillRule shape_rule,
-		BoundsAccumulator& accum) noexcept;
-	[[nodiscard]] PdfResult<void> accumulate_clipped_segment(
-		PdfPoint p0,
-		PdfPoint p1,
-		BoundsAccumulator& accum) noexcept;
-	[[nodiscard]] PdfResult<void> accumulate_clipped_rect(
-		const PdfRect& local_rect,
-		const PdfMatrix& to_page,
-		BoundsAccumulator& accum) noexcept;
+	template <typename... Ts>
+	[[nodiscard]] PdfResult<void> reserve_growth(Growth<Ts>... growths) noexcept;
+	[[nodiscard]] PdfResult<void> reserve_command_slot() noexcept;
+	[[nodiscard]] std::optional<PdfRect> clip_to_state(const PdfRect& box) const noexcept;
+	void commit_command(DisplayCommand&& command, std::optional<PdfRect> bounds) noexcept;
 
 	PdfRect page_box_pt_{0.0, 0.0, 612.0, 792.0};
 	DisplayListLimits limits_{};
@@ -821,6 +866,7 @@ private:
 	std::vector<TrackingState> state_stack_;
 
 	std::vector<DisplayCommand> commands_;
+	std::vector<CommandBounds> command_bounds_;
 	std::vector<RecordedPath> paths_;
 	std::vector<PathVerb> path_verbs_;
 	std::vector<PdfPoint> path_points_;
