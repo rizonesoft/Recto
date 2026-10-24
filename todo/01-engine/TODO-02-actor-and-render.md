@@ -1057,6 +1057,8 @@ Every PDF Recto writes goes through one serializer of the object model (ISO 3200
 
 ## 36. Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)
 
+> **Started:** 2026-10-24T23:13Z
+
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s36.md`):** four gaps folded in: the crypt filter chosen as decryption chooses it (`/StrF`, `/StmF`, `/EFF` for embedded files, a stream's own `/Crypt` filter, a resolver for indirect parameters) through one shared selection, with unknown filters refused; all-or-nothing encryption proven by failure injection; fresh IVs asserted only for AES, RC4 checked against fixed ciphertext; and empty and block-boundary lengths with ciphertext computed independently.
 
 The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_values`, `D01 T01`); writing into an encrypted document (`§5`) and writing an encrypted one (`D05 T01`) need the encrypting half, with the same exemptions and the same crypt filter choice (ISO 32000-1 7.6, ISO 32000-2 7.6.3).
