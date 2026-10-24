@@ -253,6 +253,20 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(kinds(*framed.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*framed.list)[0].fill);
 
+	// However many false `EI`s the pixels hold, each one truncates the stream and the real one still ends the image.
+	const std::string many_pixels = std::string(" EI 0 0 100 100 re f ") + std::string(40, ' ') + [] {
+		std::string s;
+		for (int i = 0; i < 16; ++i) {
+			s += " EI ";
+		}
+		return s;
+	}() + "\x80";
+	ASSERT_EQ(many_pixels.size(), 126u);
+	const auto many = interpret("BI /W 126 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(many_pixels) + "\nEI 0 0 10 10 re S");
+	ASSERT_NE(many.list, nullptr);
+	EXPECT_EQ(kinds(*many.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_FALSE(all_of<DrawPathCommand>(*many.list)[0].fill);
+
 	// An operator that takes no operands, given one, is skipped like any operator with the wrong operands: each case
 	// below would add a save, a restore, a close, a clip or a paint before the `2 w S` if it ran.
 	for (const std::string_view op : {"q", "Q", "h", "W", "W*", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}) {
@@ -336,6 +350,33 @@ TEST(PdfInterpreter, EntryContract)
 	const auto too_deep = interpret_page(**nested_doc, 0u);
 	ASSERT_FALSE(too_deep.has_value());
 	EXPECT_EQ(too_deep.error().code, ErrorCode::RecursionLimitExceeded);
+
+	// A filtered inline image whose end no candidate confirms within the 64 MiB decoding budget refuses the page, never
+	// falls back to an unchecked `EI`.
+	std::string candidates;
+	for (int i = 0; i < 13'000; ++i) {
+		candidates += " EI";
+	}
+	const std::vector<uint8_t> unframed = one_page_pdf("BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID" + candidates + " 0 0 10 10 re f");
+	auto unframed_doc = Document::open_memory(unframed);
+	ASSERT_TRUE(unframed_doc.has_value());
+	const auto refused = interpret_page(**unframed_doc, 0u);
+	ASSERT_FALSE(refused.has_value());
+	EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
+	EXPECT_EQ(refused.error().refusal_reason, RefusalReason::InlineImageFraming);
+
+	// A resource that fails to resolve for a reason other than damage (nesting past the parser's depth) stops the page,
+	// whether `gs` names it or an inline image's colour space does.
+	const std::string deep_object = std::string(300, '[') + std::string(300, ']');
+	for (const std::string_view content : {std::string_view("/A gs 0 0 10 10 re f"), std::string_view("BI /W 1 /H 1 /BPC 8 /CS /C ID x EI")}) {
+		SCOPED_TRACE(std::string(content));
+		const std::vector<uint8_t> deep_bytes = one_page_pdf(content, "<< /ExtGState << /A 5 0 R >> /ColorSpace << /C 5 0 R >> >>", {deep_object});
+		auto deep_doc = Document::open_memory(deep_bytes);
+		ASSERT_TRUE(deep_doc.has_value());
+		const auto failed = interpret_page(**deep_doc, 0u);
+		ASSERT_FALSE(failed.has_value());
+		EXPECT_EQ(failed.error().code, ErrorCode::RecursionLimitExceeded);
+	}
 
 	// A recording failure is returned, never a partial page reported as success.
 	DisplayListLimits failing{};

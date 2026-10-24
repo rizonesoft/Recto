@@ -723,6 +723,8 @@ enum class RefusalReason : uint16_t {
 	GlyphPoints,      // a glyph outline over its point limit
 	ComponentVisits,  // composite glyph components visited past the limit
 	CompositeDepth,   // composite glyphs nested past the depth limit
+	// Appended (D01 T02 section 3): the content-stream interpreter.
+	InlineImageFraming, // a filtered inline image whose end was not found within the decoding work limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -776,6 +778,8 @@ enum class RefusalReason : uint16_t {
 		return "ComponentVisits";
 	case RefusalReason::CompositeDepth:
 		return "CompositeDepth";
+	case RefusalReason::InlineImageFraming:
+		return "InlineImageFraming";
 	}
 	return "UnknownReason";
 }
@@ -852,6 +856,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::CompositeDepth:
 		return "Composite glyphs nest deeper than their limit (observed and bound are levels); that glyph is not "
 			   "drawn, and the file may be damaged";
+	case RefusalReason::InlineImageFraming:
+		return "The end of a compressed image inside the page's content could not be found within the decoding limit "
+			   "(observed and bound are bytes decoded); the page is not shown, and the file may be damaged";
 	}
 	return "";
 }

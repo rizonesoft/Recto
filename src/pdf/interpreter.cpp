@@ -333,6 +333,9 @@ private:
 				const Op code = op_named(op->text.view());
 				if (code == Op::BeginInlineImage) {
 					RECTO_PDF_RETURN_IF_ERROR(skip_inline_image(parser));
+					if (resolve_failure_.has_value()) {
+						return *resolve_failure_; // a colour space the image named did not resolve
+					}
 					operands.clear();
 					skip_next_ = false;
 					continue;
@@ -439,7 +442,17 @@ private:
 			}
 			return std::nullopt;
 		}
-		return *family == "ICCBased" ? std::nullopt : by_name(*family);
+		if (*family == "ICCBased" && array->size() >= 2u) {
+			const auto profile = resolved((*array)[1]);
+			const PdfStream* stream = profile.has_value() ? profile->as_stream() : nullptr;
+			const PdfValue* n = stream != nullptr ? stream->dict.get("N") : nullptr;
+			const auto count = n != nullptr ? n->as_int() : std::nullopt;
+			if (count.has_value() && *count >= 1 && *count <= 32) {
+				return static_cast<size_t>(*count);
+			}
+			return std::nullopt;
+		}
+		return by_name(*family);
 	}
 
 	using InlineEntries = std::vector<std::pair<std::string, PdfValue>>;
@@ -510,12 +523,13 @@ private:
 	// Inline images are read by section 4; until then `BI ... ID data EI` is skipped whole, so the data is never read
 	// as operators. The dictionary is parsed to find `ID`. An unfiltered image's data is skipped by its length. A
 	// filtered one ends at the first `EI` before which the data decodes through its filters to the image's full size:
-	// an `EI` inside compressed data truncates it, so it cannot. Only when the size is unknown, or 16 candidates fail,
-	// does the first `EI` with no binary byte after it end the image.
+	// an `EI` inside compressed data truncates it, so it cannot. Checking candidates may decode at most 64 MiB in all;
+	// past that the page is refused (`InlineImageFraming`), never framed unchecked. Only an image whose size is unknown,
+	// or whose data decodes at no candidate (damaged data), ends at the first `EI` with no binary byte after it.
 	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
 	{
 		static constexpr size_t kMaxInlineEntries = 64u;
-		static constexpr size_t kMaxFramingTries = 16u;
+		static constexpr size_t kMaxFramingWork = 64u * 1024u * 1024u;
 		Lexer& lexer = parser.lexer();
 		const std::span<const uint8_t> input = lexer.input();
 		InlineEntries entries;
@@ -581,13 +595,19 @@ private:
 				if (const PdfValue* parms = inline_entry(entries, "DP", "DecodeParms")) {
 					filters.set("DecodeParms", *parms);
 				}
-				size_t tries = 0;
-				for (size_t end = *data_start; end + 2u <= input.size() && tries < kMaxFramingTries; ++end) {
+				size_t work = 0;
+				for (size_t end = *data_start; end + 2u <= input.size(); ++end) {
 					if (!ei_candidate(input, *data_start, end)) {
 						continue;
 					}
-					++tries;
-					const auto data = input.subspan(*data_start, end - *data_start);
+					const size_t length = end - *data_start;
+					if (length > kMaxFramingWork - work) {
+						return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::InlineImageFraming,
+							static_cast<uint64_t>(work) + length, kMaxFramingWork,
+							"An inline image's end was not found within the decoding work limit");
+					}
+					work += length;
+					const auto data = input.subspan(*data_start, length);
 					auto decoded = decode_stream(data, filters, *samples + 4'096u);
 					if (decoded.has_value() && decoded->size() >= *samples) {
 						lexer.seek(end + 2u);
