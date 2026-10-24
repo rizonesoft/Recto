@@ -2,6 +2,7 @@
 // (D01 T02 section 3). Each test writes a one-page PDF (media box 0 0 200 200) whose content stream it states, so every
 // expected command, point, colour and box below follows by hand from that stream and ISO 32000-1 section 8.
 #include "interpreter.h"
+#include "lexer.h"
 
 #include <gtest/gtest.h>
 
@@ -204,6 +205,34 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(kinds(*inline_image.list), (std::vector<K>{K::DrawPath}));
 	EXPECT_TRUE(all_of<DrawPathCommand>(*inline_image.list)[0].fill);
 
+	// Pixel data holding " EI " and operator-shaped bytes: an unfiltered image is skipped by its length (24 bytes of
+	// 8-bit gray), so neither the false `EI` nor the `re f` inside the data is read.
+	const std::string pixels = " EI 0 0 100 100 re f    ";
+	ASSERT_EQ(pixels.size(), 24u);
+	const auto by_length = interpret("BI /W 24 /H 1 /BPC 8 /CS /G ID " + pixels + "\nEI 0 0 10 10 re S");
+	ASSERT_NE(by_length.list, nullptr);
+	EXPECT_EQ(kinds(*by_length.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_FALSE(all_of<DrawPathCommand>(*by_length.list)[0].fill);
+	// A filtered image cannot be measured: the `EI` that ends it is the first one not followed by binary bytes.
+	const auto filtered = interpret(std::string("BI /W 2 /H 2 /BPC 8 /CS /G /F /Fl ID \x01 EI \x80 0 0 100 100 re f \x90 EI\n") +
+		"0 0 10 10 re S");
+	ASSERT_NE(filtered.list, nullptr);
+	EXPECT_EQ(kinds(*filtered.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_FALSE(all_of<DrawPathCommand>(*filtered.list)[0].fill);
+
+	// An operator that takes no operands, given one, is skipped like any operator with the wrong operands: each case
+	// below would add a save, a restore, a close, a clip or a paint before the `2 w S` if it ran.
+	for (const std::string_view op : {"q", "Q", "h", "W", "W*", "S", "s", "f", "F", "f*", "B", "B*", "b", "b*", "n"}) {
+		SCOPED_TRACE(std::string(op));
+		const auto stray = interpret("q 0 0 m 10 0 l 10 10 l 7 " + std::string(op) + " 2 w S Q");
+		ASSERT_NE(stray.list, nullptr);
+		EXPECT_EQ(kinds(*stray.list), (std::vector<K>{K::SaveState, K::SetStrokeStyle, K::DrawPath, K::RestoreState}));
+		const auto stray_draws = all_of<DrawPathCommand>(*stray.list);
+		ASSERT_EQ(stray_draws.size(), 1u);
+		EXPECT_FALSE(stray_draws[0].fill);
+		EXPECT_EQ(verbs_of(*stray.list, stray_draws[0].path_index), (std::vector<PathVerb>{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo}));
+	}
+
 	// A width past the float range the display list keeps is skipped, so the stroke keeps the default width.
 	const auto wide = interpret("350000000000000000000000000000000000000.0 w 0 0 m 10 0 l S");
 	ASSERT_NE(wide.list, nullptr);
@@ -254,6 +283,18 @@ TEST(PdfInterpreter, EntryContract)
 	const auto undecodable = interpret_page(**broken_doc, 1u);
 	ASSERT_FALSE(undecodable.has_value());
 	EXPECT_EQ(undecodable.error().code, ErrorCode::DamagedFormat);
+
+	// A lexer that runs out of memory stops the page with `OutOfMemory`, not a skipped token.
+	const std::vector<uint8_t> long_string = one_page_pdf("(" + std::string(4096, 'a') + ") Tj 0 0 10 10 re f");
+	auto long_doc = Document::open_memory(long_string);
+	ASSERT_TRUE(long_doc.has_value());
+	{
+		detail::ScopedLexerAllocFaultInjector fail_first(0);
+		const auto starved = interpret_page(**long_doc, 0u);
+		ASSERT_FALSE(starved.has_value());
+		EXPECT_EQ(starved.error().code, ErrorCode::OutOfMemory);
+	}
+	ASSERT_TRUE(interpret_page(**long_doc, 0u).has_value());
 
 	// A recording failure is returned, never a partial page reported as success.
 	DisplayListLimits failing{};
@@ -479,6 +520,20 @@ TEST(PdfInterpreter, PaintingOperators)
 		}
 		EXPECT_EQ(verbs_of(*r.list, draws[0].path_index), expected);
 	}
+	// A path ended by `n` with no clip is not stored: a thousand of them leave only the visible path's geometry, and fit
+	// a list allowed a single path.
+	std::string discarded;
+	for (int i = 0; i < 1000; ++i) {
+		discarded += "0 0 10 10 re n ";
+	}
+	discarded += "0 0 5 5 re f";
+	DisplayListLimits one_path{};
+	one_path.max_paths = 1u;
+	const auto kept = interpret(one_page_pdf(discarded), one_path);
+	ASSERT_NE(kept.list, nullptr);
+	EXPECT_EQ(kinds(*kept.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kept.list->path_points().size(), 2u);
+
 	// `n` ends the path without painting, so a fill after it has nothing to paint.
 	const auto ended = interpret("0 0 10 10 re n f");
 	ASSERT_NE(ended.list, nullptr);

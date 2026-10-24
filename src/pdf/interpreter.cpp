@@ -261,6 +261,24 @@ public:
 
 	[[nodiscard]] PdfResult<std::shared_ptr<const DisplayList>> run(std::span<const uint8_t> content) noexcept
 	{
+		try {
+			RECTO_PDF_RETURN_IF_ERROR(interpret(content));
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory interpreting a content stream");
+		}
+		return builder_.finish();
+	}
+
+private:
+	// A lexer, parser or resolver failure that is not the content's fault (memory, an internal error) stops the page;
+	// anything else is damaged content, and the operator it belongs to is skipped.
+	[[nodiscard]] static bool fatal(const PdfError& error) noexcept
+	{
+		return error.code == ErrorCode::OutOfMemory || error.code == ErrorCode::InternalError;
+	}
+
+	[[nodiscard]] PdfResult<void> interpret(std::span<const uint8_t> content)
+	{
 		Parser parser(content);
 		Lexer& lexer = parser.lexer();
 		std::vector<PdfValue> operands;
@@ -268,6 +286,9 @@ public:
 			const size_t before = lexer.position();
 			auto peeked = lexer.peek_token();
 			if (!peeked.has_value()) {
+				if (fatal(peeked.error())) {
+					return peeked.error();
+				}
 				// A token the lexer cannot read: the operator it belongs to is skipped, and reading resumes past it.
 				drop_operands(operands);
 				resync(lexer, before);
@@ -279,13 +300,16 @@ public:
 			if (peeked->kind == TokenKind::Keyword) {
 				auto op = lexer.next_token();
 				if (!op.has_value()) {
+					if (fatal(op.error())) {
+						return op.error();
+					}
 					drop_operands(operands);
 					resync(lexer, before);
 					continue;
 				}
 				const Op code = op_named(op->text.view());
 				if (code == Op::BeginInlineImage) {
-					skip_inline_image(lexer);
+					RECTO_PDF_RETURN_IF_ERROR(skip_inline_image(parser));
 					operands.clear();
 					skip_next_ = false;
 					continue;
@@ -296,6 +320,9 @@ public:
 			}
 			auto operand = parser.parse_direct_object();
 			if (!operand.has_value()) {
+				if (fatal(operand.error())) {
+					return operand.error();
+				}
 				drop_operands(operands);
 				resync(lexer, before);
 				continue;
@@ -306,10 +333,9 @@ public:
 			}
 			operands.push_back(std::move(*operand));
 		}
-		return builder_.finish();
+		return {};
 	}
 
-private:
 	// The operator these operands belong to is skipped: an operand was unreadable or past the ceiling.
 	void drop_operands(std::vector<PdfValue>& operands) noexcept
 	{
@@ -324,30 +350,196 @@ private:
 		lexer.seek(after > before ? after : before + 1u);
 	}
 
-	// Inline images belong to section 4; until then their data is skipped to the `EI` that ends it, so its bytes are
-	// never read as operators.
-	static void skip_inline_image(Lexer& lexer) noexcept
+	[[nodiscard]] static bool is_white(uint8_t b) noexcept
 	{
-		const std::span<const uint8_t> input = lexer.input();
-		size_t at = lexer.position();
-		const auto is_space = [](uint8_t b) noexcept {
-			return b == 0x20u || b == 0x0Au || b == 0x0Du || b == 0x09u || b == 0x0Cu || b == 0x00u;
-		};
-		// Past "ID" and its single whitespace byte.
-		while (at + 2u <= input.size() && !(input[at] == 'I' && input[at + 1u] == 'D' &&
-				   (at + 2u == input.size() || is_space(input[at + 2u])))) {
-			++at;
+		return b == 0x20u || b == 0x0Au || b == 0x0Du || b == 0x09u || b == 0x0Cu || b == 0x00u;
+	}
+
+	// Whether the `EI` at `at` ends the image: whitespace before it, whitespace or the end after it, and no binary byte
+	// in the 32 that follow (pixel data that happens to hold " EI " is followed by more binary data, an operator is not).
+	[[nodiscard]] static bool ends_image(std::span<const uint8_t> input, size_t at) noexcept
+	{
+		if (at + 2u > input.size() || input[at] != 'E' || input[at + 1u] != 'I' || at == 0u || !is_white(input[at - 1u]) ||
+			(at + 2u < input.size() && !is_white(input[at + 2u]))) {
+			return false;
 		}
-		at += 3u;
-		while (at + 2u <= input.size()) {
-			if (input[at] == 'E' && input[at + 1u] == 'I' && (at == 0u || is_space(input[at - 1u])) &&
-				(at + 2u == input.size() || is_space(input[at + 2u]))) {
-				lexer.seek(at + 2u);
-				return;
+		const size_t end = std::min(input.size(), at + 2u + 32u);
+		for (size_t i = at + 2u; i < end; ++i) {
+			const uint8_t b = input[i];
+			if ((b < 0x20u || b > 0x7Eu) && b != 0x0Au && b != 0x0Du && b != 0x09u && b != 0x0Cu && b != 0x20u) {
+				return false;
 			}
-			++at;
+		}
+		return true;
+	}
+
+	// The components of an inline image's colour space (ISO 32000-1 Table 93 abbreviations, or a `/ColorSpace`
+	// resource), or none when this section cannot tell.
+	[[nodiscard]] std::optional<size_t> inline_components(const PdfValue& space, int depth = 0)
+	{
+		const auto by_name = [](std::string_view n) -> std::optional<size_t> {
+			if (n == "G" || n == "DeviceGray" || n == "I" || n == "Indexed" || n == "CalGray" || n == "Separation") {
+				return 1u;
+			}
+			if (n == "RGB" || n == "DeviceRGB" || n == "CalRGB" || n == "Lab") {
+				return 3u;
+			}
+			if (n == "CMYK" || n == "DeviceCMYK") {
+				return 4u;
+			}
+			return std::nullopt;
+		};
+		if (const auto n = space.as_name()) {
+			if (const auto count = by_name(*n)) {
+				return count;
+			}
+			if (depth == 0) {
+				if (const auto named = resource("ColorSpace", color_spaces_, *n)) {
+					return inline_components(*named, 1);
+				}
+			}
+			return std::nullopt;
+		}
+		const PdfArray* array = space.as_array();
+		if (array == nullptr || array->empty()) {
+			return std::nullopt;
+		}
+		const auto family = (*array)[0].as_name();
+		if (!family.has_value()) {
+			return std::nullopt;
+		}
+		if (*family == "DeviceN" && array->size() >= 2u) {
+			if (const PdfArray* names = (*array)[1].as_array(); names != nullptr && !names->empty()) {
+				return names->size();
+			}
+			return std::nullopt;
+		}
+		return *family == "ICCBased" ? std::nullopt : by_name(*family);
+	}
+
+	// The byte length of an unfiltered inline image's data, or none when it is filtered or this section cannot tell.
+	[[nodiscard]] std::optional<size_t> inline_length(const std::vector<std::pair<std::string, PdfValue>>& entries)
+	{
+		const auto find = [&](std::string_view a, std::string_view b) -> const PdfValue* {
+			for (const auto& [key, value] : entries) {
+				if (key == a || key == b) {
+					return &value;
+				}
+			}
+			return nullptr;
+		};
+		if (const PdfValue* filter = find("F", "Filter");
+			filter != nullptr && !(filter->as_array() != nullptr && filter->as_array()->empty())) {
+			return std::nullopt;
+		}
+		const PdfValue* w = find("W", "Width");
+		const PdfValue* h = find("H", "Height");
+		if (w == nullptr || h == nullptr) {
+			return std::nullopt;
+		}
+		const auto width = w->as_int();
+		const auto height = h->as_int();
+		if (!width.has_value() || !height.has_value() || *width <= 0 || *height <= 0 || *width > 65'536 || *height > 65'536) {
+			return std::nullopt;
+		}
+		size_t bpc = 0;
+		size_t comps = 0;
+		const PdfValue* mask = find("IM", "ImageMask");
+		if (mask != nullptr && mask->as_bool().value_or(false)) {
+			bpc = 1u;
+			comps = 1u;
+		} else {
+			const PdfValue* b = find("BPC", "BitsPerComponent");
+			const PdfValue* cs = find("CS", "ColorSpace");
+			const auto bits = b != nullptr ? b->as_int() : std::nullopt;
+			if (!bits.has_value() || (*bits != 1 && *bits != 2 && *bits != 4 && *bits != 8 && *bits != 16) || cs == nullptr) {
+				return std::nullopt;
+			}
+			const auto count = inline_components(*cs);
+			if (!count.has_value() || *count == 0u || *count > 32u) {
+				return std::nullopt;
+			}
+			bpc = static_cast<size_t>(*bits);
+			comps = *count;
+		}
+		// At most 65536 x 32 x 16 bits a row and 65536 rows: no overflow in 64 bits.
+		const size_t row = (static_cast<size_t>(*width) * comps * bpc + 7u) / 8u;
+		return row * static_cast<size_t>(*height);
+	}
+
+	// Inline images are read by section 4; until then `BI ... ID data EI` is skipped whole, so the data is never read
+	// as operators. The dictionary is parsed to find `ID`; an unfiltered image's data is skipped by its length, and
+	// otherwise the `EI` that ends it is the first one `ends_image` accepts.
+	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
+	{
+		static constexpr size_t kMaxInlineEntries = 64u;
+		Lexer& lexer = parser.lexer();
+		const std::span<const uint8_t> input = lexer.input();
+		std::vector<std::pair<std::string, PdfValue>> entries;
+		std::optional<size_t> data_start;
+		for (size_t pair = 0; pair <= kMaxInlineEntries; ++pair) {
+			auto peeked = lexer.peek_token();
+			if (!peeked.has_value()) {
+				if (fatal(peeked.error())) {
+					return peeked.error();
+				}
+				break;
+			}
+			if (peeked->kind == TokenKind::Eof) {
+				return {};
+			}
+			if (peeked->kind == TokenKind::Keyword) {
+				const bool id = peeked->text.view() == "ID";
+				auto keyword = lexer.next_token();
+				if (!keyword.has_value()) {
+					return fatal(keyword.error()) ? PdfResult<void>{keyword.error()} : PdfResult<void>{};
+				}
+				if (!id) {
+					return {}; // `BI` without `ID`: nothing to skip
+				}
+				data_start = std::min(lexer.position() + 1u, input.size()); // one whitespace byte after `ID`
+				break;
+			}
+			auto key = parser.parse_direct_object();
+			if (!key.has_value()) {
+				if (fatal(key.error())) {
+					return key.error();
+				}
+				break;
+			}
+			auto value = parser.parse_direct_object();
+			if (!value.has_value()) {
+				if (fatal(value.error())) {
+					return value.error();
+				}
+				break;
+			}
+			if (const auto name = key->as_name()) {
+				entries.emplace_back(std::string(*name), std::move(*value));
+			}
+		}
+		size_t at = data_start.value_or(lexer.position());
+		if (data_start.has_value()) {
+			if (const auto length = inline_length(entries); length.has_value() && *length <= input.size() - at) {
+				size_t after = at + *length;
+				while (after < input.size() && is_white(input[after])) {
+					++after;
+				}
+				if (after + 2u <= input.size() && input[after] == 'E' && input[after + 1u] == 'I' &&
+					(after + 2u == input.size() || is_white(input[after + 2u]))) {
+					lexer.seek(after + 2u);
+					return {};
+				}
+			}
+		}
+		for (; at + 2u <= input.size(); ++at) {
+			if (ends_image(input, at)) {
+				lexer.seek(at + 2u);
+				return {};
+			}
 		}
 		lexer.seek(input.size());
+		return {};
 	}
 
 	[[nodiscard]] static std::optional<double> number(const PdfValue& v) noexcept
@@ -384,6 +576,9 @@ private:
 		}
 		try {
 			auto done = dispatch_operator(op, operands);
+			if (resolve_failure_.has_value()) {
+				return *resolve_failure_;
+			}
 			if (!done.has_value() && done.error().code == ErrorCode::DamagedFormat) {
 				// The builder refused this operator's geometry (coordinates or a matrix that overflow): the operator is
 				// skipped like any malformed one. A refusal the builder keeps (a bad page box) comes back from finish().
@@ -395,8 +590,34 @@ private:
 		}
 	}
 
+	[[nodiscard]] static constexpr bool takes_no_operands(Op op) noexcept
+	{
+		switch (op) {
+		case Op::Save:
+		case Op::Restore:
+		case Op::ClosePath:
+		case Op::Stroke:
+		case Op::CloseStroke:
+		case Op::Fill:
+		case Op::FillEvenOdd:
+		case Op::FillStroke:
+		case Op::FillStrokeEvenOdd:
+		case Op::CloseFillStroke:
+		case Op::CloseFillStrokeEvenOdd:
+		case Op::EndPath:
+		case Op::Clip:
+		case Op::ClipEvenOdd:
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	[[nodiscard]] PdfResult<void> dispatch_operator(Op op, const std::vector<PdfValue>& operands)
 	{
+		if (takes_no_operands(op) && !operands.empty()) {
+			return {}; // given operands it does not take: skipped, as every operator with the wrong operands is
+		}
 		switch (op) {
 		// Graphics state.
 		case Op::Save: {
@@ -700,8 +921,8 @@ private:
 		if (!slot.resolved) {
 			slot.resolved = true;
 			if (const PdfValue* value = resources_.get(name)) {
-				if (auto resolved = document_.resolve_value(*value); resolved.has_value() && resolved->as_dict() != nullptr) {
-					slot.dict = *resolved->as_dict();
+				if (auto r = resolved(*value); r.has_value() && r->as_dict() != nullptr) {
+					slot.dict = *r->as_dict();
 				}
 			}
 		}
@@ -719,25 +940,31 @@ private:
 		if (entry == nullptr) {
 			return std::nullopt;
 		}
-		auto resolved = document_.resolve_value(*entry);
-		if (!resolved.has_value()) {
+		return resolved(*entry);
+	}
+
+	// `value` with an indirect reference resolved. A reference that does not resolve is damaged content and reads as
+	// missing; a failure that is not the content's fault is kept, and `dispatch` returns it after the operator.
+	[[nodiscard]] std::optional<PdfValue> resolved(const PdfValue& value)
+	{
+		auto r = document_.resolve_value(value);
+		if (!r.has_value()) {
+			if (fatal(r.error()) && !resolve_failure_.has_value()) {
+				resolve_failure_ = r.error();
+			}
 			return std::nullopt;
 		}
-		return std::move(*resolved);
+		return std::move(*r);
 	}
 
 	// A named value inside an `/ExtGState` dictionary, resolved.
-	[[nodiscard]] std::optional<PdfValue> entry(const PdfDict& dict, std::string_view key) const
+	[[nodiscard]] std::optional<PdfValue> entry(const PdfDict& dict, std::string_view key)
 	{
 		const PdfValue* v = dict.get(key);
 		if (v == nullptr) {
 			return std::nullopt;
 		}
-		auto resolved = document_.resolve_value(*v);
-		if (!resolved.has_value()) {
-			return std::nullopt;
-		}
-		return std::move(*resolved);
+		return resolved(*v);
 	}
 
 	// `gs /Name`: the line, dash, alpha and blend entries of the named `/ExtGState` (ISO 32000-1 Table 58). `/SMask` is
@@ -893,7 +1120,9 @@ private:
 		}
 		const std::optional<FillRule> clip = pending_clip_;
 		pending_clip_.reset();
-		auto done = path_.empty() ? PdfResult<void>{} : record_paint(fill, stroke, rule, clip);
+		// A path that is neither painted nor clipped (`n` with no `W`) records nothing.
+		const bool records = !path_.empty() && (fill || stroke || clip.has_value());
+		auto done = records ? record_paint(fill, stroke, rule, clip) : PdfResult<void>{};
 		end_path(); // the path ends with its painting operator, recorded or refused
 		return done;
 	}
@@ -932,6 +1161,7 @@ private:
 	std::optional<PdfPoint> current_{};
 	std::optional<PdfPoint> subpath_start_{};
 	std::optional<FillRule> pending_clip_{};
+	std::optional<PdfError> resolve_failure_{};
 	bool after_rect_{false};
 	bool skip_next_{false};
 };
