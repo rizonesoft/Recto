@@ -1,6 +1,7 @@
 """Tests for scripts/lib/todo_graph.py and scripts/todo-graph.py: the graph refuses malformed work and stamps only real evidence."""
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -24,8 +25,42 @@ def section(n, title, phase, needs, extra=""):
 
 
 def envelope(n, reviewer="astra (`m` via `codex`)", overall="approve"):
-    """One round as scripts/review-dispatch.py records it (without the optional Lines and Digest fields)."""
-    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\nOVERALL: {overall}\n\n"
+    """One round as scripts/review-dispatch.py records it (without the optional Lines and Digest fields), at the
+    uniform schedule the Stamp fixture pins."""
+    return (f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Effort: low\n"
+            f"- Lenses: adversarial\n\nReview text.\n\nOVERALL: {overall}\n\n")
+
+
+# A reviewer pin whose schedule runs every round at the same effort and lens, so tests that are not about the schedule
+# need not follow one; SCHEDULE_PIN is the live shape the schedule tests use.
+UNIFORM_PIN = """schema_version = 1
+
+[reviewers.astra]
+cli = "codex"
+model = "m"
+effort = "medium"
+
+[routes]
+claude = ["astra"]
+
+[schedule]
+severity_stop_after = 3
+plan = { effort = "medium", lenses = ["plan"] }
+completion = { effort = "medium" }
+rounds = [{ effort = "low", lenses = ["adversarial"] }]
+rotation = { effort = "low", lenses = ["adversarial"] }
+escalation = { effort = "low", lenses = ["adversarial"] }
+"""
+SCHEDULE_PIN = UNIFORM_PIN.split("[schedule]")[0] + """[schedule]
+severity_stop_after = 3
+plan = { effort = "medium", lenses = ["plan"] }
+completion = { effort = "medium" }
+rounds = [{ effort = "high", lenses = ["adversarial", "integration", "source-defect", "plan-delivery"] },
+          { effort = "medium", lenses = ["adversarial"] }, { effort = "low", lenses = ["adversarial"] }]
+rotation = { effort = "low", lenses = ["consistency", "quality", "design", "optimization", "record"] }
+escalation = { effort = "medium", lenses = ["adversarial"] }
+"""
+STARTED = "> **Started:** 2026-10-23T00:00Z\n\n"
 
 
 def todo_file(rows, *, ident="alpha", domain="00-workspace", status="active", depends_on=None,
@@ -382,28 +417,64 @@ class Graph(Tree):
 class Stamp(Tree):
     def setUp(self):
         super().setUp()
-        self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]))
+        self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]).replace(
+            "**Test checkpoint:**", STARTED + "**Test checkpoint:**", 1))
         report_path = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("# Review findings\n\n" + envelope(1), encoding="utf-8")
+        (self.root / ".conclave").mkdir()
+        (self.root / tg.PIN).write_text(UNIFORM_PIN, encoding="utf-8")
         for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
                      ["config", "user.name", "T"], ["add", "-A"], ["commit", "-qm", "x"]):
             subprocess.run(["git", "-C", str(self.root), *args], check=True)
-        self.sha = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
-                                  capture_output=True, text=True).stdout.strip()
+        self.sha = self.head()
+        self.start = self.sha  # the commit that records §1's Started line: the build began here
         self.reviews = [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
                          "verdict": "clean"}]
         self.write_completion()
+        self.write_plan()
 
     COMPLETION = "docs/reviews/00-workspace/D00-T01-s1-completion.md"
+    PLAN = "docs/reviews/00-workspace/D00-T01-s1.md"  # the section's own findings file, beside its rounds
+
+    @staticmethod
+    def only(text, plans):
+        """The findings file text with only its plan reviews (plans) or with every record but them, header kept."""
+        head, *records = re.split(r"(?m)^(?=## (?:Round |Plan review))", text)
+        return head + "".join(r for r in records if r.startswith("## Plan review") == plans)
+
+    def head(self):
+        return subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message="more"):
+        for args in (["add", "-A"], ["commit", "-q", "--allow-empty", "-m", message]):
+            subprocess.run(["git", "-C", str(self.root), *args], check=True)
+        return self.head()
+
+    def write_plan(self, review="1. Controls: all present.\n\nHIGHEST: none\n\nPLAN: complete\n\nOVERALL: approve",
+                   reviewer="astra", cli="codex", writer="claude", effort="medium", lenses=("plan",), candidate=None,
+                   path=None, keep=False):
+        """A plan review as scripts/review-dispatch.py --kind plan records it (keep: after the attempts already there;
+        otherwise the earlier plan reviews are dropped and the file's rounds stay)."""
+        target = self.root / (path or self.PLAN)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not keep and target.exists():
+            target.write_bytes(self.only(target.read_bytes().decode("utf-8"), plans=False).encode("utf-8"))
+        result = {"writer": writer, "reviewer": reviewer, "model": "m", "cli": cli, "effort": effort,
+                  "lenses": list(lenses), "skipped": [] if reviewer else [{"reviewer": "astra", "reason": "exited 3"}],
+                  "review": review if reviewer else None}
+        tg.review_dispatch().record_completion(target, result, "2026-10-22T00:00:00Z", candidate or self.start,
+                                               kind="plan")
 
     def write_completion(self, review="1. Open file: present.\n\nCOMPLETION: complete", notes="", reviewer="sol",
-                         candidate=None, path=None):
+                         candidate=None, path=None, effort="medium", keep=False):
         """A completion review as scripts/review-dispatch.py --kind completion records it, then the writer's notes."""
         target = self.root / (path or self.COMPLETION)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.unlink(missing_ok=True)
-        result = {"writer": "claude", "reviewer": reviewer, "model": "gpt-6.1-sol", "cli": "codex", "effort": "xhigh",
+        if not keep:
+            target.unlink(missing_ok=True)
+        result = {"writer": "claude", "reviewer": reviewer, "model": "gpt-6.1-sol", "cli": "codex", "effort": effort,
                   "skipped": [] if reviewer else [{"reviewer": "sol", "reason": "exited 3"}],
                   "review": review if reviewer else None}
         tg.review_dispatch().record_completion(target, result, "2026-10-23T00:00:00Z", candidate or self.sha)
@@ -411,10 +482,24 @@ class Stamp(Tree):
             with open(target, "a", encoding="utf-8", newline="") as handle:
                 handle.write("\n" + notes + "\n")
 
-    def stamp(self, *args, completion=None, **kwargs):
-        """tg.stamp on this tree, with a clean completion review unless the test names another."""
+    def ensure_plan(self, ref="D00 T01 §1"):
+        """The returned plan review back in the section's own findings file when a test rewrote that file for its
+        rounds (or never wrote it), as the real file carries it beside them. A file holding any plan attempt, or one
+        the dispatcher cannot read, is left as the test wrote it. Returns the file."""
+        report = tg.section_findings(self.root, ref)
+        target = self.root / report
+        plans = tg.review_dispatch().read_plans(target.read_bytes().decode("utf-8")) if target.exists() else []
+        if plans == []:
+            self.write_plan(path=report, keep=True)
+        return report
+
+    def stamp(self, *args, completion=None, plan=None, **kwargs):
+        """tg.stamp on this tree, with a clean completion review and the section's own plan review unless the test
+        names others (see ensure_plan)."""
+        if plan is None:
+            plan = self.ensure_plan(args[0])
         return tg.stamp(self.root, *args, completion=completion or {"report": self.COMPLETION, "verdict": "complete"},
-                        **kwargs)
+                        plan=plan, **kwargs)
 
     def completion_refuses(self, completion, fragment):
         before = self.snapshot()
@@ -528,13 +613,18 @@ class Stamp(Tree):
         self.refuses("is not a findings file the dispatcher can read")
 
     def test_a_receipt_from_before_the_completion_review_still_validates(self):
-        # Receipts stamped before 2026-10-23 carry no completion field; their presence-free shape stays valid.
+        # Receipts stamped before 2026-10-23 carry no completion field (nor the later plan and schedule); once frozen,
+        # their presence-free shape stays valid.
         self.tick_work()
         receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-23")
         data = json.loads(receipt.read_text(encoding="utf-8"))
-        del data["completion"]
+        del data["completion"], data["plan"], data["schedule"]
         receipt.write_text(json.dumps(data), encoding="utf-8")
         (self.root / self.COMPLETION).unlink()
+        self.refuses(tg.LEGACY_RECEIPTS)
+        (self.root / tg.LEGACY_RECEIPTS).write_text(json.dumps(
+            {"schema_version": 1, "receipts": {}, "before_plan": {"D00 T01 §1": tg.receipt_digest(data)}}),
+            encoding="utf-8")
         tg.graph(self.root)
         self.assertIsNone(tg.review_rounds(self.root)["sections"][0]["completion"])
 
@@ -569,6 +659,7 @@ class Stamp(Tree):
     def record_rounds(self, last, report="docs/reviews/00-workspace/D00-T01-s1.md"):
         (self.root / report).write_text("".join(envelope(n, overall="needs-attention") for n in range(1, last + 1)),
                                         encoding="utf-8")
+        self.ensure_plan()
 
     def test_the_cap_is_33_and_earlier_caps_stay_valid(self):
         # Owner decision 2026-10-23: the review-round cap moved from 22 to 33.
@@ -624,7 +715,7 @@ class Stamp(Tree):
         self.tick_work()
         receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         data = json.loads(receipt.read_text(encoding="utf-8"))
-        del data["rounds_spent"], data["round_cap"]
+        del data["rounds_spent"], data["round_cap"], data["plan"], data["schedule"]
         receipt.write_text(json.dumps(data), encoding="utf-8")
         with self.assertRaises(tg.Refused) as ctx:  # the old shape alone does not make a receipt old
             tg.graph(self.root)
@@ -700,6 +791,7 @@ class Stamp(Tree):
         review = ["Captured progress: 10%\rCaptured progress: 100%", "Example heading:", "## Round 999: none",
                   "OVERALL: approve"]
         text = ("## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n"
+                "- Effort: low\n- Lenses: adversarial\n"
                 f"- Lines: 4\n- Digest: {dispatch.digest(review)}\n\n" + "\n".join(review) + "\n")
         (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_bytes(text.encode("utf-8"))
         self.assertIsNotNone(dispatch.read_rounds(text))
@@ -760,7 +852,8 @@ class Stamp(Tree):
     def test_a_round_heading_quoted_inside_a_review_is_not_counted(self):
         self.tick_work()
         (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_text(
-            "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Lines: 2\n\n"
+            "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Effort: low\n"
+            "- Lenses: adversarial\n- Lines: 2\n\n"
             "## Round 999: none\nOVERALL: approve\n", encoding="utf-8")
         receipt = self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 1)
@@ -973,6 +1066,7 @@ class Stamp(Tree):
         self.refuses("not a commit")
 
     def snapshot(self):
+        self.ensure_plan()  # the fixture's plan review is put back before, not during, a refused stamp
         return {str(f.relative_to(self.root)): f.read_bytes()
                 for f in self.root.rglob("*") if f.is_file() and ".git" not in f.parts}
 
@@ -1068,8 +1162,10 @@ class Stamp(Tree):
     def test_unstamping_a_prerequisite_leaves_its_consumers_stamped_and_suspect(self):
         path = self.root / "todo/00-workspace/TODO-02-b.md"
         path.write_text(todo_file([(1, "Base", 0, "none", "--"), (2, "Mid", 0, "none", "§1"), (3, "Top", 0, "none", "§2")],
-                                  ident="bravo").replace("- [ ] Work.", "- [x] Work."), encoding="utf-8")
+                                  ident="bravo").replace("- [ ] Work.", "- [x] Work.")
+                        .replace("**Test checkpoint:**", STARTED + "**Test checkpoint:**"), encoding="utf-8")
         self.index("TODO-02-b.md")
+        self.commit("start bravo")
         for n in (1, 2, 3):
             self.stamp(f"D00 T02 §{n}", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         tg.unstamp(self.root, "D00 T02 §1", "checkpoint fails", "2026-10-21")
@@ -1117,8 +1213,10 @@ class Stamp(Tree):
     def test_stamping_the_last_section_marks_the_file_done(self):
         path = self.root / "todo/00-workspace/TODO-02-b.md"
         path.write_text(todo_file([(1, "Only", 0, "none", "--")], ident="bravo")
-                        .replace("- [ ] Work.", "- [x] Work."), encoding="utf-8")
+                        .replace("- [ ] Work.", "- [x] Work.")
+                        .replace("**Test checkpoint:**", STARTED + "**Test checkpoint:**"), encoding="utf-8")
         self.index("TODO-02-b.md")
+        self.commit("start bravo")
         self.stamp("D00 T02 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         self.assertIn("status: done", path.read_text(encoding="utf-8"))
         self.assertTrue(tg.graph(self.root)["D00 T02 §1"].done)
@@ -1140,6 +1238,284 @@ class Stamp(Tree):
         receipt = self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         (self.root / receipt).unlink()
         self.refuses("missing receipt")
+
+    # The plan review and the review schedule (2026-10-24): stamp refuses a section whose reviews did not follow them.
+
+    LOOP = "docs/reviews/00-workspace/D00-T01-s1.md"
+    ROUND_1 = ["adversarial", "integration", "source-defect", "plan-delivery"]
+
+    def live(self, surface=False):
+        """Pin the live schedule shape (and, with surface, make §1 a surface section), committed as the stamped commit."""
+        (self.root / tg.PIN).write_text(SCHEDULE_PIN, encoding="utf-8")
+        if surface:
+            path = self.root / "todo/00-workspace/TODO-01-a.md"
+            path.write_text(path.read_text(encoding="utf-8").replace(
+                "**Surface:** no", "**Surface:** yes\n**Fidelity:** f.\n**Job:** j.\n**Treatment:** t.\n**Chrome:** c.",
+                1), encoding="utf-8")
+        self.sha = self.commit("live schedule")
+
+    def loop(self, steps, surface=False):
+        """Record a review loop as the dispatcher would, each round at the pass `scheduled` gives it. A step is a
+        severity (a returned needs-attention review declaring it), "clean", "outage", "self" (a self-review) or
+        "malformed" (a reply without the final OVERALL line)."""
+        dispatch = tg.review_dispatch()
+        schedule = tg.pin_schedule(self.root, self.sha, "test")
+        path = self.root / self.LOOP
+        if path.exists():  # a fresh loop: the rounds go, the section's plan review stays
+            path.write_bytes(self.only(path.read_bytes().decode("utf-8"), plans=True).encode("utf-8"))
+        for step in steps:
+            existing = path.read_bytes().decode("utf-8") if path.exists() else ""
+            plan = dispatch.scheduled(schedule, "round", dispatch.read_rounds(existing), surface)
+            result = {"writer": "claude", "effort": plan["effort"], "lenses": plan["lenses"], "skipped": [],
+                      "reviewer": "astra", "model": "m", "cli": "codex",
+                      "review": "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve"}
+            if step == "outage":
+                result.update(reviewer=None, review=None, skipped=[{"reviewer": "astra", "reason": "exited 3"}])
+            elif step == "self":
+                result.update(reviewer="opus", cli="claude")
+            elif step == "malformed":
+                result["review"] = "1. The reply stopped before its verdict."
+            elif step != "clean":
+                result["review"] = f"1. [{step}] gap.\n\nHIGHEST: {step}\n\nOVERALL: needs-attention"
+            dispatch.record(path, result, "2026-10-23T00:00:00Z")
+        self.reviews = [{"round": len(steps), "report": self.LOOP, "verdict": "clean"}]
+
+    def edit_round(self, n, effort, lenses):
+        """Rewrite round n's Effort and Lenses lines, which sit outside its digest, as a hand edit would."""
+        path = self.root / self.LOOP
+        text = path.read_bytes().decode("utf-8")
+        start = text.index(f"## Round {n}: ")
+        end = text.find("\n## Round ", start)
+        end = len(text) if end < 0 else end
+        block = re.sub(r"^- Effort: .*$", f"- Effort: {effort}", text[start:end], count=1, flags=re.M)
+        block = re.sub(r"^- Lenses: .*$", f"- Lenses: {', '.join(lenses)}", block, count=1, flags=re.M)
+        path.write_bytes((text[:start] + block + text[end:]).encode("utf-8"))
+
+    def stamp_refuses(self, fragment):
+        self.tick_work()
+        before = self.snapshot()
+        with self.assertRaises(tg.Refused) as ctx:
+            self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24")
+        self.assertIn(fragment, str(ctx.exception))
+        self.assertEqual(self.snapshot(), before, "a refused stamp wrote something")
+        return str(ctx.exception)
+
+    def test_a_stamp_without_a_plan_review_refuses(self):
+        self.tick_work()
+        before = self.snapshot()
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24",
+                     completion={"report": self.COMPLETION, "verdict": "complete"})
+        self.assertIn("--plan '<findings file>' is required", str(ctx.exception))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_plan_review_must_be_one_returned_by_another_model_family(self):
+        family = "must hold exactly one plan review returned by another model family"
+        for kwargs in ({"reviewer": "opus", "cli": "claude"}, {"reviewer": None},
+                       {"review": "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve"},
+                       {"review": "1. ok.\n\nOVERALL: approve\n\nPLAN: complete"}):
+            with self.subTest(kwargs=kwargs):
+                self.write_plan(**kwargs)
+                self.stamp_refuses(family)
+        self.write_plan()
+        path = self.root / self.PLAN
+        text = path.read_bytes().decode("utf-8")
+        path.write_bytes(self.only(text, plans=False).encode("utf-8"))
+        self.tick_work()
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24", plan=self.PLAN,
+                     completion={"report": self.COMPLETION, "verdict": "complete"})
+        self.assertIn("holds no ## Plan review", str(ctx.exception))
+        path.write_bytes(text.encode("utf-8"))
+        for plan in ("docs/reviews/00-workspace/D00-T01-s2.md", self.COMPLETION,
+                     "docs\\reviews\\00-workspace\\D00-T01-s1.md", "../plan.md"):
+            with self.subTest(plan=plan):
+                self.tick_work()
+                with self.assertRaises(tg.Refused) as ctx:
+                    self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24", plan=plan)
+                self.assertIn(f"--plan must be the section's own findings file {self.PLAN}", str(ctx.exception))
+        path.unlink()
+        self.tick_work()
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24", plan=self.PLAN,
+                     completion={"report": self.COMPLETION, "verdict": "complete"})
+        self.assertIn("missing or empty review report", str(ctx.exception))
+
+    def test_another_sections_plan_review_does_not_stand_in(self):
+        # §2's own findings file holds a returned plan review on the build-start commit; §1 cannot stamp on it.
+        other = "docs/reviews/00-workspace/D00-T01-s2.md"
+        self.write_plan(path=other)
+        self.tick_work()
+        with self.assertRaises(tg.Refused) as ctx:
+            self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24", plan=other)
+        self.assertIn(f"--plan must be the section's own findings file {self.PLAN}, not {other}", str(ctx.exception))
+        # Nor through a receipt edited after the stamp to name it.
+        receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24")
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data["plan"]["report"] = other
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        self.refuses(f"--plan must be the section's own findings file {self.PLAN}, not {other}")
+
+    def test_a_plan_review_after_the_build_began_refuses(self):
+        later = self.commit("the build")
+        self.write_plan(candidate=later)
+        self.stamp_refuses("is not the commit the build began at")
+        self.write_plan(candidate="f" * 40)
+        self.stamp_refuses("not a commit")
+        # Without a Started line or a commit naming the section, there is no build start to check the plan against.
+        self.write_plan()
+        path = self.root / "todo/00-workspace/TODO-01-a.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(STARTED, ""), encoding="utf-8")
+        self.stamp_refuses("cannot find the commit the build began at")
+
+    def test_the_plan_and_completion_passes_run_at_their_scheduled_effort(self):
+        self.live()
+        self.loop(["clean"])
+        self.write_plan(effort="high")
+        self.stamp_refuses("the plan review in docs/reviews/00-workspace/D00-T01-s1.md ran at high")
+        self.write_plan(lenses=("adversarial",))
+        self.stamp_refuses("lenses ['adversarial']; the schedule expects medium with ['plan']")
+        self.write_plan()
+        self.write_completion(effort="xhigh")
+        self.stamp_refuses("the completion review in docs/reviews/00-workspace/D00-T01-s1-completion.md ran at xhigh")
+
+    def test_every_plan_and_completion_attempt_runs_at_its_scheduled_effort(self):
+        self.live()
+        self.loop(["clean"])
+        self.write_plan(reviewer=None, effort="low", lenses=("adversarial",))
+        self.write_plan(keep=True)
+        self.stamp_refuses("the plan review in docs/reviews/00-workspace/D00-T01-s1.md ran at low with lenses "
+                           "['adversarial']")
+        self.write_plan()
+        self.write_completion(reviewer=None, effort="low")
+        self.write_completion(keep=True)
+        self.stamp_refuses("the completion review in docs/reviews/00-workspace/D00-T01-s1-completion.md ran at low")
+
+    def test_the_schedule_check_needs_no_temporary_directory(self):
+        # A reviewer's read-only sandbox runs validate with no writable temporary directory.
+        self.live()
+        real = tempfile.tempdir
+        tempfile.tempdir = str(self.root / "no-such-directory")
+        try:
+            schedule = tg.pin_schedule(self.root, self.sha, "D00 T01 §1")
+        finally:
+            tempfile.tempdir = real
+        self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})
+
+    def test_the_build_start_matches_the_whole_reference(self):
+        (self.root / "src").mkdir(exist_ok=True)
+        (self.root / "src/a.txt").write_text("a", encoding="utf-8")
+        self.commit("build\n\nD00 T01 §11")
+        (self.root / "src/b.txt").write_text("b", encoding="utf-8")
+        mine = self.commit("build\n\nThe section (D00 T01 §1).")
+        self.assertEqual(tg.build_start(self.root, "todo/00-workspace/TODO-01-a.md", "", "D00 T01 §1"), mine)
+
+    def test_the_build_start_is_the_sections_own_whole_started_line(self):
+        # §1's Started line is in the first commit; §2 records a prefix of it, then the identical line, later.
+        path = "todo/00-workspace/TODO-01-a.md"
+
+        def record(line):
+            text = (self.root / path).read_text(encoding="utf-8")
+            two = tg.section_text(text, 2)
+            two_now = re.sub(r"(?m)^> \*\*Started:\*\* .*\n\n", "", two)
+            two_now = two_now.replace("**Test checkpoint:**", line + "\n\n**Test checkpoint:**", 1)
+            (self.root / path).write_text(text.replace(two, two_now), encoding="utf-8")
+            return self.commit("start §2"), tg.section_text((self.root / path).read_text(encoding="utf-8"), 2)
+
+        prefix, body = record("> **Started:** 2026-10-23")
+        self.assertEqual(tg.build_start(self.root, path, body, "D00 T01 §2"), prefix)
+        whole, body = record(STARTED.strip())
+        self.assertEqual(tg.build_start(self.root, path, body, "D00 T01 §2"), whole)
+        self.assertEqual(tg.build_start(self.root, path, tg.section_text((self.root / path).read_text(
+            encoding="utf-8"), 1), "D00 T01 §1"), self.start)
+
+    def test_round_1_runs_at_high_effort(self):
+        self.live()
+        self.loop(["clean"])
+        self.edit_round(1, "medium", self.ROUND_1)
+        message = self.stamp_refuses(f"{self.LOOP} round 1 ran at medium")
+        self.assertIn(f"the schedule expects high with {self.ROUND_1} (position 1)", message)
+
+    def test_round_1_runs_all_four_lenses(self):
+        self.live()
+        self.loop(["clean"])
+        self.edit_round(1, "high", self.ROUND_1[:3])
+        self.stamp_refuses(f"round 1 ran at high with lenses {self.ROUND_1[:3]}; the schedule expects high with "
+                           f"{self.ROUND_1}")
+
+    def test_a_rotation_round_runs_its_one_lens(self):
+        self.live()
+        self.loop(["P2", "P2", "P2", "clean"])
+        self.edit_round(4, "low", ["quality"])
+        self.stamp_refuses("round 4 ran at low with lenses ['quality']; the schedule expects low with ['consistency'] "
+                           "(position 4)")
+
+    def test_the_design_lens_is_only_for_surface_sections(self):
+        self.live()
+        self.loop(["P2", "P2", "P2", "P2", "P2", "clean"])
+        self.edit_round(6, "low", ["design"])
+        self.stamp_refuses("round 6 ran at low with lenses ['design']; the schedule expects low with ['optimization']")
+
+    def test_a_low_round_with_a_p1_escalates_the_next(self):
+        self.live()
+        self.loop(["P2", "P2", "P1", "clean"])
+        self.edit_round(4, "low", ["consistency"])
+        self.stamp_refuses("round 4 ran at low with lenses ['consistency']; the schedule expects medium with "
+                           "['adversarial'] (position 4, escalated)")
+
+    def test_an_outage_or_a_self_review_does_not_advance_the_schedule(self):
+        for skipped in ("outage", "self", "malformed"):
+            with self.subTest(skipped=skipped):
+                self.live()
+                self.loop([skipped, "clean"])
+                self.edit_round(2, "medium", ["adversarial"])
+                self.stamp_refuses(f"round 2 ran at medium with lenses ['adversarial']; the schedule expects high with "
+                                   f"{self.ROUND_1} (position 1)")
+
+    def test_a_receipt_records_the_plan_review_and_schedule_and_edits_refuse(self):
+        self.tick_work()
+        receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24")
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual(data["plan"], {"report": self.PLAN, "candidate": self.sha, "reviewer": "astra", "model": "m",
+                                        "effort": "medium", "lenses": ["plan"]})
+        self.assertEqual(data["schedule"]["rounds"], [{"effort": "low", "lenses": ["adversarial"]}])
+        edits = [("plan", "effort", "high"), ("plan", "lenses", []), ("plan", "candidate", "f" * 40),
+                 ("plan", "reviewer", "sol"), ("plan", "model", "other"), ("plan", "report", self.COMPLETION),
+                 ("plan", "extra", 1), ("schedule", "severity_stop_after", 2)]
+        for where, key, value in edits:
+            with self.subTest(where=where, key=key):
+                edited = json.loads(json.dumps(data))
+                edited[where][key] = value
+                receipt.write_text(json.dumps(edited), encoding="utf-8")
+                with self.assertRaises(tg.Refused):
+                    tg.graph(self.root)
+        for dropped, fragment in ((("plan",), "plan and schedule together"),
+                                  (("plan", "schedule"), "a receipt without a plan review must be one of the old")):
+            with self.subTest(dropped=dropped):
+                edited = json.loads(json.dumps(data))
+                for key in dropped:
+                    del edited[key]
+                receipt.write_text(json.dumps(edited), encoding="utf-8")
+                self.refuses(fragment)
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        tg.graph(self.root)
+        # The recorded plan pass is what the findings file still says: its effort line edited after the stamp refuses.
+        path = self.root / self.PLAN
+        path.write_bytes(path.read_bytes().replace(b"- Effort: medium", b"- Effort: high"))
+        self.refuses("receipt plan does not match its findings file")
+
+    def test_a_loop_that_follows_the_whole_schedule_stamps(self):
+        self.live(surface=True)
+        self.loop(["P2", "outage", "P2", "self", "P1", "P3", "P2", "P2", "P2", "clean"], surface=True)
+        self.tick_work()
+        receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-24")
+        self.assertTrue(tg.graph(self.root)["D00 T01 §1"].done)
+        rounds = tg.review_dispatch().read_rounds((self.root / self.LOOP).read_bytes().decode("utf-8"))
+        self.assertEqual([(r["effort"], r["lenses"]) for r in rounds], [
+            ("high", self.ROUND_1), ("medium", ["adversarial"]), ("medium", ["adversarial"]),
+            ("low", ["adversarial"]), ("low", ["adversarial"]), ("medium", ["adversarial"]), ("low", ["quality"]),
+            ("low", ["design"]), ("low", ["optimization"]), ("low", ["record"])])
+        self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["rounds_spent"], 10)
 
 
 class Repository(unittest.TestCase):

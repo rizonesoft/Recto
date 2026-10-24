@@ -11,6 +11,7 @@
                                                              # 4 waiting; a pasted plan row works too
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
+        --plan '<findings file>' \
         --completion '<findings file>:<complete|completed|filed>' \
         --review '<round>:<report path>:<clean|fixed|stopped-at-33|stopped-low-severity>' --check '<command> -> <result>' \
         [--cap-outcome '<what was done when the review cap was reached>']   # required with a stopped verdict
@@ -75,6 +76,7 @@ def main():
     s.add_argument("--check", dest="checks", action="append", default=[])
     s.add_argument("--date", default=date.today().isoformat())
     s.add_argument("--cap-outcome", help="with a stopped-at verdict: what was done when the review cap was reached")
+    s.add_argument("--plan", help="required: <findings file>, the one-pass plan review before the build")
     s.add_argument("--completion", type=completion_review,
                    help="required: <findings file>:<complete|completed|filed>, the one-pass completion review")
     u = sub.add_parser("unstamp", help="an audit found a stamped section regressed: reopen it, keeping the receipt")
@@ -90,7 +92,7 @@ def main():
         return 0
     if args.command == "stamp":
         receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True,
-                        cap_outcome=args.cap_outcome, completion=args.completion)
+                        cap_outcome=args.cap_outcome, completion=args.completion, plan=args.plan)
         print(f"stamped {args.ref}; receipt {receipt}; plan synchronized")
         return 0
     rows = graph()

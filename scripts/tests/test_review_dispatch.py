@@ -653,7 +653,12 @@ class Dispatch(Harness):
         # Installed, but not a program the system can start, so the launch itself fails.
         self.codex.unlink()
         if os.name == "nt":
-            (self.bin / "codex.exe").write_bytes(b"not a program")
+            # A real program with execute denied: CreateProcess refuses it at once. A file that is not a valid image
+            # would be run as a 16-bit program instead, and Windows blocks the launch on a modal "Unsupported 16-Bit
+            # Application" dialog until someone dismisses it.
+            target = self.bin / "codex.exe"
+            shutil.copyfile(Path(os.environ["SystemRoot"]) / "System32" / "where.exe", target)
+            subprocess.run(["icacls", str(target), "/deny", "*S-1-1-0:(X)"], capture_output=True, check=True)
         else:
             write_launcher(self.bin, "codex", "unused").write_text("#!/nonexistent/interpreter\n", encoding="utf-8")
         result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt))
@@ -875,6 +880,19 @@ class Schedule(Harness):
         self.assertEqual(summary["position"], 2)
         summary, (call,) = self.round()
         self.assertEqual((summary["position"], summary["round"], self.effort_of(call)), (2, 3, "medium"))
+
+    def test_a_self_review_or_a_reply_without_a_verdict_does_not_move_the_position(self):
+        # scripts/lib/todo_graph.py stamp replays `scheduled`, so neither may count as a review, like an outage.
+        module = self.module()
+        schedule = module.load_pin(str(self.repo / ".conclave/reviewers.toml"))["schedule"]
+        returned = {"reviewer": "astra", "cli": "codex", "writer": "claude", "effort": "high",
+                    "review": "OVERALL: approve"}
+        self.assertEqual(module.scheduled(schedule, "round", [returned, returned], False)["position"], 3)
+        for own in ({"reviewer": "opus", "cli": "claude"}, {"reviewer": "x", "cli": "unknown"},
+                    {"review": "1. The reply stopped before its verdict."}):
+            with self.subTest(own=own):
+                self.assertEqual(module.scheduled(schedule, "round", [returned, {**returned, **own}], False)
+                                 ["position"], 2)
 
     def test_a_low_effort_p1_escalates_the_next_round(self):
         for _ in range(3):

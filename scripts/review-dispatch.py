@@ -80,10 +80,14 @@ class Refused(Exception):
     """The pin or the arguments are wrong; nothing ran."""
 
 
-def load_pin(path=PIN):
+def load_pin(path=PIN, data=None):
+    """The checked pin at `path`, or, given `data`, the pin in those bytes (a committed pin read with `git show`), so
+    a read-only caller needs no temporary file."""
     try:
-        with open(path, "rb") as handle:
-            pin = tomllib.load(handle)
+        if data is None:
+            with open(path, "rb") as handle:
+                data = handle.read()
+        pin = tomllib.loads(data.decode("utf-8"))
     except FileNotFoundError:
         raise Refused(f"no reviewer pin at {path}") from None
     except tomllib.TOMLDecodeError as exc:
@@ -205,17 +209,30 @@ def highest(review):
     return found[-1].upper() if found else None
 
 
+def returned_review(entry):
+    """A recorded round that is a review: a reviewer of another model family than the writer ran and replied with the
+    prompt's final `OVERALL: approve` or `OVERALL: needs-attention` line. An outage, a self-review (a reviewer of the
+    writer's own family, or of no known family) and a reply without that line are recorded rounds, not reviews.
+    scripts/lib/todo_graph.py `stamp` uses this same predicate, so the schedule and the receipt count the same rounds."""
+    lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
+    return bool(entry.get("reviewer")) and entry.get("writer") in WRITER_FAMILY \
+        and FAMILY.get(entry.get("cli")) not in (None, WRITER_FAMILY[entry["writer"]]) \
+        and bool(lines) and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
+
+
 def scheduled(schedule, kind, rounds, surface):
     """The effort and lenses for the next pass, from the pin's schedule and the rounds already recorded.
 
-    The position counts returned rounds only (an outage is not a review). Rounds past the fixed list rotate through
-    `rotation`'s lenses, one per round, skipping `design` when the section has no surface. After a low-effort round
-    that declared `HIGHEST: P1`, the next round is the `escalation` step instead."""
+    The position counts returned reviews only (`returned_review`): an outage, a self-review and a reply without the
+    final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one per round,
+    skipping `design` when the section has no surface. After a low-effort round that declared `HIGHEST: P1`, the next
+    round is the `escalation` step instead. scripts/lib/todo_graph.py `stamp` replays this to check every recorded
+    pass, so it is the one copy of the schedule rule."""
     if kind in ("plan", "completion"):
         step = schedule[kind]
         return {"position": None, "effort": step["effort"], "lenses": list(step.get("lenses", [])),
                 "escalated": False}
-    returned = [r for r in rounds if r["reviewer"]]
+    returned = [r for r in rounds if returned_review(r)]
     position = len(returned) + 1
     last = returned[-1] if returned else None
     if last is not None and last.get("effort") == "low" and highest(last.get("review")) == "P1":

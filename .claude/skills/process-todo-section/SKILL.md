@@ -92,7 +92,7 @@ Once the section is corrected, commit it (with `plan --sync`) so the reviewer re
 python scripts/review-dispatch.py --kind plan --candidate <full SHA of that commit> --writer claude --prompt <scratch-plan-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
-The dispatcher sets the effort and the `plan` lens from the pin's `[schedule] plan` step and appends a `## Plan review` section; it is not a round, it does not move the round schedule, and a findings file takes one returned plan review. Fix every `P1` and `P2` gap in the section the same way as step 3 (corrected in place, dated), and file a `P3` you do not take through `add-todo`. Under the plan review in the findings file, add one line per gap: `- Planned: <gap> in <commit>` or `- Filed: DNN TNN §N (<gap>)`. When the dispatcher exits 1, run the pass again before building. A section stamped before 2026-10-23 has no plan review and stays valid.
+The dispatcher sets the effort and the `plan` lens from the pin's `[schedule] plan` step and appends a `## Plan review` section; it is not a round, it does not move the round schedule, and a findings file takes one returned plan review. Fix every `P1` and `P2` gap in the section the same way as step 3 (corrected in place, dated), and file a `P3` you do not take through `add-todo`. Under the plan review in the findings file, add one line per gap: `- Planned: <gap> in <commit>` or `- Filed: DNN TNN §N (<gap>)`. When the dispatcher exits 1, run the pass again before building. `stamp` requires this review as `--plan '<findings file>'`, naming the section's own findings file (the `--record` path above; another section's file refuses), refuses one whose candidate is later than the commit that records `Started:`, and refuses one run at another effort or lenses than the schedule's `plan` step; a section stamped before 2026-10-24 has no plan review and stays valid only as frozen in `docs/reviews/legacy-receipts.json`.
 
 ### 4. Build the corrected contract
 
@@ -119,7 +119,7 @@ Commit the section work (in one or more commits as steps complete), recording th
 <plan corrections, if any>
 ```
 
-Then invoke `review-todo-section` on the same ref. It runs the one-pass completion and excellence review first (`scripts/review-dispatch.py --kind completion`): implement every in-scope gap and excellence item it lists in this section, file the rest through `add-todo`, then the regular rounds run. Review writes the stamp through `stamp --completion`, which flips the row and syncs the plan. Commit the stamp and the regenerated plan as the stamp commit (`todo: stamp <ref>`).
+Then invoke `review-todo-section` on the same ref. It runs the one-pass completion and excellence review first (`scripts/review-dispatch.py --kind completion`): implement every in-scope gap and excellence item it lists in this section, file the rest through `add-todo`, then the regular rounds run. Review writes the stamp through `stamp --plan --completion`, which flips the row and syncs the plan. Commit the stamp and the regenerated plan as the stamp commit (`todo: stamp <ref>`).
 
 ### 8. Report
 
