@@ -6,6 +6,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -698,6 +699,142 @@ TEST(PdfDocument, RetainedPageDictionariesShareOneBudget)
 	auto large = Document::open_memory(pages_with_padding_arrays(400u, 20'000u));
 	ASSERT_FALSE(large.has_value());
 	EXPECT_EQ(large.error().code, ErrorCode::ResourceLimit);
+}
+
+// An outline is read one item at a time: each level keeps only the reference it reads next, so 64 nested items with
+// a 10,000-element /Pad array each (about 64 times one item's dictionary if every ancestor stayed alive) open within a
+// few items' memory (D06 T05 section 24, audit round 2). The heap meter measures in the Debug and Release runs.
+TEST(PdfDocument, OutlineTraversalHoldsOneItemAtATime)
+{
+	constexpr uint32_t kLevels = 64u;
+	std::string pad;
+	for (size_t i = 0u; i < 10'000u; ++i) {
+		pad += "0 ";
+	}
+	std::vector<std::pair<uint32_t, std::string>> objects = {
+		{1, "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>"},
+		{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R >>"},
+		{5, "<< /Type /Outlines /First 10 0 R /Last 10 0 R /Count 1 >>"},
+	};
+	for (uint32_t level = 0u; level < kLevels; ++level) {
+		const uint32_t num = 10u + level;
+		std::string item = "<< /Title (Level " + std::to_string(level) + ") /Parent " +
+			std::to_string(level == 0u ? 5u : num - 1u) + " 0 R /Dest [3 0 R /Fit] /Pad [" + pad + "]";
+		if (level + 1u < kLevels) {
+			item += " /First " + std::to_string(num + 1u) + " 0 R /Last " + std::to_string(num + 1u) + " 0 R /Count 1";
+		}
+		objects.emplace_back(num, item + " >>");
+	}
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+	const size_t one_item_bytes = 10'000u * sizeof(PdfValue);
+
+	const test::ScopedHeapMeter meter;
+	auto doc = Document::open_memory(bytes);
+	const size_t peak = meter.peak_bytes();
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	const std::vector<OutlineNode>* level_nodes = &(*doc)->outline();
+	for (uint32_t level = 0u; level < kLevels; ++level) {
+		ASSERT_EQ(level_nodes->size(), 1u) << "level " << level;
+		EXPECT_EQ((*level_nodes)[0].title, "Level " + std::to_string(level));
+		EXPECT_EQ((*level_nodes)[0].page_index, 0);
+		level_nodes = &(*level_nodes)[0].children;
+	}
+	EXPECT_TRUE(level_nodes->empty());
+	if (test::ScopedHeapMeter::available()) {
+		// The file's own copy plus a few items; every ancestor kept alive would be 64 items.
+		EXPECT_LT(peak, bytes.size() + 8u * one_item_bytes);
+	}
+}
+
+// Pages that share an /Annots array read it once, and an annotation found not to be a link is not read again: 1,000
+// pages sharing one array of 1,000 Text annotations and a link, and 300 pages each listing the same 300 Text
+// annotations directly, open with every page's link and a few thousand annotation reads instead of 1,090,000. Another
+// page entry naming a shared object is validated once too (D06 T05 section 24, audit round 2).
+TEST(PdfDocument, SharedAnnotationsAreReadOnce)
+{
+	constexpr uint32_t kSharedPages = 1'000u;
+	constexpr uint32_t kSharedAnnots = 1'000u;
+	constexpr uint32_t kDirectPages = 300u;
+	constexpr uint32_t kDirectAnnots = 300u;
+	const uint32_t first_annot = 100u;
+	const uint32_t link_annot = first_annot + kSharedAnnots;
+	const uint32_t first_page = link_annot + 1u;
+
+	std::vector<std::pair<uint32_t, std::string>> objects = {{1, "<< /Type /Catalog /Pages 2 0 R >>"}};
+	std::string shared = "[";
+	for (uint32_t a = 0u; a < kSharedAnnots; ++a) {
+		shared += std::to_string(first_annot + a) + " 0 R ";
+		objects.emplace_back(first_annot + a, "<< /Type /Annot /Subtype /Text /Rect [0 0 5 5] /Contents (note) >>");
+	}
+	shared += std::to_string(link_annot) + " 0 R]";
+	objects.emplace_back(4u, shared);
+	objects.emplace_back(
+		link_annot, "<< /Type /Annot /Subtype /Link /Rect [10 10 20 20] /Dest [" + std::to_string(first_page) + " 0 R /Fit] >>");
+	std::string direct = "[";
+	for (uint32_t a = 0u; a < kDirectAnnots; ++a) {
+		direct += std::to_string(first_annot + a) + " 0 R ";
+	}
+	direct += "]";
+	std::string kids;
+	for (uint32_t p = 0u; p < kSharedPages + kDirectPages; ++p) {
+		kids += std::to_string(first_page + p) + " 0 R ";
+		objects.emplace_back(
+			first_page + p,
+			"<< /Type /Page /Parent 2 0 R /Annots " + (p < kSharedPages ? std::string("4 0 R") : direct) + " >>");
+	}
+	objects.emplace_back(
+		2u,
+		"<< /Type /Pages /Count " + std::to_string(kSharedPages + kDirectPages) + " /MediaBox [0 0 100 100] /Kids [" +
+			kids + "] >>");
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+
+	const auto allocated_to_open = [&](std::string_view shared_entry) {
+		auto variant = objects;
+		for (auto& [num, body] : variant) {
+			if (const size_t at = body.find("/Annots 4 0 R"); at != std::string::npos) {
+				body.replace(at, 13u, shared_entry);
+			} else if (const size_t direct_at = body.find("/Annots "); direct_at != std::string::npos) {
+				body.replace(direct_at, 8u, "/Pad ");
+			}
+		}
+		const auto variant_bytes = build_synthetic_pdf_from_objects("1.7", variant);
+		const test::ScopedHeapMeter variant_meter;
+		auto variant_doc = Document::open_memory(variant_bytes);
+		EXPECT_TRUE(variant_doc.has_value());
+		return variant_meter.allocated_bytes();
+	};
+	// The same pages with the arrays under /Pad: page-tree validation reads the shared array once, not once per page,
+	// and nothing reads an annotation. With the key gone the shared array is not read at all.
+	const size_t baseline_allocated = allocated_to_open("/Pad 4 0 R");
+	const size_t unshared_allocated = allocated_to_open("/Pad null");
+
+	const test::ScopedHeapMeter meter;
+	const auto started = std::chrono::steady_clock::now();
+	auto doc = Document::open_memory(bytes);
+	const auto elapsed = std::chrono::steady_clock::now() - started;
+	const size_t allocated = meter.allocated_bytes();
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	for (uint32_t p = 0u; p < kSharedPages + kDirectPages; ++p) {
+		auto links = (*doc)->page_links(p);
+		ASSERT_TRUE(links.has_value()) << links.error().message.view();
+		ASSERT_EQ(links->size(), p < kSharedPages ? 1u : 0u) << "page " << p;
+		if (p < kSharedPages) {
+			EXPECT_EQ((*links)[0].kind, LinkKind::Internal);
+			EXPECT_EQ((*links)[0].page_index, 0);
+		}
+	}
+	// About 4 s under AddressSanitizer with the fix; reading every page's annotations again took 7 s without it in a
+	// Release build. The heap meter is the precise check where it measures.
+	EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 15000);
+	if (test::ScopedHeapMeter::available()) {
+		// Reading the annotations adds a few thousand dictionaries to the baseline; reading every page's annotations
+		// again would add 1,090,000 of them (13 GB allocated in a Release build without the fix).
+		EXPECT_LT(allocated, baseline_allocated + (size_t{32} << 20u))
+			<< "baseline " << baseline_allocated << " bytes";
+		EXPECT_LT(baseline_allocated, unshared_allocated + (size_t{32} << 20u))
+			<< "without the shared array " << unshared_allocated << " bytes";
+	}
 }
 
 TEST(PdfDocument, PageTreeAndRotatedPages)

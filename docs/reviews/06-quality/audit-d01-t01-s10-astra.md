@@ -42,3 +42,30 @@ OVERALL: needs-attention
 - Finding 3 (P2, byte-distinct name-tree keys collide): correct. Name-tree keys and string destinations are kept as their bytes (ISO 32000-1 sections 7.9.6 and 12.3.2.3), so `<41>` and `<FEFF0041>` are two destinations. `PdfDocument.NameTreeKeysCompareAsBytes`.
 
 Gates after the round 1 fixes: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter 'PdfError.*:PdfObject.*:PdfLexer.*:PdfParser.*:PdfXref.*:PdfFilters.*:PdfCrypto.*:PdfDocument.*:Support.AsanActiveWhenEnabled'` -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 127 tests.` (one skipped, `PdfFilters.WicCauseSurvivesAllocationFailure`, by design under ASan); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 208 tests.`
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-24T09:23:48Z
+- Effort: medium
+- Lenses: adversarial
+- Lines: 10
+- Digest: d55abeab48eea9e8
+
+### adversarial: needs-attention
+
+1. **P1: Recursive outline traversal retains gigabytes outside its memory budget.** `src/pdf/document.cpp:3335` recurses while each ancestor’s complete `item_val` remains alive. The budget at `:3324` counts only the extracted `OutlineNode`, excluding those dictionaries. Reproduce by opening a one-page PDF with 64 nested outline items linked through `/First`, each containing a direct `/Pad` string of 128 MiB, stored in separate Flate-compressed object streams. Each object stays below the parser and decoding limits, and the extracted titles stay below the outline budget, but traversal retains **8 GiB of padding alone**. Object-stream cache eviction cannot release these parsed dictionaries. Bound aggregate live traversal memory or discard unused dictionary payload before descending.
+
+2. **P1: Shared non-link annotations bypass the document-wide work limit.** `src/pdf/document.cpp:3732` traverses annotations separately for every page, resets deduplication at `:3752`, and skips non-links at `:3791` without charging the document-wide counter. Reproduce by opening a PDF with 100,000 small page dictionaries, all referencing one indirect `/Annots` array containing 65,536 distinct references to small `/Subtype /Text` annotation dictionaries. These counts fit the existing page, array, xref and retained-page limits. Opening performs **6,553,600,000 annotation resolutions**, repeatedly parsing the same objects, without reaching the link budget. This creates a CPU denial of service from a comparatively small file. Apply a document-wide annotation work budget or reuse classification results across pages; this is separate from cancellable opening.
+
+Both findings are based on static tracing at `dc5cc29`. Reproductions and ASan tests were not executed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1, outline ancestors kept alive): correct. The outline is now walked with an explicit stack (one frame per open level, holding only the `IndirectRef` it reads next, ISO 32000-1 Table 153), and an item's dictionary is released before its children are read. Writing the test also found the recursive walk overflowing the 1 MB stack of a Debug build at 64 levels (`0xC00000FD`), which the explicit stack removes. `PdfDocument.OutlineTraversalHoldsOneItemAtATime`: 64 nested items with 10,000-element `/Pad` arrays; peak 451,602,325 bytes on the code before the fix against a bound of 51,209,335.
+- Finding 2 (P1, shared non-link annotations read once per page): correct. A page whose `/Annots` names an array already read (by the reference it names or the object that resolves to) copies that page's links through the link budget, and an annotation object found not to be a link is not read again on any page. The same class in page-tree validation is fixed too: another indirect page entry is validated once per object, not once per page. `PdfDocument.SharedAnnotationsAreReadOnce`: 1,000 pages sharing one array of 1,001 annotations and 300 pages listing 300 of them directly; 13,192,954,915 bytes allocated on the code before the fix, and with only the validation hunk removed the baseline allocates 2,258,237,779 bytes against 243,390,211.
+
+Gates after the round 2 fixes: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 129 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 210 tests.` in Debug and Release.

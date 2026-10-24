@@ -2313,6 +2313,8 @@ PdfResult<void> Document::load_document_structure()
 	// ordinary page dictionary estimates at a few hundred bytes to a few KiB, so a document at the page cap fits.
 	constexpr size_t kMaxTotalPageDictBytes = kMaxDecodedStreamBytes;
 	size_t total_retained_page_dict_bytes = 0u;
+	// Objects the pages' other entries name, each validated once however many pages share it.
+	std::unordered_set<uint64_t> validated_page_entry_objs;
 
 	struct ActivePagesFrame {
 		PdfValue kids_val{};
@@ -2457,7 +2459,8 @@ PdfResult<void> Document::load_document_structure()
 					k_sv == "PieceInfo" || k_sv == "DPart") {
 					continue;
 				}
-				if (const auto entry_ref = entry_v.as_ref()) {
+				if (const auto entry_ref = entry_v.as_ref();
+					entry_ref.has_value() && validated_page_entry_objs.insert(make_ref_cache_key(*entry_ref)).second) {
 					RECTO_PDF_TRY(PdfValue resolved_entry, resolve_object(*entry_ref));
 					(void)resolved_entry;
 				}
@@ -3163,10 +3166,20 @@ PdfResult<void> Document::load_document_structure()
 				constexpr size_t kMaxOutlineStringBytes = 4096u;
 				constexpr size_t kMaxTotalOutlineBytes = 8u * 1024u * 1024u;
 
-				auto build_outline_siblings = [&](auto& self,
-												  const PdfValue* first_val,
-												  std::vector<OutlineNode>& out_siblings,
-												  size_t depth) -> PdfResult<void> {
+				// The outline is walked with an explicit stack, one frame per open level, so its depth costs heap rather
+				// than call stack. /First and /Next are indirect references (ISO 32000-1 Table 153): a frame keeps only the
+				// reference it reads next, and an item's dictionary is released before its children are read, so a deep
+				// tree holds one item's dictionary at a time however large its other entries are.
+				struct OutlineFrame {
+					std::vector<OutlineNode>* siblings{nullptr};
+					std::optional<IndirectRef> next{};
+					size_t depth{0};
+				};
+				std::vector<OutlineFrame> outline_stack;
+				outline_stack.reserve(kMaxOutlineDepth + 1u);
+				auto open_outline_level = [&](const PdfValue* first_val,
+											  std::vector<OutlineNode>* siblings,
+											  size_t depth) -> PdfResult<void> {
 					if (first_val == nullptr || first_val->is_null()) {
 						return {};
 					}
@@ -3176,142 +3189,147 @@ PdfResult<void> Document::load_document_structure()
 							DiagnosticId::RecursionLimitExceeded,
 							"/Outlines tree exceeds maximum depth");
 					}
+					const std::optional<IndirectRef> first = first_val->as_ref();
+					if (!first.has_value()) {
+						record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedDictionary);
+						return {};
+					}
+					outline_stack.push_back(OutlineFrame{siblings, first, depth});
+					return {};
+				};
 
-					PdfValue current_ptr;
-					RECTO_PDF_TRY(PdfValue cloned_first, first_val->deep_clone());
-					current_ptr = std::move(cloned_first);
-
-					while (!current_ptr.is_null()) {
-						if (total_outline_nodes >= kMaxOutlineNodes) {
-							return make_doc_error(
+				RECTO_PDF_RETURN_IF_ERROR(open_outline_level(outlines_root->get("First"), &description_.outline, 0u));
+				while (!outline_stack.empty()) {
+					OutlineFrame& frame = outline_stack.back();
+					if (!frame.next.has_value()) {
+						outline_stack.pop_back();
+						continue;
+					}
+					if (total_outline_nodes >= kMaxOutlineNodes) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Outlines tree exceeds maximum node budget");
+					}
+					PdfValue item_val;
+					{
+						const std::optional<IndirectRef> item_ref = frame.next;
+						frame.next.reset();
+						if (!visited_outline_objs.insert(make_ref_cache_key(*item_ref)).second) {
+							record_diagnostic(
 								ErrorCode::DamagedFormat,
 								DiagnosticId::DamagedDictionary,
-								"/Outlines tree exceeds maximum node budget");
+								std::nullopt,
+								item_ref->obj_num,
+								item_ref->gen_num);
+							continue;
 						}
-						PdfValue item_val;
-						if (const auto item_ref = current_ptr.as_ref()) {
-							if (!visited_outline_objs.insert(make_ref_cache_key(*item_ref)).second) {
+						std::vector<IndirectRef> hop_refs;
+						hop_refs.reserve(kMaxIndirectRefDepth);
+						auto item_res = resolve_object_with_visited(*item_ref, hop_refs);
+						if (!item_res.has_value()) {
+							continue;
+						}
+						bool cycle_in_hops = false;
+						for (size_t h = 1u; h < hop_refs.size(); ++h) {
+							if (!visited_outline_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
 								record_diagnostic(
 									ErrorCode::DamagedFormat,
 									DiagnosticId::DamagedDictionary,
 									std::nullopt,
-									item_ref->obj_num,
-									item_ref->gen_num);
+									hop_refs[h].obj_num,
+									hop_refs[h].gen_num);
+								cycle_in_hops = true;
 								break;
 							}
-							std::vector<IndirectRef> hop_refs;
-							hop_refs.reserve(kMaxIndirectRefDepth);
-							auto item_res = resolve_object_with_visited(*item_ref, hop_refs);
-							if (!item_res.has_value()) {
-								break;
-							}
-							bool cycle_in_hops = false;
-							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_outline_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
-									record_diagnostic(
+						}
+						if (cycle_in_hops) {
+							continue;
+						}
+						item_val = std::move(*item_res);
+					}
+					const PdfDict* item_dict = item_val.as_dict();
+					if (item_dict == nullptr) {
+						continue;
+					}
+
+					++total_outline_nodes;
+					OutlineNode node{};
+					if (const PdfValue* title_v = item_dict->get("Title")) {
+						auto title_res = resolve_value(*title_v);
+						if (title_res.has_value()) {
+							if (const PdfString* ts = title_res->as_string()) {
+								if (ts->span().size() > kMaxOutlineStringBytes) {
+									return make_doc_error(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedDictionary,
-										std::nullopt,
-										hop_refs[h].obj_num,
-										hop_refs[h].gen_num);
-									cycle_in_hops = true;
-									break;
+										"/Outlines item /Title exceeds maximum length");
 								}
-							}
-							if (cycle_in_hops) {
-								break;
-							}
-							item_val = std::move(*item_res);
-						} else {
-							auto item_res = resolve_value(current_ptr);
-							if (!item_res.has_value()) {
-								break;
-							}
-							item_val = std::move(*item_res);
-						}
-						const PdfDict* item_dict = item_val.as_dict();
-						if (item_dict == nullptr) {
-							break;
-						}
-
-						++total_outline_nodes;
-						OutlineNode node{};
-						if (const PdfValue* title_v = item_dict->get("Title")) {
-							auto title_res = resolve_value(*title_v);
-							if (title_res.has_value()) {
-								if (const PdfString* ts = title_res->as_string()) {
-									if (ts->span().size() > kMaxOutlineStringBytes) {
+								auto utf8_res = pdf_string_to_utf8(ts->span());
+								if (utf8_res.has_value()) {
+									if (utf8_res->size() > kMaxOutlineStringBytes) {
 										return make_doc_error(
 											ErrorCode::DamagedFormat,
 											DiagnosticId::DamagedDictionary,
-											"/Outlines item /Title exceeds maximum length");
+											"/Outlines item UTF-8 /Title exceeds maximum length");
 									}
-									auto utf8_res = pdf_string_to_utf8(ts->span());
-									if (utf8_res.has_value()) {
-										if (utf8_res->size() > kMaxOutlineStringBytes) {
-											return make_doc_error(
-												ErrorCode::DamagedFormat,
-												DiagnosticId::DamagedDictionary,
-												"/Outlines item UTF-8 /Title exceeds maximum length");
-										}
-										node.title = std::move(*utf8_res);
-									}
+									node.title = std::move(*utf8_res);
 								}
 							}
 						}
+					}
 
-						if (const PdfValue* count_v = item_dict->get("Count")) {
-							auto count_res = resolve_value(*count_v);
-							if (count_res.has_value()) {
-								if (const auto c_int = count_res->as_int()) {
-									node.is_open = (*c_int >= 0);
-								}
+					if (const PdfValue* count_v = item_dict->get("Count")) {
+						auto count_res = resolve_value(*count_v);
+						if (count_res.has_value()) {
+							if (const auto c_int = count_res->as_int()) {
+								node.is_open = (*c_int >= 0);
 							}
 						}
+					}
 
-						if (const PdfValue* dest_v = item_dict->get("Dest")) {
-							RECTO_PDF_TRY(const ParsedDest pd, resolve_dest_value(*dest_v));
-							if (pd.valid) {
-								node.page_index = pd.page_index;
-								node.dest_x_pt = pd.x_pt;
-								node.dest_y_pt = pd.y_pt;
-								node.zoom = pd.zoom;
-								node.fit_mode = std::string(pd.fit_mode);
-								node.has_destination = true;
-							}
-						} else if (const PdfValue* act_v = item_dict->get("A")) {
-							auto act_res = resolve_value(*act_v);
-							if (act_res.has_value()) {
-								if (const PdfDict* act_dict = act_res->as_dict()) {
-									const std::string s_name = entry_name(*act_dict, "S").value_or("");
-									if (s_name == "GoTo") {
-										if (const PdfValue* d_v = act_dict->get("D")) {
-											RECTO_PDF_TRY(const ParsedDest pd, resolve_dest_value(*d_v));
-											if (pd.valid) {
-												node.page_index = pd.page_index;
-												node.dest_x_pt = pd.x_pt;
-												node.dest_y_pt = pd.y_pt;
-												node.zoom = pd.zoom;
-												node.fit_mode = std::string(pd.fit_mode);
-												node.has_destination = true;
-											}
+					if (const PdfValue* dest_v = item_dict->get("Dest")) {
+						RECTO_PDF_TRY(const ParsedDest pd, resolve_dest_value(*dest_v));
+						if (pd.valid) {
+							node.page_index = pd.page_index;
+							node.dest_x_pt = pd.x_pt;
+							node.dest_y_pt = pd.y_pt;
+							node.zoom = pd.zoom;
+							node.fit_mode = std::string(pd.fit_mode);
+							node.has_destination = true;
+						}
+					} else if (const PdfValue* act_v = item_dict->get("A")) {
+						auto act_res = resolve_value(*act_v);
+						if (act_res.has_value()) {
+							if (const PdfDict* act_dict = act_res->as_dict()) {
+								const std::string s_name = entry_name(*act_dict, "S").value_or("");
+								if (s_name == "GoTo") {
+									if (const PdfValue* d_v = act_dict->get("D")) {
+										RECTO_PDF_TRY(const ParsedDest pd, resolve_dest_value(*d_v));
+										if (pd.valid) {
+											node.page_index = pd.page_index;
+											node.dest_x_pt = pd.x_pt;
+											node.dest_y_pt = pd.y_pt;
+											node.zoom = pd.zoom;
+											node.fit_mode = std::string(pd.fit_mode);
+											node.has_destination = true;
 										}
-									} else if (s_name == "URI") {
-										if (const PdfValue* uri_v = act_dict->get("URI")) {
-											auto uri_res = resolve_value(*uri_v);
-											if (uri_res.has_value()) {
-												if (const PdfString* us = uri_res->as_string()) {
-													if (us->span().size() > kMaxOutlineStringBytes) {
-														return make_doc_error(
-															ErrorCode::DamagedFormat,
-															DiagnosticId::DamagedDictionary,
-															"/Outlines item /URI exceeds maximum length");
-													}
-													auto u_utf8 = pdf_string_to_utf8(us->span());
-													if (u_utf8.has_value() &&
-														is_safe_external_uri(*u_utf8)) {
-														node.uri = std::move(*u_utf8);
-													}
+									}
+								} else if (s_name == "URI") {
+									if (const PdfValue* uri_v = act_dict->get("URI")) {
+										auto uri_res = resolve_value(*uri_v);
+										if (uri_res.has_value()) {
+											if (const PdfString* us = uri_res->as_string()) {
+												if (us->span().size() > kMaxOutlineStringBytes) {
+													return make_doc_error(
+														ErrorCode::DamagedFormat,
+														DiagnosticId::DamagedDictionary,
+														"/Outlines item /URI exceeds maximum length");
+												}
+												auto u_utf8 = pdf_string_to_utf8(us->span());
+												if (u_utf8.has_value() &&
+													is_safe_external_uri(*u_utf8)) {
+													node.uri = std::move(*u_utf8);
 												}
 											}
 										}
@@ -3319,40 +3337,40 @@ PdfResult<void> Document::load_document_structure()
 								}
 							}
 						}
-
-						const size_t node_bytes =
-							sizeof(OutlineNode) + node.title.size() + node.uri.size() + node.fit_mode.size();
-						if (total_outline_bytes + node_bytes > kMaxTotalOutlineBytes) {
-							return make_doc_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedDictionary,
-								"/Outlines tree exceeds aggregate memory budget");
-						}
-						total_outline_bytes += node_bytes;
-
-						if (const PdfValue* child_first = item_dict->get("First")) {
-							RECTO_PDF_RETURN_IF_ERROR(
-								self(self, child_first, node.children, depth + 1u));
-						}
-
-						const PdfValue* next_v = item_dict->get("Next");
-						PdfValue next_ptr{};
-						if (next_v != nullptr && !next_v->is_null()) {
-							RECTO_PDF_TRY(PdfValue cloned_next, next_v->deep_clone());
-							next_ptr = std::move(cloned_next);
-						}
-						out_siblings.push_back(std::move(node));
-						current_ptr = std::move(next_ptr);
 					}
-					return {};
-				};
 
-				RECTO_PDF_RETURN_IF_ERROR(
-					build_outline_siblings(
-						build_outline_siblings,
-						outlines_root->get("First"),
-						description_.outline,
-						0u));
+					const size_t node_bytes =
+						sizeof(OutlineNode) + node.title.size() + node.uri.size() + node.fit_mode.size();
+					if (total_outline_bytes + node_bytes > kMaxTotalOutlineBytes) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Outlines tree exceeds aggregate memory budget");
+					}
+					total_outline_bytes += node_bytes;
+
+					const PdfValue* child_v = item_dict->get("First");
+					const bool has_child = child_v != nullptr && !child_v->is_null();
+					const std::optional<IndirectRef> child_ref = has_child ? child_v->as_ref() : std::nullopt;
+					if (has_child && !child_ref.has_value()) {
+						record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedDictionary);
+					}
+					if (const PdfValue* next_v = item_dict->get("Next"); next_v != nullptr && !next_v->is_null()) {
+						frame.next = next_v->as_ref();
+						if (!frame.next.has_value()) {
+							record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedDictionary);
+						}
+					}
+					item_val = PdfValue{};
+					frame.siblings->push_back(std::move(node));
+					if (child_ref.has_value()) {
+						const PdfValue child_val(*child_ref);
+						std::vector<OutlineNode>* children = &frame.siblings->back().children;
+						const size_t child_depth = frame.depth + 1u;
+						// `frame` is not used again: opening the child level may grow the stack.
+						RECTO_PDF_RETURN_IF_ERROR(open_outline_level(&child_val, children, child_depth));
+					}
+				}
 			}
 		}
 	}
@@ -3729,16 +3747,54 @@ PdfResult<void> Document::load_document_structure()
 		return {};
 	};
 
-	for (ResolvedPageRecord& page_rec : page_records_) {
+	// Pages that share one /Annots array share its links, and an annotation found not to be a link is not read again:
+	// the array is read once, keyed by the object it resolves to, and each later page copies its links (charged to the
+	// link budget), so a shared array or shared annotations cost their size once rather than once per page.
+	std::unordered_map<uint64_t, size_t> annots_array_page;
+	std::unordered_set<uint64_t> non_link_annots;
+	for (size_t page_i = 0u; page_i < page_records_.size(); ++page_i) {
+		ResolvedPageRecord& page_rec = page_records_[page_i];
 		const PdfValue* annots_val = page_rec.page_dict.get("Annots");
 		if (annots_val == nullptr || annots_val->is_null()) {
 			continue;
 		}
-		auto annots_res = resolve_value(*annots_val);
-		if (!annots_res.has_value()) {
-			continue;
+		PdfValue annots_resolved;
+		if (const auto annots_ref = annots_val->as_ref()) {
+			const auto copy_links_of = [&](size_t source_page) -> PdfResult<void> {
+				for (const PageLink& shared : page_records_[source_page].links) {
+					RECTO_PDF_RETURN_IF_ERROR(record_page_link(page_rec, PageLink(shared)));
+				}
+				return {};
+			};
+			// Checked before the array is read again: the reference this page names, then the object it resolves to.
+			const uint64_t named_key = make_ref_cache_key(*annots_ref);
+			if (const auto seen = annots_array_page.find(named_key); seen != annots_array_page.end()) {
+				RECTO_PDF_RETURN_IF_ERROR(copy_links_of(seen->second));
+				continue;
+			}
+			std::vector<IndirectRef> hop_refs;
+			hop_refs.reserve(kMaxIndirectRefDepth);
+			auto annots_res = resolve_object_with_visited(*annots_ref, hop_refs);
+			if (!annots_res.has_value()) {
+				continue;
+			}
+			const IndirectRef array_ref = hop_refs.empty() ? *annots_ref : hop_refs.back();
+			const auto [first_page, first_use] = annots_array_page.try_emplace(make_ref_cache_key(array_ref), page_i);
+			const size_t source_page = first_page->second; // read before the next insertion may rehash
+			annots_array_page.try_emplace(named_key, source_page);
+			if (!first_use) {
+				RECTO_PDF_RETURN_IF_ERROR(copy_links_of(source_page));
+				continue;
+			}
+			annots_resolved = std::move(*annots_res);
+		} else {
+			auto annots_res = resolve_value(*annots_val);
+			if (!annots_res.has_value()) {
+				continue;
+			}
+			annots_resolved = std::move(*annots_res);
 		}
-		const PdfArray* annots_arr = annots_res->as_array();
+		const PdfArray* annots_arr = annots_resolved.as_array();
 		if (annots_arr == nullptr) {
 			continue;
 		}
@@ -3755,19 +3811,29 @@ PdfResult<void> Document::load_document_structure()
 				continue;
 			}
 			PdfValue annot_val;
+			// The objects this element reached, remembered as not links when it turns out not to be one.
+			std::vector<uint64_t> annot_keys;
+			const auto mark_non_link = [&]() {
+				non_link_annots.insert(annot_keys.begin(), annot_keys.end());
+			};
 			if (const auto annot_ref = annot_elem.as_ref()) {
-				if (!visited_page_annots.insert(make_ref_cache_key(*annot_ref)).second) {
+				const uint64_t elem_key = make_ref_cache_key(*annot_ref);
+				if (non_link_annots.contains(elem_key) || !visited_page_annots.insert(elem_key).second) {
 					continue;
 				}
+				annot_keys.push_back(elem_key);
 				std::vector<IndirectRef> hop_refs;
 				hop_refs.reserve(kMaxIndirectRefDepth);
 				auto annot_res = resolve_object_with_visited(*annot_ref, hop_refs);
 				if (!annot_res.has_value()) {
+					mark_non_link();
 					continue;
 				}
 				bool duplicate_alias = false;
 				for (size_t h = 1u; h < hop_refs.size(); ++h) {
-					if (!visited_page_annots.insert(make_ref_cache_key(hop_refs[h])).second) {
+					const uint64_t hop_key = make_ref_cache_key(hop_refs[h]);
+					annot_keys.push_back(hop_key);
+					if (!visited_page_annots.insert(hop_key).second) {
 						duplicate_alias = true;
 						break;
 					}
@@ -3785,10 +3851,12 @@ PdfResult<void> Document::load_document_structure()
 			}
 			const PdfDict* annot_dict = annot_val.as_dict();
 			if (annot_dict == nullptr) {
+				mark_non_link();
 				continue;
 			}
 			const std::string subtype = entry_name(*annot_dict, "Subtype").value_or("");
 			if (subtype != "Link") {
+				mark_non_link();
 				continue;
 			}
 
@@ -3799,6 +3867,7 @@ PdfResult<void> Document::load_document_structure()
 			} else if (const auto direct_rect = annot_dict->get_rect("Rect")) {
 				rect_opt = *direct_rect;
 			} else {
+				mark_non_link();
 				continue;
 			}
 
