@@ -1029,20 +1029,23 @@ Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer
 
 ## 35. Canonical `PdfValue` serializer for indirect objects and streams
 
+> **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s35.md`):** three gaps folded in: typed results with an output budget, allocation failure and rollback of a failed call's partial output; streams written from their encoded `raw_bytes` with their filters, never the decoded cache `payload_bytes()` prefers; and stream framing, `/Length` and object headers asserted directly, since the parser's `endstream` scan would hide a wrong length.
+
 Every PDF Recto writes goes through one serializer of the object model (ISO 32000-1 sections 7.3 and 7.5), shared by `§5` and `D04 T02 §2`, so a value written is always a value read back the same. -> XREF: D04 T02 §2 (its `PdfWriter` writes every object through it)
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that serialization reads the value without changing it and bounds its nesting.
+**Freeze check:** Verify that serialization reads the value without changing it, bounds its nesting and output, and leaves the caller's buffer as it was when it fails.
 
 **Build order:**
 
 1. Implement `src/pdf/serialize.h` and `src/pdf/serialize.cpp`. Done when: they compile on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_serialize_tests.cpp`. Done when: its tests pass under ASan.
 
-- [ ] `serialize_value(const PdfValue&, std::string& out)`: null, booleans, integers, reals in the shortest form that reads back exactly, with no exponent (ISO 32000-1 7.3.3), names with `#XX` for delimiters, whitespace, `#` and bytes outside `!`..`~` (7.3.5), strings as literal strings with `(`, `)`, `\` and non-printing bytes escaped or as hex strings when most bytes are binary (7.3.4), arrays, dictionaries and references; nesting refused past 64 levels. Done when: `PdfSerialize.ValuesRoundTrip` parses every serialized value back equal (all object kinds, every corpus file's objects) and `PdfSerialize.RealsAndNames` checks exponent-free reals and name escapes.
-- [ ] `serialize_indirect(IndirectRef, const PdfValue&, std::string& out)` writing `N G obj ... endobj`, with a stream's `/Length` set to its exact byte count and `stream` followed by a line feed (7.3.8.1). Done when: `PdfSerialize.IndirectAndStreams` reopens a document built from serialized objects and reads each stream's bytes back exactly.
+- [ ] `serialize_value(const PdfValue&, std::string& out, size_t max_bytes = kMaxSerializedBytes)` returning `PdfResult<void>` and appending to `out`: null, booleans, integers, reals in the shortest form that reads back exactly, with no exponent (ISO 32000-1 7.3.3), names with `#XX` for delimiters, whitespace, `#` and bytes outside `!`..`~` (7.3.5), strings as literal strings with `(`, `)`, `\` and non-printing bytes escaped or as hex strings when most bytes are binary or the string was hex (7.3.4), arrays, dictionaries and references. Done when: `PdfSerialize.ValuesRoundTrip` parses every serialized value back equal (every kind, every corpus file's objects, compared by kind and content) and `PdfSerialize.RealsAndNames` checks exponent-free reals, non-finite reals refused and name escapes.
+- [ ] Failure is typed and leaves `out` as it was: nesting past 64 levels is `RecursionLimitExceeded` (as the parser reports nesting), output past `max_bytes` is `ResourceLimit` (`RefusalReason::WorkingBytes`), and an allocation failure is `OutOfMemory`; in each case `out` is truncated back to its length before the call. Done when: `PdfSerialize.Failures` checks depth 64 accepted and 65 refused, a string whose escaped form passes the budget refused, and an injected allocation failure after partial output, each with `out` and the input value unchanged.
+- [ ] `serialize_indirect(IndirectRef, const PdfValue&, std::string& out, size_t max_bytes = kMaxSerializedBytes)` writing `N G obj` and `endobj`; a stream is written from its encoded `raw_bytes` with its dictionary as given (`/Filter` and `/DecodeParms` kept) and `/Length` set to the bytes written, never from the decoded cache, with `stream`, a line feed, the bytes, a line feed and `endstream` (7.3.8.1), and the input value unchanged. Done when: `PdfSerialize.IndirectAndStreams` checks the header's number and generation, `/Length` against the emitted byte count, the delimiters for an empty stream, a binary payload holding `endstream` and one ending in CR LF, and a `FlateDecode` stream with its decoded cache filled, which reopens with its encoded bytes and decodes to the same content.
 - [ ] Commit: `pdf: add the canonical PdfValue serializer`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfSerialize.*` passes under ASan with 0 warnings.
