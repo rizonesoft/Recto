@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 86 | Checklist items: 525
+Sections: 91 | Checklist items: 547
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -83,10 +83,14 @@ Sections: 86 | Checklist items: 525
 | [x]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host              | 5     |
 | [x]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host              | 5     |
 | [x]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host              | 17    |
-| [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host              | 7     |
+| [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 6     |
 | [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host              | 9     |
 | [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 7     |
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 9     |
+| [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 5     |
+| [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
+| [ ]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 5     |
+| [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 4     |
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 5     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
@@ -105,6 +109,7 @@ Sections: 86 | Checklist items: 525
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 7     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
+| [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
@@ -900,6 +905,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 69/831 verified sections, 33 ready to run now.
+Progress: 69/836 verified sections, 33 ready to run now.
 
-Checklist: 430/6112 items completed (includes Commit items).
+Checklist: 430/6134 items completed (includes Commit items).

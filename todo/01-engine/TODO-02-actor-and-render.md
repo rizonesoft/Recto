@@ -59,9 +59,9 @@ track: M1
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
-| 2 | §2 | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap | §1 | [ ] |
+| 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [ ] |
 | 3 | §3 | Content-stream graphics state machine, path construction/clipping and colour spaces | §1 | [ ] |
-| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, D06 T05 §32, D06 T05 §33 | [ ] |
+| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
@@ -74,7 +74,7 @@ track: M1
 | 14 | §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation` | §8, §13, §18, D02 T03 §7 | [ ] |
 | 15 | §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer | §3, §4, §6 | [ ] |
 | 16 | §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer | §4, §6 | [ ] |
-| 17 | §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics | §2, §4 | [ ] |
+| 17 | §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics | §2, §4, §27, §30 | [ ] |
 | 18 | §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h` | D01 T01 §1 | [x] |
 | 19 | §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams | §4, §7, §8, §18 | [ ] |
 | 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
@@ -84,6 +84,11 @@ track: M1
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [x] |
 | 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [x] |
 | 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [x] |
+| 27 | §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback | §2 | [ ] |
+| 28 | §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps | §2 | [ ] |
+| 29 | §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines) | §2 | [ ] |
+| 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [ ] |
+| 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -130,31 +135,28 @@ Implement the thread-safe, immutable display-list representation in `src/pdf/dis
 > **Verified:** 2026-10-24 | §1 | 753ff65d3dcbc478e8635940509dd2faf0a86908
 > **Review:** `docs/reviews/d01-t02-s1.json`
 
-## 2. DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap
+## 2. DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback
 
-Implement font loading, glyph mapping, and Unicode CMap parsing in `src/pdf/font.h` and `src/pdf/font.cpp` (ISO 32000-1 section 9):
-- Custom in-memory `IDWriteFontFileLoader` and `IDWriteFontFileStream` registering embedded `/FontFile2` (TrueType) and `/FontFile3` (OpenType / CFF) byte buffers directly with a process-wide thread-safe `IDWriteFactory` (`DWRITE_FACTORY_TYPE_SHARED`) to create thread-safe `IDWriteFontFace` instances without writing temp files to disk.
-- Standard 14 PDF font table (`Times-Roman`/`Bold`/`Italic`/`BoldItalic`, `Helvetica` family, `Courier` family, `Symbol`, `ZapfDingbats`) with exact ISO 32000-1 AFM character widths and fallback mapping to Windows 11 system fonts (`Times New Roman`, `Arial`, `Courier New`, `Segoe UI Symbol`).
-- Legacy `/Subtype /Type1` / bare `/FontFile` (`eexec` decrypted charstrings) and `/Subtype /Type3` (`/CharProcs` procedural glyph content streams) support, converting Type 1 charstrings to `RecordedPath` outlines and Type 3 charprocs into per-glyph sub-`DisplayList`s.
-- Character code to glyph index and Unicode mapping: `/Encoding` (`WinAnsiEncoding`, `MacRomanEncoding`, `StandardEncoding`, `/Encoding << /BaseEncoding ... /Differences [...] >>`), TrueType `cmap` table (`(3,1)` Windows Unicode, `(1,0)` Mac, `(3,0)` Symbol), CIDFonts (`/Subtype /Type0` with `/DescendantFonts`, `/CIDToGIDMap`, `/W` and `/DW` widths), and `/ToUnicode` CMap parser (`begincodespacerange`, `beginbfchar`, `beginbfrange`).
+> **Corrected 2026-10-24:** split before the build (AGENTS.md: small, single-responsibility sections). The section had six large items, one of which could not be built here: Type 3 `/CharProcs` are content streams and need the interpreter of `§3` and `§4`. It now covers loading and glyph metrics only; the Standard 14 metrics moved to `§27`, encodings and `/ToUnicode` to `§28`, Type 1 and CFF charstrings to `§29`, CID fonts to `§30` and Type 3 to `§31`. Two facts the old text missed: DirectWrite cannot load a bare CFF program (`/FontFile3 /Type1C` or `/CIDFontType0C`; `§29` reads those), and it refuses many embedded TrueType subsets that lack tables it requires (`OS/2`, `name`, `post`), which every other reader tolerates, so this section reads `glyf` outlines itself when DirectWrite refuses a font. Windows 11 provides the in-memory loader (`IDWriteFactory5::CreateInMemoryFontFileLoader`), so no custom `IDWriteFontFileLoader` is written.
+
+Load embedded font programs into immutable `LoadedFont` objects in `src/pdf/font.h` and `src/pdf/font.cpp` (ISO 32000-1 sections 9.6.3, 9.8 and 9.9) that the interpreter (`§4`) asks for glyph advances, ink boxes and outlines, and that the rasterizer (`§6`) draws through DirectWrite or as paths.
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that `IDWriteFactory` is created with `DWRITE_FACTORY_TYPE_SHARED`, in-memory font byte buffers outlive their `IDWriteFontFace` via `std::shared_ptr<const std::vector<uint8_t>>`, and `LoadedFont` objects stored in a `DisplayList` are immutable and thread-safe for concurrent `ID2D1RenderTarget::DrawGlyphRun` calls across `RenderPool` workers.
+**Freeze check:** Verify that `IDWriteFactory` is created once with `DWRITE_FACTORY_TYPE_SHARED`, that each font's bytes outlive its `IDWriteFontFace` through the owner object passed to `CreateInMemoryFontFileReference`, and that a `LoadedFont` has only `const` accessors and no lazy caches, so `RenderPool` workers can draw it concurrently.
 
 **Build order:**
 
-1. Implement `src/pdf/font.h` and `src/pdf/font.cpp` (in-memory `IDWriteFontFileLoader`, Standard 14 width/font resolver, `/Encoding` + `/Differences` tables, `/ToUnicode` CMap parser, CID `/W` width parser, Type 1 charstring path decoder, and Type 3 `/CharProcs` hook). Done when: `font.cpp` compiles cleanly on `x64` and `ARM64` linking `dwrite.lib`.
-2. Add `tests/recto-tests/pdf_font_tests.cpp` testing Standard 14 metrics, in-memory TrueType/OpenType loading, `/Differences` encoding overrides, `/ToUnicode` `bfchar`/`bfrange` parsing (including UTF-16 surrogate pairs and multi-char ligature expansions), CID `/W` width arrays, and Type 1/Type 3 glyph outlines. Done when: `PdfFont.*` passes under ASan.
+1. Author `src/pdf/font.h` and `src/pdf/font.cpp` with `LoadedFont`, the shared factory and the in-memory loader, linking `dwrite.lib` in `src/pdf/recto-pdf.vcxproj`. Done when: both compile cleanly on `x64` and `ARM64`.
+2. Add `tests/recto-tests/pdf_font_tests.cpp` with the tests named below. Done when: `PdfFont.*` passes under ASan.
 
-- [ ] Implement a custom `IDWriteFontFileLoader` + `IDWriteFontFileStream` backed by `std::shared_ptr<const std::vector<uint8_t>>` so embedded `/FontFile2` and `/FontFile3` streams load into `IDWriteFontFace` in memory with zero disk I/O. Done when: `PdfFont.InMemoryDirectWriteLoader` loads an embedded TrueType font buffer and resolves glyph indices and design-unit metrics. Cheaper substitute: GDI `AddFontMemResourceEx` or ignoring embedded fonts and rendering everything in Arial.
-- [ ] Build the complete Standard 14 font metric and encoding table (`Helvetica`, `Times-Roman`, `Courier`, `Symbol`, `ZapfDingbats` and their bold/oblique variants) with exact 1000-unit glyph widths and Windows 11 system `IDWriteFontFace` fallback. Done when: `PdfFont.Standard14Metrics` matches ISO AFM widths for ASCII and Latin-1 characters.
-- [ ] Parse `/Encoding` (`/WinAnsiEncoding`, `/MacRomanEncoding`, `/MacExpertEncoding`, `/StandardEncoding`) and `/Differences [code /glyphname ...]` arrays, mapping Adobe Glyph List (`AGL`) names (`/fi`, `/bullet`, `/emdash`, `/Euro`, `/uniXXXX`) to Unicode codepoints and glyph indices. Done when: `PdfFont.EncodingAndDifferences` resolves custom `/Differences` remappings accurately.
-- [ ] Implement the `/ToUnicode` CMap stream parser (`begincodespacerange` 1-byte and 2-byte ranges, `beginbfchar`, `beginbfrange` with both `<hex>` increment and `[<hex1> <hex2> ...]` array forms, and multi-character ligature targets like `<00660069>` -> `"fi"`). Done when: `PdfFont.ToUnicodeCMap` decodes 1-byte, 2-byte CID, and ligature CMap streams.
-- [ ] Parse `/Page` font `/Widths` (`FirstChar`..`LastChar`) and Type 0 CIDFont `/DW` and `/W [c [w1 w2 ...] c_first c_last w]` arrays plus `/CIDToGIDMap` (`/Identity` or binary stream). Done when: `PdfFont.CidFontWidths` computes exact horizontal advances for 2-byte Identity-H CID strings.
-- [ ] Implement Type 1 (`eexec` binary/hex decrypt + Type 1/Type 2 charstring `rmoveto`/`rlineto`/`rrcurveto`/`seac` path builder) and `/Subtype /Type3` (`/FontBBox`, `/FontMatrix`, `/CharProcs` sub-display-list) fallback for fonts DirectWrite cannot instantiate as an `IDWriteFontFace`. Done when: `PdfFont.Type1AndType3` converts Type 1 and Type 3 glyphs into vector `DisplayList` paths.
-- [ ] Commit: `pdf: add DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and ToUnicode parser`
+- [ ] Define the immutable `LoadedFont` in `src/pdf/font.h`: the font program bytes (`std::shared_ptr<const std::vector<uint8_t>>`), its kind (`TrueType`, `OpenType`, `OutlineOnly`), `units_per_em`, glyph count, and `const` queries `advance(glyph)` and `ink_box(glyph)` in glyph units, plus `outline(glyph)` as `RecordedPath`-ready verbs and points for the path renderer. Done when: `PdfFont.LoadedFontIsImmutable` checks the type has no non-`const` member function and no `mutable` field, and two threads querying one font get identical results.
+- [ ] Load `/FontFile2` (TrueType) and `/FontFile3 /Subtype /OpenType` through one process-wide `IDWriteFactory5` (`DWRITE_FACTORY_TYPE_SHARED`), `CreateInMemoryFontFileLoader`, and `CreateInMemoryFontFileReference` with an owner object that holds the shared bytes, so nothing is written to disk. Done when: `PdfFont.InMemoryDirectWriteLoader` loads an embedded TrueType buffer, resolves glyph indices and design-unit advances, and the bytes stay alive after the caller drops its copy. Cheaper substitute: GDI `AddFontMemResourceEx`, or a temporary file per font.
+- [ ] When DirectWrite refuses a TrueType program, read its `head`, `maxp`, `loca`, `glyf` and `hmtx` tables directly (simple and composite glyphs, quadratic contours converted to cubic verbs) and load it as `OutlineOnly`. Done when: `PdfFont.RefusedTrueTypeFallsBackToGlyfOutlines` loads a subset with no `OS/2`, `name` or `post` table, gives the same advances and outlines as the intact font, and the path renderer can draw them. Cheaper substitute: failing the font and drawing every glyph in a system face.
+- [ ] Glyph advances and ink boxes in the `§1` convention: glyph units scaled by `1 / units_per_em` into text space, so the interpreter multiplies by the font size and `PositionedGlyph::ink_bounds_pt` follows `D01 T02 §1` (text-space points with the font size applied). Done when: `PdfFont.GlyphMetricsInTextSpace` checks advances and ink boxes against the font's `hmtx` and `glyf` boxes, including a glyph with a negative left side bearing and one that overhangs its advance.
+- [ ] Hostile font programs are refused with typed errors and bounded work: a font program larger than `kMaxDecodedStreamBytes`, table offsets or lengths outside the buffer, `loca` offsets that run backwards or past `glyf`, composite glyph recursion past 16 levels, more than 65,535 glyphs or 65,535 points in a glyph. Done when: `PdfFont.HostileFontProgramsRefused` covers each case without a crash under ASan and with the error code each case names. Cheaper substitute: trusting DirectWrite to reject them.
+- [ ] Commit: `pdf: load embedded TrueType and OpenType fonts in memory, with a glyf fallback`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.*` passes under ASan with 0 warnings.
 
@@ -816,6 +818,114 @@ The completion review of `D06 T05 §34` (`docs/reviews/06-quality/D06-T05-s34.md
 
 > **Verified:** 2026-10-24 | §26 | f78e3d7be5df1fcda3132913be36f874dbfebeb9
 > **Review:** `docs/reviews/d01-t02-s26.json`
+
+## 27. Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback
+
+The fourteen standard fonts (ISO 32000-1 section 9.6.2.2) need their exact widths and font boxes even when a PDF does not embed them, and a face to draw with. Adobe's Core14 AFM files are the primary source; their licence allows use, copying and distribution with the notice kept, which is compatible with Recto's GPL-3.0-or-later.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the generated metrics are `constexpr` tables with no mutable state, and that a standard font resolves to an immutable `LoadedFont` shared by every thread.
+
+**Build order:**
+
+1. Vendor the 14 Adobe Core14 AFM files with their licence notice under `third_party/adobe-core14-afm/` and generate `src/pdf/standard14_metrics.inc` with `scripts/build-font-metrics.py`. Done when: `python scripts/build-font-metrics.py --check` regenerates the file byte for byte.
+2. Expose the metrics and the system-face mapping from `src/pdf/font.h`. Done when: `PdfFont.Standard14Metrics` passes under ASan.
+
+- [ ] Vendor `Courier`, `Courier-Bold`, `Courier-Oblique`, `Courier-BoldOblique`, `Helvetica` (four), `Times-Roman`, `Times-Bold`, `Times-Italic`, `Times-BoldItalic`, `Symbol` and `ZapfDingbats` AFM files under `third_party/adobe-core14-afm/` with Adobe's licence text and a `README.md` naming the source and its SHA-256 sums. Done when: the files and sums are committed and `tests/scripts` checks the sums.
+- [ ] Generate `src/pdf/standard14_metrics.inc` (glyph name, code, width, glyph bounding box per glyph; `FontBBox`, `Ascender`, `Descender`, `CapHeight`, `ItalicAngle`, `IsFixedPitch` per font) with `scripts/build-font-metrics.py`, with a `--check` mode run by `tests/scripts`. Done when: `--check` passes and fails after a one-byte edit of an AFM.
+- [ ] Resolve a `/BaseFont` to its standard font, including the common aliases (`Arial`, `Arial,Bold`, `ArialMT`, `TimesNewRoman`, `TimesNewRomanPS-BoldMT`, `CourierNew` and their style suffixes) and subset prefixes (`ABCDEF+`). Done when: `PdfFont.Standard14Aliases` resolves each alias to its font and leaves unrelated names alone.
+- [ ] Map each standard font to a Windows 11 face for drawing (`Times New Roman`, `Arial`, `Courier New` with matching weight and style; `Symbol` and `ZapfDingbats` to `Segoe UI Symbol`), keeping the AFM widths for layout so text never reflows. Done when: `PdfFont.Standard14Metrics` matches the AFM widths for every ASCII and Latin-1 glyph and loads each mapped face.
+- [ ] Commit: `pdf: Standard 14 font metrics from the Adobe Core14 AFM files`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Standard14*` passes under ASan with 0 warnings, and `python scripts/build-font-metrics.py --check` exits 0.
+
+## 28. Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps
+
+Character codes in a simple font (`/Type1`, `/TrueType`, `/Type3`) map to glyphs through the font's encoding and to Unicode for search, copy and accessibility (ISO 32000-1 sections 9.6.6, 9.10). This section owns both maps.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the encoding, glyph-name and `/ToUnicode` maps are immutable once built and are read without locks by every thread that holds the font.
+
+**Build order:**
+
+1. Generate the base encodings (ISO 32000-1 Annex D) and the Adobe Glyph List into `src/pdf/glyph_names.inc` with `scripts/build-glyph-names.py`, and implement encoding and `/ToUnicode` parsing in `src/pdf/font_encoding.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_font_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Base encodings `StandardEncoding`, `WinAnsiEncoding`, `MacRomanEncoding`, `MacExpertEncoding`, and the built-in encodings of `Symbol` and `ZapfDingbats`, generated from ISO 32000-1 Annex D tables, and the Adobe Glyph List (`glyphlist.txt`, `zapfdingbats.txt`, BSD-3-Clause, vendored under `third_party/adobe-glyph-list/` with sums). Done when: `python scripts/build-glyph-names.py --check` passes and `PdfFont.BaseEncodings` checks every code of each table.
+- [ ] `/Encoding` dictionaries: `/BaseEncoding` and `/Differences [code /name ...]`, names resolved through the AGL, `uniXXXX`, `uXXXX[XX]` and ligature names (`f_i`). Done when: `PdfFont.EncodingAndDifferences` resolves remapped codes, unknown names and runs of consecutive codes.
+- [ ] TrueType glyph selection for simple fonts (ISO 32000-1 9.6.6.4): `(3,1)` with the encoding's Unicode for non-symbolic fonts, `(3,0)` with `0xF000` offsets and `(1,0)` for symbolic ones, and the code itself when no table fits. Done when: `PdfFont.TrueTypeCmapSelection` covers each branch with fixtures.
+- [ ] `/ToUnicode` CMap streams: `begincodespacerange` with 1- to 4-byte ranges, `beginbfchar`, `beginbfrange` with the increment and array forms, UTF-16 surrogate pairs and multi-character targets (`<00660069>` is `fi`), `usecmap` refused with a typed error, and bounds on ranges, entries and target length. Done when: `PdfFont.ToUnicodeCMap` decodes each form and refuses malformed and oversized CMaps without a crash.
+- [ ] Unicode for each code in the order readers use: `/ToUnicode`, then the encoding's glyph name through the AGL, then the TrueType `cmap`, else none (never a guessed character). Done when: `PdfFont.UnicodeFallbackOrder` checks each step.
+- [ ] Commit: `pdf: simple-font encodings, glyph names and ToUnicode CMaps`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.*Encoding*:PdfFont.ToUnicode*:PdfFont.TrueTypeCmap*:PdfFont.UnicodeFallback*` passes under ASan with 0 warnings.
+
+## 29. Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)
+
+Type 1 fonts (`/FontFile`) and bare CFF programs (`/FontFile3` with `/Type1C` or `/CIDFontType0C`) cannot be loaded by DirectWrite, so their glyphs are read into outlines here and drawn as paths (ISO 32000-1 sections 9.6.2 and 9.9; Adobe Type 1 Font Format; Adobe Technical Notes 5176 and 5177).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that outlines are decoded once into the immutable `LoadedFont` on the `DocumentActor` thread, with no lazy decoding on `RenderPool` workers.
+
+**Build order:**
+
+1. Implement `src/pdf/font_charstrings.cpp` reading Type 1 and CFF programs into `LoadedFont` (`OutlineOnly`). Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below. Done when: they pass under ASan.
+
+- [ ] Type 1 programs: the cleartext and `eexec` portions by `/Length1`, `/Length2`, `/Length3` (binary and hexadecimal), `eexec` and charstring decryption with `lenIV`, `/Subrs`, `/CharStrings`, `/FontMatrix` and the built-in `/Encoding`. Done when: `PdfFont.Type1Outlines` reads a PFA-style and a PFB-style fixture to the same outlines.
+- [ ] Type 1 charstrings (`hsbw`, `sbw`, `rmoveto`, `rlineto`, `rrcurveto`, the short forms, `closepath`, `callsubr` and `return`, `seac` accented glyphs from `StandardEncoding`, flex through `callothersubr` 0 to 2, hints skipped), with a 10-level subroutine depth and a stack of 24. Done when: `PdfFont.Type1Outlines` matches reference outlines and advances, including an `seac` glyph.
+- [ ] CFF programs: header, `INDEX` and `DICT` parsing, charsets, encodings, `FDArray` and `FDSelect` for CID-keyed fonts, and Type 2 charstrings (all path operators, `hintmask` and `cntrmask` skipped, `callsubr` and `callgsubr` with the bias, `endchar` with `seac` arguments), with a 10-level depth and a stack of 48. Done when: `PdfFont.CffOutlines` matches reference outlines for a name-keyed and a CID-keyed fixture.
+- [ ] Hostile programs refused with typed errors and bounded work: offsets outside the buffer, `INDEX` counts past the data, subroutine recursion, stack overflow and underflow, a charstring longer than 65,535 bytes, a glyph past 100,000 path operators. Done when: `PdfFont.HostileCharstringsRefused` covers each without a crash under ASan.
+- [ ] Commit: `pdf: Type 1 and CFF charstrings to glyph outlines`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Type1*:PdfFont.Cff*:PdfFont.HostileCharstrings*` passes under ASan with 0 warnings.
+
+## 30. CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`
+
+Composite fonts (ISO 32000-1 section 9.7) carry most CJK and many Western PDFs from Office: a `/Type0` font with one `/DescendantFonts` entry, a CMap from codes to CIDs and widths per CID.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the CID maps and widths are immutable once built and shared read-only across threads with the font.
+
+**Build order:**
+
+1. Implement composite fonts in `src/pdf/font_cid.cpp` on top of `§2`, `§28` and `§29`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below. Done when: they pass under ASan.
+
+- [ ] `/Type0` with `/Encoding /Identity-H` and `/Identity-V`, and embedded CMap streams (`begincidrange`, `begincidchar`, `usecmap` of an identity CMap); the predefined CJK CMaps stay with `§17`. Done when: `PdfFont.Type0CodeToCid` maps 2-byte codes through each form.
+- [ ] `/CIDFontType2` with `/CIDToGIDMap` (`/Identity` or a stream of big-endian glyph indices) over a `§2` font, and `/CIDFontType0` over a `§29` CFF program. Done when: `PdfFont.CidToGidMap` resolves glyphs through both forms and refuses a map stream of odd length.
+- [ ] Widths: `/DW` and `/W` in both forms (`c [w1 w2 ...]` and `c_first c_last w`), and vertical `/DW2` and `/W2`, with bounds on entries and on CID ranges. Done when: `PdfFont.CidFontWidths` computes exact advances for an Identity-H string and refuses an oversized range.
+- [ ] Commit: `pdf: CID fonts with CIDToGIDMap and W widths`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Type0*:PdfFont.CidTo*:PdfFont.CidFontWidths` passes under ASan with 0 warnings.
+
+## 31. Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists
+
+A Type 3 font draws each glyph with its own content stream (ISO 32000-1 section 9.6.5), so its glyphs are recorded by the interpreter of `§3` and `§4` into sub-display-lists that `D01 T02 §1` places at each glyph origin.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that each glyph sub-list is an immutable `std::shared_ptr<const DisplayList>` recorded on the `DocumentActor` thread and only read by `RenderPool` workers.
+
+**Build order:**
+
+1. Record each `/CharProcs` stream through the interpreter into a `DisplayList` per glyph, in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Record `/CharProcs` with `/FontMatrix` applied (so the sub-list is in text space with the font size applied, the `D01 T02 §1` convention), `d0` glyphs keeping their own colours and `d1` glyphs painting in the run's colour, `/Resources` from the font or else the page, and widths from `/Widths`. Done when: `PdfInterpreter.Type3Glyphs` draws a `d0` and a `d1` glyph with their bounds and colours.
+- [ ] Bound Type 3 recursion (a glyph showing text in a Type 3 font) at 8 levels and charge glyph content to the interpreter's work ceilings (`§19`). Done when: `PdfInterpreter.Type3RecursionBounded` refuses a self-referencing glyph with a typed error.
+- [ ] Commit: `pdf: Type 3 fonts as per-glyph sub-display-lists`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Type3*` passes under ASan with 0 warnings.
 
 ## Verification
 
