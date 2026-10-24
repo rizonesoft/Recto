@@ -54,94 +54,94 @@ Sections: 37 | Checklist items: 192
 
 Sections: 86 | Checklist items: 515
 
-| Status | Reference   | Deliverable                                                                              | Needs                        | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
-| [x]    | D01 T01 §1  | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`      | windows-host                 | 7     |
-| [x]    | D01 T01 §2  | `PdfValue` variant object model, dictionary/array helpers and deep cloning               | windows-host                 | 7     |
-| [x]    | D01 T01 §3  | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)                                  | windows-host                 | 8     |
-| [x]    | D01 T01 §4  | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)                  | windows-host                 | 7     |
-| [x]    | D01 T01 §5  | Classic `xref` tables, trailer merging and `/Prev` incremental update chains             | windows-host                 | 7     |
-| [x]    | D01 T01 §7  | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | windows-host                 | 7     |
-| [x]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host                 | 7     |
-| [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host                 | 7     |
-| [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host                 | 8     |
-| [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host                 | 9     |
-| [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host                 | 5     |
-| [x]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host                 | 5     |
-| [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
-| [x]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host                 | 4     |
-| [x]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host                 | 4     |
-| [x]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host                 | 4     |
-| [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
-| [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host                 | 5     |
-| [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host                 | 5     |
-| [x]    | D06 T05 §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp)  | windows-host                 | 5     |
-| [x]    | D06 T05 §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update      | windows-host                 | 5     |
-| [x]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host                 | 5     |
-| [x]    | D06 T05 §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file   | windows-host                 | 5     |
-| [x]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host                 | 5     |
-| [x]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host                 | 5     |
-| [ ]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host                 | 5     |
-| [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host                 | 7     |
-| [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host                 | 7     |
-| [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host                 | 9     |
-| [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host                 | 7     |
-| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host                 | 9     |
-| [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host                 | 5     |
-| [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host                 | 4     |
-| [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host                 | 6     |
-| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host                 | 7     |
-| [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host                 | 4     |
-| [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host                 | 8     |
-| [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host                 | 7     |
-| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host                 | 7     |
-| [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host                 | 7     |
-| [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host                 | 7     |
-| [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host                 | 7     |
-| [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host                 | 7     |
-| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host                 | 9     |
-| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host                 | 8     |
-| [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host                 | 8     |
-| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host                 | 7     |
-| [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host                 | 7     |
-| [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host                 | 6     |
-| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host                 | 10    |
-| [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host                 | 6     |
-| [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host                 | 5     |
-| [ ]    | D01 T03 §4  | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer     | windows-host                 | 6     |
-| [ ]    | D01 T03 §6  | Section 4.9 Thread-Safety Battery Part 1: `ThreadSafety.Determinism` (1 vs 8 workers)    | windows-host                 | 7     |
-| [ ]    | D01 T03 §7  | Section 4.9 Battery Part 2: `CancellationStorm` (30 s) and `MultiDocumentStress`         | windows-host                 | 7     |
-| [ ]    | D01 T03 §8  | `recto::cli::Dispatcher` in its own unit and the read-only `Dispatcher::verb_names()`    | windows-host                 | 6     |
-| [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host                 | 8     |
-| [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host                 | 7     |
-| [ ]    | D01 T03 §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths               | windows-host                 | 6     |
-| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host                 | 7     |
-| [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host                 | 8     |
-| [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host                 | 10    |
-| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host                 | 7     |
-| [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host                 | 8     |
-| [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host                 | 4     |
-| [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host                 | 6     |
-| [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host                 | 6     |
-| [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host                 | 4     |
-| [x]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host                 | 4     |
-| [x]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host                 | 4     |
-| [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host                 | 3     |
-| [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host                 | 5     |
-| [ ]    | D06 T05 §41 | Recovery resolves compressed parameter targets and an indirect container /Type           | windows-host                 | 4     |
-| [ ]    | D06 T05 §42 | Cancellable damaged-file recovery with progress                                          | windows-host                 | 3     |
-| [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host                 | 5     |
-| [ ]    | D06 T05 §44 | Damaged-file recovery measured against competitors on one corpus                         | windows-host, owner-decision | 5     |
-| [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host                 | 4     |
-| [ ]    | D06 T05 §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments       | windows-host                 | 4     |
-| [ ]    | D06 T05 §47 | Standard security handler interoperability matrix and cancellable decryption             | windows-host                 | 4     |
-| [ ]    | D06 T05 §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts   | windows-host, third-party    | 5     |
-| [ ]    | D06 T05 §49 | Opening keeps readable pages, reports what it skipped, names OS read failures            | windows-host                 | 6     |
-| [ ]    | D06 T05 §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals     | windows-host                 | 6     |
-| [ ]    | D06 T05 §51 | Font inventory over every resource path, with checked embedding and Type3 classification | windows-host                 | 4     |
-| [ ]    | D06 T05 §52 | Cancellable document opening and extraction                                              | windows-host                 | 3     |
-| [ ]    | D06 T05 §53 | JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels       | windows-host                 | 5     |
-| [ ]    | D06 T05 §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder               | windows-host, third-party    | 4     |
+| Status | Reference   | Deliverable                                                                              | Needs                     | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
+| [x]    | D01 T01 §1  | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`      | windows-host              | 7     |
+| [x]    | D01 T01 §2  | `PdfValue` variant object model, dictionary/array helpers and deep cloning               | windows-host              | 7     |
+| [x]    | D01 T01 §3  | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)                                  | windows-host              | 8     |
+| [x]    | D01 T01 §4  | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)                  | windows-host              | 7     |
+| [x]    | D01 T01 §5  | Classic `xref` tables, trailer merging and `/Prev` incremental update chains             | windows-host              | 7     |
+| [x]    | D01 T01 §7  | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | windows-host              | 7     |
+| [x]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host              | 7     |
+| [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host              | 7     |
+| [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host              | 8     |
+| [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host              | 9     |
+| [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host              | 5     |
+| [x]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host              | 5     |
+| [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host              | 3     |
+| [x]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host              | 4     |
+| [x]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host              | 4     |
+| [x]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host              | 4     |
+| [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
+| [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
+| [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host              | 5     |
+| [x]    | D06 T05 §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp)  | windows-host              | 5     |
+| [x]    | D06 T05 §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update      | windows-host              | 5     |
+| [x]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host              | 5     |
+| [x]    | D06 T05 §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file   | windows-host              | 5     |
+| [x]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host              | 5     |
+| [x]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host              | 5     |
+| [ ]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host              | 5     |
+| [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host              | 7     |
+| [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host              | 7     |
+| [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host              | 9     |
+| [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 7     |
+| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 9     |
+| [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 5     |
+| [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
+| [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
+| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 7     |
+| [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 4     |
+| [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 8     |
+| [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 7     |
+| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 7     |
+| [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 7     |
+| [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
+| [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
+| [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
+| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 9     |
+| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 8     |
+| [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
+| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 7     |
+| [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
+| [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
+| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
+| [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
+| [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
+| [ ]    | D01 T03 §4  | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer     | windows-host              | 6     |
+| [ ]    | D01 T03 §6  | Section 4.9 Thread-Safety Battery Part 1: `ThreadSafety.Determinism` (1 vs 8 workers)    | windows-host              | 7     |
+| [ ]    | D01 T03 §7  | Section 4.9 Battery Part 2: `CancellationStorm` (30 s) and `MultiDocumentStress`         | windows-host              | 7     |
+| [ ]    | D01 T03 §8  | `recto::cli::Dispatcher` in its own unit and the read-only `Dispatcher::verb_names()`    | windows-host              | 6     |
+| [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host              | 8     |
+| [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host              | 7     |
+| [ ]    | D01 T03 §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths               | windows-host              | 6     |
+| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 7     |
+| [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host              | 8     |
+| [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
+| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
+| [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host              | 8     |
+| [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host              | 4     |
+| [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host              | 6     |
+| [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host              | 6     |
+| [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host              | 4     |
+| [x]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host              | 4     |
+| [x]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host              | 4     |
+| [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host              | 3     |
+| [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host              | 5     |
+| [ ]    | D06 T05 §41 | Recovery resolves compressed parameter targets and an indirect container /Type           | windows-host              | 4     |
+| [ ]    | D06 T05 §42 | Cancellable damaged-file recovery with progress                                          | windows-host              | 3     |
+| [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host              | 5     |
+| [ ]    | D06 T05 §44 | Damaged-file recovery measured against competitors on one corpus                         | windows-host              | 5     |
+| [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host              | 4     |
+| [ ]    | D06 T05 §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments       | windows-host              | 4     |
+| [ ]    | D06 T05 §47 | Standard security handler interoperability matrix and cancellable decryption             | windows-host              | 4     |
+| [ ]    | D06 T05 §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts   | windows-host, third-party | 5     |
+| [ ]    | D06 T05 §49 | Opening keeps readable pages, reports what it skipped, names OS read failures            | windows-host              | 6     |
+| [ ]    | D06 T05 §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals     | windows-host              | 6     |
+| [ ]    | D06 T05 §51 | Font inventory over every resource path, with checked embedding and Type3 classification | windows-host              | 4     |
+| [ ]    | D06 T05 §52 | Cancellable document opening and extraction                                              | windows-host              | 3     |
+| [ ]    | D06 T05 §53 | JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels       | windows-host              | 5     |
+| [ ]    | D06 T05 §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder               | windows-host, third-party | 4     |
 
 ### Phase 2: M2 Viewer
 
@@ -902,4 +902,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 67/831 verified sections, 27 ready to run now.
 
-Checklist: 413/6102 items completed (includes Commit items).
+Checklist: 414/6102 items completed (includes Commit items).
