@@ -57,7 +57,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 21 | §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file | D01 T01 §6, §20 | [x] |
 | 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [x] |
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [x] |
-| 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
+| 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [x] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
@@ -735,13 +735,16 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 1. Re-run `D01 T01 §10`'s Test checkpoint at the final audited commit. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` with that commit's SHA.
 2. Audit `D01 T01 §10` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Run audit rounds on `D01 T01 §10`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: a round approves, or the severity cutoff or the 33-round cap stops the loop with its outcome recorded, and no leftover is safety, data-integrity or stamp-invalidating.
-- [ ] Fix each finding at its owning layer in a new commit with a test that fails before it, or file it through `add-todo` with an owner. Done when: no finding in either audit findings file is open without a fix commit or a filed section.
-- [ ] After the last fix, re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §10"` prints on the x64 Release AddressSanitizer build (`build/build.ps1 -Platform x64 -Configuration Release -EnableASAN`), and the full `.\build.cmd` gate, at the final audited commit. Done when: `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` quotes that commit's SHA, `ASan=enabled`, the `PdfDocument.*` and sibling suites' pass count, and `0 Warning(s)`; missing or stale output counts as a failed checkpoint, not a confirmation.
-- [ ] On a confirmed regression, file the repair through `add-todo`, run `python scripts/todo-graph.py unstamp "D01 T01 §10" --reason '<what regressed and the repair section that owns it>'`, and list the stamped sections it prints as suspect in `docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: `resolve "D01 T01 §10"` no longer exits 3, its `Verified:` line is gone, `docs/reviews/d01-t01-s10.revoked-<date>.json` exists and the suspect list is recorded; or the audit confirms the stamp.
-- [ ] Commit: `review: audit D01 T01 §10 under the current review process`
+- [x] Run audit rounds on `D01 T01 §10`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: a round approves, or the severity cutoff or the 33-round cap stops the loop with its outcome recorded, and no leftover is safety, data-integrity or stamp-invalidating.
+- [x] Fix each finding at its owning layer in a new commit with a test that fails before it, or file it through `add-todo` with an owner. Done when: no finding in either audit findings file is open without a fix commit or a filed section.
+- [x] After the last fix, re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §10"` prints on the x64 Release AddressSanitizer build (`build/build.ps1 -Platform x64 -Configuration Release -EnableASAN`), and the full `.\build.cmd` gate, at the final audited commit. Done when: `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` quotes that commit's SHA, `ASan=enabled`, the `PdfDocument.*` and sibling suites' pass count, and `0 Warning(s)`; missing or stale output counts as a failed checkpoint, not a confirmation.
+- [x] On a confirmed regression, file the repair through `add-todo`, run `python scripts/todo-graph.py unstamp "D01 T01 §10" --reason '<what regressed and the repair section that owns it>'`, and list the stamped sections it prints as suspect in `docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: `resolve "D01 T01 §10"` no longer exits 3, its `Verified:` line is gone, `docs/reviews/d01-t01-s10.revoked-<date>.json` exists and the suspect list is recorded; or the audit confirms the stamp.
+- [x] Commit: `review: audit D01 T01 §10 under the current review process`
 
 **Test checkpoint:** either the stamp is confirmed (`python scripts/todo-graph.py resolve "D01 T01 §10"` exits 3, and `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` quotes the ASan checkpoint passing and `.\build.cmd` at 0 warnings at the final audited commit, then ends in an approving round or a recorded stop with every finding fixed or filed), or it is revoked (`resolve` does not exit 3, the revoked receipt exists, and the repair and suspect list are recorded). A note beside a still-valid stamp, or a confirmation without the quoted checkpoint, fails.
+
+> **Verified:** 2026-10-24 | §24 | 14c68c5756ea3194fa3034f08c02798477ffb4c6
+> **Review:** `docs/reviews/d06-t05-s24.json`
 
 ## 25. Retired MuPDF and AGPL text removed from the A, B and C mockup boards
 

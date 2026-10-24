@@ -117,3 +117,31 @@ OVERALL: needs-attention
 - Finding 1 (P1, pending action siblings unbudgeted): correct, and a miss in the round 3 sweep, which judged the action-chain walker safe because it is iterative: its pending `/Next` values are copies that outlive the object they came from while the walk follows a reference sibling. Pending copies now share a 1 MiB budget, charged before each copy and released as each is inspected; a chain past it fails closed (the link is inert), like one past the walker's node and depth limits. `PdfDocument.PendingActionSiblingsShareOneBudget`: 32 chained GoTo actions each leaving a direct sibling with a 2,000-element `/Pad` array pending give an inert link (an `Internal` link on `874ef18`), and the same chain with one-element pads stays `Internal`.
 
 Gates after the round 4 fix: ASan engine checkpoint -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 133 tests.` (one skipped by design); `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 214 tests.` in Debug and Release.
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-24T10:31:05Z
+- Effort: low
+- Lenses: quality
+- Lines: 6
+- Digest: 93ad03f09cfa6408
+
+### quality: approve
+
+No actionable quality findings identified in the candidate. Static review only; tests were not executed. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Checkpoint at the final audited commit
+
+Final audited commit: `14c68c5756ea3194fa3034f08c02798477ffb4c6` (round 5 approved it). The gates ran on this tree before it was committed and nothing in `src/`, `tests/` or `build/` changed since:
+
+- `python scripts/todo-graph.py resolve "D01 T01 §10"` -> exit 3 (still verified).
+- The section's checkpoint on the x64 Release AddressSanitizer build: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter 'PdfError.*:PdfObject.*:PdfLexer.*:PdfParser.*:PdfXref.*:PdfFilters.*:PdfCrypto.*:PdfDocument.*:Support.AsanActiveWhenEnabled'` -> exit 0, `0 Warning(s)`, `ASan=enabled`, `[  PASSED  ] 133 tests.`, one skipped (`PdfFilters.WicCauseSurvivesAllocationFailure`, whose allocation-failure injection is unavailable under ASan by design).
+- `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations (x64 and ARM64, Debug and Release), `[  PASSED  ] 214 tests.` in x64 Debug and Release.
+
+## Audit outcome
+
+The stamp of `D01 T01 §10` is confirmed. Every finding was a defect in what the section built (bounded opening on hostile input, link and destination resolution) or behaviour its contract did not ask for, and each is fixed at its owning layer with a test that fails before the fix (`77a2506`, `aed408b`, `dc5cc29`, `29df9ea`, `874ef18`, `14c68c5`) or owned by a filed section (`D06 T05 §43`, `§49` to `§52`, `D01 T02 §21`, `D06 T01 §7`, `D02 T01 §5`, `§10`, `D02 T02 §9`, `D02 T03 §1`, `§4`). No regression of a behaviour the section stamped, so no `unstamp` and no suspect list. Architecture: the fixes keep the foundation plan intact (one owning `Document`, typed `PdfResult<T>` errors, bounded allocation on hostile input); none revises a decision.
