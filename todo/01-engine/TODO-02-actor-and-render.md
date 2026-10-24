@@ -58,7 +58,7 @@ track: M1
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
+| 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
 | 2 | §2 | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap | §1 | [ ] |
 | 3 | §3 | Content-stream graphics state machine, path construction/clipping and colour spaces | §1 | [ ] |
 | 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, D06 T05 §32, D06 T05 §33 | [ ] |
@@ -123,9 +123,12 @@ Implement the thread-safe, immutable display-list representation in `src/pdf/dis
 - [x] Sealing and ownership: mutation or a second `finish()` after sealing returns `InternalError`, the builder can be destroyed while lists are read (`PdfDisplayList.OneShotFinishSemantics`), and `PdfDisplayList.ConcurrentRead` compares every reader's walk with the expected payloads (command kinds, pool ranges, bitmap identity). Done when: both tests pass under ASan.
 - [x] Track active `DisplayList` instances via an atomic counter `recto::pdf::debug_live_display_lists()` so `§8` and `§10` can assert zero leaked display lists on shutdown. Done when: constructing and destroying `DisplayList` increments and decrements the counter to `0`.
 - [x] Verify concurrent lock-free reading of one `std::shared_ptr<const DisplayList>` across 8 threads in `PdfDisplayList.ConcurrentRead`. Done when: 8 threads iterating 10,000 commands simultaneously pass under ASan.
-- [ ] Commit: `pdf: add immutable DisplayList command buffer and DisplayListBuilder`
+- [x] Commit: `pdf: add immutable DisplayList command buffer and DisplayListBuilder`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDisplayList.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-24 | §1 | 753ff65d3dcbc478e8635940509dd2faf0a86908
+> **Review:** `docs/reviews/d01-t02-s1.json`
 
 ## 2. DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap
 
