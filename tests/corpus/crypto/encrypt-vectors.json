@@ -1,0 +1,88 @@
+{
+  "fixtures": [
+    {
+      "cases": [
+        {
+          "ciphertext": "",
+          "plaintext": ""
+        },
+        {
+          "ciphertext": "af",
+          "plaintext": "01"
+        },
+        {
+          "ciphertext": "af5138d9c27036de201eb89dbbcbcf",
+          "plaintext": "01080f161d242b323940474e555c63"
+        },
+        {
+          "ciphertext": "af5138d9c27036de201eb89dbbcbcf3c",
+          "plaintext": "01080f161d242b323940474e555c636a"
+        },
+        {
+          "ciphertext": "af5138d9c27036de201eb89dbbcbcf3ce8",
+          "plaintext": "01080f161d242b323940474e555c636a71"
+        }
+      ],
+      "file_key": "8b49d1e6c0db0d3e70ab1ba06e18578d",
+      "method": "V2",
+      "path": "render/encrypted-rc4-128.pdf"
+    },
+    {
+      "cases": [
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fad1a3c27e34c46781e99a671ba322fd6",
+          "plaintext": ""
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fc6431fb3aa0211084ae09b2e7b12f96d",
+          "plaintext": "01"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fc3dd0fbf1af6092cbfdea95623833f16",
+          "plaintext": "01080f161d242b323940474e555c63"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fcfbbef8098fc6b3e400ae544561c25b2fa5c4dd90c359f18aac63550bd46b91c",
+          "plaintext": "01080f161d242b323940474e555c636a"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fcfbbef8098fc6b3e400ae544561c25b2812e058cee3355b98c42bca1c029477e",
+          "plaintext": "01080f161d242b323940474e555c636a71"
+        }
+      ],
+      "file_key": "576813e5d4f08f4f3d37b2ea89a78b19",
+      "method": "AESV2",
+      "path": "render/encrypted-aes-128.pdf"
+    },
+    {
+      "cases": [
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fbf9e8cd2f2a55836cc8ba350a79c0e8e",
+          "plaintext": ""
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0ff8b76ad2f510935d24e9cf72fafda2e5",
+          "plaintext": "01"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0f98e107a40bbfd17424336c4ff7ef16dd",
+          "plaintext": "01080f161d242b323940474e555c63"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fde0038b3669582e00b5d654e5e0d4692b44e2cbeda98eb9781c341e8a088accb",
+          "plaintext": "01080f161d242b323940474e555c636a"
+        },
+        {
+          "ciphertext": "000102030405060708090a0b0c0d0e0fde0038b3669582e00b5d654e5e0d4692a061c828452576002f90221611f1b890",
+          "plaintext": "01080f161d242b323940474e555c636a71"
+        }
+      ],
+      "file_key": "2d59ac77f2d7df01fee1bcf6bd39da16e62999eddeae442f9f9a5a2e531d501b",
+      "method": "AESV3",
+      "path": "render/encrypted-aes-256.pdf"
+    }
+  ],
+  "generation": 3,
+  "iv": "000102030405060708090a0b0c0d0e0f",
+  "object": 12
+}

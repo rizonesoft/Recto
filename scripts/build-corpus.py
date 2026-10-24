@@ -2186,6 +2186,56 @@ def _build_encrypted_pdf(mode: str) -> bytes:
     return raw.replace(b"/Info 6 0 R /ID", b"/Info 6 0 R /Encrypt 7 0 R /ID")
 
 
+def encrypted_fixture_file_key(mode: str) -> bytes:
+    """The file encryption key `_build_encrypted_pdf` uses for `render/encrypted-<mode>.pdf`, derived the same way."""
+    rel = f"render/encrypted-{mode}.pdf"
+    if mode == "aes-256":
+        return hashlib.sha256(f"recto-aes256-fkey:{rel}".encode("utf-8")).digest()
+    id0_bytes = bytes.fromhex(deterministic_id_hex(rel, rev=0)[0])
+    o_val = pdf_r34_compute_o(CORPUS_USER_PASSWORD, CORPUS_OWNER_PASSWORD)
+    return pdf_r34_compute_file_key(CORPUS_USER_PASSWORD, o_val, CORPUS_PERMISSIONS_MASK, id0_bytes)
+
+
+ENCRYPT_VECTOR_OBJECT = (12, 3)
+ENCRYPT_VECTOR_LENGTHS = (0, 1, 15, 16, 17)
+ENCRYPT_VECTOR_IV = bytes(range(16))
+
+
+def build_crypto_encrypt_vectors() -> bytes:
+    """`tests/corpus/crypto/encrypt-vectors.json` (D01 T02 section 36): for each encrypted fixture, its file key and
+    the ciphertext this script's own RC4 and AES give for object 12 generation 3 and plaintexts of 0, 1, 15, 16 and
+    17 bytes, AES behind the IV 00 01 .. 0F, so `SecurityHandler::encrypt_bytes` is checked against an independent
+    implementation rather than only against its own decryption."""
+    obj_num, gen_num = ENCRYPT_VECTOR_OBJECT
+    fixtures = []
+    for mode, method in (("rc4-128", "V2"), ("aes-128", "AESV2"), ("aes-256", "AESV3")):
+        file_key = encrypted_fixture_file_key(mode)
+        cases = []
+        for n in ENCRYPT_VECTOR_LENGTHS:
+            plain = bytes((7 * i + 1) & 0xFF for i in range(n))
+            if method == "V2":
+                cipher = rc4_crypt(pdf_r34_object_key(file_key, obj_num, gen_num, is_aes=False), plain)
+            elif method == "AESV2":
+                okey = pdf_r34_object_key(file_key, obj_num, gen_num, is_aes=True)
+                cipher = ENCRYPT_VECTOR_IV + aes_cbc_encrypt(okey, ENCRYPT_VECTOR_IV, plain, pad=True)
+            else:
+                cipher = ENCRYPT_VECTOR_IV + aes_cbc_encrypt(file_key, ENCRYPT_VECTOR_IV, plain, pad=True)
+            cases.append({"plaintext": plain.hex(), "ciphertext": cipher.hex()})
+        fixtures.append({"path": f"render/encrypted-{mode}.pdf", "method": method, "file_key": file_key.hex(),
+                         "cases": cases})
+    listing = {"object": obj_num, "generation": gen_num, "iv": ENCRYPT_VECTOR_IV.hex(), "fixtures": fixtures}
+    return (json.dumps(listing, indent=2, sort_keys=True) + "\n").encode("ascii")
+
+
+def validate_crypto_fixture(rel_path: str, data: bytes) -> None:
+    if rel_path != "crypto/encrypt-vectors.json":
+        raise ValueError(f"unrecognized crypto fixture {rel_path}")
+    listing = json.loads(data)
+    if len(listing.get("fixtures", [])) != 3 or any(len(f["cases"]) != len(ENCRYPT_VECTOR_LENGTHS)
+                                                   for f in listing["fixtures"]):
+        raise ValueError(f"{rel_path}: expected three fixtures of {len(ENCRYPT_VECTOR_LENGTHS)} cases")
+
+
 def build_encrypted_rc4_128() -> bytes:
     return _build_encrypted_pdf("rc4-128")
 
@@ -4142,6 +4192,8 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_font_structure(rel_path, data)
     elif rel_path.startswith("flate/"):
         validate_flate_fixture(rel_path, data)
+    elif rel_path.startswith("crypto/"):
+        validate_crypto_fixture(rel_path, data)
     elif rel_path.startswith("images/dct-") and rel_path.endswith(".jpg"):
         validate_jpeg_baseline(rel_path, data, 16, 8, 4 if "-4c-" in rel_path else 3)
     else:
@@ -4814,6 +4866,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "flate/image-rows.bin": "A 256 by 256 RGB gradient with noise as PNG Up predictor rows, the Flate compressor's image sample",
     "flate/collisions.bin": "256 KiB over a three-symbol alphabet, the Flate compressor's longest-chain worst case",
     "flate/reference-sizes.json": "SHA-256, size and Python zlib level-6 size of each Flate compressor input",
+    "crypto/encrypt-vectors.json": "Expected RC4, AES-128 and AES-256 ciphertexts for the encrypted fixtures' keys, from this script's own ciphers",
 }
 
 
@@ -4875,6 +4928,7 @@ def expected_corpus_files() -> dict[str, bytes]:
         "flate/collisions.bin": build_flate_collisions(),
     }
     files["flate/reference-sizes.json"] = build_flate_reference_sizes(files)
+    files["crypto/encrypt-vectors.json"] = build_crypto_encrypt_vectors()
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
         missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))
         extra = sorted(set(CORPUS_PURPOSES.keys()) - set(files.keys()))

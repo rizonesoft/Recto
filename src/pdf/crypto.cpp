@@ -1717,32 +1717,8 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::decrypt_bytes(
 		}
 
 		if (method == CryptFilterMethod::V2 || method == CryptFilterMethod::AESV2) {
-			// ISO 32000-1 section 7.6.2 Algorithm 1: Derive per-object key from
-			// `file_key_ || obj_num(3 LE) || gen_num(2 LE) [|| "sAlT" for AESV2]`.
-			const std::array<uint8_t, 5> obj_gen_le = {
-				static_cast<uint8_t>(ref.obj_num & 0xFFu),
-				static_cast<uint8_t>((ref.obj_num >> 8u) & 0xFFu),
-				static_cast<uint8_t>((ref.obj_num >> 16u) & 0xFFu),
-				static_cast<uint8_t>(ref.gen_num & 0xFFu),
-				static_cast<uint8_t>((ref.gen_num >> 8u) & 0xFFu),
-			};
-			const std::array<uint8_t, 4> aes_salt = {'s', 'A', 'l', 'T'};
-			const std::span<const uint8_t> salt_span =
-				(method == CryptFilterMethod::AESV2)
-					? std::span<const uint8_t>(aes_salt)
-					: std::span<const uint8_t>{};
-
 			std::array<uint8_t, 16> obj_digest{};
-			if (!cng_md5({file_key_, obj_gen_le, salt_span}, obj_digest)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG MD5 per-object key derivation failed",
-					ref.obj_num,
-					ref.gen_num);
-			}
-			const size_t obj_key_len = std::min<size_t>(file_key_.size() + 5u, 16u);
-			const std::span<const uint8_t> obj_key(obj_digest.data(), obj_key_len);
+			RECTO_PDF_TRY(const std::span<const uint8_t> obj_key, object_key(ref, method, obj_digest));
 
 			if (method == CryptFilterMethod::V2) {
 				std::vector<uint8_t> out(ciphertext.begin(), ciphertext.end());
@@ -1867,6 +1843,371 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::decrypt_bytes(
 	}
 }
 
+namespace {
+
+thread_local std::optional<std::array<uint8_t, 16>> t_test_iv{};
+thread_local int t_fail_after = 0; // 0: no failure injected
+thread_local int t_encrypt_calls = 0;
+thread_local detail::ScopedEncryptionFailure::Kind t_fail_kind = detail::ScopedEncryptionFailure::Kind::Allocation;
+
+// ISO 32000-1 7.6.2: a signature dictionary's `/Contents` is never encrypted (`/Type /Sig` or `/DocTimeStamp`, or
+// the `/ByteRange` and `/Contents` of a signature value with its `/Filter` or `/SubFilter`).
+[[nodiscard]] bool is_signature_dict(const PdfDict& dict) noexcept
+{
+	const auto type_name = dict.get_name("Type");
+	return (type_name.has_value() && (*type_name == "Sig" || *type_name == "DocTimeStamp")) ||
+		(dict.contains("ByteRange") && dict.contains("Contents") && (dict.contains("Filter") || dict.contains("SubFilter")));
+}
+
+} // namespace
+
+namespace detail {
+
+ScopedEncryptionIv::ScopedEncryptionIv(std::array<uint8_t, 16> iv) noexcept
+{
+	t_test_iv = iv;
+}
+
+ScopedEncryptionIv::~ScopedEncryptionIv() noexcept
+{
+	t_test_iv.reset();
+}
+
+ScopedEncryptionFailure::ScopedEncryptionFailure(Kind kind, int after) noexcept
+{
+	t_fail_kind = kind;
+	t_fail_after = after;
+	t_encrypt_calls = 0;
+}
+
+ScopedEncryptionFailure::~ScopedEncryptionFailure() noexcept
+{
+	t_fail_after = 0;
+	t_encrypt_calls = 0;
+}
+
+} // namespace detail
+
+PdfResult<std::span<const uint8_t>> SecurityHandler::object_key(
+	IndirectRef ref,
+	CryptFilterMethod method,
+	std::array<uint8_t, 16>& digest) const noexcept
+{
+	// ISO 32000-1 section 7.6.2 Algorithm 1: Derive per-object key from
+	// `file_key_ || obj_num(3 LE) || gen_num(2 LE) [|| "sAlT" for AESV2]`.
+	const std::array<uint8_t, 5> obj_gen_le = {
+		static_cast<uint8_t>(ref.obj_num & 0xFFu),
+		static_cast<uint8_t>((ref.obj_num >> 8u) & 0xFFu),
+		static_cast<uint8_t>((ref.obj_num >> 16u) & 0xFFu),
+		static_cast<uint8_t>(ref.gen_num & 0xFFu),
+		static_cast<uint8_t>((ref.gen_num >> 8u) & 0xFFu),
+	};
+	const std::array<uint8_t, 4> aes_salt = {'s', 'A', 'l', 'T'};
+	const std::span<const uint8_t> salt_span =
+		(method == CryptFilterMethod::AESV2) ? std::span<const uint8_t>(aes_salt) : std::span<const uint8_t>{};
+	bool hashed = false;
+	try {
+		hashed = cng_md5({file_key_, obj_gen_le, salt_span}, digest);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory deriving a per-object key", std::nullopt, ref.obj_num,
+			ref.gen_num);
+	}
+	if (!hashed) {
+		return make_crypto_error(
+			ErrorCode::InternalError,
+			DiagnosticId::InternalError,
+			"CNG MD5 per-object key derivation failed",
+			ref.obj_num,
+			ref.gen_num);
+	}
+	return std::span<const uint8_t>(digest.data(), std::min<size_t>(file_key_.size() + 5u, 16u));
+}
+
+PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
+	const PdfDict& dict,
+	std::optional<std::string_view> type,
+	IndirectRef ref,
+	const IndirectObjectResolver* resolver) const
+{
+	CryptFilterMethod method = params_.stream_method;
+	if (type.has_value() && *type == "EmbeddedFile" && !params_.eff_f.empty()) {
+		method = params_.embedded_file_method;
+	}
+	// A value as it reads, an indirect one resolved one level when a resolver is given and never written back; a
+	// reference that does not resolve reads as nothing, unless memory ran out.
+	const auto read = [&](const PdfValue* v) -> PdfResult<std::optional<PdfValue>> {
+		if (v == nullptr) {
+			return std::optional<PdfValue>{};
+		}
+		if (v->is_ref() && resolver != nullptr && *resolver) {
+			auto target = (*resolver)(*v->as_ref());
+			if (!target.has_value()) {
+				if (target.error().code == ErrorCode::OutOfMemory) {
+					return target.error();
+				}
+				return std::optional<PdfValue>{};
+			}
+			return std::optional<PdfValue>(std::move(*target));
+		}
+		return std::optional<PdfValue>(*v);
+	};
+	RECTO_PDF_TRY(const std::optional<PdfValue> filter, read(dict.get("Filter")));
+	const bool single = filter.has_value() && filter->is_name();
+	std::optional<PdfValue> first;
+	if (single) {
+		first = filter;
+	} else if (filter.has_value() && filter->as_array() != nullptr && !filter->as_array()->empty()) {
+		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*filter->as_array())[0]));
+		first = std::move(head);
+	}
+	// ISO 32000-1 7.4.10: a chain that starts with `/Crypt` names its filter in `/DecodeParms` `/Name` (a dictionary
+	// for a single filter, the first element of an array for a chain), `Identity` when absent.
+	if (!first.has_value() || first->as_name() != std::optional<std::string_view>("Crypt")) {
+		return StreamCrypt{method, false};
+	}
+	std::string cf_name = "Identity";
+	RECTO_PDF_TRY(const std::optional<PdfValue> parms, read(dict.get("DecodeParms")));
+	std::optional<PdfValue> parms0;
+	if (parms.has_value() && parms->is_dict()) {
+		parms0 = parms;
+	} else if (!single && parms.has_value() && parms->as_array() != nullptr && !parms->as_array()->empty()) {
+		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*parms->as_array())[0]));
+		parms0 = std::move(head);
+	}
+	if (parms0.has_value() && parms0->is_dict()) {
+		RECTO_PDF_TRY(const std::optional<PdfValue> name, read(parms0->as_dict()->get("Name")));
+		if (name.has_value() && name->as_name().has_value()) {
+			cf_name = std::string(*name->as_name());
+		}
+	}
+	const auto it = params_.crypt_filters.find(cf_name);
+	if (it == params_.crypt_filters.end()) {
+		return make_crypto_error(
+			ErrorCode::UnsupportedEncryption,
+			DiagnosticId::UnsupportedEncryption,
+			single ? "Unknown /Crypt filter /Name in stream /DecodeParms" : "Unknown /Crypt filter /Name in stream /DecodeParms array",
+			ref.obj_num,
+			ref.gen_num);
+	}
+	return StreamCrypt{it->second, true};
+}
+
+PdfResult<std::vector<uint8_t>> SecurityHandler::encrypt_bytes(
+	std::span<const uint8_t> plaintext,
+	IndirectRef ref,
+	CryptFilterMethod method) const noexcept
+{
+	try {
+		check_crypto_alloc();
+		if (!authenticated_) {
+			return make_crypto_error(
+				ErrorCode::NeedsPassword,
+				DiagnosticId::NeedsPassword,
+				"Cannot encrypt PDF object before SecurityHandler is authenticated",
+				ref.obj_num,
+				ref.gen_num);
+		}
+		const bool injected = t_fail_after > 0 && ++t_encrypt_calls >= t_fail_after;
+		if (injected && t_fail_kind == detail::ScopedEncryptionFailure::Kind::Allocation) {
+			throw std::bad_alloc();
+		}
+		if (method == CryptFilterMethod::None) {
+			return std::vector<uint8_t>(plaintext.begin(), plaintext.end());
+		}
+		std::array<uint8_t, 16> obj_digest{};
+		std::span<const uint8_t> key;
+		if (method == CryptFilterMethod::V2 || method == CryptFilterMethod::AESV2) {
+			RECTO_PDF_TRY(const std::span<const uint8_t> obj_key, object_key(ref, method, obj_digest));
+			key = obj_key;
+		} else if (file_key_.size() == 32u) {
+			key = file_key_; // AESV3 (ISO 32000-2 7.6.3.3): the file key itself
+		} else {
+			return make_crypto_error(
+				ErrorCode::InternalError,
+				DiagnosticId::InternalError,
+				"AES-256 file encryption key is not 32 bytes",
+				ref.obj_num,
+				ref.gen_num);
+		}
+		if (method == CryptFilterMethod::V2) {
+			std::vector<uint8_t> out(plaintext.begin(), plaintext.end());
+			if (!cng_rc4(key, out)) {
+				return make_crypto_error(
+					ErrorCode::InternalError,
+					DiagnosticId::InternalError,
+					"CNG RC4 per-object encryption failed",
+					ref.obj_num,
+					ref.gen_num);
+			}
+			return out;
+		}
+		// AES-CBC behind a fresh IV, PKCS#7 padded: 1 to 16 bytes of padding, so an empty plaintext is one block.
+		std::array<uint8_t, 16> iv{};
+		const bool have_iv = !(injected && t_fail_kind == detail::ScopedEncryptionFailure::Kind::Randomness) &&
+			(t_test_iv.has_value() ? (iv = *t_test_iv, true)
+								   : BCRYPT_SUCCESS(BCryptGenRandom(nullptr, iv.data(), static_cast<ULONG>(iv.size()),
+										 BCRYPT_USE_SYSTEM_PREFERRED_RNG)));
+		if (!have_iv) {
+			return make_crypto_error(
+				ErrorCode::InternalError,
+				DiagnosticId::InternalError,
+				"CNG random IV generation failed",
+				ref.obj_num,
+				ref.gen_num);
+		}
+		const size_t pad = 16u - (plaintext.size() % 16u);
+		std::vector<uint8_t> padded(plaintext.begin(), plaintext.end());
+		padded.insert(padded.end(), pad, static_cast<uint8_t>(pad));
+		std::vector<uint8_t> out(16u + padded.size());
+		std::memcpy(out.data(), iv.data(), iv.size());
+		if (!cng_aes_cbc_raw(/*encrypt=*/true, key, iv, padded, std::span<uint8_t>(out).subspan(16u))) {
+			return make_crypto_error(
+				ErrorCode::InternalError,
+				DiagnosticId::InternalError,
+				"CNG AES-CBC per-object encryption failed",
+				ref.obj_num,
+				ref.gen_num);
+		}
+		return out;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while encrypting PDF object bytes",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while encrypting PDF object bytes",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+}
+
+PdfResult<void> SecurityHandler::encrypt_value_recursive(
+	PdfValue& value,
+	IndirectRef ref,
+	size_t depth,
+	const IndirectObjectResolver* resolver) const
+{
+	if (depth > kMaxObjectCloneDepth) {
+		return make_crypto_error(
+			ErrorCode::RecursionLimitExceeded,
+			DiagnosticId::RecursionLimitExceeded,
+			"Object nesting depth exceeded while encrypting PDF object",
+			ref.obj_num,
+			ref.gen_num);
+	}
+	if (PdfString* str = value.as_string_mut()) {
+		if (params_.string_method != CryptFilterMethod::None) {
+			RECTO_PDF_TRY(std::vector<uint8_t> cipher, encrypt_bytes(str->bytes, ref, params_.string_method));
+			str->bytes = std::move(cipher);
+		}
+		return {};
+	}
+	if (PdfArray* arr = value.as_array_mut()) {
+		for (PdfValue& elem : *arr) {
+			RECTO_PDF_RETURN_IF_ERROR(encrypt_value_recursive(elem, ref, depth + 1u, resolver));
+		}
+		return {};
+	}
+	if (PdfDict* dict = value.as_dict_mut()) {
+		const bool is_sig_dict = is_signature_dict(*dict);
+		for (size_t i = 0; i < dict->size(); ++i) {
+			const PdfName& key = dict->entries()[i].first; // exact lookup, as decryption does
+			if (is_sig_dict && key.view() == "Contents") {
+				continue;
+			}
+			if (PdfValue* entry_val = dict->get_mut(key)) {
+				RECTO_PDF_RETURN_IF_ERROR(encrypt_value_recursive(*entry_val, ref, depth + 1u, resolver));
+			}
+		}
+		return {};
+	}
+	if (PdfStream* stm = value.as_stream_mut()) {
+		// /Type as decryption reads it: direct, or one level through the resolver, never written back.
+		std::optional<std::string_view> stm_type = stm->dict.get_name("Type");
+		std::string resolved_type;
+		if (!stm_type.has_value() && resolver != nullptr && *resolver) {
+			if (const PdfValue* type_val = stm->dict.get("Type"); type_val != nullptr && type_val->is_ref()) {
+				if (auto target = (*resolver)(*type_val->as_ref()); target.has_value()) {
+					if (const auto name = target->as_name()) {
+						resolved_type.assign(name->begin(), name->end());
+						stm_type = resolved_type;
+					}
+				} else if (target.error().code == ErrorCode::OutOfMemory) {
+					return target.error();
+				}
+			}
+		}
+		// ISO 32000-1 7.5.8.1: a cross-reference stream is never encrypted.
+		if (stm_type.has_value() && *stm_type == "XRef") {
+			return {};
+		}
+		for (size_t i = 0; i < stm->dict.size(); ++i) {
+			const PdfName& key = stm->dict.entries()[i].first;
+			if (PdfValue* entry_val = stm->dict.get_mut(key)) {
+				RECTO_PDF_RETURN_IF_ERROR(encrypt_value_recursive(*entry_val, ref, depth + 1u, resolver));
+			}
+		}
+		// ISO 32000-1 7.6.3.2: metadata streams stay readable when /EncryptMetadata is false.
+		if (!params_.encrypt_metadata && stm_type.has_value() && *stm_type == "Metadata") {
+			return {};
+		}
+		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, resolver));
+		if (choice.method != CryptFilterMethod::None) {
+			RECTO_PDF_TRY(std::vector<uint8_t> cipher, encrypt_bytes(stm->raw_bytes, ref, choice.method));
+			stm->raw_bytes = std::move(cipher);
+			stm->raw_length = stm->raw_bytes.size();
+		}
+		return {};
+	}
+	return {};
+}
+
+PdfResult<void> SecurityHandler::encrypt_object_values(
+	PdfValue& value,
+	IndirectRef ref,
+	const IndirectObjectResolver* resolver) const noexcept
+{
+	try {
+		check_crypto_alloc();
+		if (!authenticated_) {
+			return make_crypto_error(
+				ErrorCode::NeedsPassword,
+				DiagnosticId::NeedsPassword,
+				"Cannot encrypt PDF object before SecurityHandler is authenticated",
+				ref.obj_num,
+				ref.gen_num);
+		}
+		// ISO 32000-1 7.6.2: the /Encrypt dictionary itself is never encrypted.
+		if (encrypt_ref_.has_value() && *encrypt_ref_ == ref) {
+			return {};
+		}
+		// All or nothing: the copy is encrypted, and replaces the value only when every part succeeded.
+		RECTO_PDF_TRY(PdfValue copy, value.deep_clone());
+		RECTO_PDF_RETURN_IF_ERROR(encrypt_value_recursive(copy, ref, 0u, resolver));
+		value = std::move(copy);
+		return {};
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while encrypting PDF object",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while encrypting PDF object",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+}
+
 PdfResult<void> SecurityHandler::decrypt_value_recursive(
 	PdfValue& value,
 	IndirectRef ref,
@@ -1904,11 +2245,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		// `/Type /DocTimeStamp`, or contains `/FT /Sig` or `/ByteRange` + `/Filter` + `/Contents`).
 		// Per ISO 32000-1 section 7.6.2, the `/Contents` hex string of a signature
 		// dictionary is never encrypted.
-		const auto type_name = dict->get_name("Type");
-		const bool is_sig_dict =
-			(type_name.has_value() && (*type_name == "Sig" || *type_name == "DocTimeStamp")) ||
-			(dict->contains("ByteRange") && dict->contains("Contents") &&
-			 (dict->contains("Filter") || dict->contains("SubFilter")));
+		const bool is_sig_dict = is_signature_dict(*dict);
 
 		for (size_t i = 0; i < dict->size(); ++i) {
 			// The entry's own PdfName, looked up exactly: the string_view overload strips a leading '/', so a key
@@ -1961,13 +2298,6 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		// when `/EncryptMetadata` is false.
 		if (!params_.encrypt_metadata && stm_type.has_value() && *stm_type == "Metadata") {
 			return {};
-		}
-
-		// Determine effective stream crypt filter method (honoring per-stream `/Crypt` filter
-		// in `/Filter` and `/DecodeParms`, or `/EmbeddedFile` `/EFF`).
-		CryptFilterMethod eff_method = params_.stream_method;
-		if (stm_type.has_value() && *stm_type == "EmbeddedFile" && !params_.eff_f.empty()) {
-			eff_method = params_.embedded_file_method;
 		}
 
 		// An indirect /Filter, or its elements, is written into the dictionary resolved (one level), and so is
@@ -2056,55 +2386,10 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 			}
 		}
 
-		// Check if the stream's first `/Filter` is `/Crypt` (ISO 32000-1 section 7.4.10).
-		bool strip_leading_crypt_filter = false;
-		if (const PdfValue* filter_val = stm->dict.get("Filter")) {
-			if (const auto single_f = filter_val->as_name()) {
-				if (*single_f == "Crypt") {
-					std::string cf_name = "Identity";
-					if (const PdfDict* dp = stm->dict.get_dict("DecodeParms")) {
-						cf_name = std::string(dp->get_name("Name").value_or("Identity"));
-					}
-					const auto it = params_.crypt_filters.find(cf_name);
-					if (it == params_.crypt_filters.end()) {
-						return make_crypto_error(
-							ErrorCode::UnsupportedEncryption,
-							DiagnosticId::UnsupportedEncryption,
-							"Unknown /Crypt filter /Name in stream /DecodeParms",
-							ref.obj_num,
-							ref.gen_num);
-					}
-					eff_method = it->second;
-					strip_leading_crypt_filter = true;
-				}
-			} else if (const PdfArray* f_arr = filter_val->as_array()) {
-				if (!f_arr->empty()) {
-					if (const auto first_f = (*f_arr)[0].as_name(); first_f.has_value() && *first_f == "Crypt") {
-						std::string cf_name = "Identity";
-						if (const PdfArray* dp_arr = stm->dict.get_array("DecodeParms")) {
-							if (!dp_arr->empty()) {
-								if (const PdfDict* dp0 = (*dp_arr)[0].as_dict()) {
-									cf_name = std::string(dp0->get_name("Name").value_or("Identity"));
-								}
-							}
-						} else if (const PdfDict* dp = stm->dict.get_dict("DecodeParms")) {
-							cf_name = std::string(dp->get_name("Name").value_or("Identity"));
-						}
-						const auto it = params_.crypt_filters.find(cf_name);
-						if (it == params_.crypt_filters.end()) {
-							return make_crypto_error(
-								ErrorCode::UnsupportedEncryption,
-								DiagnosticId::UnsupportedEncryption,
-								"Unknown /Crypt filter /Name in stream /DecodeParms array",
-								ref.obj_num,
-								ref.gen_num);
-						}
-						eff_method = it->second;
-						strip_leading_crypt_filter = true;
-					}
-				}
-			}
-		}
+		// The method as encryption chooses it (`stream_crypt`); the references above are already written in.
+		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, nullptr));
+		const CryptFilterMethod eff_method = choice.method;
+		const bool strip_leading_crypt_filter = choice.leading_crypt;
 
 		if (eff_method != CryptFilterMethod::None && !stm->raw_bytes.empty()) {
 			RECTO_PDF_TRY(

@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <span>
 #include <string>
@@ -122,6 +123,28 @@ public:
 	{
 		set_crypto_alloc_fail_countdown(-1);
 	}
+};
+
+// Tests only: while alive, `SecurityHandler::encrypt_bytes` on this thread uses `iv` for every AES encryption
+// instead of `BCryptGenRandom`, so ciphertext can be compared with values computed elsewhere.
+class ScopedEncryptionIv {
+public:
+	explicit ScopedEncryptionIv(std::array<uint8_t, 16> iv) noexcept;
+	~ScopedEncryptionIv() noexcept;
+	ScopedEncryptionIv(const ScopedEncryptionIv&) = delete;
+	ScopedEncryptionIv& operator=(const ScopedEncryptionIv&) = delete;
+};
+
+// Tests only: while alive, the `after`-th `encrypt_bytes` call on this thread (counting from 1) and every later one
+// fail, by an allocation failure or by `BCryptGenRandom` failing (AES only), so all-or-nothing encryption can be
+// checked after some strings are done.
+class ScopedEncryptionFailure {
+public:
+	enum class Kind : uint8_t { Allocation, Randomness };
+	ScopedEncryptionFailure(Kind kind, int after) noexcept;
+	~ScopedEncryptionFailure() noexcept;
+	ScopedEncryptionFailure(const ScopedEncryptionFailure&) = delete;
+	ScopedEncryptionFailure& operator=(const ScopedEncryptionFailure&) = delete;
 };
 
 } // namespace detail
@@ -241,6 +264,28 @@ public:
 		bool is_inside_obj_stm = false,
 		const IndirectObjectResolver* resolver = nullptr) const noexcept;
 
+	// Encrypts `plaintext` for indirect object `ref` with `method` (D01 T02 section 36): RC4 (`V2`) and AES-128
+	// (`AESV2`) with the per-object key of ISO 32000-1 Algorithm 1 (`sAlT` for AES), AES-256 (`AESV3`) with the file
+	// key, AES in CBC with PKCS#7 padding behind a fresh 16-byte IV from `BCryptGenRandom` (an empty plaintext is the IV
+	// and one padding block); `None` returns the bytes. Refused with `NeedsPassword` before authentication, as
+	// decryption is.
+	[[nodiscard]] PdfResult<std::vector<uint8_t>> encrypt_bytes(
+		std::span<const uint8_t> plaintext,
+		IndirectRef ref,
+		CryptFilterMethod method) const noexcept;
+
+	// Encrypts every string and stream payload in `value` for indirect object `ref`, the inverse of
+	// `decrypt_object_values` with its exemptions (the `/Encrypt` dictionary, cross-reference streams, `/Sig` and
+	// `/DocTimeStamp` `/Contents`, `/Metadata` when `/EncryptMetadata` is false, the `Identity` filter): strings with
+	// `/StrF`, streams with `/StmF`, `/EFF` for `/Type /EmbeddedFile`, or their own leading `/Crypt` filter, chosen by
+	// the function decryption uses. `resolver` reads an indirect `/Type`, `/Filter`, `/DecodeParms` or `/Name`
+	// without writing it in. An unknown crypt filter is `UnsupportedEncryption`, nesting past the limit
+	// `RecursionLimitExceeded`. All or nothing: on any failure `value` is unchanged.
+	[[nodiscard]] PdfResult<void> encrypt_object_values(
+		PdfValue& value,
+		IndirectRef ref,
+		const IndirectObjectResolver* resolver = nullptr) const noexcept;
+
 	// Resolves indirect object `ref` from `xref` and `file_bytes`, decrypts its
 	// strings and stream payloads (and decompresses `/Type /ObjStm` containers
 	// after decrypting the container stream), and caches the decrypted
@@ -251,6 +296,30 @@ public:
 		IndirectRef ref) noexcept;
 
 private:
+	// The crypt filter a stream uses: `/StmF`, `/EFF` for an embedded file, or the stream's own leading `/Crypt`
+	// filter named in its `/DecodeParms` (ISO 32000-1 7.4.10, 7.6.5), and whether the chain starts with `/Crypt`.
+	struct StreamCrypt {
+		CryptFilterMethod method;
+		bool leading_crypt;
+	};
+	[[nodiscard]] PdfResult<StreamCrypt> stream_crypt(
+		const PdfDict& dict,
+		std::optional<std::string_view> type,
+		IndirectRef ref,
+		const IndirectObjectResolver* resolver) const;
+
+	// The per-object key of ISO 32000-1 Algorithm 1 for `V2` and `AESV2`, written into `digest`.
+	[[nodiscard]] PdfResult<std::span<const uint8_t>> object_key(
+		IndirectRef ref,
+		CryptFilterMethod method,
+		std::array<uint8_t, 16>& digest) const noexcept;
+
+	[[nodiscard]] PdfResult<void> encrypt_value_recursive(
+		PdfValue& value,
+		IndirectRef ref,
+		size_t depth,
+		const IndirectObjectResolver* resolver) const;
+
 	[[nodiscard]] PdfResult<void> decrypt_value_recursive(
 		PdfValue& value,
 		IndirectRef ref,

@@ -16,6 +16,7 @@
 // - Structured `PdfPermissions` extraction from `/P` bitmask (ISO 32000-1 Table 22).
 
 #include "crypto.h"
+#include "document.h"
 
 #include "filters.h"
 #include "parser.h"
@@ -27,6 +28,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -951,6 +953,265 @@ TEST(PdfCrypto, PermissionsBitmask)
 		EXPECT_FALSE(pm.can_assemble);
 		EXPECT_TRUE(pm.can_print_high_quality);
 	}
+}
+
+
+// Encrypting new objects (D01 T02 section 36). The expected ciphertexts in `tests/corpus/crypto/encrypt-vectors.json`
+// come from scripts/build-corpus.py's own RC4, MD5 and AES with each encrypted fixture's file key, object 12
+// generation 3 and the IV 00..0F, so a key-derivation or padding mistake shared by encryption and decryption cannot
+// pass on a round trip alone.
+namespace {
+
+std::vector<std::string> json_strings(const std::string& json, std::string_view key)
+{
+	std::vector<std::string> out;
+	const std::string marker = "\"" + std::string(key) + "\": \"";
+	for (size_t at = json.find(marker); at != std::string::npos; at = json.find(marker, at + 1u)) {
+		const size_t start = at + marker.size();
+		out.push_back(json.substr(start, json.find('"', start) - start));
+	}
+	return out;
+}
+
+std::vector<uint8_t> from_hex(std::string_view hex)
+{
+	std::vector<uint8_t> out;
+	for (size_t i = 0; i + 1u < hex.size(); i += 2u) {
+		out.push_back(static_cast<uint8_t>(std::stoul(std::string(hex.substr(i, 2u)), nullptr, 16)));
+	}
+	return out;
+}
+
+std::string to_hex(std::span<const uint8_t> bytes)
+{
+	static constexpr char kDigits[] = "0123456789abcdef";
+	std::string out;
+	for (const uint8_t b : bytes) {
+		out += kDigits[b >> 4u];
+		out += kDigits[b & 0xFu];
+	}
+	return out;
+}
+
+CryptFilterMethod method_named(std::string_view name)
+{
+	return name == "V2" ? CryptFilterMethod::V2 : name == "AESV2" ? CryptFilterMethod::AESV2 : CryptFilterMethod::AESV3;
+}
+
+struct OpenedFixture {
+	std::vector<uint8_t> bytes;
+	std::unique_ptr<Document> doc;
+};
+
+OpenedFixture open_encrypted(std::string_view rel_path)
+{
+	OpenedFixture f{read_corpus_bytes(rel_path), nullptr};
+	auto doc = Document::open_memory(f.bytes, "recto-test");
+	EXPECT_TRUE(doc.has_value()) << rel_path;
+	if (doc.has_value()) {
+		f.doc = std::move(*doc);
+	}
+	return f;
+}
+
+constexpr IndirectRef kVectorRef{12u, 3u};
+
+} // namespace
+
+TEST(PdfCrypto, EncryptBytes)
+{
+	const std::vector<uint8_t> raw = read_corpus_bytes("crypto/encrypt-vectors.json");
+	const std::string json(raw.begin(), raw.end());
+	const auto paths = json_strings(json, "path");
+	const auto methods = json_strings(json, "method");
+	const auto keys = json_strings(json, "file_key");
+	const auto plains = json_strings(json, "plaintext");
+	const auto ciphers = json_strings(json, "ciphertext");
+	ASSERT_EQ(paths.size(), 3u);
+	ASSERT_EQ(plains.size(), 15u);
+	ASSERT_EQ(ciphers.size(), 15u);
+	std::array<uint8_t, 16> iv{};
+	for (uint8_t i = 0; i < 16u; ++i) {
+		iv[i] = i;
+	}
+	for (size_t f = 0; f < paths.size(); ++f) {
+		SCOPED_TRACE(paths[f]);
+		const OpenedFixture fixture = open_encrypted(paths[f]);
+		ASSERT_NE(fixture.doc, nullptr);
+		const auto& handler = fixture.doc->security_handler();
+		ASSERT_TRUE(handler.has_value());
+		// The key the vectors were computed with is the key Recto derived from the password.
+		ASSERT_EQ(to_hex(handler->file_encryption_key()), keys[f]);
+		const CryptFilterMethod method = method_named(methods[f]);
+		const bool aes = method != CryptFilterMethod::V2;
+		for (size_t c = 0; c < 5u; ++c) {
+			const std::vector<uint8_t> plain = from_hex(plains[f * 5u + c]);
+			SCOPED_TRACE(plain.size());
+			{
+				detail::ScopedEncryptionIv fixed(iv);
+				auto cipher = handler->encrypt_bytes(plain, kVectorRef, method);
+				RECTO_ASSERT_OK(cipher);
+				EXPECT_EQ(to_hex(*cipher), ciphers[f * 5u + c]);
+				EXPECT_EQ(cipher->size(), aes ? 16u + (plain.size() / 16u + 1u) * 16u : plain.size());
+			}
+			// Without a fixed IV: decryption restores the bytes, AES differs on every call and RC4 does not.
+			auto first = handler->encrypt_bytes(plain, kVectorRef, method);
+			auto second = handler->encrypt_bytes(plain, kVectorRef, method);
+			RECTO_ASSERT_OK(first);
+			RECTO_ASSERT_OK(second);
+			EXPECT_EQ(*first != *second, aes);
+			auto back = handler->decrypt_bytes(*first, kVectorRef, method);
+			RECTO_ASSERT_OK(back);
+			EXPECT_EQ(*back, plain);
+		}
+		auto none = handler->encrypt_bytes(from_hex("616263"), kVectorRef, CryptFilterMethod::None);
+		RECTO_ASSERT_OK(none);
+		EXPECT_EQ(*none, from_hex("616263"));
+	}
+	// A handler that is not authenticated encrypts nothing.
+	const std::vector<uint8_t> locked_bytes = read_corpus_bytes("render/encrypted-aes-256.pdf");
+	auto locked = Document::open_memory_unauthenticated(locked_bytes);
+	RECTO_ASSERT_OK(locked);
+	ASSERT_TRUE((*locked)->security_handler().has_value());
+	RECTO_EXPECT_ERR((*locked)->security_handler()->encrypt_bytes(from_hex("00"), kVectorRef, CryptFilterMethod::AESV3),
+		ErrorCode::NeedsPassword);
+}
+
+TEST(PdfCrypto, EncryptObjects)
+{
+	// The AES-128 fixture's encryption dictionary with strings left clear (/StrF /Identity), streams in AES-128
+	// (/StmF /StdCF) and embedded files in RC4 (/EFF /RC4CF): each payload must take its own filter.
+	const OpenedFixture fixture = open_encrypted("render/encrypted-aes-128.pdf");
+	ASSERT_NE(fixture.doc, nullptr);
+	const PdfDict& trailer = fixture.doc->xref().trailer();
+	const auto encrypt_ref = fixture.doc->xref().encrypt_ref();
+	ASSERT_TRUE(encrypt_ref.has_value());
+	auto encrypt_value = fixture.doc->resolve_value(PdfValue{*encrypt_ref});
+	RECTO_ASSERT_OK(encrypt_value);
+	PdfDict encrypt = *encrypt_value->as_dict();
+	auto filters = parse_dict_literal(
+		"<< /StdCF << /Type /CryptFilter /CFM /AESV2 /AuthEvent /DocOpen /Length 16 >> "
+		"/RC4CF << /Type /CryptFilter /CFM /V2 /AuthEvent /DocOpen /Length 16 >> >>");
+	RECTO_ASSERT_OK(filters);
+	encrypt.set("CF", PdfValue{*filters});
+	encrypt.set("StrF", PdfValue{PdfName("Identity")});
+	encrypt.set("StmF", PdfValue{PdfName("StdCF")});
+	encrypt.set("EFF", PdfValue{PdfName("RC4CF")});
+	const PdfArray* ids = trailer.get_array("ID");
+	ASSERT_NE(ids, nullptr);
+	const PdfString* id0 = (*ids)[0].as_string();
+	ASSERT_NE(id0, nullptr);
+	auto made = SecurityHandler::create(encrypt, id0->bytes, *encrypt_ref);
+	RECTO_ASSERT_OK(made);
+	SecurityHandler& handler = *made;
+	RECTO_ASSERT_OK(handler.authenticate("recto-test"));
+
+	const auto stream_of = [](std::string_view dict_text, std::string_view payload) {
+		auto dict = parse_dict_literal(dict_text);
+		EXPECT_TRUE(dict.has_value());
+		PdfStream s;
+		s.dict = dict.has_value() ? *dict : PdfDict{};
+		s.raw_bytes.assign(payload.begin(), payload.end());
+		return PdfValue{std::move(s)};
+	};
+	// An indirect /DecodeParms naming the RC4 filter for a stream whose chain starts with /Crypt.
+	const IndirectObjectResolver resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+		if (r == IndirectRef{40u, 0u}) {
+			auto parms = parse_dict_literal("<< /Type /CryptFilterDecodeParms /Name /RC4CF >>");
+			return PdfValue{PdfArray{PdfValue{*parms}, PdfValue{}}};
+		}
+		if (r == IndirectRef{41u, 0u}) {
+			return PdfValue{PdfName("EmbeddedFile")};
+		}
+		return make_pdf_error(ErrorCode::DamagedFormat, "no such object");
+	};
+	PdfArray parts;
+	parts.push_back(PdfValue{PdfString(std::string_view("clear string"))});
+	parts.push_back(stream_of("<< /Length 9 >>", "content 1"));
+	parts.push_back(stream_of("<< /Type 41 0 R >>", "an embedded file"));
+	parts.push_back(stream_of("<< /Filter [/Crypt /FlateDecode] /DecodeParms 40 0 R >>", "crypt override"));
+	parts.push_back(stream_of("<< /Filter /Crypt /DecodeParms << /Name /Identity >> >>", "identity payload"));
+	parts.push_back(stream_of("<< /Type /XRef >>", "xref bytes"));
+	parts.push_back(PdfValue{PdfDict{}});
+	auto sig = parse_dict_literal("<< /Type /Sig /Filter /Adobe.PPKLite /ByteRange [0 10 20 30] /Contents <0102> /M (D:2026) >>");
+	RECTO_ASSERT_OK(sig);
+	parts.push_back(PdfValue{*sig});
+	const PdfValue original{parts};
+	PdfValue value = original;
+	RECTO_ASSERT_OK(handler.encrypt_object_values(value, IndirectRef{30u, 0u}, &resolver));
+
+	const PdfArray& out = *value.as_array();
+	const auto raw_of = [&](size_t i) { return out[i].as_stream()->raw_bytes; };
+	const auto bytes_of_text = [](std::string_view s) { return std::vector<uint8_t>(s.begin(), s.end()); };
+	EXPECT_EQ(out[0], original.as_array()->at(0)); // /StrF /Identity: strings stay clear
+	EXPECT_EQ(raw_of(1).size(), 32u);               // /StmF AES-128: IV and one block
+	auto rc4_file = handler.encrypt_bytes(bytes_of_text("an embedded file"), IndirectRef{30u, 0u}, CryptFilterMethod::V2);
+	RECTO_ASSERT_OK(rc4_file);
+	EXPECT_EQ(raw_of(2), *rc4_file); // /EFF RC4, through the indirect /Type
+	auto rc4_override = handler.encrypt_bytes(bytes_of_text("crypt override"), IndirectRef{30u, 0u}, CryptFilterMethod::V2);
+	RECTO_ASSERT_OK(rc4_override);
+	EXPECT_EQ(raw_of(3), *rc4_override); // the stream's own /Crypt filter, its parameters indirect
+	EXPECT_EQ(out[3].as_stream()->dict.get("DecodeParms")->as_ref(), (IndirectRef{40u, 0u})); // not written in
+	EXPECT_EQ(raw_of(4), bytes_of_text("identity payload")); // the Identity filter
+	EXPECT_EQ(raw_of(5), bytes_of_text("xref bytes"));       // cross-reference streams are never encrypted
+	EXPECT_EQ(*out[7].as_dict()->get("Contents"), *sig->get("Contents")); // a signature's /Contents stays
+	// With strings encrypted (the fixture's own handler, /StrF AES-128), a signature's other strings are encrypted
+	// and its /Contents still is not.
+	PdfValue signed_value{*sig};
+	RECTO_ASSERT_OK(fixture.doc->security_handler()->encrypt_object_values(signed_value, IndirectRef{30u, 0u}));
+	EXPECT_EQ(*signed_value.as_dict()->get("Contents"), *sig->get("Contents"));
+	EXPECT_NE(*signed_value.as_dict()->get("M"), *sig->get("M"));
+
+	// Decryption restores every payload; it removes the /Crypt filter it applied, as it always does.
+	PdfValue back = value;
+	RECTO_ASSERT_OK(handler.decrypt_object_values(back, IndirectRef{30u, 0u}, false, &resolver));
+	for (const size_t i : {size_t{1}, size_t{2}, size_t{3}, size_t{4}, size_t{5}}) {
+		EXPECT_EQ(back.as_array()->at(i).as_stream()->raw_bytes, original.as_array()->at(i).as_stream()->raw_bytes) << i;
+	}
+	EXPECT_EQ(back.as_array()->at(7), original.as_array()->at(7));
+
+	// The /Encrypt dictionary itself is left alone, and an unknown crypt filter is refused with the value unchanged.
+	PdfValue encrypt_copy{encrypt};
+	RECTO_ASSERT_OK(handler.encrypt_object_values(encrypt_copy, *encrypt_ref));
+	EXPECT_EQ(encrypt_copy, PdfValue{encrypt});
+	PdfValue unknown = stream_of("<< /Filter /Crypt /DecodeParms << /Name /Nowhere >> >>", "payload");
+	const PdfValue unknown_before = unknown;
+	RECTO_EXPECT_ERR(handler.encrypt_object_values(unknown, IndirectRef{30u, 0u}), ErrorCode::UnsupportedEncryption);
+	EXPECT_EQ(unknown, unknown_before);
+}
+
+TEST(PdfCrypto, EncryptFailures)
+{
+	const OpenedFixture fixture = open_encrypted("render/encrypted-aes-256.pdf");
+	ASSERT_NE(fixture.doc, nullptr);
+	const SecurityHandler& handler = *fixture.doc->security_handler();
+	PdfArray strings;
+	for (int i = 0; i < 4; ++i) {
+		strings.push_back(PdfValue{PdfString(std::string_view("secret"))});
+	}
+	const PdfValue original{strings};
+	// A failure at the third string, after two are done: a typed error, nothing changed, and a retry succeeds.
+	for (const auto kind : {detail::ScopedEncryptionFailure::Kind::Allocation, detail::ScopedEncryptionFailure::Kind::Randomness}) {
+		PdfValue value = original;
+		{
+			detail::ScopedEncryptionFailure fail(kind, 3);
+			const auto failed = handler.encrypt_object_values(value, IndirectRef{30u, 0u});
+			ASSERT_FALSE(failed.has_value());
+			EXPECT_EQ(failed.error().code,
+				kind == detail::ScopedEncryptionFailure::Kind::Allocation ? ErrorCode::OutOfMemory : ErrorCode::InternalError);
+		}
+		EXPECT_EQ(value, original);
+		RECTO_ASSERT_OK(handler.encrypt_object_values(value, IndirectRef{30u, 0u}));
+		EXPECT_NE(value, original);
+	}
+	// Nesting past the limit is refused before anything is encrypted.
+	PdfValue deep{PdfString(std::string_view("inner"))};
+	for (int i = 0; i < 70; ++i) {
+		deep = PdfValue{PdfArray{std::move(deep)}};
+	}
+	const PdfValue deep_before = deep;
+	RECTO_EXPECT_ERR(handler.encrypt_object_values(deep, IndirectRef{30u, 0u}), ErrorCode::RecursionLimitExceeded);
+	EXPECT_EQ(deep, deep_before);
 }
 
 } // namespace
