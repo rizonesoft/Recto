@@ -70,7 +70,8 @@ Completion review dispositions (writer):
 - Implemented: gap 1 (page content through this recovery path): `PdfXref.RecoveryKeepsPageContent` walks the recovered root through its page tree to `/Contents` and reads the same bytes as an undamaged control, for a catalog held only in a container with an indirect `/Type` and for the ambiguous-length case, where the genuine page's content is read and the injected one's is not.
 - Filed: D06 T03 §2 (gap 3: a document-specific recovery and loss report; existing owner)
 - Filed: D06 T03 §3 (gaps 4 and 10: accessible recovery, partial-success and refusal states, with D02 T01 §11 for the dialog; existing owner)
-- Filed: D02 T01 §11 (gaps 2 and 4: the Open entry points, off-UI-thread opening and the failure dialog; existing owner)
+- Filed: D02 T01 §5 (gap 2: the shared Open entry points and the off-UI-thread `OpenDocumentPipeline`; existing owner)
+- Filed: D02 T01 §11 (gap 4: the could-not-open dialog and its copied details; existing owner)
 - Filed: D06 T05 §42 (gaps 5 and 9: cancellable recovery with progress; existing owner)
 - Filed: D06 T05 §41 (gaps 6 and 11: compressed parameter dependencies; existing owner)
 - Filed: D06 T05 §43 (gaps 7 and 11: page salvage and a verified repaired copy; existing owner)
