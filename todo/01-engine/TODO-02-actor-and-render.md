@@ -62,7 +62,7 @@ track: M1
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
 | 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
 | 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
-| 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [ ] |
+| 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [x] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [ ] |
@@ -285,6 +285,9 @@ Implement `src/pdf/incremental_writer.h` and `src/pdf/incremental_writer.cpp` (`
 - [x] Commit: `pdf: add IncrementalWriter for non-destructive PDF revisions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfIncrementalWriter.*:PdfXref.NewestSection` passes under ASan.
+
+> **Verified:** 2026-10-25 | §5 | 9b40d0be97e16e21b3cbf40c24dc7a03b6a23a17
+> **Review:** `docs/reviews/d01-t02-s5.json`
 
 ## 6. Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)
 

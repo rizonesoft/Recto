@@ -89,7 +89,7 @@ Sections: 98 | Checklist items: 589
 | [x]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host              | 17    |
 | [x]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 7     |
 | [x]    | D01 T02 §3  | Content-stream interpreter: graphics state, paths, painting, clipping and device colour  | windows-host              | 7     |
-| [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 16    |
+| [x]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 16    |
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 9     |
 | [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 5     |
 | [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
@@ -914,6 +914,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 75/845 verified sections, 35 ready to run now.
+Progress: 76/845 verified sections, 35 ready to run now.
 
 Checklist: 477/6186 items completed (includes Commit items).

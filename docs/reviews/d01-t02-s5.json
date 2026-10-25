@@ -1,0 +1,107 @@
+{
+  "ref": "D01 T02 \u00a75",
+  "title": "Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)",
+  "implementation_sha": "9b40d0be97e16e21b3cbf40c24dc7a03b6a23a17",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s5.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfIncrementalWriter.*:PdfXref.*:PdfCrypto.*:PdfError.* -> 0 Warning(s), [  PASSED  ] 73 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 278 tests and [  PASSED  ] 276 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "mutants: 35 of 35 killed (mutate_s5.py), each named test failing on its mutant"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s5.md",
+    "verdict": "filed",
+    "candidate": "38f32044c04295ddc60534589fe3b2688f05bd73",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a738",
+      "D06 T01 \u00a710",
+      "D02 T01 \u00a78",
+      "D01 T02 \u00a713",
+      "D05 T01 \u00a78",
+      "D02 T01 \u00a712"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s5.md",
+    "candidate": "9d4fcad43f64c986b311caa74b63eaaf8eccce9d",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
