@@ -66,7 +66,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [x] |
 | 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [x] |
-| 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
+| 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [x] |
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
 | 36 | §36 | Native JPX decoder bounded by a cumulative work budget | §22 | [ ] |
@@ -992,6 +992,9 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 > **Corrected 2026-10-23:** (built) the fixtures live in `tests/corpus/images/` (`dct-3c-no-marker.jpg`, `dct-3c-adobe-rgb.jpg`, `dct-4c-adobe-cmyk.jpg`, `dct-4c-adobe-ycck.jpg`), written by `make_dc_only_jpeg` in `scripts/build-corpus.py` and checked against libjpeg through Pillow. Building it found that WIC returns every four-component JPEG complemented (255 - v, with or without an Adobe marker), so Recto's CMYK samples were inverted, and a PDF carrying the usual `/Decode [1 0 1 0 1 0 1 0]` for an Adobe file was inverted twice; DCTDecode now returns the stored samples and leaves inversion to `/Decode`, as libjpeg, pdf.js and MuPDF do. Raw three-component samples come from WIC's planar transform (`IWICPlanarBitmapSourceTransform`); where WIC offers none, a marked WORKAROUND undoes its conversion with the forward JFIF equations. YCCK declared by `/ColorTransform 1` alone (no Adobe marker) is converted by Recto, since WIC does not know it.
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctColorTransformAndAdobeCmykYcck`, `PdfFilters.DctColorTransformThroughPipeline`, `PdfFilters.DctMarkedStreamCostsNothing` and `PdfFilters.DctSubsampledAndProgressive`.
+
+> **Verified:** 2026-10-25 | §33 | 8a091de48cdc6913a5ef149a7360c718916873ad
+> **Review:** `docs/reviews/d06-t05-s33.json`
 
 ## 34. CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies
 

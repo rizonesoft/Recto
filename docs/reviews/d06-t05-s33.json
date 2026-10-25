@@ -1,0 +1,105 @@
+{
+  "ref": "D06 T05 \u00a733",
+  "title": "DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding",
+  "implementation_sha": "8a091de48cdc6913a5ef149a7360c718916873ad",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s33.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFilters.* -> 0 Warning(s), [  PASSED  ] 47 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 310 tests and [  PASSED  ] 311 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "python scripts/build-corpus.py --check -> verified: 63 corpus fixtures",
+    "mutants: every fix of the plan review, completion review and rounds 1 and 2 killed by its test; keeping a stream's own APP14 unrenamed is equivalent on this WIC (it reads the first Adobe marker)"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s33.md",
+    "verdict": "filed",
+    "candidate": "ca0e603a595afce5e91399510cb3c9f17c4d89b8",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a77",
+      "D01 T02 \u00a732",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T05-s33.md",
+    "candidate": "6ec824deb608d129fc19c7eaf1e0e05b5a8c7022",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
