@@ -1234,6 +1234,9 @@ TEST(PdfCrypto, EncryptFailClosed)
 		if (r == IndirectRef{45u, 0u}) {
 			return PdfValue{PdfString(std::string_view("not parameters"))};
 		}
+		if (r == IndirectRef{46u, 0u}) {
+			return PdfValue{PdfString(std::string_view("EmbeddedFile"))};
+		}
 		return make_pdf_error(ErrorCode::DamagedFormat, "a damaged object");
 	};
 
@@ -1288,6 +1291,8 @@ TEST(PdfCrypto, EncryptFailClosed)
 	refuses("<< /Filter (Crypt) >>", nullptr);
 	refuses("<< /Filter /Crypt /DecodeParms [<< /Name /StdCF >>] >>", nullptr); // a single filter's parameters are a dictionary
 	refuses("<< /Filter [/FlateDecode /Crypt] >>", nullptr);                    // /Crypt comes first in a chain (7.4.10)
+	refuses("<< /Type 46 0 R >>", &resolver);                                   // a /Type resolving to a string
+	refuses("<< /Type (EmbeddedFile) >>", nullptr);                             // a direct /Type that is not a name
 
 	// The signature exemption is for signatures: an annotation holding /ByteRange, /Contents and /Filter, whose /Type
 	// says what it is, has its /Contents encrypted like any text.

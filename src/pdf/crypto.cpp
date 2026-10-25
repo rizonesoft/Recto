@@ -2203,7 +2203,22 @@ PdfResult<void> SecurityHandler::encrypt_value_recursive(
 			if (const auto name = target.as_name()) {
 				resolved_type.assign(name->begin(), name->end());
 				stm_type = resolved_type;
+			} else if (!target.is_null()) {
+				return make_crypto_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"A stream's /Type is not a name, so its filter cannot be chosen",
+					ref.obj_num,
+					ref.gen_num);
 			}
+		} else if (type_val != nullptr && !stm_type.has_value() && !type_val->is_null()) {
+			// A direct /Type that is not a name decides between /EFF and /StmF as well (fail closed).
+			return make_crypto_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"A stream's /Type is not a name, so its filter cannot be chosen",
+				ref.obj_num,
+				ref.gen_num);
 		}
 		// ISO 32000-1 7.5.8.1: a cross-reference stream is never encrypted.
 		if (stm_type.has_value() && *stm_type == "XRef") {
