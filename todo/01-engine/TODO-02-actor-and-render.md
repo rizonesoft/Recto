@@ -95,7 +95,7 @@ track: M1
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
 | 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [x] |
-| 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
+| 38 | §38 | Cancellable Flate compression and incremental revisions (`CancelToken`) | §5, §7, §34 | [ ] |
 | 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37, D06 T01 §7 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
@@ -281,6 +281,7 @@ Implement `src/pdf/incremental_writer.h` and `src/pdf/incremental_writer.cpp` (`
 - [x] `add_signature(PdfDict sig, size_t contents_bytes)` stages one `/Type /Sig` or `/DocTimeStamp` dictionary per revision with a reserved `/ByteRange` of four fixed-width integers and a `/Contents` hex string of `contents_bytes` zero bytes, written by the writer itself after the rest of the dictionary is serialized (and encrypted, `/Contents` exempt as `§36` decides), and `revision()` reports the absolute offset and length of both fields, so the signer (`D05 T01 §8`) patches them in place without moving a byte. Done when: `PdfIncrementalWriter.SignaturePlaceholder` patches a computed `/ByteRange` and a `/Contents` value into the output of an unencrypted and an AES-256 base, and the patched file parses strictly with every cross-reference offset still pointing at its object and reads both fields back.
 - [x] Support chaining 3 consecutive incremental revisions (`Rev 1 -> Rev 2 -> Rev 3`) and verify `Document::open_memory` sees the latest state from each revision. Done when: `PdfIncrementalWriter.MultiRevisionChain` passes under ASan.
 - [x] Every test that reopens a written file first parses it with `XrefTable::parse(bytes, kMaxXrefTotalEntries, /*allow_recovery=*/false)` (`Document::open_memory` recovers a damaged cross-reference, which would hide a wrong offset) and asserts the revision count and newest section kind, on bases with a zero and a nonzero header offset. Done when: `PdfIncrementalWriter.StrictReparse` passes, and fails when one emitted offset, the `/Prev` value or a stream `/Index` entry is changed in the output.
+- [x] Completion review (`docs/reviews/01-engine/D01-T02-s5.md`): every staged value counts against `kMaxRevisionBytes` (strings, names, containers, stream payloads and a signature's reservation), and allocation keeps a mark below which every number is staged, so it never rescans what it handed out. Done when: `PdfIncrementalWriter.StagingLimit` refuses at a lowered limit with earlier edits kept and room freed by replacing or dropping, and `PdfIncrementalWriter.AllocationScales` holds 10,000 and 20,000 allocations to two probes each. Cancellation and progress are `§38`'s; the large-base gate is `D06 T01 §10`'s. -> XREF: D01 T02 §38
 - [x] Commit: `pdf: add IncrementalWriter for non-destructive PDF revisions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfIncrementalWriter.*:PdfXref.NewestSection` passes under ASan.
@@ -1130,9 +1131,11 @@ Its completion review filed the end-to-end comparison of save time and size with
 > **Verified:** 2026-10-25 | §37 | 87fde24776518b9727fbe9d1ef197fc762b464b2
 > **Review:** `docs/reviews/d01-t02-s37.json`
 
-## 38. Cancellable Flate compression (`CancelToken` polled per block)
+## 38. Cancellable Flate compression and incremental revisions (`CancelToken`)
 
 Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only discard a compression it no longer needs, so a large stream holds a save, an optimize job or shutdown until it ends. -> XREF: D01 T02 §34
+
+> **Corrected 2026-10-25:** widened by the `§5` completion review (`docs/reviews/01-engine/D01-T02-s5.md`, excellence 2): a revision of large streams compresses, encrypts and serializes them in one call, so the incremental writer takes the same token and reports progress. Was titled "Cancellable Flate compression (`CancelToken` polled per block)". -> XREF: D01 T02 §5
 
 **Phase:** 1
 **Needs:** windows-host
@@ -1145,7 +1148,8 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only disc
 2. Add `PdfFilters.FlateCompressCancel`. Done when: it passes under ASan.
 
 - [ ] A token cancelled before the call returns `Cancelled` without work; one cancelled mid-stream returns `Cancelled` within 10 ms in Release x64 on `flate/collisions.bin` at `Best` (the slowest case), with no output; the next call compresses normally. Done when: `PdfFilters.FlateCompressCancel` checks the three cases and the latency.
-- [ ] Commit: `pdf: cancellable Flate compression`
+- [ ] `IncrementalWriter::revision` and `write` (`src/pdf/incremental_writer.h`) take the token and an optional progress callback (bytes written of the staged total, never decreasing), polled between objects and passed to each compression; a cancel returns `Cancelled` within 100 ms on a revision of 256 MiB of streams in Release x64, keeps the staged edits, and a retry writes the same revision. Done when: `PdfIncrementalWriter.Cancel` checks the latency, the kept edits, the retry and that progress never decreases and ends at the total.
+- [ ] Commit: `pdf: cancellable Flate compression and incremental revisions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressCancel` passes under ASan with 0 warnings.
 

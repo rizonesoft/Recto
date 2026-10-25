@@ -24,7 +24,8 @@
 
 namespace recto::pdf {
 
-// The largest revision written, its stream payloads as staged and its output each counted.
+// The largest revision written: every staged value (its strings, names, containers and stream payloads, and a reserved
+// signature) counted as it is staged, and the output counted as it is written.
 inline constexpr uint64_t kMaxRevisionBytes = 1ull << 30u;
 
 // The highest object number a conforming reader must accept (ISO 32000-1 Annex C.2).
@@ -80,7 +81,8 @@ public:
 	// `kMaxRevisionBytes` `ResourceLimit`. Writing a number already staged replaces it.
 	[[nodiscard]] PdfResult<void> set_object(IndirectRef ref, PdfValue value) noexcept;
 
-	// Writes `value` at the lowest number at or past the base `/Size` that nothing staged holds, and returns it.
+	// Writes `value` at the lowest number at or past the base `/Size` that nothing staged holds, and returns it, in
+	// amortized constant probes: numbers below a kept mark are all staged, so the search starts there.
 	[[nodiscard]] PdfResult<IndirectRef> allocate_object(PdfValue value) noexcept;
 
 	// Frees an in-use object: a free entry at the next generation (65,535 at most, then never reused; ISO 32000-1
@@ -125,14 +127,37 @@ private:
 	[[nodiscard]] PdfResult<uint32_t> next_free_number() const noexcept;
 	[[nodiscard]] PdfResult<void> check_rows(size_t staged_after) const noexcept;
 	[[nodiscard]] PdfResult<void> stage(uint32_t number, Staged staged) noexcept;
+	[[nodiscard]] static uint64_t staged_size(const Staged& staged); // may throw std::bad_alloc
 
 	const Document* base_;
 	uint64_t base_size_{0}; // the merged trailer's /Size
+	uint64_t next_mark_{0}; // every number from the base /Size up to this one is staged
 	std::optional<uint32_t> catalog_{};
 	std::optional<uint32_t> encrypt_{};
 	std::map<uint32_t, Staged> staged_{};
-	uint64_t staged_bytes_{0}; // stream payloads as staged
+	uint64_t staged_bytes_{0}; // what every staged value holds, as `kMaxRevisionBytes` counts it
 	std::optional<uint32_t> signature_{};
 };
+
+namespace detail {
+
+// Tests only: while alive, writers on this thread use `limit` in place of `kMaxRevisionBytes`, so the refusal at the
+// limit can be checked without staging a gigabyte.
+class ScopedRevisionByteLimit {
+public:
+	explicit ScopedRevisionByteLimit(uint64_t limit) noexcept;
+	~ScopedRevisionByteLimit() noexcept;
+	ScopedRevisionByteLimit(const ScopedRevisionByteLimit&) = delete;
+	ScopedRevisionByteLimit& operator=(const ScopedRevisionByteLimit&) = delete;
+
+private:
+	uint64_t previous_;
+};
+
+// Tests only: numbers this thread's writers have probed while allocating, so a test can show allocation does not
+// rescan what it has already handed out.
+[[nodiscard]] uint64_t allocation_probes() noexcept;
+
+} // namespace detail
 
 } // namespace recto::pdf

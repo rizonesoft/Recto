@@ -381,6 +381,82 @@ TEST(PdfIncrementalWriter, RefusesUnsafeBases)
 	}
 }
 
+TEST(PdfIncrementalWriter, StagingLimit)
+{
+	// Every staged value counts against the revision's limit (strings, containers and a signature's reservation,
+	// not only stream payloads); a refusal keeps what was staged, and freeing room lets the next value in.
+	const Bytes base = corpus("render/simple-1p.pdf");
+	auto doc = open_doc(base);
+	ASSERT_NE(doc, nullptr);
+	detail::ScopedRevisionByteLimit limit(10'000u);
+	IncrementalWriter writer = make_writer(*doc);
+	const auto big = [](char c) {
+		return PdfValue(PdfArray{PdfValue(PdfString(std::string(3'000, c)))});
+	};
+	auto a = writer.allocate_object(big('a'));
+	auto b = writer.allocate_object(big('b'));
+	auto c = writer.allocate_object(big('c'));
+	RECTO_ASSERT_OK(a);
+	RECTO_ASSERT_OK(b);
+	RECTO_ASSERT_OK(c);
+	RECTO_EXPECT_ERR(writer.allocate_object(big('d')), ErrorCode::ResourceLimit);
+	RECTO_EXPECT_ERR(writer.set_object(IndirectRef(6u), big('e')), ErrorCode::ResourceLimit);
+	RECTO_EXPECT_ERR(writer.add_signature(dict_of("<< /Type /Sig >>"), 1'000u), ErrorCode::ResourceLimit);
+	// Replacing a staged value with a smaller one, or dropping one, frees its share.
+	RECTO_ASSERT_OK(writer.set_object(*c, PdfValue(int64_t{1})));
+	RECTO_ASSERT_OK(writer.free_object(*b));
+	auto d = writer.allocate_object(big('d'));
+	RECTO_ASSERT_OK(d);
+	EXPECT_EQ(d->obj_num, b->obj_num); // the lowest free number again
+	RECTO_ASSERT_OK(writer.set_object(IndirectRef(6u), big('e')));
+	const Bytes out = write_ok(writer);
+	EXPECT_STRICT(out, 2u, XrefSectionKind::Classic);
+	auto reopened = open_doc(out);
+	ASSERT_NE(reopened, nullptr);
+	auto first = reopened->resolve_object(*a);
+	RECTO_ASSERT_OK(first);
+	ASSERT_NE(first->as_array(), nullptr);
+	EXPECT_EQ((*first->as_array())[0].as_string()->size(), 3'000u);
+	auto third = reopened->resolve_object(*c);
+	RECTO_ASSERT_OK(third);
+	EXPECT_EQ(third->as_int(), 1);
+}
+
+TEST(PdfIncrementalWriter, AllocationScales)
+{
+	// Allocation probes stay linear in the objects allocated: numbers already handed out are not rescanned.
+	const Bytes base = corpus("render/simple-1p.pdf");
+	auto doc = open_doc(base);
+	ASSERT_NE(doc, nullptr);
+	for (const size_t n : {10'000u, 20'000u}) {
+		IncrementalWriter writer = make_writer(*doc);
+		const uint64_t before = detail::allocation_probes();
+		for (size_t i = 0; i < n; ++i) {
+			auto ref = writer.allocate_object(PdfValue(static_cast<int64_t>(i)));
+			ASSERT_TRUE(ref.has_value());
+			ASSERT_EQ(ref->obj_num, 7u + i);
+		}
+		EXPECT_LE(detail::allocation_probes() - before, 2u * n) << n;
+	}
+	// Numbers staged ahead of the mark are skipped, and a dropped one is handed out first.
+	IncrementalWriter writer = make_writer(*doc);
+	RECTO_ASSERT_OK(writer.set_object(IndirectRef(8u), PdfValue(int64_t{8})));
+	RECTO_ASSERT_OK(writer.set_object(IndirectRef(9u), PdfValue(int64_t{9})));
+	auto first = writer.allocate_object(PdfValue(int64_t{7}));
+	auto second = writer.allocate_object(PdfValue(int64_t{10}));
+	RECTO_ASSERT_OK(first);
+	RECTO_ASSERT_OK(second);
+	EXPECT_EQ(first->obj_num, 7u);
+	EXPECT_EQ(second->obj_num, 10u);
+	RECTO_ASSERT_OK(writer.free_object(IndirectRef(8u)));
+	auto again = writer.allocate_object(PdfValue(int64_t{8}));
+	RECTO_ASSERT_OK(again);
+	EXPECT_EQ(again->obj_num, 8u);
+	auto next = writer.allocate_object(PdfValue(int64_t{11}));
+	RECTO_ASSERT_OK(next);
+	EXPECT_EQ(next->obj_num, 11u);
+}
+
 TEST(PdfIncrementalWriter, BytePrefixPreserved)
 {
 	for (const bool final_eol : {true, false}) {

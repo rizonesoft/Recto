@@ -38,6 +38,49 @@ constexpr std::array<std::string_view, 14> kSectionOwnKeys = {
 	"Prev", "XRefStm", "Size", "ID", "Type", "W", "Index", "Length", "Filter", "DecodeParms", "F", "FFilter",
 	"FDecodeParms", "DL"};
 
+thread_local uint64_t t_revision_limit = kMaxRevisionBytes;
+thread_local uint64_t t_allocation_probes = 0;
+
+[[nodiscard]] uint64_t revision_limit() noexcept
+{
+	return t_revision_limit;
+}
+
+// What a staged value holds, as `kMaxRevisionBytes` counts it: its string, name, key and stream bytes, and a fixed
+// share for every value and container entry, walked without recursion (a value can nest as deep as its caller made it).
+[[nodiscard]] uint64_t value_bytes(const PdfValue& root)
+{
+	constexpr uint64_t kPerValue = 16u;
+	uint64_t total = 0;
+	std::vector<const PdfValue*> pending{&root};
+	while (!pending.empty()) {
+		const PdfValue* v = pending.back();
+		pending.pop_back();
+		total += kPerValue;
+		if (const PdfString* s = v->as_string()) {
+			total += s->size();
+		} else if (const PdfName* n = v->as_name_obj()) {
+			total += n->value.size();
+		} else if (const PdfArray* a = v->as_array()) {
+			for (const PdfValue& e : *a) {
+				pending.push_back(&e);
+			}
+		} else if (const PdfDict* d = v->as_dict()) {
+			for (const auto& [key, value] : *d) {
+				total += key.value.size();
+				pending.push_back(&value);
+			}
+		} else if (const PdfStream* st = v->as_stream()) {
+			total += st->raw_bytes.size();
+			for (const auto& [key, value] : st->dict) {
+				total += key.value.size();
+				pending.push_back(&value);
+			}
+		}
+	}
+	return total;
+}
+
 [[nodiscard]] PdfError invalid_argument(std::string_view message, std::optional<uint32_t> obj = std::nullopt)
 {
 	PdfError err = make_pdf_error(ErrorCode::InvalidArgument, message, std::nullopt, obj);
@@ -150,6 +193,7 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 		}
 		IncrementalWriter writer(base);
 		writer.base_size_ = static_cast<uint64_t>(*size);
+		writer.next_mark_ = writer.base_size_;
 		if (const auto root = xref.root_ref()) {
 			writer.catalog_ = root->obj_num;
 		}
@@ -188,11 +232,14 @@ PdfResult<uint16_t> IncrementalWriter::check_existing(IndirectRef ref) const noe
 
 PdfResult<uint32_t> IncrementalWriter::next_free_number() const noexcept
 {
-	uint64_t number = base_size_;
-	for (auto it = staged_.lower_bound(static_cast<uint32_t>(std::min<uint64_t>(base_size_, kMaxPdfObjectNumber + 1u)));
+	// Every number from the base /Size up to the mark is staged, so the search starts at the mark.
+	uint64_t number = std::max(base_size_, next_mark_);
+	for (auto it = staged_.lower_bound(static_cast<uint32_t>(std::min<uint64_t>(number, kMaxPdfObjectNumber + 1u)));
 		 it != staged_.end() && it->first == number; ++it) {
 		++number;
+		++t_allocation_probes;
 	}
+	++t_allocation_probes;
 	if (number > kMaxPdfObjectNumber) {
 		return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectNumber, number, kMaxPdfObjectNumber,
 			"No object number a reader accepts is left");
@@ -216,15 +263,11 @@ PdfResult<void> IncrementalWriter::stage(uint32_t number, Staged staged) noexcep
 	try {
 		const auto it = staged_.find(number);
 		RECTO_WRITER_TRY_VOID(check_rows(staged_.size() + (it == staged_.end() ? 1u : 0u)));
-		const auto payload = [](const Staged& s) -> uint64_t {
-			const PdfStream* stream = s.value.as_stream();
-			return stream != nullptr ? stream->raw_bytes.size() : 0u;
-		};
-		const uint64_t old_bytes = it != staged_.end() ? payload(it->second) : 0u;
-		const uint64_t new_bytes = payload(staged);
-		if (staged_bytes_ - old_bytes + new_bytes > kMaxRevisionBytes) {
+		const uint64_t old_bytes = it != staged_.end() ? staged_size(it->second) : 0u;
+		const uint64_t new_bytes = staged_size(staged);
+		if (staged_bytes_ - old_bytes + new_bytes > revision_limit()) {
 			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes,
-				staged_bytes_ - old_bytes + new_bytes, kMaxRevisionBytes, "The revision would be larger than its limit");
+				staged_bytes_ - old_bytes + new_bytes, revision_limit(), "The revision would be larger than its limit");
 		}
 		if (it != staged_.end()) {
 			it->second = std::move(staged);
@@ -262,6 +305,7 @@ PdfResult<IndirectRef> IncrementalWriter::allocate_object(PdfValue value) noexce
 {
 	RECTO_PDF_TRY(const uint32_t number, next_free_number());
 	RECTO_WRITER_TRY_VOID(stage(number, Staged{StagedKind::Value, 0u, std::move(value), 0u}));
+	next_mark_ = static_cast<uint64_t>(number) + 1u;
 	return IndirectRef(number, 0u);
 }
 
@@ -275,12 +319,16 @@ PdfResult<void> IncrementalWriter::free_object(IndirectRef ref) noexcept
 		if (it == staged_.end() || ref.gen_num != 0u) {
 			return invalid_argument("The object is not staged in this revision", ref.obj_num);
 		}
-		const uint64_t payload = it->second.value.as_stream() != nullptr ? it->second.value.as_stream()->raw_bytes.size() : 0u;
-		staged_bytes_ -= payload;
+		try {
+			staged_bytes_ -= staged_size(it->second);
+		} catch (const std::bad_alloc&) {
+			return out_of_memory();
+		}
 		if (signature_.has_value() && *signature_ == ref.obj_num) {
 			signature_.reset();
 		}
 		staged_.erase(it);
+		next_mark_ = std::min<uint64_t>(next_mark_, ref.obj_num); // the number is free again
 		return {};
 	}
 	RECTO_PDF_TRY(const uint16_t generation, check_existing(ref));
@@ -306,6 +354,7 @@ PdfResult<IndirectRef> IncrementalWriter::add_signature(PdfDict sig, size_t cont
 		RECTO_PDF_TRY(const uint32_t number, next_free_number());
 		RECTO_WRITER_TRY_VOID(stage(number, Staged{StagedKind::Signature, 0u, PdfValue(std::move(sig)), contents_bytes}));
 		signature_ = number;
+		next_mark_ = static_cast<uint64_t>(number) + 1u;
 		return IndirectRef(number, 0u);
 	} catch (const std::bad_alloc&) {
 		return out_of_memory();
@@ -340,7 +389,7 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 			out.push_back('\n');
 		}
 		const auto remaining = [&out]() -> size_t {
-			return static_cast<size_t>(std::min<uint64_t>(kMaxSerializedBytes, kMaxRevisionBytes - std::min<uint64_t>(out.size(), kMaxRevisionBytes)));
+			return static_cast<size_t>(std::min<uint64_t>(kMaxSerializedBytes, revision_limit() - std::min<uint64_t>(out.size(), revision_limit())));
 		};
 
 		std::vector<Row> rows;
@@ -417,9 +466,9 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 					rest.erase("ByteRange");
 					rest.erase("Contents");
 				}
-				if (out.size() + plain.size() > kMaxRevisionBytes) {
+				if (out.size() + plain.size() > revision_limit()) {
 					return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes,
-						out.size() + plain.size(), kMaxRevisionBytes, "The revision would be larger than its limit");
+						out.size() + plain.size(), revision_limit(), "The revision would be larger than its limit");
 				}
 				RECTO_PDF_TRY(const auto at, frame(rest, out));
 				rev.signature = SignaturePlaceholder{ref, base_size + at.first, byte_range.size(),
@@ -595,9 +644,9 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 		out.append("startxref\n");
 		put_decimal(out, section_at - header);
 		out.append("\n%%EOF\n");
-		if (out.size() > kMaxRevisionBytes) {
+		if (out.size() > revision_limit()) {
 			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, out.size(),
-				kMaxRevisionBytes, "The revision would be larger than its limit");
+				revision_limit(), "The revision would be larger than its limit");
 		}
 		rev.bytes.assign(out.begin(), out.end());
 		return rev;
@@ -620,6 +669,32 @@ PdfResult<std::vector<uint8_t>> IncrementalWriter::write() const noexcept
 		return out_of_memory();
 	}
 }
+
+uint64_t IncrementalWriter::staged_size(const Staged& staged)
+{
+	// A signature also holds its reserved /Contents, written as two hex digits per byte.
+	return value_bytes(staged.value) + static_cast<uint64_t>(staged.contents_bytes) * 2u;
+}
+
+namespace detail {
+
+ScopedRevisionByteLimit::ScopedRevisionByteLimit(uint64_t limit) noexcept
+	: previous_(t_revision_limit)
+{
+	t_revision_limit = limit;
+}
+
+ScopedRevisionByteLimit::~ScopedRevisionByteLimit() noexcept
+{
+	t_revision_limit = previous_;
+}
+
+uint64_t allocation_probes() noexcept
+{
+	return t_allocation_probes;
+}
+
+} // namespace detail
 
 #undef RECTO_WRITER_TRY_VOID
 
