@@ -298,6 +298,7 @@ public:
 private:
 	// The crypt filter a stream uses: `/StmF`, `/EFF` for an embedded file, or the stream's own leading `/Crypt`
 	// filter named in its `/DecodeParms` (ISO 32000-1 7.4.10, 7.6.5), and whether the chain starts with `/Crypt`.
+	// `strict` (encryption) refuses any parameter it cannot read instead of reading it as absent.
 	struct StreamCrypt {
 		CryptFilterMethod method;
 		bool leading_crypt;
@@ -306,7 +307,8 @@ private:
 		const PdfDict& dict,
 		std::optional<std::string_view> type,
 		IndirectRef ref,
-		const IndirectObjectResolver* resolver) const;
+		const IndirectObjectResolver* resolver,
+		bool strict) const;
 
 	// The per-object key of ISO 32000-1 Algorithm 1 for `V2` and `AESV2`, written into `digest`.
 	[[nodiscard]] PdfResult<std::span<const uint8_t>> object_key(

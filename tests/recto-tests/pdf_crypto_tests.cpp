@@ -1231,6 +1231,9 @@ TEST(PdfCrypto, EncryptFailClosed)
 		if (r == IndirectRef{42u, 0u}) {
 			return PdfValue{PdfArray{PdfValue{PdfName("Crypt")}, PdfValue{PdfName("FlateDecode")}}};
 		}
+		if (r == IndirectRef{45u, 0u}) {
+			return PdfValue{PdfString(std::string_view("not parameters"))};
+		}
 		return make_pdf_error(ErrorCode::DamagedFormat, "a damaged object");
 	};
 
@@ -1268,6 +1271,32 @@ TEST(PdfCrypto, EncryptFailClosed)
 		RECTO_EXPECT_ERR(handler.encrypt_object_values(damaged, IndirectRef{30u, 0u}, &resolver), ErrorCode::DamagedFormat);
 		EXPECT_EQ(damaged, before);
 	}
+
+	// Every parameter must be readable when encrypting: a reference with no resolver to read it, a resolved value of
+	// the wrong kind and a /Name that is not a name are refused, with the value unchanged.
+	const auto refuses = [&](std::string_view dict, const IndirectObjectResolver* with) {
+		SCOPED_TRACE(std::string(dict));
+		PdfValue damaged = stream_of(dict, "payload");
+		const PdfValue before = damaged;
+		RECTO_EXPECT_ERR(handler.encrypt_object_values(damaged, IndirectRef{30u, 0u}, with), ErrorCode::DamagedFormat);
+		EXPECT_EQ(damaged, before);
+	};
+	refuses("<< /Filter /Crypt /DecodeParms 43 0 R >>", nullptr);
+	refuses("<< /Type 44 0 R >>", nullptr);
+	refuses("<< /Filter /Crypt /DecodeParms 45 0 R >>", &resolver);
+	refuses("<< /Filter /Crypt /DecodeParms << /Name (StdCF) >> >>", nullptr);
+	refuses("<< /Filter (Crypt) >>", nullptr);
+
+	// The signature exemption is for signatures: an annotation holding /ByteRange, /Contents and /Filter, whose /Type
+	// says what it is, has its /Contents encrypted like any text.
+	auto annot = parse_dict_literal("<< /Type /Annot /Subtype /Text /Contents (secret) /ByteRange [] /Filter /Adobe.PPKLite >>");
+	RECTO_ASSERT_OK(annot);
+	PdfValue annot_value{*annot};
+	RECTO_ASSERT_OK(handler.encrypt_object_values(annot_value, IndirectRef{30u, 0u}));
+	EXPECT_NE(*annot_value.as_dict()->get("Contents"), *annot->get("Contents"));
+	PdfValue annot_back = annot_value;
+	RECTO_ASSERT_OK(handler.decrypt_object_values(annot_back, IndirectRef{30u, 0u}));
+	EXPECT_EQ(*annot_back.as_dict()->get("Contents"), *annot->get("Contents")); // decryption agrees
 
 	// /EncryptMetadata false (an R=6 dictionary from scripts/build-corpus.py with the /Perms that says so): a
 	// /Metadata stream stays readable, any other stream is encrypted.

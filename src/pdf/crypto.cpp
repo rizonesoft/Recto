@@ -1852,11 +1852,15 @@ thread_local detail::ScopedEncryptionFailure::Kind t_fail_kind = detail::ScopedE
 
 // ISO 32000-1 7.6.2: a signature dictionary's `/Contents` is never encrypted (`/Type /Sig` or `/DocTimeStamp`, or
 // the `/ByteRange` and `/Contents` of a signature value with its `/Filter` or `/SubFilter`).
+// A dictionary whose /Type names something else (an annotation with a /Contents, say) is not one, whatever other
+// keys it holds (ISO 32000-1 Table 252: /Type, when present, is /Sig).
 [[nodiscard]] bool is_signature_dict(const PdfDict& dict) noexcept
 {
-	const auto type_name = dict.get_name("Type");
-	return (type_name.has_value() && (*type_name == "Sig" || *type_name == "DocTimeStamp")) ||
-		(dict.contains("ByteRange") && dict.contains("Contents") && (dict.contains("Filter") || dict.contains("SubFilter")));
+	if (const PdfValue* type = dict.get("Type"); type != nullptr && !type->is_null()) {
+		const auto type_name = type->as_name();
+		return type_name.has_value() && (*type_name == "Sig" || *type_name == "DocTimeStamp");
+	}
+	return dict.contains("ByteRange") && dict.contains("Contents") && (dict.contains("Filter") || dict.contains("SubFilter"));
 }
 
 } // namespace
@@ -1927,33 +1931,62 @@ PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
 	const PdfDict& dict,
 	std::optional<std::string_view> type,
 	IndirectRef ref,
-	const IndirectObjectResolver* resolver) const
+	const IndirectObjectResolver* resolver,
+	bool strict) const
 {
 	CryptFilterMethod method = params_.stream_method;
 	if (type.has_value() && *type == "EmbeddedFile" && !params_.eff_f.empty()) {
 		method = params_.embedded_file_method;
 	}
-	// A value as it reads, an indirect one resolved one level when a resolver is given and never written back. A
-	// reference that does not resolve is refused, never read as absent: an absent parameter means Identity or the
-	// default filter, so reading a damaged one as absent would choose a weaker filter than the file names (fail
-	// closed). Decryption passes no resolver here; its references are already written in.
-	const auto read = [&](const PdfValue* v) -> PdfResult<std::optional<PdfValue>> {
-		if (v == nullptr) {
+	// A value as it reads, an indirect one resolved one level through the resolver and never written back. When
+	// encrypting (`strict`) every parameter must be readable: a reference that does not resolve, a reference with no
+	// resolver to read it, and a value of the wrong kind are refused, never read as absent, because absent means
+	// Identity or the default filter and would choose a weaker filter than the file names (fail closed). Decryption
+	// passes no resolver; its references are already written in, and a value it cannot read stays absent as before.
+	const auto read = [&](const PdfValue* v, auto usable) -> PdfResult<std::optional<PdfValue>> {
+		const auto unreadable = [&]() -> PdfResult<std::optional<PdfValue>> {
+			if (!strict) {
+				return std::optional<PdfValue>{};
+			}
+			return make_crypto_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"A stream's crypt filter parameters cannot be read, so its filter cannot be chosen",
+				ref.obj_num,
+				ref.gen_num);
+		};
+		if (v == nullptr || v->is_null()) {
 			return std::optional<PdfValue>{};
 		}
-		if (v->is_ref() && resolver != nullptr && *resolver) {
+		if (v->is_ref()) {
+			if (resolver == nullptr || !*resolver) {
+				return unreadable();
+			}
 			RECTO_PDF_TRY(PdfValue target, (*resolver)(*v->as_ref()));
+			if (target.is_null()) {
+				return std::optional<PdfValue>{};
+			}
+			if (!usable(target)) {
+				return unreadable();
+			}
 			return std::optional<PdfValue>(std::move(target));
+		}
+		if (!usable(*v)) {
+			return unreadable();
 		}
 		return std::optional<PdfValue>(*v);
 	};
-	RECTO_PDF_TRY(const std::optional<PdfValue> filter, read(dict.get("Filter")));
+	const auto name_or_names = [](const PdfValue& v) { return v.is_name() || v.is_array(); };
+	const auto a_name = [](const PdfValue& v) { return v.is_name(); };
+	const auto parms_or_list = [](const PdfValue& v) { return v.is_dict() || v.is_array(); };
+	const auto parms = [](const PdfValue& v) { return v.is_dict(); };
+	RECTO_PDF_TRY(const std::optional<PdfValue> filter, read(dict.get("Filter"), name_or_names));
 	const bool single = filter.has_value() && filter->is_name();
 	std::optional<PdfValue> first;
 	if (single) {
 		first = filter;
 	} else if (filter.has_value() && filter->as_array() != nullptr && !filter->as_array()->empty()) {
-		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*filter->as_array())[0]));
+		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*filter->as_array())[0], a_name));
 		first = std::move(head);
 	}
 	// ISO 32000-1 7.4.10: a chain that starts with `/Crypt` names its filter in `/DecodeParms` `/Name` (a dictionary
@@ -1962,16 +1995,16 @@ PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
 		return StreamCrypt{method, false};
 	}
 	std::string cf_name = "Identity";
-	RECTO_PDF_TRY(const std::optional<PdfValue> parms, read(dict.get("DecodeParms")));
+	RECTO_PDF_TRY(const std::optional<PdfValue> parms_value, read(dict.get("DecodeParms"), parms_or_list));
 	std::optional<PdfValue> parms0;
-	if (parms.has_value() && parms->is_dict()) {
-		parms0 = parms;
-	} else if (!single && parms.has_value() && parms->as_array() != nullptr && !parms->as_array()->empty()) {
-		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*parms->as_array())[0]));
+	if (parms_value.has_value() && parms_value->is_dict()) {
+		parms0 = parms_value;
+	} else if (!single && parms_value.has_value() && parms_value->as_array() != nullptr && !parms_value->as_array()->empty()) {
+		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*parms_value->as_array())[0], parms));
 		parms0 = std::move(head);
 	}
 	if (parms0.has_value() && parms0->is_dict()) {
-		RECTO_PDF_TRY(const std::optional<PdfValue> name, read(parms0->as_dict()->get("Name")));
+		RECTO_PDF_TRY(const std::optional<PdfValue> name, read(parms0->as_dict()->get("Name"), a_name));
 		if (name.has_value() && name->as_name().has_value()) {
 			cf_name = std::string(*name->as_name());
 		}
@@ -2132,13 +2165,19 @@ PdfResult<void> SecurityHandler::encrypt_value_recursive(
 		// not resolve is refused (it decides between /EFF and /StmF, and whether the stream is encrypted at all).
 		std::optional<std::string_view> stm_type = stm->dict.get_name("Type");
 		std::string resolved_type;
-		if (!stm_type.has_value() && resolver != nullptr && *resolver) {
-			if (const PdfValue* type_val = stm->dict.get("Type"); type_val != nullptr && type_val->is_ref()) {
-				RECTO_PDF_TRY(const PdfValue target, (*resolver)(*type_val->as_ref()));
-				if (const auto name = target.as_name()) {
-					resolved_type.assign(name->begin(), name->end());
-					stm_type = resolved_type;
-				}
+		if (const PdfValue* type_val = stm->dict.get("Type"); !stm_type.has_value() && type_val != nullptr && type_val->is_ref()) {
+			if (resolver == nullptr || !*resolver) {
+				return make_crypto_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"A stream's indirect /Type cannot be read without a resolver, so its filter cannot be chosen",
+					ref.obj_num,
+					ref.gen_num);
+			}
+			RECTO_PDF_TRY(const PdfValue target, (*resolver)(*type_val->as_ref()));
+			if (const auto name = target.as_name()) {
+				resolved_type.assign(name->begin(), name->end());
+				stm_type = resolved_type;
 			}
 		}
 		// ISO 32000-1 7.5.8.1: a cross-reference stream is never encrypted.
@@ -2155,7 +2194,7 @@ PdfResult<void> SecurityHandler::encrypt_value_recursive(
 		if (!params_.encrypt_metadata && stm_type.has_value() && *stm_type == "Metadata") {
 			return {};
 		}
-		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, resolver));
+		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, resolver, /*strict=*/true));
 		if (choice.method != CryptFilterMethod::None) {
 			RECTO_PDF_TRY(std::vector<uint8_t> cipher, encrypt_bytes(stm->raw_bytes, ref, choice.method));
 			stm->raw_bytes = std::move(cipher);
@@ -2386,7 +2425,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		}
 
 		// The method as encryption chooses it (`stream_crypt`); the references above are already written in.
-		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, nullptr));
+		RECTO_PDF_TRY(const StreamCrypt choice, stream_crypt(stm->dict, stm_type, ref, nullptr, /*strict=*/false));
 		const CryptFilterMethod eff_method = choice.method;
 		const bool strip_leading_crypt_filter = choice.leading_crypt;
 
