@@ -1988,6 +1988,21 @@ PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
 	} else if (filter.has_value() && filter->as_array() != nullptr && !filter->as_array()->empty()) {
 		RECTO_PDF_TRY(std::optional<PdfValue> head, read(&(*filter->as_array())[0], a_name));
 		first = std::move(head);
+		// ISO 32000-1 7.4.10: a /Crypt filter comes first in a chain; one later on is a chain encryption cannot follow.
+		if (strict) {
+			const PdfArray& chain = *filter->as_array();
+			for (size_t k = 1; k < chain.size(); ++k) {
+				RECTO_PDF_TRY(const std::optional<PdfValue> later, read(&chain[k], a_name));
+				if (later.has_value() && later->as_name() == std::optional<std::string_view>("Crypt")) {
+					return make_crypto_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedObject,
+						"A /Crypt filter that is not first in its chain cannot be encrypted for",
+						ref.obj_num,
+						ref.gen_num);
+				}
+			}
+		}
 	}
 	// ISO 32000-1 7.4.10: a chain that starts with `/Crypt` names its filter in `/DecodeParms` `/Name` (a dictionary
 	// for a single filter, the first element of an array for a chain), `Identity` when absent.
@@ -1996,6 +2011,16 @@ PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
 	}
 	std::string cf_name = "Identity";
 	RECTO_PDF_TRY(const std::optional<PdfValue> parms_value, read(dict.get("DecodeParms"), parms_or_list));
+	// A single filter takes a dictionary (ISO 32000-1 Table 5); an array beside it is a shape encryption cannot read,
+	// and reading it as absent would choose Identity.
+	if (strict && single && parms_value.has_value() && !parms_value->is_dict()) {
+		return make_crypto_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"A single /Crypt filter's /DecodeParms is not a dictionary, so its filter cannot be chosen",
+			ref.obj_num,
+			ref.gen_num);
+	}
 	std::optional<PdfValue> parms0;
 	if (parms_value.has_value() && parms_value->is_dict()) {
 		parms0 = parms_value;

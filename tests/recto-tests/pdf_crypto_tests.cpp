@@ -1286,6 +1286,8 @@ TEST(PdfCrypto, EncryptFailClosed)
 	refuses("<< /Filter /Crypt /DecodeParms 45 0 R >>", &resolver);
 	refuses("<< /Filter /Crypt /DecodeParms << /Name (StdCF) >> >>", nullptr);
 	refuses("<< /Filter (Crypt) >>", nullptr);
+	refuses("<< /Filter /Crypt /DecodeParms [<< /Name /StdCF >>] >>", nullptr); // a single filter's parameters are a dictionary
+	refuses("<< /Filter [/FlateDecode /Crypt] >>", nullptr);                    // /Crypt comes first in a chain (7.4.10)
 
 	// The signature exemption is for signatures: an annotation holding /ByteRange, /Contents and /Filter, whose /Type
 	// says what it is, has its /Contents encrypted like any text.
