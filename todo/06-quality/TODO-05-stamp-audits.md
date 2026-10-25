@@ -63,7 +63,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
 | 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [x] |
-| 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [ ] |
+| 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [x] |
 | 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
@@ -901,6 +901,9 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 - [x] Commit: `pdf: recovery keeps an encrypted file's compressed objects`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*:PdfDocument.*` passes under ASan with 0 warnings, including `PdfDocument.RecoveredEncryptedObjectStreamsResolve`.
+
+> **Verified:** 2026-10-25 | §30 | ea149f8e4dbfbc2d8df7ce8635ea02ab24dcafa8
+> **Review:** `docs/reviews/d06-t05-s30.json`
 
 ## 31. JBIG2 striped pages, MMR halftone alignment and HENABLESKIP
 
