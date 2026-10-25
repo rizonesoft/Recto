@@ -243,6 +243,8 @@ Complete `src/pdf/interpreter.cpp` with text state and positioning operators, im
 
 ## 5. Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)
 
+> **Started:** 2026-10-25T10:12Z
+
 > **Corrected 2026-10-24:** split before the build. The engine had no object serializer, no Flate encoder and no encryption path (only `decode_flate`, `SecurityHandler::decrypt_bytes`), so this section would have built three shared modules inside a revision writer. They are `§34` (the Flate compressor), `§35` (the `PdfValue` serializer) and `§36` (encrypting new objects); `D04 T02 §2`'s `PdfWriter` consumes the same three instead of building its own. This section is the revision writer on top of them.
 
 > **Corrected 2026-10-25 (plan review, `docs/reviews/01-engine/D01-T02-s5.md`):** folded its six gaps: a signature placeholder with reported field offsets for `D05 T01 §8` (P1), `PdfResult` entry points with aggregate bounds and all-or-nothing output tested by injected failures (P1), strict reparsing so recovery cannot hide a bad offset (P1), one allocator for explicit, allocated and cross-reference stream numbers (P2), the free list linked onto the old chain (P2), and an identifier hashed before encryption (P2).
