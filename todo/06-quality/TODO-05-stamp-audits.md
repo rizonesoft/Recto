@@ -65,7 +65,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [x] |
 | 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [x] |
 | 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
-| 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
+| 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [x] |
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
@@ -959,6 +959,9 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 > **Corrected 2026-10-23:** (built) a signed component is output unsigned by the same 2^(depth - 1) offset an unsigned one is level-shifted by, since PDF samples are unsigned; a palette index component above 8 bits and a component precision above 16 bits are refused as unsupported; a segmentation symbol that does not read 1010 drops its bitplane and stops that code-block; a JP2 header asking for CMYK or an opacity channel is decoded natively, since the WIC path converts to gray or RGB. The ROI test uses its own Maxshift shift (8) instead of an external encoder's `-ROI` option: the test codestreams come from an in-test Tier-1 encoder written from T.800 Annex D and checked against OpenJPEG 2.5.4 (through Pillow), which decodes all of them identically.
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.JpxComponentsAndCodingStyles`.
+
+> **Verified:** 2026-10-25 | §32 | d6c15d6ea66b86795824ab5d06195c4bcb2ee9e3
+> **Review:** `docs/reviews/d06-t05-s32.json`
 
 ## 33. DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding
 

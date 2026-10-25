@@ -1,0 +1,120 @@
+{
+  "ref": "D06 T05 \u00a732",
+  "title": "JPX per-component precision and sampling, and the full coding-style set",
+  "implementation_sha": "d6c15d6ea66b86795824ab5d06195c4bcb2ee9e3",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s32.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s32.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s32.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s32.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s32.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFilters.* -> 0 Warning(s), [  PASSED  ] 43 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 306 tests and [  PASSED  ] 307 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "mutants: every fix of the plan review and rounds 1 to 4 killed by its test; the pending-list charge is defence in depth (the segment charge refuses the same headers at test sizes)"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s32.md",
+    "verdict": "filed",
+    "candidate": "e82c8471184a71425e4c81809c010a587a07ac0d",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D06 T05 \u00a753",
+      "D06 T05 \u00a754",
+      "D06 T05 \u00a755",
+      "D06 T05 \u00a736",
+      "D06 T05 \u00a740",
+      "D01 T02 \u00a726",
+      "D01 T02 \u00a77",
+      "D06 T05 \u00a739",
+      "D01 T02 \u00a73"
+    ]
+  },
+  "rounds_spent": 5,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T05-s32.md",
+    "candidate": "e82c8471184a71425e4c81809c010a587a07ac0d",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

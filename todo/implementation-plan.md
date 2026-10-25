@@ -100,7 +100,7 @@ Sections: 98 | Checklist items: 600
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
-| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
+| [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 4     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 8     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 9     |
@@ -915,6 +915,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 79/846 verified sections, 38 ready to run now.
+Progress: 80/846 verified sections, 39 ready to run now.
 
 Checklist: 497/6202 items completed (includes Commit items).
