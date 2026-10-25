@@ -7124,6 +7124,69 @@ TEST(PdfFilters, CcittRecoveryPlanReviewCases)
 	}
 }
 
+// D06 T05 §34 review round 1, each reproduction byte for byte: damage after /Rows rows that an EOL introduced is a
+// row (refused with no EOL after it, with any allowance); a mixed-mode row that lacks its tag does not swallow the
+// next row's EOL; EOLs with T.4 fill under /EncodedByteAlign are read whether or not /EndOfLine says they are there;
+// and fill longer than 64 zeros is fill.
+TEST(PdfFilters, CcittRecoveryRoundOne)
+{
+	const auto decode = [](std::vector<uint8_t> bytes, int64_t k, int64_t rows, int64_t allowance, bool end_of_line,
+							bool end_of_block, bool aligned) {
+		PdfDict parms;
+		parms.set("K", PdfValue(k));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		parms.set("Rows", PdfValue(rows));
+		parms.set("EndOfLine", PdfValue(end_of_line));
+		parms.set("EndOfBlock", PdfValue(end_of_block));
+		parms.set("EncodedByteAlign", PdfValue(aligned));
+		parms.set("DamagedRowsBeforeError", PdfValue(allowance));
+		return decode_ccitt_fax(bytes, &parms);
+	};
+	// Finding 1: a good row, then an EOL and an invalid code, under /Rows 1 and /EndOfBlock true.
+	for (const auto& [k, bytes] : {std::pair{int64_t{0}, std::vector<uint8_t>{0x00, 0x1B, 0x16, 0xC0, 0x04, 0x04}},
+			 std::pair{int64_t{2}, std::vector<uint8_t>{0x00, 0x1D, 0x8B, 0x60, 0x03, 0x01}}}) {
+		for (const int64_t allowance : {int64_t{1}, int64_t{0}}) {
+			auto decoded = decode(bytes, k, 1, allowance, true, true, false);
+			ASSERT_FALSE(decoded.has_value()) << "K " << k << ", allowance " << allowance;
+			EXPECT_EQ(decoded.error().code, ErrorCode::DamagedFormat);
+		}
+	}
+	// Finding 2: a patterned row, an empty row without its tag, a white row, then RTC.
+	{
+		auto decoded = decode({0x00, 0x1D, 0x8B, 0x60, 0x02, 0x00, 0x3A, 0x80, 0x06, 0x00, 0x30, 0x01, 0x80, 0x0C,
+								  0x00, 0x60, 0x03},
+			2, 3, 1, true, true, false);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu}));
+	}
+	// Finding 3: T.4-filled EOLs with /EndOfLine false under /EncodedByteAlign.
+	{
+		auto decoded = decode({0x00, 0x01, 0x98, 0xA0, 0x01, 0xA8}, 0, 2, 0, false, false, true);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xFFu, 0x00u, 0xFFu, 0xFFu}));
+	}
+	// Finding 4: 57 zeros of fill before the second EOL.
+	{
+		auto decoded = decode({0x00, 0x01, 0x98, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xA8}, 0, 2, 0,
+			true, false, true);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xFFu, 0x00u, 0xFFu, 0xFFu}));
+	}
+	// With fill of any length, the search for an EOL to resume at stays linear: a damaged row followed by a MiB of
+	// zeros (no EOL in it) is refused at once, where a scan from every bit would read the run millions of times.
+	{
+		std::vector<uint8_t> bytes = pack_bitstring("000000000001" "1011" "000101" "1011" "000000000001" "00000001");
+		bytes.resize(bytes.size() + (1u << 20u), 0u);
+		const auto started = std::chrono::steady_clock::now();
+		auto decoded = decode(bytes, 0, 4, 1, true, true, false);
+		const auto elapsed = std::chrono::steady_clock::now() - started;
+		ASSERT_FALSE(decoded.has_value());
+		EXPECT_NE(decoded.error().message.view().find("no EOL follows"), std::string_view::npos)
+			<< decoded.error().message.view();
+		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
+	}
+}
+
 // A recovered fax stream records one outcome with the rows replaced and the first of them, an intact one none, and
 // every refusal cause (the allowance spent, no EOL to resume at, /EndOfLine false, Group 4) records exactly one entry
 // with its reason, row and allowance in the PdfError, the ring and ETW alike; a stream that recovers a row and is then

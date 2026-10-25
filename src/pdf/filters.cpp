@@ -1765,8 +1765,9 @@ struct MsbBitReader {
 		bit_pos = (bit_pos + 7u) & ~size_t{7u};
 	}
 
-	// Checks if the upcoming bits form an EOL (`>= 11` zero bits followed by a `1` bit).
-	// If found, advances `bit_pos` past the `1` bit and returns true.
+	// Checks if the upcoming bits form an EOL (`>= 11` zero bits followed by a `1` bit): the zeros past eleven are fill,
+	// which may be of any length (ITU-T T.4 4.1.3). If found, advances `bit_pos` past the `1` bit and returns true. The
+	// scan reads each bit once, so a caller that moves on past a failed scan stays linear.
 	[[nodiscard]] bool try_consume_eol() noexcept
 	{
 		size_t p = bit_pos;
@@ -1777,9 +1778,6 @@ struct MsbBitReader {
 			if (bit == 0u) {
 				++zeros;
 				++p;
-				if (zeros > 64u) {
-					return false;
-				}
 			} else {
 				if (zeros >= 11u) {
 					bit_pos = p + 1u;
@@ -1789,6 +1787,23 @@ struct MsbBitReader {
 			}
 		}
 		return false;
+	}
+
+	// Where the first EOL at or after `from` starts (its fill included), found in one pass; nothing if none follows.
+	[[nodiscard]] std::optional<size_t> find_eol(size_t from) const noexcept
+	{
+		const size_t limit = total_bits();
+		size_t zeros = 0;
+		for (size_t p = from; p < limit; ++p) {
+			if (((data[p >> 3u] >> (7u - (p & 7u))) & 1u) == 0u) {
+				++zeros;
+			} else if (zeros >= 11u) {
+				return p - zeros;
+			} else {
+				zeros = 0;
+			}
+		}
+		return std::nullopt;
 	}
 
 	// An EOL with no fill bits before it: exactly eleven zeros and a one.
@@ -2296,6 +2311,9 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		reserve_ccitt_transitions(ref_changes, cur_changes, params.columns);
 		uint64_t decoded_rows = 0;
 		int32_t consecutive_damaged_rows = 0;
+		// Whether rows come with EOLs: /EndOfLine true says they must, and a first row that starts with one shows they do
+		// (an EOL is always accepted, Table 11), which decides how /EncodedByteAlign's fill is read.
+		bool eol_rows = params.end_of_line;
 		// Rows Table 11 recovery replaced, and the zero-based first, for the recovery outcome a successful decode records.
 		uint64_t substituted_rows = 0;
 		std::optional<uint64_t> first_substituted_row;
@@ -2369,20 +2387,11 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			if (consecutive_damaged_rows >= params.damaged_rows_before_error) {
 				return refuse(RefusalReason::DamagedRowAllowance, "the allowance of damaged rows is used up");
 			}
-			reader.bit_pos = row_start;
-			bool found_sync = false;
-			while (!reader.at_end()) {
-				const size_t sync_pos = reader.bit_pos;
-				if (reader.try_consume_eol()) {
-					reader.bit_pos = sync_pos; // the EOL starts the next row
-					found_sync = true;
-					break;
-				}
-				++reader.bit_pos;
-			}
-			if (!found_sync) {
+			const std::optional<size_t> sync_pos = reader.find_eol(row_start);
+			if (!sync_pos.has_value()) {
 				return refuse(RefusalReason::DamagedRowNoSync, "no EOL follows it to resynchronize at");
 			}
+			reader.bit_pos = *sync_pos; // the EOL starts the next row
 			if (consecutive_damaged_rows == 0) {
 				cur_changes = ref_changes; // the previous row, which was good (or the white line before the first row)
 			} else {
@@ -2441,15 +2450,20 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		};
 
 		// After /Rows rows a row that fails to decode ends the image, as /Rows says, unless /EndOfBlock true overrides
-		// /Rows (Table 11) and Table 11 recovery can apply: /EndOfLine true, K non-negative and an EOL ahead of the
-		// damaged row to resynchronize at. Then the row is damage, recovered or refused, and the rows after it decoded.
-		// Without that, what follows /Rows rows is not rows (leftover code bits, padding), so the image ends there.
-		const auto rows_done_without_recovery = [&](size_t from) noexcept -> bool {
+		// /Rows (Table 11) and Table 11 recovery can apply: /EndOfLine true and K non-negative, and either an EOL
+		// introduced the row (an EOL starts a row, so what follows it is a row: recovered at the next EOL, or refused
+		// when none follows, D06 T05 section 34 round 1) or an EOL ahead of it to resynchronize at. Then the row is
+		// damage and the rows after it decoded. Without that, what follows /Rows rows is not rows (leftover code bits,
+		// padding), so the image ends there.
+		const auto rows_done_without_recovery = [&](size_t from, bool after_eol) noexcept -> bool {
 			if (params.rows <= 0 || decoded_rows < static_cast<uint64_t>(params.rows)) {
 				return false;
 			}
 			if (!params.end_of_block || !params.end_of_line || params.k < 0) {
 				return true;
+			}
+			if (after_eol) {
+				return false;
 			}
 			uint32_t zeros = 0;
 			for (size_t b = from; b < reader.total_bits(); ++b) {
@@ -2468,11 +2482,12 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		// and decodes until an end-of-block marker (EOFB or RTC) or end of data.
 		while (params.end_of_block || params.rows == 0 ||
 			   decoded_rows < static_cast<uint64_t>(params.rows)) {
-			// /EncodedByteAlign: each row's codes begin on a byte boundary (Table 11). With EOLs (K non-negative and
-			// /EndOfLine true) the fill zeros come before each EOL so that it ends on the boundary (ITU-T T.4 4.1.2), and
-			// the EOL scan takes any run of 11 or more zeros, so it finds the boundary itself: aligning first could cut into
-			// the EOL (D06 T05 section 34, plan review). Rows without EOLs are aligned here.
-			if (params.encoded_byte_align && decoded_rows > 0 && !(params.end_of_line && params.k >= 0)) {
+			// /EncodedByteAlign: each row's codes begin on a byte boundary (Table 11). With EOLs (K non-negative, and
+			// /EndOfLine true or a first row that starts with one: EOLs are always accepted, Table 11) the fill zeros come
+			// before each EOL so that it ends on the boundary (ITU-T T.4 4.1.2), and the EOL scan takes any run of 11 or
+			// more zeros, so it finds the boundary itself: aligning first could cut into the EOL (D06 T05 section 34, plan
+			// review and round 1). Rows without EOLs are aligned here.
+			if (params.encoded_byte_align && decoded_rows > 0 && !(params.k >= 0 && eol_rows)) {
 				reader.align_to_byte();
 			}
 			if (reader.at_end()) {
@@ -2540,10 +2555,13 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					}
 				}
 
+				if (decoded_rows == 0 && saw_eol) {
+					eol_rows = true;
+				}
 				const bool eol_ok = !params.end_of_line || saw_eol;
 				const size_t row_start = reader.bit_pos;
 				if (!eol_ok || !decode_ccitt_1d_row(reader, params.columns, cur_changes)) {
-					if (rows_done_without_recovery(row_start)) {
+					if (rows_done_without_recovery(row_start, saw_eol)) {
 						break;
 					}
 					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
@@ -2572,19 +2590,23 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 						break;
 					}
 				}
+				if (decoded_rows == 0 && saw_eol) {
+					eol_rows = true;
+				}
 				if (params.end_of_line && !saw_eol) {
-					if (rows_done_without_recovery(reader.bit_pos)) {
+					if (rows_done_without_recovery(reader.bit_pos, false)) {
 						break;
 					}
 					// The previous row ran past its end: this row is damaged.
 					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(reader.bit_pos));
 					continue;
 				}
+				// The row starts before its tag: a damaged row may lack one, and its first bit may be the next EOL's.
+				const size_t row_start = reader.bit_pos;
 				const int tag_bit = reader.read_bit();
 				if (tag_bit < 0) {
 					break;
 				}
-				const size_t row_start = reader.bit_pos;
 				bool row_ok = false;
 				if (tag_bit == 1) {
 					row_ok = decode_ccitt_1d_row(reader, params.columns, cur_changes);
@@ -2596,7 +2618,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 						cur_changes) == 1);
 				}
 				if (!row_ok) {
-					if (rows_done_without_recovery(row_start)) {
+					if (rows_done_without_recovery(row_start, saw_eol)) {
 						break;
 					}
 					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
