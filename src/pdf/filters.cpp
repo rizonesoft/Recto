@@ -98,18 +98,6 @@ ScopedDctForceConverter::~ScopedDctForceConverter() noexcept
 	g_dct_force_converter = previous_;
 }
 
-thread_local bool g_dct_no_planar = false;
-
-ScopedDctNoPlanar::ScopedDctNoPlanar() noexcept : previous_(g_dct_no_planar)
-{
-	g_dct_no_planar = true;
-}
-
-ScopedDctNoPlanar::~ScopedDctNoPlanar() noexcept
-{
-	g_dct_no_planar = previous_;
-}
-
 ScopedWicFailure::ScopedWicFailure(WicStage stage, int32_t hresult) noexcept
 	: previous_stage_(g_wic_failure_stage)
 	, previous_hresult_(g_wic_failure_hresult)
@@ -6971,108 +6959,207 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 	b = static_cast<uint8_t>(std::clamp(std::lrintf(yy + 1.772f * u), 0L, 255L));
 }
 
-// Reads a three-component JPEG's planes as stored, before any colour conversion, through WIC's planar transform
-// (IWICPlanarBitmapSourceTransform, Windows 8.1 and later), into `samples` interleaved, a subsampled plane repeated
-// over the pixels it covers. False when WIC offers no planar transform for this image. The planes are charged at the
-// sizes WIC gives them, beside the `held` bytes already charged.
-[[nodiscard]] PdfResult<bool> read_jpeg_planes(
-	IWICBitmapFrameDecode* frame, UINT w, UINT h, std::span<uint8_t> samples, uint64_t held, size_t limit)
+// The bytes of the Adobe APP14 segment a marked stream carries (Adobe Technical Note 5116, section 18).
+constexpr size_t kAdobeSegmentBytes = 16u;
+
+// One step of a JPEG header walk at `pos` (T.81 B.1.1.2 to B.1.1.4): the marker there and where the next one starts,
+// or nothing at the first scan, at the end, or at anything malformed.
+struct JpegHeaderStep {
+	uint8_t marker = 0;
+	size_t next = 0;
+};
+
+[[nodiscard]] std::optional<JpegHeaderStep> jpeg_header_step(std::span<const uint8_t> input, size_t pos) noexcept
 {
-	ComPtr<IWICPlanarBitmapSourceTransform> planar;
-	if (detail::g_dct_no_planar || FAILED(frame->QueryInterface(IID_PPV_ARGS(&planar))) || !planar) {
-		return false;
+	if (pos + 4u > input.size() || input[pos] != 0xFFu) {
+		return std::nullopt;
 	}
-	const WICPixelFormatGUID formats[3] = {GUID_WICPixelFormat8bppY, GUID_WICPixelFormat8bppCb, GUID_WICPixelFormat8bppCr};
-	WICBitmapPlaneDescription desc[3]{};
-	UINT pw = w;
-	UINT ph = h;
-	BOOL supported = FALSE;
-	if (FAILED(planar->DoesSupportTransform(&pw, &ph, WICBitmapTransformRotate0, WICPlanarOptionsDefault, formats, desc, 3u,
-			&supported)) ||
-		!supported || pw != w || ph != h) {
-		return false;
+	const uint8_t marker = input[pos + 1u];
+	if (marker == 0xFFu) {
+		return JpegHeaderStep{marker, pos + 1u}; // a fill byte before the marker
 	}
-	uint64_t plane_bytes = 0;
-	for (size_t i = 0; i < 3u; ++i) {
-		if (desc[i].Width == 0u || desc[i].Height == 0u || desc[i].Width > w || desc[i].Height > h) {
-			return false;
-		}
-		plane_bytes += static_cast<uint64_t>(desc[i].Width) * desc[i].Height;
+	if (marker == 0xDAu || marker == 0xD9u) {
+		return std::nullopt;
 	}
-	if (plane_bytes > limit - held) {
-		return dct_refusal(held + plane_bytes, limit);
+	if (marker == 0x01u || (marker >= 0xD0u && marker <= 0xD7u)) {
+		return JpegHeaderStep{marker, pos + 2u}; // a marker without a length
 	}
-	std::array<std::vector<uint8_t>, 3> planes;
-	WICBitmapPlane wic_planes[3]{};
-	for (size_t i = 0; i < 3u; ++i) {
-		planes[i].resize(static_cast<size_t>(desc[i].Width) * desc[i].Height);
-		wic_planes[i] = WICBitmapPlane{desc[i].Format, planes[i].data(), desc[i].Width, static_cast<UINT>(planes[i].size())};
+	const size_t len = (static_cast<size_t>(input[pos + 2u]) << 8u) | input[pos + 3u];
+	if (len < 2u || len > input.size() - pos - 2u) {
+		return std::nullopt;
 	}
-	const HRESULT hr = wic_step(detail::WicStage::CopyPixels, [&] {
-		return planar->CopyPixels(nullptr, w, h, WICBitmapTransformRotate0, WICPlanarOptionsDefault, wic_planes, 3u);
-	});
-	if (FAILED(hr)) {
-		return wic_failure(hr, "IWICPlanarBitmapSourceTransform::CopyPixels in DCTDecode", DecoderStep::WicCopyPixels);
-	}
-	for (size_t y = 0; y < h; ++y) {
-		for (size_t x = 0; x < w; ++x) {
-			for (size_t i = 0; i < 3u; ++i) {
-				const size_t py = y * desc[i].Height / h;
-				const size_t px = x * desc[i].Width / w;
-				samples[(y * w + x) * 3u + i] = planes[i][py * desc[i].Width + px];
-			}
-		}
-	}
-	return true;
+	return JpegHeaderStep{marker, pos + 2u + len};
 }
 
-// The Adobe APP14 segment a JPEG not colour-transformed carries (Adobe Technical Note 5116, section 18): version 100,
-// no flags, transform 0.
-constexpr std::array<uint8_t, 16> kAdobeUntransformed = {
-	0xFFu, 0xEEu, 0x00u, 0x0Eu, 'A', 'd', 'o', 'b', 'e', 0x00u, 0x64u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u};
-
-// A copy of a JPEG marked as not colour-transformed: the Adobe segment above right after SOI, and every APP0 segment
-// before the first scan renamed APP15, so no JFIF marker claims YCbCr (T.81 B.1.1.3 and B.2.4.6). The walk stops at
-// the first scan or at anything malformed and leaves the rest as it is: the decoder reads that, as it would have.
-[[nodiscard]] std::vector<uint8_t> jpeg_marked_untransformed(std::span<const uint8_t> input)
+// Where a JPEG's header ends: its first SOS marker, or the first byte the walk cannot read. What follows is left as
+// it is: the decoder reads it, as it would have.
+[[nodiscard]] size_t jpeg_header_end(std::span<const uint8_t> input) noexcept
 {
-	std::vector<uint8_t> out;
-	if (input.size() < 2u) {
-		out.assign(input.begin(), input.end());
-		return out;
-	}
-	out.reserve(input.size() + kAdobeUntransformed.size());
-	out.insert(out.end(), input.begin(), input.begin() + 2);
-	out.insert(out.end(), kAdobeUntransformed.begin(), kAdobeUntransformed.end());
-	out.insert(out.end(), input.begin() + 2, input.end());
 	size_t pos = 2u;
-	while (pos + 4u <= input.size() && input[pos] == 0xFFu) {
-		const uint8_t marker = input[pos + 1u];
-		if (marker == 0xFFu) {
-			++pos; // a fill byte before the marker
-			continue;
-		}
-		if (marker == 0xDAu || marker == 0xD9u) {
-			break;
-		}
-		if (marker == 0x01u || (marker >= 0xD0u && marker <= 0xD7u)) {
-			pos += 2u; // a marker without a length
-			continue;
-		}
-		const size_t len = (static_cast<size_t>(input[pos + 2u]) << 8u) | input[pos + 3u];
-		if (len < 2u || len > input.size() - pos - 2u) {
-			break;
-		}
-		if (marker == 0xE0u) {
-			out[pos + kAdobeUntransformed.size() + 1u] = 0xEFu;
-		}
-		pos += 2u + len;
+	while (const std::optional<JpegHeaderStep> step = jpeg_header_step(input, pos)) {
+		pos = step->next;
 	}
-	return out;
+	return std::min(pos, input.size());
 }
 
-// Opens `bytes` as a JPEG through WIC and returns its first frame; the stream and decoder are kept alive beside it.
-[[nodiscard]] PdfResult<void> open_jpeg_frame(IWICImagingFactory* factory, std::span<const uint8_t> bytes,
+// A read-only IStream over a three-component JPEG as Recto marks it, made on the fly from the caller's bytes, which
+// are never copied: SOI, an Adobe segment with `transform` (0 none, 1 YCbCr), then the rest of the stream with every
+// APP0 (JFIF, JFXX) and APP14 (Adobe) segment of the header renamed APP15. No other marker, and no component naming
+// (which only a stream without either marker leaves to the decoder), can then change the decoder's choice (T.871 6,
+// Adobe Technical Note 5116 section 18). The renames are found by one walk of the header that a sequential reader
+// advances once; a read before the last one restarts it. The caller's bytes outlive every WIC object reading them
+// (all are released before decode_dct_image returns).
+class MarkedJpegStream final : public IStream {
+public:
+	MarkedJpegStream(std::span<const uint8_t> input, uint8_t transform) noexcept
+		: input_(input), header_end_(jpeg_header_end(input)),
+		  adobe_{0xFFu, 0xEEu, 0x00u, 0x0Eu, 'A', 'd', 'o', 'b', 'e', 0x00u, 0x64u, 0x00u, 0x00u, 0x00u, 0x00u, transform}
+	{
+	}
+
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override
+	{
+		if (out == nullptr) {
+			return E_POINTER;
+		}
+		if (riid == __uuidof(IUnknown) || riid == __uuidof(ISequentialStream) || riid == __uuidof(IStream)) {
+			*out = static_cast<IStream*>(this);
+			AddRef();
+			return S_OK;
+		}
+		*out = nullptr;
+		return E_NOINTERFACE;
+	}
+	ULONG STDMETHODCALLTYPE AddRef() override { return static_cast<ULONG>(InterlockedIncrement(&refs_)); }
+	ULONG STDMETHODCALLTYPE Release() override
+	{
+		const LONG left = InterlockedDecrement(&refs_);
+		if (left == 0) {
+			delete this;
+		}
+		return static_cast<ULONG>(left);
+	}
+
+	HRESULT STDMETHODCALLTYPE Read(void* buffer, ULONG cb, ULONG* read) override
+	{
+		if (buffer == nullptr && cb != 0u) {
+			return STG_E_INVALIDPOINTER;
+		}
+		auto* dst = static_cast<uint8_t*>(buffer);
+		ULONG done = 0;
+		while (done < cb && pos_ < size()) {
+			const uint64_t want = cb - done;
+			uint64_t n = 0;
+			if (pos_ < 2u) {
+				n = std::min<uint64_t>(2u - pos_, want);
+				std::memcpy(dst + done, input_.data() + pos_, static_cast<size_t>(n));
+			} else if (pos_ < 2u + kAdobeSegmentBytes) {
+				n = std::min<uint64_t>(2u + kAdobeSegmentBytes - pos_, want);
+				std::memcpy(dst + done, adobe_.data() + (pos_ - 2u), static_cast<size_t>(n));
+			} else {
+				const uint64_t from = pos_ - kAdobeSegmentBytes;
+				n = std::min<uint64_t>(input_.size() - from, want);
+				std::memcpy(dst + done, input_.data() + from, static_cast<size_t>(n));
+				rename(dst + done, from, from + n);
+			}
+			done += static_cast<ULONG>(n);
+			pos_ += n;
+		}
+		if (read != nullptr) {
+			*read = done;
+		}
+		return done == cb ? S_OK : S_FALSE;
+	}
+	HRESULT STDMETHODCALLTYPE Write(const void*, ULONG, ULONG* written) override
+	{
+		if (written != nullptr) {
+			*written = 0;
+		}
+		return STG_E_ACCESSDENIED;
+	}
+	HRESULT STDMETHODCALLTYPE Seek(LARGE_INTEGER move, DWORD origin, ULARGE_INTEGER* new_pos) override
+	{
+		uint64_t base = 0;
+		if (origin == STREAM_SEEK_CUR) {
+			base = pos_;
+		} else if (origin == STREAM_SEEK_END) {
+			base = size();
+		} else if (origin != STREAM_SEEK_SET) {
+			return STG_E_INVALIDFUNCTION;
+		}
+		const int64_t delta = move.QuadPart;
+		if ((delta < 0 && static_cast<uint64_t>(-(delta + 1)) + 1u > base) ||
+			(delta > 0 && static_cast<uint64_t>(delta) > std::numeric_limits<uint64_t>::max() - base)) {
+			return STG_E_INVALIDFUNCTION;
+		}
+		pos_ = delta < 0 ? base - (static_cast<uint64_t>(-(delta + 1)) + 1u) : base + static_cast<uint64_t>(delta);
+		if (new_pos != nullptr) {
+			new_pos->QuadPart = pos_;
+		}
+		return S_OK;
+	}
+	HRESULT STDMETHODCALLTYPE SetSize(ULARGE_INTEGER) override { return STG_E_ACCESSDENIED; }
+	HRESULT STDMETHODCALLTYPE CopyTo(IStream*, ULARGE_INTEGER, ULARGE_INTEGER*, ULARGE_INTEGER*) override { return E_NOTIMPL; }
+	HRESULT STDMETHODCALLTYPE Commit(DWORD) override { return S_OK; }
+	HRESULT STDMETHODCALLTYPE Revert() override { return S_OK; }
+	HRESULT STDMETHODCALLTYPE LockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) override { return STG_E_INVALIDFUNCTION; }
+	HRESULT STDMETHODCALLTYPE UnlockRegion(ULARGE_INTEGER, ULARGE_INTEGER, DWORD) override { return STG_E_INVALIDFUNCTION; }
+	HRESULT STDMETHODCALLTYPE Stat(STATSTG* stat, DWORD) override
+	{
+		if (stat == nullptr) {
+			return STG_E_INVALIDPOINTER;
+		}
+		*stat = STATSTG{};
+		stat->type = STGTY_STREAM;
+		stat->cbSize.QuadPart = size();
+		stat->grfMode = STGM_READ;
+		return S_OK;
+	}
+	HRESULT STDMETHODCALLTYPE Clone(IStream** out) override
+	{
+		if (out != nullptr) {
+			*out = nullptr;
+		}
+		return E_NOTIMPL;
+	}
+
+private:
+	~MarkedJpegStream() = default;
+	[[nodiscard]] uint64_t size() const noexcept { return input_.size() + kAdobeSegmentBytes; }
+
+	// Renames the APP0 and APP14 markers among the caller's bytes [from, to), just copied to `out`.
+	void rename(uint8_t* out, uint64_t from, uint64_t to) noexcept
+	{
+		if (from < walked_to_) {
+			walk_ = 2u; // a read before the last one: the walk starts again
+		}
+		walked_to_ = to;
+		while (walk_ < header_end_ && walk_ + 1u < to) {
+			const std::optional<JpegHeaderStep> step = jpeg_header_step(input_, walk_);
+			if (!step.has_value()) {
+				walk_ = header_end_;
+				break;
+			}
+			const uint64_t marker_at = walk_ + 1u;
+			if ((step->marker == 0xE0u || step->marker == 0xEEu) && marker_at >= from) {
+				out[marker_at - from] = 0xEFu;
+			}
+			walk_ = step->next;
+		}
+	}
+
+	volatile LONG refs_ = 1;
+	std::span<const uint8_t> input_;
+	size_t header_end_ = 0;
+	std::array<uint8_t, kAdobeSegmentBytes> adobe_{};
+	uint64_t pos_ = 0;
+	size_t walk_ = 2u;
+	uint64_t walked_to_ = 2u;
+};
+
+// Opens a JPEG through WIC, `source` when given or else `bytes` in memory, and returns its first frame; the stream and
+// decoder are kept alive beside it.
+[[nodiscard]] PdfResult<void> open_jpeg_frame(IWICImagingFactory* factory, std::span<const uint8_t> bytes, IStream* source,
 	ComPtr<IWICStream>& wic_stream, ComPtr<IWICBitmapDecoder>& decoder, ComPtr<IWICBitmapFrameDecode>& frame)
 {
 	HRESULT hr = factory->CreateStream(&wic_stream);
@@ -7080,11 +7167,12 @@ constexpr std::array<uint8_t, 16> kAdobeUntransformed = {
 		return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateStream in DCTDecode", DecoderStep::WicCreateDecoder)
 						  : wic_no_result("IWICImagingFactory::CreateStream returned no stream in DCTDecode", DecoderStep::WicCreateDecoder);
 	}
-	hr = wic_stream->InitializeFromMemory(
-		const_cast<BYTE*>(bytes.data()),
-		static_cast<DWORD>(std::min<size_t>(
-			bytes.size(),
-			static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
+	hr = source != nullptr ? wic_stream->InitializeFromIStream(source)
+						   : wic_stream->InitializeFromMemory(
+								 const_cast<BYTE*>(bytes.data()),
+								 static_cast<DWORD>(std::min<size_t>(
+									 bytes.size(),
+									 static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
 	if (FAILED(hr)) {
 		return wic_failure(hr, "IWICStream::InitializeFromMemory in DCTDecode", DecoderStep::WicCreateDecoder);
 	}
@@ -7121,10 +7209,35 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			return wic_failure(factory_hr, "The Windows Imaging Component factory for DCTDecode", DecoderStep::WicFactory);
 		}
 
+		// The colour transform the encoder applied (ISO 32000-1 Table 13): an Adobe APP14 marker's when there is one
+		// (0 none, 1 YCbCr, 2 YCCK), otherwise /ColorTransform, which defaults to 1 for three components and 0 for any
+		// other count.
+		uint8_t transform = hdr.components == 3u ? 1u : 0u;
+		if (hdr.has_adobe_app14) {
+			transform = hdr.adobe_transform;
+		} else if (decode_parms != nullptr) {
+			if (const auto ct = decode_parms->get_int("ColorTransform"); ct.has_value()) {
+				transform = *ct == 0 ? 0u : 1u;
+			}
+		}
+		// WIC decides for itself whether three components are YCbCr (a JFIF marker over an Adobe transform of 0, and
+		// component ids such as R, G, B over the PDF's default), so it reads the stream marked with Recto's choice
+		// alone, made on the fly from the caller's bytes (nothing is copied, so nothing more is charged).
+		// WORKAROUND: WIC has no switch for its YCbCr-to-RGB conversion but the markers it reads.
+		ComPtr<IStream> marked;
+		if (hdr.components == 3u) {
+			transform = transform == 0u ? 0u : 1u;
+			auto* stream = new (std::nothrow) MarkedJpegStream(input, transform);
+			if (stream == nullptr) {
+				return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while decoding DCTDecode JPEG stream");
+			}
+			marked.Attach(stream);
+		}
+
 		ComPtr<IWICStream> wic_stream;
 		ComPtr<IWICBitmapDecoder> decoder;
 		ComPtr<IWICBitmapFrameDecode> frame;
-		RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, input, wic_stream, decoder, frame));
+		RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, input, marked.Get(), wic_stream, decoder, frame));
 
 		UINT w = 0;
 		UINT h = 0;
@@ -7149,23 +7262,8 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		const bool is_cmyk = IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppCMYK) || hdr.components == 4u;
 		const bool is_gray = !is_cmyk && (IsEqualGUID(pixel_format, GUID_WICPixelFormat8bppGray) || hdr.components == 1u);
 		const uint64_t comp_bytes = is_cmyk ? 4ULL : (is_gray ? 1ULL : 3ULL);
-		// The colour transform the encoder applied (ISO 32000-1 Table 13): an Adobe APP14 marker's when there is one
-		// (0 none, 1 YCbCr, 2 YCCK), otherwise /ColorTransform, which defaults to 1 for three components and 0 for any
-		// other count. WIC decides by itself: it converts any three-component JPEG without an Adobe transform of 0
-		// from YCbCr, and returns every four-component JPEG complemented (255 - v; and for an Adobe transform of 2,
-		// converted from YCCK first), so the decoder reads WIC's choice back to what the stream says.
-		uint8_t transform = hdr.components == 3u ? 1u : 0u;
-		if (hdr.has_adobe_app14) {
-			transform = hdr.adobe_transform;
-		} else if (decode_parms != nullptr) {
-			if (const auto ct = decode_parms->get_int("ColorTransform"); ct.has_value()) {
-				transform = *ct == 0 ? 0u : 1u;
-			}
-		}
-		// Three components the stream says were not transformed, where WIC transforms: the samples are read as the
-		// codestream's planes (IWICPlanarBitmapSourceTransform), or where WIC has no planar transform for the image,
-		// decoded from a copy of the stream marked as not transformed; each is charged when its path is chosen.
-		const bool raw_three = !is_cmyk && !is_gray && transform == 0u && !hdr.has_adobe_app14;
+		// WIC returns every four-component JPEG complemented (255 - v; and for an Adobe transform of 2, converted from
+		// YCCK first), so the decoder reads that back to what the stream says below.
 
 		// The buffers this decode builds. A stream filter returns the samples, or for CMYK one 8-bit layout: RGBA unless
 		// a direct caller's /TargetFormat asks for BGRA or the CMYK samples (a stream dictionary's is dropped before it
@@ -7179,7 +7277,6 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		const bool single_layout = !keep_samples;
 		const uint64_t peak_bpp = dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes);
 		RECTO_PDF_RETURN_IF_ERROR(dct_fits(w64, h64, peak_bpp, effective_limit));
-		const uint64_t held = w64 * h64 * peak_bpp; // at most effective_limit, just checked
 		std::vector<uint8_t>& store = !single_layout ? result.pixels : (want == DctOutput::Rgba ? result.rgba_pixels : result.bgra_pixels);
 		store.resize(single_layout ? pixel_count * 4u : pixel_count * static_cast<size_t>(comp_bytes));
 		const size_t sample_bytes = pixel_count * static_cast<size_t>(comp_bytes);
@@ -7283,47 +7380,11 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// 3-component JPEG: convert via `IWICFormatConverter` to `24bppRGB` if not already `24bppBGR`/`24bppRGB`.
 		result.components = 3u;
 		bool bgr_order = false;
-		bool raw_read = false;
-		if (raw_three) {
-			RECTO_PDF_TRY(raw_read, read_jpeg_planes(frame.Get(), w, h, samples, held, effective_limit));
-		}
-		IWICBitmapFrameDecode* source = frame.Get();
-		WICPixelFormatGUID source_format = pixel_format;
-		std::vector<uint8_t> marked;
-		ComPtr<IWICStream> marked_stream;
-		ComPtr<IWICBitmapDecoder> marked_decoder;
-		ComPtr<IWICBitmapFrameDecode> marked_frame;
-		if (raw_three && !raw_read) {
-			// WORKAROUND: WIC has no planar transform for this JPEG, and no switch for its YCbCr-to-RGB conversion but
-			// the Adobe APP14 transform flag, so the stream's "not transformed" (/ColorTransform 0) is given to it in
-			// that flag: a copy marked with an APP14 transform of 0 decodes to the samples as stored, exactly. The copy
-			// is charged beside the buffers already held (the planes it replaces were never allocated).
-			const uint64_t copy_bytes = static_cast<uint64_t>(input.size()) + kAdobeUntransformed.size();
-			if (copy_bytes > effective_limit - held) {
-				return dct_refusal(held + copy_bytes, effective_limit);
-			}
-			marked = jpeg_marked_untransformed(input);
-			RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, marked, marked_stream, marked_decoder, marked_frame));
-			UINT mw = 0;
-			UINT mh = 0;
-			hr = marked_frame->GetSize(&mw, &mh);
-			if (FAILED(hr) || mw != w || mh != h) {
-				return FAILED(hr) ? wic_failure(hr, "IWICBitmapFrameDecode::GetSize in DCTDecode", DecoderStep::WicGetFrame)
-								  : wic_no_result("The untransformed DCTDecode copy changed size", DecoderStep::WicGetFrame);
-			}
-			hr = marked_frame->GetPixelFormat(&source_format);
-			if (FAILED(hr)) {
-				return wic_failure(hr, "IWICBitmapFrameDecode::GetPixelFormat in DCTDecode", DecoderStep::WicGetFrame);
-			}
-			source = marked_frame.Get();
-		}
-		if (raw_read) {
-			// the samples are the codestream's planes, as stored
-		} else if (IsEqualGUID(source_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
-			RECTO_PDF_RETURN_IF_ERROR(copy_frame(source, w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
+		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
+			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
 			bgr_order = true;
-		} else if (IsEqualGUID(source_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
-			RECTO_PDF_RETURN_IF_ERROR(copy_frame(source, w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppRGB JPEG"));
+		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
+			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppRGB JPEG"));
 		} else {
 			ComPtr<IWICFormatConverter> converter;
 			hr = factory->CreateFormatConverter(&converter);
@@ -7333,7 +7394,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			}
 			hr = wic_step(detail::WicStage::ConvertFormat, [&] {
 				return converter->Initialize(
-					source, GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+					frame.Get(), GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
 			});
 			if (FAILED(hr)) {
 				return wic_failure(hr, "IWICFormatConverter::Initialize in DCTDecode", DecoderStep::WicConvertFormat);

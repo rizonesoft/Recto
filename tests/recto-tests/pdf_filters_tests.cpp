@@ -3533,20 +3533,36 @@ TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
 		ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
 		EXPECT_TRUE(within(pixel(*converted, 0u), {77, 255, 133}, 1));
 	}
-	// Where WIC has no planar transform the samples are still exact, though converting them saturates a channel (G
-	// 255 for the first block, G 0 for the second), with a JFIF marker or none (D06 T05 §33 plan review, gap 1).
-	{
-		const detail::ScopedDctNoPlanar no_planar;
-		for (const std::string_view name : {std::string_view("dct-3c-no-marker.jpg"), std::string_view("dct-3c-jfif.jpg")}) {
-			SCOPED_TRACE(name);
-			auto raw = decode(name, 0);
-			ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
-			EXPECT_EQ(pixel(*raw, 0u), (std::vector<int>{200, 90, 40}));
-			EXPECT_EQ(pixel(*raw, 8u), (std::vector<int>{30, 160, 220}));
-			auto converted = decode(name, 1);
+	// The samples are exact, though converting them saturates a channel (G 255 for the first block, G 0 for the
+	// second), whatever else the stream says: a JFIF marker, none, or component ids R, G, B, which WIC would take for
+	// RGB where the PDF's default is YCbCr (D06 T05 §33 plan review gap 1, round 1).
+	for (const std::string_view name : {std::string_view("dct-3c-no-marker.jpg"), std::string_view("dct-3c-jfif.jpg"),
+			 std::string_view("dct-3c-rgb-ids.jpg")}) {
+		SCOPED_TRACE(name);
+		auto raw = decode(name, 0);
+		ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
+		EXPECT_EQ(pixel(*raw, 0u), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(pixel(*raw, 8u), (std::vector<int>{30, 160, 220}));
+		for (const std::optional<int64_t> ct : {std::optional<int64_t>{}, std::optional<int64_t>{1}}) {
+			auto converted = decode(name, ct);
 			ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
+			EXPECT_TRUE(within(pixel(*converted, 0u), {77, 255, 133}, 1));
 			EXPECT_TRUE(within(pixel(*converted, 8u), {159, 0, 87}, 1));
 		}
+	}
+	// An Adobe transform of 2 on three components is read as YCbCr, as libjpeg reads it, whatever /ColorTransform says.
+	for (const std::optional<int64_t> ct : {std::optional<int64_t>{}, std::optional<int64_t>{0}}) {
+		auto img = decode("dct-3c-adobe-2.jpg", ct);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_TRUE(within(pixel(*img, 0u), {77, 255, 133}, 1));
+		EXPECT_TRUE(within(pixel(*img, 8u), {159, 0, 87}, 1));
+	}
+	// An Adobe transform of 0 beside a JFIF marker: the Adobe marker wins, the samples as stored (round 1).
+	for (const std::optional<int64_t> ct : {std::optional<int64_t>{}, std::optional<int64_t>{0}, std::optional<int64_t>{1}}) {
+		auto img = decode("dct-3c-adobe-rgb-jfif.jpg", ct);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(pixel(*img, 0u), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(pixel(*img, 8u), (std::vector<int>{30, 160, 220}));
 	}
 	// Four components and no Adobe marker: CMYK as stored by default, YCCK when /ColorTransform 1 says so.
 	{
@@ -3560,17 +3576,18 @@ TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
 	}
 }
 
-// D06 T05 §33 completion review, gaps 1 and 2: a raw three-component decode is charged what its path holds (the
-// planes at the sizes WIC gives them, or the marked copy at the stream's size plus its marker) only once the path is
-// chosen, so an exact fit decodes, and a refusal one byte short keeps the bytes needed and the ceiling through the
+// D06 T05 §33 completion review, gaps 1 and 2, and round 1: a three-component decode holds only its samples (the
+// marked stream WIC reads is made on the fly from the caller's bytes, nothing copied), raw or converted, so a ceiling
+// of exactly the samples decodes, and a refusal one byte short keeps the bytes needed and the ceiling through the
 // diagnostic ring.
-TEST(PdfFilters, DctRawPathsChargeWhatTheyHold)
+TEST(PdfFilters, DctMarkedStreamCostsNothing)
 {
-	const auto jpeg = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-no-marker.jpg"));
-	PdfDict parms;
-	parms.set("ColorTransform", PdfValue(int64_t{0}));
-	const uint64_t samples = 16u * 8u * 3u;
-	const auto smallest_fit = [&] {
+	const auto jpeg = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-jfif.jpg"));
+	const uint64_t needed = 16u * 8u * 3u;
+	for (const int64_t ct : {int64_t{0}, int64_t{1}}) {
+		SCOPED_TRACE(ct);
+		PdfDict parms;
+		parms.set("ColorTransform", PdfValue(ct));
 		size_t lo = 1u;
 		size_t hi = 1u << 16u;
 		while (lo < hi) {
@@ -3581,20 +3598,10 @@ TEST(PdfFilters, DctRawPathsChargeWhatTheyHold)
 				lo = mid + 1u;
 			}
 		}
-		return uint64_t{lo};
-	};
-	for (const bool planar : {true, false}) {
-		SCOPED_TRACE(planar ? "planes" : "marked copy");
-		std::optional<detail::ScopedDctNoPlanar> no_planar;
-		if (!planar) {
-			no_planar.emplace();
-		}
-		// Three full-size planes (every component is sampled 1x1), or the stream and its 16-byte Adobe segment.
-		const uint64_t needed = samples + (planar ? 3u * 16u * 8u : jpeg.size() + 16u);
-		EXPECT_EQ(smallest_fit(), needed);
+		EXPECT_EQ(uint64_t{lo}, needed);
 		auto fits = decode_dct_image(jpeg, &parms, static_cast<size_t>(needed), DctOutput::Samples);
 		ASSERT_TRUE(fits.has_value()) << fits.error().message.view();
-		EXPECT_EQ(std::vector<int>(fits->pixels.begin(), fits->pixels.begin() + 3), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(int{fits->pixels[0]}, ct == 0 ? 200 : 77);
 		auto refused = decode_dct_image(jpeg, &parms, static_cast<size_t>(needed - 1u), DctOutput::Samples);
 		ASSERT_FALSE(refused.has_value());
 		EXPECT_EQ(refused.error().code, ErrorCode::DecompressionLimitExceeded);
@@ -3614,8 +3621,8 @@ TEST(PdfFilters, DctRawPathsChargeWhatTheyHold)
 
 // D06 T05 §33 completion review, gap 3: the same 29 x 13, 4:2:0 image as a baseline and as a progressive JPEG (an
 // odd size, eight flat Y blocks, flat chroma that saturates a channel at both ends, scripts/build-corpus.py
-// make_dc_only_jpeg_420), checked over every pixel: as stored for /ColorTransform 0, through WIC's planes or the
-// marked copy, and converted by default within one level of the JFIF equations worked out here.
+// make_dc_only_jpeg_420), checked over every pixel: as stored for /ColorTransform 0, and converted by default within
+// one level of the JFIF equations worked out here.
 TEST(PdfFilters, DctSubsampledAndProgressive)
 {
 	constexpr uint32_t kW = 29u;
@@ -3630,12 +3637,7 @@ TEST(PdfFilters, DctSubsampledAndProgressive)
 		const auto bytes = recto::test::read_file_bytes(recto::test::corpus_path(std::string("images/") + std::string(name)));
 		PdfDict raw_parms;
 		raw_parms.set("ColorTransform", PdfValue(int64_t{0}));
-		for (const bool planar : {true, false}) {
-			SCOPED_TRACE(planar ? "planes when WIC has them" : "marked copy");
-			std::optional<detail::ScopedDctNoPlanar> no_planar;
-			if (!planar) {
-				no_planar.emplace();
-			}
+		{
 			auto raw = decode_dct_image(bytes, &raw_parms, kMaxDecodedStreamBytes, DctOutput::Samples);
 			ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
 			ASSERT_EQ(raw->width, kW);
@@ -3762,6 +3764,19 @@ TEST(PdfFilters, DctColorTransformThroughPipeline)
 		auto out = run("dct-3c-adobe-ycc.jpg", Parms::Direct, ct, false);
 		RECTO_ASSERT_OK(out);
 		EXPECT_TRUE(close_to(px(*out, 3u, 0u), converted_rgb, 1));
+	}
+	// Round 1: an Adobe transform of 0 wins over a JFIF marker too, and component ids R, G, B do not override the
+	// default YCbCr or /ColorTransform.
+	{
+		auto out = run("dct-3c-adobe-rgb-jfif.jpg", Parms::Direct, PdfValue(int64_t{1}), false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
+		auto ids_default = run("dct-3c-rgb-ids.jpg", Parms::None, std::nullopt, false);
+		RECTO_ASSERT_OK(ids_default);
+		EXPECT_TRUE(close_to(px(*ids_default, 3u, 0u), converted_rgb, 1));
+		auto ids_raw = run("dct-3c-rgb-ids.jpg", Parms::Direct, PdfValue(int64_t{0}), false);
+		RECTO_ASSERT_OK(ids_raw);
+		EXPECT_EQ(px(*ids_raw, 3u, 0u), stored_rgb);
 	}
 
 	// Adobe CMYK, shown as RGBA: the stored inks without /Decode, the inverted inks with the Adobe /Decode, each once.

@@ -496,12 +496,17 @@ def _canonical_codes(bits: list[int], values: list[int]) -> dict[int, str]:
 
 
 def make_dc_only_jpeg(
-    width_blocks: int, component_blocks: list[list[int]], app14_transform: int | None, jfif: bool = False
+    width_blocks: int,
+    component_blocks: list[list[int]],
+    app14_transform: int | None,
+    jfif: bool = False,
+    component_ids: bytes | None = None,
 ) -> bytes:
     """A baseline JPEG of `width_blocks` x 1 blocks of 8x8 whose every block is flat: block b of component c is the
     sample value `component_blocks[c][b]`. Only DC coefficients are coded (quantizer 1, so a flat block of value v has
     DC 8 * (v - 128); T.81 A.3.3), each component at 1x1 sampling, interleaved, with an Adobe APP14 marker carrying
-    `app14_transform` (0 none, 1 YCbCr, 2 YCCK) when it is not None, and a JFIF APP0 marker only when `jfif`."""
+    `app14_transform` (0 none, 1 YCbCr, 2 YCCK) when it is not None, a JFIF APP0 marker only when `jfif`, and the
+    component ids `component_ids` (default 1, 2, 3 ...)."""
     ncomp = len(component_blocks)
     dc_codes = _canonical_codes(_DC_BITS, _DC_VALUES)
     bits = []
@@ -529,12 +534,13 @@ def make_dc_only_jpeg(
         return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
 
     dqt = bytes([0] + [1] * 64)
+    ids = component_ids if component_ids is not None else bytes(range(1, ncomp + 1))
     sof0 = struct.pack(">BHHB", 8, 8, 8 * width_blocks, ncomp)
     for c in range(ncomp):
-        sof0 += bytes([c + 1, 0x11, 0])
+        sof0 += bytes([ids[c], 0x11, 0])
     dht = bytes([0x00]) + bytes(_DC_BITS) + bytes(_DC_VALUES)
     dht += bytes([0x10]) + bytes([1] + [0] * 15) + bytes([0x00])
-    sos = bytes([ncomp]) + b"".join(bytes([c + 1, 0x00]) for c in range(ncomp)) + bytes([0, 63, 0])
+    sos = bytes([ncomp]) + b"".join(bytes([ids[c], 0x00]) for c in range(ncomp)) + bytes([0, 63, 0])
     out = b"\xFF\xD8"
     if jfif:
         out += segment(0xE0, b"JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00")  # JFIF 1.01, 72 dpi, no thumbnail
@@ -3016,9 +3022,9 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
         else:
             raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
         pos += 2 + length
-    if seen not in ([0xE0, 0xDB, 0xC0, 0xC4, 0xDA], [0xEE, 0xDB, 0xC0, 0xC4, 0xDA], [0xDB, 0xC0, 0xC4, 0xDA]):
+    if seen[-4:] != [0xDB, 0xC0, 0xC4, 0xDA] or seen[:-4] not in ([], [0xE0], [0xEE], [0xE0, 0xEE]):
         raise ValueError(
-            f"{rel_path}: JPEG segments are {[hex(s) for s in seen]}, not [APP0 or APP14,] DQT, SOF0, DHT, SOS once each")
+            f"{rel_path}: JPEG segments are {[hex(s) for s in seen]}, not [APP0][APP14] DQT, SOF0, DHT, SOS once each")
     if not data.endswith(b"\xFF\xD9"):
         raise ValueError(f"{rel_path}: JPEG does not end with EOI")
     entropy = data[pos:-2]
@@ -4987,6 +4993,9 @@ CORPUS_PURPOSES: dict[str, str] = {
     "images/dct-3c-jfif.jpg": "Baseline JPEG, 3 components, the same blocks as dct-3c-no-marker.jpg, a JFIF APP0 marker and no Adobe marker",
     "images/dct-4c-no-marker.jpg": "Baseline JPEG, 4 components, the same values as dct-4c-adobe-cmyk.jpg, no Adobe marker (/ColorTransform decides)",
     "images/dct-3c-adobe-ycc.jpg": "Baseline JPEG, 3 components, the same blocks as dct-3c-no-marker.jpg, Adobe APP14 transform 1 (YCbCr)",
+    "images/dct-3c-adobe-rgb-jfif.jpg": "Baseline JPEG, 3 components, the same blocks, a JFIF marker and an Adobe APP14 transform 0 (RGB: the Adobe marker wins)",
+    "images/dct-3c-rgb-ids.jpg": "Baseline JPEG, 3 components, the same blocks, component ids R, G, B and no marker (/ColorTransform decides, default YCbCr)",
+    "images/dct-3c-adobe-2.jpg": "Baseline JPEG, 3 components, the same blocks, Adobe APP14 transform 2 (not defined for three components; read as YCbCr, as libjpeg does)",
     "images/dct-3c-420-odd.jpg": "Baseline JPEG, 29x13, 4:2:0, eight flat Y blocks and flat chroma, JFIF marker",
     "images/dct-3c-420-odd-progressive.jpg": "Progressive JPEG (SOF2), the same image as dct-3c-420-odd.jpg: a DC scan and three AC scans",
     "render/simple-1p.pdf": "Single-page PDF 1.7 with Helvetica text and stroked/filled vector rectangle",
@@ -5092,6 +5101,9 @@ def expected_corpus_files() -> dict[str, bytes]:
     "images/dct-3c-jfif.jpg": make_dc_only_jpeg(2, DCT_THREE, None, jfif=True),
     "images/dct-4c-no-marker.jpg": make_dc_only_jpeg(2, DCT_FOUR, None),
     "images/dct-3c-adobe-ycc.jpg": make_dc_only_jpeg(2, DCT_THREE, 1),
+    "images/dct-3c-adobe-rgb-jfif.jpg": make_dc_only_jpeg(2, DCT_THREE, 0, jfif=True),
+    "images/dct-3c-rgb-ids.jpg": make_dc_only_jpeg(2, DCT_THREE, None, component_ids=b"RGB"),
+    "images/dct-3c-adobe-2.jpg": make_dc_only_jpeg(2, DCT_THREE, 2),
     "images/dct-3c-420-odd.jpg": make_dc_only_jpeg_420(29, 13, DCT_420_Y, DCT_420_CB, DCT_420_CR, False),
     "images/dct-3c-420-odd-progressive.jpg": make_dc_only_jpeg_420(29, 13, DCT_420_Y, DCT_420_CB, DCT_420_CR, True),
         "fonts/truetype-full-short-loca.ttf": build_truetype_font(long_loca=False, stripped=False),
