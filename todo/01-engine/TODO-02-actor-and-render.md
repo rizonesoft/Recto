@@ -94,7 +94,7 @@ track: M1
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
-| 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [ ] |
+| 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [x] |
 | 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
 | 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37 | [ ] |
 
@@ -1088,7 +1088,7 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 
 > **Started:** 2026-10-25T02:10Z
 
-> **Corrected 2026-10-25 (owner decision):** re-targeted to what was measured. The section was filed for zlib-ng parity on every sample; tuning reached smaller output than zlib-ng on content and image rows and 20 to 23% more speed there, but not zlib-ng's speed, nor its size and speed on the collisions worst case, which need a new parser and SIMD paths. The owner chose to ship the measured gains and file the rest: full parity, `Best` on long chains and the `§34` size rule for every file move to `§39`. Was titled "Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains".
+> **Corrected 2026-10-25 (owner decision):** re-targeted to what was measured. The section was filed for zlib-ng parity on every sample; tuning reached smaller output than zlib-ng on content and image rows and 18% and 26% more speed than `§34` there, but not zlib-ng's speed, nor its size and speed on the collisions worst case, which need a new parser and SIMD paths. The owner chose to ship the measured gains and file the rest: full parity, `Best` on long chains and the `§34` size rule for every file move to `§39`. Was titled "Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains".
 
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s37.md`):** three gaps folded in: `Best` (and `Default`) held to the sizes `§34` stamped with on every sample, so a faster search cannot buy speed with size; the zlib-ng comparison run by the checkpoint itself against the fresh Release build, failing on any missing result; and the zlib-ng backend required and reported, never assumed. Measured on this host with Python's zlib-ng 2.2.4 at level 6 (median of seven): content 55.0 MB/s and 363,179 bytes, image rows 55.6 MB/s and 48,947 bytes, collisions 30.3 MB/s and 61,593 bytes; at level 9 collisions run at 1.3 MB/s.
 
@@ -1111,6 +1111,9 @@ Its completion review filed the end-to-end comparison of save time and size with
 - [x] Commit: `pdf: a faster, smaller Default Flate level, measured against zlib-ng`
 
 **Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes, `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
+
+> **Verified:** 2026-10-25 | §37 | 87fde24776518b9727fbe9d1ef197fc762b464b2
+> **Review:** `docs/reviews/d01-t02-s37.json`
 
 ## 38. Cancellable Flate compression (`CancelToken` polled per block)
 

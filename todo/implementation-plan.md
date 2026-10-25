@@ -75,7 +75,7 @@ Sections: 99 | Checklist items: 583
 | [x]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [x]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 4     |
 | [x]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 4     |
-| [ ]    | D01 T02 §37 | Faster, smaller `Default` Flate level, measured against zlib-ng                          | windows-host              | 3     |
+| [x]    | D01 T02 §37 | Faster, smaller `Default` Flate level, measured against zlib-ng                          | windows-host              | 3     |
 | [ ]    | D01 T02 §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths                | windows-host              | 4     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
@@ -914,6 +914,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 74/845 verified sections, 36 ready to run now.
+Progress: 75/845 verified sections, 36 ready to run now.
 
 Checklist: 461/6175 items completed (includes Commit items).

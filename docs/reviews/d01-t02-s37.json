@@ -1,0 +1,97 @@
+{
+  "ref": "D01 T02 \u00a737",
+  "title": "Faster, smaller `Default` Flate level, measured against zlib-ng",
+  "implementation_sha": "87fde24776518b9727fbe9d1ef197fc762b464b2",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s37.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress* -> [  PASSED  ] 6 tests",
+    "python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe -> content 0.78, image 0.90, collisions 0.78 of zlib-ng 2.2.4 level 6 speed; Default no larger on content and image; exit 0",
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFilters.FlateCompress* -> 0 Warning(s), [  PASSED  ] 5 tests (speed test skipped under ASan)",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 258 tests and [  PASSED  ] 259 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "round 1 advisory P3 (classic zlib in the benchmark tests) fixed in 87fde24 with test_runs_where_python_has_classic_zlib"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s37.md",
+    "verdict": "filed",
+    "candidate": "22b2e748d0cdc8186dd73ccad933dffa24a1b253",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a738",
+      "D01 T02 \u00a75",
+      "D01 T02 \u00a739",
+      "D06 T01 \u00a710"
+    ]
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s37.md",
+    "candidate": "950e07648f521518e4bac2b9201be55770480e52",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
