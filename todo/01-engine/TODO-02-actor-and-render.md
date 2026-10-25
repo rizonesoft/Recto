@@ -1085,6 +1085,8 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 
 ## 37. Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains
 
+> **Started:** 2026-10-25T02:10Z
+
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s37.md`):** three gaps folded in: `Best` (and `Default`) held to the sizes `§34` stamped with on every sample, so a faster search cannot buy speed with size; the zlib-ng comparison run by the checkpoint itself against the fresh Release build, failing on any missing result; and the zlib-ng backend required and reported, never assumed. Measured on this host with Python's zlib-ng 2.2.4 at level 6 (median of seven): content 55.0 MB/s and 363,179 bytes, image rows 55.6 MB/s and 48,947 bytes, collisions 30.3 MB/s and 61,593 bytes; at level 9 collisions run at 1.3 MB/s.
 
 Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`): `§34`'s compressor meets its targets (at most 1.05 of zlib's size, 20 MB/s) but on this host Python's zlib-ng 2.2.4 compresses the content sample at 65 MB/s at level 6 against `Default`'s 39 MB/s, and `Best` falls to 1.9 MB/s on `flate/collisions.bin`, where every chain is long and every match short. -> XREF: D01 T02 §34
