@@ -2667,7 +2667,7 @@ struct EncodedJ2kBlock {
 
 [[nodiscard]] EncodedJ2kBlock encode_j2k_block(
 	std::span<const int32_t> coeffs, uint32_t w, uint32_t h, uint32_t mb_total, uint8_t cb_style,
-	int32_t wrong_symbol_bitplane = -1)
+	int32_t wrong_symbol_bitplane = -1, bool trim_raw_ff = false)
 {
 	const bool bypass = (cb_style & 0x01u) != 0u;
 	const bool reset = (cb_style & 0x02u) != 0u;
@@ -2759,6 +2759,16 @@ struct EncodedJ2kBlock {
 		} else if (raw.has_value()) {
 			raw->flush_aligned();
 			seg.bytes = raw->bytes();
+			if (trim_raw_ff) {
+				// As an encoder may (T.800 D.6, Note 2): the stuffed byte after a final 0xFF, then the trailing 0xFF
+				// bytes, are left out; a decoder supplies 0xFF bytes in their place.
+				if (seg.bytes.size() >= 2u && seg.bytes.back() == 0x00u && seg.bytes[seg.bytes.size() - 2u] == 0xFFu) {
+					seg.bytes.pop_back();
+				}
+				while (!seg.bytes.empty() && seg.bytes.back() == 0xFFu) {
+					seg.bytes.pop_back();
+				}
+			}
 		}
 		out.segments.push_back(std::move(seg));
 		mq.reset();
@@ -2943,6 +2953,7 @@ struct J2kTestOptions {
 	std::vector<uint8_t> roi;
 	uint32_t wrong_symbol_components = 0u; // bit i set: component i's last segmentation symbol reads 1011
 	uint32_t origin = 0u;                   // XOsiz and YOsiz: the image area starts here on the reference grid
+	bool trim_raw_ff = false;               // raw segments leave out their trailing 0xFF bytes (T.800 D.6, Note 2)
 };
 
 // A one-tile, one-layer LRCP JPEG 2000 codestream of reversible components with no decomposition (each component's
@@ -2967,7 +2978,8 @@ struct J2kTestOptions {
 		}
 		const uint32_t mb = comp.depth + (ci == 0u ? opt.roi_shift : 0u); // one guard bit + epsilon - 1, plus the shift
 		const EncodedJ2kBlock block =
-			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ((opt.wrong_symbol_components >> ci) & 1u) != 0u ? 0 : -1);
+			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ((opt.wrong_symbol_components >> ci) & 1u) != 0u ? 0 : -1,
+				opt.trim_raw_ff);
 		TestBitWriter bw;
 		if (block.num_passes == 0u) {
 			bw.write_bit(0u); // an empty packet
@@ -5857,6 +5869,77 @@ TEST(PdfFilters, DISABLED_JpxStyleCodestreamsForCrossCheck)
 // WIC would misread go to Recto's own decoder: the routing rule sends a palette image, a CMYK image and one with a cdef
 // opacity channel native and leaves plain sRGB to WIC, on any host; and the default path decodes each exactly as the
 // native one. Whether WIC is registered on this host is printed: the WIC-equivalence half needs a host with a codec.
+// Round 1 of D06 T05 §32 under the second schedule.
+TEST(PdfFilters, JpxRoundOneFixes)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+	// P1 (T.800 D.6, Note 2): raw segments whose trailing 0xFF bytes the encoder left out decode exactly: the reader
+	// supplies 0xFF, not 0, so all-ones refinement bits survive.
+	{
+		// 53 samples, every refinement bit a one: raw bytes alternate 0xFF (8 bits) and 0x7F (7 bits after a 0xFF),
+		// so 53 = 3 x 15 + 8 bits end each refinement segment on a 0xFF the encoder may leave out.
+		const std::vector<uint16_t> ones(53u, 255u);
+		const std::array<J2kTestComponent, 1> comps = {J2kTestComponent{ones, 53u, 1u, 8u, 1u, 1u}};
+		J2kTestOptions opt;
+		opt.cb_style = 0x01u; // bypass
+		opt.trim_raw_ff = true;
+		const auto trimmed = make_j2k_codestream(comps, 53u, 1u, opt);
+		opt.trim_raw_ff = false;
+		ASSERT_LT(trimmed.size(), make_j2k_codestream(comps, 53u, 1u, opt).size()); // something was left out
+		auto img = decode_jpx_image(trimmed);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		std::vector<uint8_t> expected;
+		for (const uint16_t v : ones) {
+			expected.push_back(static_cast<uint8_t>(v));
+		}
+		EXPECT_EQ(img->pixels, expected);
+	}
+	// P1: a signed palette index is the component's own value: 0 selects entry 0 (red), not entry 128 (clamped to 1).
+	{
+		std::array<J2kTestComponent, 1> idx = {J2kTestComponent{{128u}, 1u, 1u, 8u, 1u, 1u}}; // stored 0 after the shift
+		J2kTestOptions opt;
+		auto cs = make_j2k_codestream(idx, 1u, 1u, opt);
+		// Mark the component signed in SIZ (Ssiz bit 7): its decoded value is then 0, used as the index as it is.
+		const size_t ssiz = 4u + 38u; // the first component's Ssiz, after SOC, the SIZ marker and length, and 36 bytes
+		ASSERT_EQ(cs[ssiz], 7u);
+		cs[ssiz] = 0x87u;
+		const std::vector<uint8_t> pclr = {0u, 2u, 3u, 7u, 7u, 7u, 255u, 0u, 0u, 0u, 0u, 255u};
+		const std::vector<uint8_t> cmap = {0u, 0u, 1u, 0u, 0u, 0u, 1u, 1u, 0u, 0u, 1u, 2u};
+		const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> boxes = {{
+			{"colr", enum_srgb}, {"pclr", pclr}, {"cmap", cmap}}};
+		auto img = decode_jpx_image(make_jp2(cs, 1u, 1u, 1u, boxes));
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(img->pixels, (std::vector<uint8_t>{255u, 0u, 0u}));
+	}
+	// P1: a cmap mapping more channels than an image can have is refused before its entries are kept.
+	{
+		const std::array<J2kTestComponent, 1> idx = {J2kTestComponent{{0u}, 1u, 1u, 8u, 1u, 1u}};
+		const std::vector<uint8_t> pclr = {0u, 1u, 1u, 7u, 9u};
+		std::vector<uint8_t> cmap;
+		for (size_t i = 0; i < 16'385u; ++i) {
+			cmap.insert(cmap.end(), {0u, 0u, 1u, 0u});
+		}
+		const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> boxes = {{
+			{"colr", std::vector<uint8_t>{1u, 0u, 0u, 0u, 0u, 0u, 17u}}, {"pclr", pclr}, {"cmap", cmap}}};
+		RECTO_EXPECT_ERR(decode_jpx_image(make_jp2(make_j2k_codestream(idx, 1u, 1u), 1u, 1u, 1u, boxes)),
+			ErrorCode::DamagedFormat);
+	}
+	// P1 (T.800 I.5.3.6): an sRGB image's cdef must give every one of its three colours a channel; red and an
+	// opacity channel alone are refused rather than read as grey with alpha.
+	{
+		std::array<J2kTestComponent, 4> four{};
+		for (uint32_t c = 0; c < 4u; ++c) {
+			four[c] = J2kTestComponent{{static_cast<uint16_t>(40u * c), static_cast<uint16_t>(40u * c + 10u)}, 2u, 1u, 8u, 1u, 1u};
+		}
+		const std::vector<uint8_t> cdef = {0u, 2u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 3u, 0u, 1u, 0u, 0u};
+		const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{
+			{"colr", enum_srgb}, {"cdef", cdef}}};
+		RECTO_EXPECT_ERR(decode_jpx_image(make_jp2(make_j2k_codestream(four, 2u, 1u), 2u, 1u, 4u, boxes)),
+			ErrorCode::DamagedFormat);
+	}
+}
+
 TEST(PdfFilters, JpxDefaultPathRoutesChannelsNative)
 {
 	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};

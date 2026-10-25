@@ -7288,6 +7288,9 @@ PdfResult<std::vector<uint8_t>> decode_dct(
 
 namespace {
 
+// The most channels a JP2 image can map: one per component, and SIZ allows 16,384 (T.800 A.5.1).
+constexpr size_t kMaxJp2Channels = 16'384u;
+
 struct JpxHeaderInfo {
 	uint32_t width{0};
 	uint32_t height{0};
@@ -7891,7 +7894,8 @@ struct J2kSegment {
 };
 
 // The raw bit reader for bypass passes (T.800 D.6): bits most significant first, and after an 0xFF byte the next
-// byte's top bit is a stuffed zero that is skipped. Past the segment's end it reads zeros.
+// byte's top bit is a stuffed zero that is skipped. Past the segment's end it reads 0xFF bytes: an encoder may omit the
+// trailing 0xFF bytes of a raw segment (D.6, Note 2), so the bits it dropped are ones.
 class J2kRawDecoder {
 public:
 	J2kRawDecoder() noexcept = default;
@@ -7904,7 +7908,7 @@ public:
 	{
 		if (bits_ == 0u) {
 			const bool after_ff = last_ == 0xFFu;
-			last_ = pos_ < data_.size() ? data_[pos_++] : 0u;
+			last_ = pos_ < data_.size() ? data_[pos_++] : uint8_t{0xFFu};
 			bits_ = after_ff ? 7u : 8u;
 		}
 		--bits_;
@@ -8551,6 +8555,8 @@ void idwt_97_2d_float(
 		};
 		RECTO_PDF_TRY(std::optional<WicDecodedImage> wic_image, through_wic());
 		if (wic_image.has_value()) {
+			// The header's embedded profile travels with the image whichever decoder produced it.
+			wic_image->icc_profile.assign(hdr.icc_profile.begin(), hdr.icc_profile.end());
 			return std::move(*wic_image);
 		}
 		// Only a codec that is absent or rejects the data hands over to the native decoder; a resource failure, a
@@ -8738,6 +8744,12 @@ struct Jp2Palette {
 			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
 				"JPXDecode palette without a valid cmap component mapping box");
 		}
+		// One entry per channel, and an image has at most 16,384 components (SIZ Csiz, T.800 A.5.1): a longer cmap is
+		// refused before anything is allocated for its entries.
+		if (hdr.component_map.size() / 4u > kMaxJp2Channels) {
+			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+				"JPXDecode cmap maps more channels than an image can have");
+		}
 		for (size_t at = 0; at < hdr.component_map.size(); at += 4u) {
 			Jp2Channel ch;
 			ch.component = read_u16_be(hdr.component_map.data() + at);
@@ -8764,6 +8776,7 @@ struct Jp2Palette {
 	// here: a signed component is made unsigned on output by the same 2^(depth - 1) offset an unsigned one is
 	// level-shifted by (T.800 G.1.2), as PDF samples are unsigned.
 	std::vector<uint8_t> comp_depth(num_comps, 8u);
+	std::vector<bool> comp_signed(num_comps, false);
 	std::vector<uint8_t> comp_dx(num_comps, 1u);
 	std::vector<uint8_t> comp_dy(num_comps, 1u);
 	for (uint32_t c = 0; c < num_comps; ++c) {
@@ -8775,6 +8788,7 @@ struct Jp2Palette {
 				"Truncated component list in J2K SIZ marker segment");
 		}
 		comp_depth[c] = static_cast<uint8_t>((cs[at] & 0x7Fu) + 1u);
+		comp_signed[c] = (cs[at] & 0x80u) != 0u;
 		comp_dx[c] = cs[at + 1u];
 		comp_dy[c] = cs[at + 2u];
 		if (comp_dx[c] == 0u || comp_dy[c] == 0u) {
@@ -10563,9 +10577,13 @@ struct Jp2Palette {
 						const size_t t_idx = static_cast<size_t>(cy) * (comp.x1 - comp.x0) + cx;
 						const uint32_t depth = comp_depth[c];
 						const int32_t max_sample = (1 << depth) - 1;
-						int32_t val = std::clamp(comp.spatial[t_idx] + (1 << (depth - 1u)), 0, max_sample);
+						const int32_t sample = comp.spatial[t_idx];
+						int32_t val = std::clamp(sample + (1 << (depth - 1u)), 0, max_sample);
 						if (palette_index[c]) {
-							raw_index[img_idx * num_comps + c] = static_cast<uint8_t>(val); // at most 8 bits here
+							// The index is the component's own value: an unsigned one after its DC level shift (T.800
+							// G.1.2), a signed one as decoded, a negative one clamped to the first entry.
+							const int32_t index = comp_signed[c] ? sample : sample + (1 << (depth - 1u));
+							raw_index[img_idx * num_comps + c] = static_cast<uint8_t>(std::clamp(index, 0, 255));
 						}
 						if (depth > 8u) {
 							val >>= (depth - 8u);
@@ -10625,8 +10643,29 @@ struct Jp2Palette {
 				premultiplied = type == 2u;
 			}
 		}
+		// The colour space decides how many colours need a channel (T.800 I.5.3.6): three for sRGB and sYCC, one for
+		// greyscale, four for CMYK; for another space, the associations given.
+		size_t required = colour_count;
+		switch (hdr.enumerated_colour) {
+		case 16u:
+		case 18u:
+			required = 3u;
+			break;
+		case 17u:
+			required = 1u;
+			break;
+		case 12u:
+			required = 4u;
+			break;
+		default:
+			break;
+		}
+		if (colour_count > required) {
+			return inconsistent("cdef associates a channel with a colour the image's colour space does not have in JPXDecode");
+		}
+		colour_count = required;
 		for (size_t a = 0; a < colour_count; ++a) {
-			if (!association_used[a]) {
+			if (a >= association_used.size() || !association_used[a]) {
 				return inconsistent("cdef leaves a colour of the image's colour space without a channel in JPXDecode");
 			}
 		}
