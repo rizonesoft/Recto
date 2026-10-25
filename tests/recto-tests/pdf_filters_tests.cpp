@@ -3550,6 +3550,34 @@ TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
 			EXPECT_TRUE(within(pixel(*converted, 8u), {159, 0, 87}, 1));
 		}
 	}
+	// Bytes a decoder skips before a marker (a stray 0x00, a fill byte, garbage) do not hide the JFIF marker from the
+	// renaming: the header walk recovers as the decoders do (round 2).
+	{
+		const auto jfif = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-jfif.jpg"));
+		for (const std::vector<uint8_t>& extra :
+			{std::vector<uint8_t>{0x00u}, std::vector<uint8_t>{0xFFu}, std::vector<uint8_t>{0x12u, 0x34u}}) {
+			SCOPED_TRACE(testing::Message() << "inserted after SOI: " << extra.size() << " bytes, first " << int{extra[0]});
+			std::vector<uint8_t> bytes(jfif.begin(), jfif.begin() + 2);
+			bytes.insert(bytes.end(), extra.begin(), extra.end());
+			bytes.insert(bytes.end(), jfif.begin() + 2, jfif.end());
+			PdfDict raw_parms;
+			raw_parms.set("ColorTransform", PdfValue(int64_t{0}));
+			auto raw = decode_dct_image(bytes, &raw_parms, kMaxDecodedStreamBytes, DctOutput::Samples);
+			ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
+			EXPECT_EQ(pixel(*raw, 0u), (std::vector<int>{200, 90, 40}));
+			auto converted = decode_dct_image(bytes, nullptr, kMaxDecodedStreamBytes, DctOutput::Samples);
+			ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
+			EXPECT_TRUE(within(pixel(*converted, 0u), {77, 255, 133}, 1));
+			PdfDict dict;
+			dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+			PdfDict dp;
+			dp.set("ColorTransform", PdfValue(int64_t{0}));
+			dict.set("DecodeParms", PdfValue{std::move(dp)});
+			auto streamed = decode_stream(bytes, dict);
+			RECTO_ASSERT_OK(streamed);
+			EXPECT_EQ(std::vector<int>(streamed->begin(), streamed->begin() + 3), (std::vector<int>{200, 90, 40}));
+		}
+	}
 	// An Adobe transform of 2 on three components is read as YCbCr, as libjpeg reads it, whatever /ColorTransform says.
 	for (const std::optional<int64_t> ct : {std::optional<int64_t>{}, std::optional<int64_t>{0}}) {
 		auto img = decode("dct-3c-adobe-2.jpg", ct);
@@ -3667,6 +3695,38 @@ TEST(PdfFilters, DctSubsampledAndProgressive)
 			}
 		}
 		EXPECT_EQ(off, 0u);
+	}
+}
+
+// D06 T05 §33 rounds 1 and 2: the marked stream WIC reads is the stream with an Adobe segment carrying Recto's
+// transform after SOI and the header's APP0 and APP14 markers renamed APP15, whatever the read sizes, wherever a read
+// ends (a marker byte split from its 0xFF included) and after a seek back. The fixture's APP0 is at 2 and its APP14
+// at 20; the variant with two garbage bytes after SOI moves them to 4 and 22.
+TEST(PdfFilters, DctMarkedStreamBytes)
+{
+	const auto fixture = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-adobe-rgb-jfif.jpg"));
+	ASSERT_EQ(fixture[3], 0xE0u);
+	ASSERT_EQ(fixture[21], 0xEEu);
+	std::vector<uint8_t> garbage(fixture.begin(), fixture.begin() + 2);
+	garbage.insert(garbage.end(), {0x12u, 0x34u});
+	garbage.insert(garbage.end(), fixture.begin() + 2, fixture.end());
+	for (const auto& [input, app0, app14] :
+		{std::tuple{fixture, size_t{2}, size_t{20}}, std::tuple{garbage, size_t{4}, size_t{22}}}) {
+		for (const uint8_t transform : {uint8_t{0}, uint8_t{1}}) {
+			std::vector<uint8_t> want(input.begin(), input.begin() + 2);
+			want.insert(want.end(), {0xFFu, 0xEEu, 0x00u, 0x0Eu, 'A', 'd', 'o', 'b', 'e', 0x00u, 0x64u, 0x00u, 0x00u, 0x00u,
+				0x00u, transform});
+			want.insert(want.end(), input.begin() + 2, input.end());
+			want[app0 + 16u + 1u] = 0xEFu;
+			want[app14 + 16u + 1u] = 0xEFu;
+			for (const size_t chunk : {size_t{1}, size_t{2}, size_t{3}, size_t{5}, size_t{7}, size_t{4096}}) {
+				for (const size_t rewind : {size_t{0}, size_t{5}, size_t{40}}) {
+					SCOPED_TRACE(testing::Message() << "app0 " << app0 << ", transform " << int{transform} << ", chunk "
+													<< chunk << ", rewind " << rewind);
+					EXPECT_EQ(detail::marked_jpeg_bytes(input, transform, chunk, rewind), want);
+				}
+			}
+		}
 	}
 }
 

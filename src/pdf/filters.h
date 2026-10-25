@@ -306,6 +306,11 @@ private:
 	bool previous_{false};
 };
 
+// Tests only: the bytes WIC is given for a three-component JPEG marked with `transform`, read `chunk` bytes at a time;
+// when `rewind_after` is not zero, after a first read of that many bytes and a seek back to the start.
+[[nodiscard]] std::vector<uint8_t> marked_jpeg_bytes(
+	std::span<const uint8_t> input, uint8_t transform, size_t chunk, size_t rewind_after);
+
 // Tests only: how many native JPXDecode decodes this thread has started, so a test can tell whether WIC handed a
 // stream over.
 [[nodiscard]] uint64_t native_jpx_attempts() noexcept;

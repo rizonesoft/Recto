@@ -6718,6 +6718,75 @@ struct JpegHeaderInfo {
 	uint8_t adobe_transform{0};
 };
 
+// One step of a JPEG header walk at `pos`, the one walk inspect_jpeg_header and the marked stream share, so what Recto
+// reads of a header and what it renames never differ. It recovers as decoders do (libjpeg's next_marker): bytes
+// before a marker are skipped to the next 0xFF, fill bytes one at a time, and 0xFF 0x00, TEM, RSTn and a stray SOI are
+// not segments (T.81 B.1.1.2 to B.1.1.4).
+struct JpegHeaderStep {
+	enum class Kind : uint8_t {
+		Skip, // garbage, a fill byte or a marker without a length: go on at `next`
+		Segment, // a marker segment: `marker` at `marker_at`, its payload, then `next`
+		Scan, // SOS: the header ends here
+		End, // EOI, or the bytes ran out
+		Truncated, // a segment marker without room for its length
+		Overrun, // a segment length that does not fit the stream
+	};
+	Kind kind = Kind::End;
+	uint8_t marker = 0;
+	size_t marker_at = 0;
+	size_t payload = 0;
+	size_t payload_size = 0;
+	size_t next = 0;
+};
+
+[[nodiscard]] JpegHeaderStep jpeg_header_step(std::span<const uint8_t> input, size_t pos) noexcept
+{
+	using Kind = JpegHeaderStep::Kind;
+	if (pos + 1u >= input.size()) {
+		return JpegHeaderStep{Kind::End, 0u, pos, 0u, 0u, pos};
+	}
+	if (input[pos] != 0xFFu) {
+		const void* ff = std::memchr(input.data() + pos, 0xFF, input.size() - pos);
+		const size_t next = ff == nullptr ? input.size() : static_cast<size_t>(static_cast<const uint8_t*>(ff) - input.data());
+		return JpegHeaderStep{Kind::Skip, 0u, next, 0u, 0u, next};
+	}
+	const uint8_t marker = input[pos + 1u];
+	if (marker == 0xFFu) {
+		return JpegHeaderStep{Kind::Skip, 0u, pos + 1u, 0u, 0u, pos + 1u};
+	}
+	if (marker == 0x00u || marker == 0x01u || (marker >= 0xD0u && marker <= 0xD8u)) {
+		return JpegHeaderStep{Kind::Skip, marker, pos + 1u, 0u, 0u, pos + 2u};
+	}
+	if (marker == 0xD9u) {
+		return JpegHeaderStep{Kind::End, marker, pos + 1u, 0u, 0u, pos};
+	}
+	if (marker == 0xDAu) {
+		return JpegHeaderStep{Kind::Scan, marker, pos + 1u, 0u, 0u, pos};
+	}
+	if (pos + 4u > input.size()) {
+		return JpegHeaderStep{Kind::Truncated, marker, pos + 1u, 0u, 0u, pos};
+	}
+	const size_t len = (static_cast<size_t>(input[pos + 2u]) << 8u) | input[pos + 3u];
+	if (len < 2u || len > input.size() - pos - 2u) {
+		return JpegHeaderStep{Kind::Overrun, marker, pos + 1u, 0u, 0u, pos};
+	}
+	return JpegHeaderStep{Kind::Segment, marker, pos + 1u, pos + 4u, len - 2u, pos + 2u + len};
+}
+
+// Where a JPEG's header ends: its first SOS marker, or where the walk stops. What follows is left as it is: the
+// decoder reads it, as it would have.
+[[nodiscard]] size_t jpeg_header_end(std::span<const uint8_t> input) noexcept
+{
+	size_t pos = 2u;
+	for (;;) {
+		const JpegHeaderStep step = jpeg_header_step(input, pos);
+		if (step.kind != JpegHeaderStep::Kind::Skip && step.kind != JpegHeaderStep::Kind::Segment) {
+			return std::min(pos, input.size());
+		}
+		pos = step.next;
+	}
+}
+
 // Scans a JPEG byte stream for `SOF0..SOF15` and Adobe `APP14` markers BEFORE
 // passing the stream to WIC, so decode_dct_image can charge the representation it
 // will build against the ceiling before any bitmap allocation (D06 T05 §38).
@@ -6732,40 +6801,31 @@ struct JpegHeaderInfo {
 
 	JpegHeaderInfo info{};
 	size_t pos = 2u;
-	while (pos + 1u < input.size()) {
-		if (input[pos] != 0xFFu) {
-			++pos;
-			continue;
-		}
-		while (pos < input.size() && input[pos] == 0xFFu) {
-			++pos;
-		}
-		if (pos >= input.size()) {
+	for (;;) {
+		const JpegHeaderStep step = jpeg_header_step(input, pos);
+		if (step.kind == JpegHeaderStep::Kind::End || step.kind == JpegHeaderStep::Kind::Scan) {
 			break;
 		}
-		const uint8_t marker = input[pos++];
-		if (marker == 0x00u || marker == 0x01u || (marker >= 0xD0u && marker <= 0xD8u)) {
-			continue;
-		}
-		if (marker == 0xD9u) { // EOI
-			break;
-		}
-		if (pos + 2u > input.size()) {
+		if (step.kind == JpegHeaderStep::Kind::Truncated) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"Truncated marker segment length in DCTDecode JPEG stream",
-				pos);
+				step.marker_at + 1u);
 		}
-		const uint16_t seg_len = read_u16_be(input.data() + pos);
-		if (seg_len < 2u || pos + seg_len > input.size()) {
+		if (step.kind == JpegHeaderStep::Kind::Overrun) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"JPEG marker segment length exceeds DCTDecode stream bounds",
-				pos);
+				step.marker_at + 1u);
 		}
-		const std::span<const uint8_t> payload = input.subspan(pos + 2u, seg_len - 2u);
+		pos = step.next;
+		if (step.kind == JpegHeaderStep::Kind::Skip) {
+			continue;
+		}
+		const uint8_t marker = step.marker;
+		const std::span<const uint8_t> payload = input.subspan(step.payload, step.payload_size);
 
 		// Adobe APP14 marker (0xFFEE): 12-byte payload starting with "Adobe".
 		if (marker == 0xEEu && payload.size() >= 12u &&
@@ -6782,7 +6842,7 @@ struct JpegHeaderInfo {
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
 					"Truncated SOF frame header in DCTDecode JPEG stream",
-					pos);
+					step.marker_at + 1u);
 			}
 			info.height = read_u16_be(payload.data() + 1u);
 			info.width = read_u16_be(payload.data() + 3u);
@@ -6794,14 +6854,9 @@ struct JpegHeaderInfo {
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
 					"Invalid width, height, or component count in JPEG SOF header",
-					pos);
+					step.marker_at + 1u);
 			}
 		}
-
-		if (marker == 0xDAu) { // SOS: entropy-coded scan follows
-			break;
-		}
-		pos += seg_len;
 	}
 
 	if (!info.has_sof) {
@@ -6962,52 +7017,12 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 // The bytes of the Adobe APP14 segment a marked stream carries (Adobe Technical Note 5116, section 18).
 constexpr size_t kAdobeSegmentBytes = 16u;
 
-// One step of a JPEG header walk at `pos` (T.81 B.1.1.2 to B.1.1.4): the marker there and where the next one starts,
-// or nothing at the first scan, at the end, or at anything malformed.
-struct JpegHeaderStep {
-	uint8_t marker = 0;
-	size_t next = 0;
-};
-
-[[nodiscard]] std::optional<JpegHeaderStep> jpeg_header_step(std::span<const uint8_t> input, size_t pos) noexcept
-{
-	if (pos + 4u > input.size() || input[pos] != 0xFFu) {
-		return std::nullopt;
-	}
-	const uint8_t marker = input[pos + 1u];
-	if (marker == 0xFFu) {
-		return JpegHeaderStep{marker, pos + 1u}; // a fill byte before the marker
-	}
-	if (marker == 0xDAu || marker == 0xD9u) {
-		return std::nullopt;
-	}
-	if (marker == 0x01u || (marker >= 0xD0u && marker <= 0xD7u)) {
-		return JpegHeaderStep{marker, pos + 2u}; // a marker without a length
-	}
-	const size_t len = (static_cast<size_t>(input[pos + 2u]) << 8u) | input[pos + 3u];
-	if (len < 2u || len > input.size() - pos - 2u) {
-		return std::nullopt;
-	}
-	return JpegHeaderStep{marker, pos + 2u + len};
-}
-
-// Where a JPEG's header ends: its first SOS marker, or the first byte the walk cannot read. What follows is left as
-// it is: the decoder reads it, as it would have.
-[[nodiscard]] size_t jpeg_header_end(std::span<const uint8_t> input) noexcept
-{
-	size_t pos = 2u;
-	while (const std::optional<JpegHeaderStep> step = jpeg_header_step(input, pos)) {
-		pos = step->next;
-	}
-	return std::min(pos, input.size());
-}
-
 // A read-only IStream over a three-component JPEG as Recto marks it, made on the fly from the caller's bytes, which
 // are never copied: SOI, an Adobe segment with `transform` (0 none, 1 YCbCr), then the rest of the stream with every
 // APP0 (JFIF, JFXX) and APP14 (Adobe) segment of the header renamed APP15. No other marker, and no component naming
 // (which only a stream without either marker leaves to the decoder), can then change the decoder's choice (T.871 6,
-// Adobe Technical Note 5116 section 18). The renames are found by one walk of the header that a sequential reader
-// advances once; a read before the last one restarts it. The caller's bytes outlive every WIC object reading them
+// Adobe Technical Note 5116 section 18). The renames are found by the header walk inspect_jpeg_header reads with
+// (jpeg_header_step), which a sequential reader advances once; a read before the last one restarts it. The caller's bytes outlive every WIC object reading them
 // (all are released before decode_dct_image returns).
 class MarkedJpegStream final : public IStream {
 public:
@@ -7134,17 +7149,21 @@ private:
 			walk_ = 2u; // a read before the last one: the walk starts again
 		}
 		walked_to_ = to;
-		while (walk_ < header_end_ && walk_ + 1u < to) {
-			const std::optional<JpegHeaderStep> step = jpeg_header_step(input_, walk_);
-			if (!step.has_value()) {
+		while (walk_ < header_end_ && walk_ < to) {
+			const JpegHeaderStep step = jpeg_header_step(input_, walk_);
+			if (step.kind != JpegHeaderStep::Kind::Skip && step.kind != JpegHeaderStep::Kind::Segment) {
 				walk_ = header_end_;
 				break;
 			}
-			const uint64_t marker_at = walk_ + 1u;
-			if ((step->marker == 0xE0u || step->marker == 0xEEu) && marker_at >= from) {
-				out[marker_at - from] = 0xEFu;
+			if (step.kind == JpegHeaderStep::Kind::Segment && (step.marker == 0xE0u || step.marker == 0xEEu)) {
+				if (step.marker_at >= to) {
+					break; // its marker byte comes with a later read
+				}
+				if (step.marker_at >= from) {
+					out[step.marker_at - from] = 0xEFu;
+				}
 			}
-			walk_ = step->next;
+			walk_ = step.next;
 		}
 	}
 
@@ -7190,6 +7209,30 @@ private:
 }
 
 } // namespace
+
+namespace detail {
+
+std::vector<uint8_t> marked_jpeg_bytes(std::span<const uint8_t> input, uint8_t transform, size_t chunk, size_t rewind_after)
+{
+	ComPtr<IStream> stream;
+	stream.Attach(new MarkedJpegStream(input, transform));
+	std::vector<uint8_t> out;
+	std::vector<uint8_t> buffer(std::max<size_t>(chunk, rewind_after));
+	ULONG got = 0;
+	if (rewind_after != 0u) {
+		(void)stream->Read(buffer.data(), static_cast<ULONG>(rewind_after), &got);
+		LARGE_INTEGER start{};
+		(void)stream->Seek(start, STREAM_SEEK_SET, nullptr);
+	}
+	do {
+		got = 0;
+		(void)stream->Read(buffer.data(), static_cast<ULONG>(chunk), &got);
+		out.insert(out.end(), buffer.begin(), buffer.begin() + got);
+	} while (got != 0u);
+	return out;
+}
+
+} // namespace detail
 
 PdfResult<WicDecodedImage> decode_dct_image(
 	std::span<const uint8_t> input,
