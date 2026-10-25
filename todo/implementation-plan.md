@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 595
+Sections: 98 | Checklist items: 596
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -98,7 +98,7 @@ Sections: 98 | Checklist items: 595
 | [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
 | [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
-| [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
+| [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 7     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 4     |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 78/846 verified sections, 38 ready to run now.
 
-Checklist: 493/6197 items completed (includes Commit items).
+Checklist: 495/6198 items completed (includes Commit items).

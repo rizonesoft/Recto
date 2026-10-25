@@ -246,6 +246,88 @@ TEST(PdfDocument, RecoveredEncryptedObjectStreamsResolve)
 	EXPECT_EQ(kept_21->as_int(), std::optional<int64_t>(7));
 }
 
+// Plan review of D06 T05 §30, gap 2 (docs/reviews/06-quality/D06-T05-s30.md): an encrypted file whose catalog and page
+// tree live only in an encrypted object stream, its cross-reference lost. Recovery takes the compressed root on the
+// intact xref stream's word; the document refuses without the password, refuses the wrong one, then opens with the
+// right one after that refusal, with the base file's page and content. A compressed root that is not a catalog is a
+// typed error, not a document.
+TEST(PdfDocument, RecoveredEncryptedCompressedCatalog)
+{
+	const std::vector<uint8_t> base = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto base_doc = Document::open_memory(base, "recto-test");
+	ASSERT_TRUE(base_doc.has_value());
+	auto base_content = (*base_doc)->decoded_page_contents(0u);
+	ASSERT_TRUE(base_content.has_value());
+	auto base_xref = XrefTable::parse(base);
+	ASSERT_TRUE(base_xref.has_value());
+	auto sh_opt = SecurityHandler::from_xref(*base_xref, base);
+	ASSERT_TRUE(sh_opt.has_value() && sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	ASSERT_TRUE(sh.authenticate("recto-test").has_value());
+
+	const auto build = [&](std::string_view catalog) {
+		std::vector<uint8_t> bytes = base;
+		const auto append = [&](std::string_view sv) { bytes.insert(bytes.end(), sv.begin(), sv.end()); };
+		const std::string pages = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+		const std::string header = "31 0 32 " + std::to_string(catalog.size() + 1u) + " ";
+		const std::string plain = header + std::string(catalog) + " " + pages;
+		const std::span<const uint8_t> span(reinterpret_cast<const uint8_t*>(plain.data()), plain.size());
+		auto cipher = sh.decrypt_bytes(span, IndirectRef{30u, 0u}, CryptFilterMethod::V2); // RC4 is symmetric
+		EXPECT_TRUE(cipher.has_value());
+		append("\n");
+		const uint64_t off30 = bytes.size();
+		append("30 0 obj\n<< /Type /ObjStm /N 2 /First " + std::to_string(header.size()) + " /Length " +
+			std::to_string(cipher->size()) + " >>\nstream\n");
+		bytes.insert(bytes.end(), cipher->begin(), cipher->end());
+		append("\nendstream\nendobj\n");
+		const uint64_t off33 = bytes.size();
+		std::string rows;
+		const auto row = [&](uint8_t type, uint32_t f2, uint16_t f3) {
+			rows.push_back(static_cast<char>(type));
+			for (int s = 24; s >= 0; s -= 8) {
+				rows.push_back(static_cast<char>((f2 >> s) & 0xFFu));
+			}
+			rows.push_back(static_cast<char>((f3 >> 8) & 0xFFu));
+			rows.push_back(static_cast<char>(f3 & 0xFFu));
+		};
+		row(1, static_cast<uint32_t>(off30), 0);
+		row(2, 30, 0);
+		row(2, 30, 1);
+		row(1, static_cast<uint32_t>(off33), 0);
+		append("33 0 obj\n<< /Type /XRef /Size 34 /Root 31 0 R /Info 6 0 R /Encrypt 7 0 R "
+			"/ID [<0CC47D6E8331B0D9BBEBAFED46D1A791> <0CC47D6E8331B0D9BBEBAFED46D1A791>] /Prev 961 "
+			"/Index [30 4] /W [1 4 2] /Length " + std::to_string(rows.size()) + " >>\nstream\n");
+		append(rows);
+		append("\nendstream\nendobj\nstartxref\n1\n%%EOF\n"); // the offset is wrong: recovery
+		return bytes;
+	};
+
+	const std::vector<uint8_t> bytes = build("<< /Type /Catalog /Pages 32 0 R >>");
+	auto locked = Document::open_memory(bytes);
+	ASSERT_FALSE(locked.has_value());
+	EXPECT_EQ(locked.error().code, ErrorCode::NeedsPassword);
+	auto pending = Document::open_memory_unauthenticated(bytes);
+	ASSERT_TRUE(pending.has_value()) << pending.error().message.view();
+	EXPECT_TRUE((*pending)->is_recovered());
+	auto wrong = (*pending)->authenticate("wrong");
+	ASSERT_FALSE(wrong.has_value());
+	EXPECT_EQ(wrong.error().code, ErrorCode::WrongPassword);
+	auto right = (*pending)->authenticate("recto-test");
+	ASSERT_TRUE(right.has_value()) << right.error().message.view();
+	EXPECT_EQ((*pending)->xref().root_ref(), (std::optional<IndirectRef>(IndirectRef{31u, 0u})));
+	ASSERT_EQ((*pending)->page_count(), 1u);
+	auto content = (*pending)->decoded_page_contents(0u);
+	ASSERT_TRUE(content.has_value()) << content.error().message.view();
+	EXPECT_EQ(*content, *base_content);
+
+	// The compressed root is not a catalog: once its container can be read, the document is refused with a typed
+	// error.
+	const std::vector<uint8_t> bad = build("<< /Type /Pages /Kids [] /Count 0 >>");
+	auto refused = Document::open_memory(bad, "recto-test");
+	ASSERT_FALSE(refused.has_value());
+	EXPECT_EQ(refused.error().code, ErrorCode::DamagedFormat) << refused.error().message.view();
+}
+
 // The audit of D01 T01 §9, round 2 (D06 T05 §23): in an encrypted file (Identity crypt filters, empty user password),
 // a chain of streams each naming the next one eight times in /Filter is not copied into each dictionary while it is
 // decrypted: only a resolved name is written in, so resolving the first costs a few objects, not 8^5 copies.
