@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 579
+Sections: 98 | Checklist items: 580
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -75,7 +75,7 @@ Sections: 98 | Checklist items: 579
 | [x]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [x]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 4     |
 | [x]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 4     |
-| [ ]    | D01 T02 §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains            | windows-host              | 3     |
+| [ ]    | D01 T02 §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains            | windows-host              | 4     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host              | 5     |
@@ -914,4 +914,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 74/843 verified sections, 36 ready to run now.
 
-Checklist: 458/6167 items completed (includes Commit items).
+Checklist: 458/6168 items completed (includes Commit items).

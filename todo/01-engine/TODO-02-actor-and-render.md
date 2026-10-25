@@ -1085,6 +1085,8 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 
 ## 37. Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains
 
+> **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s37.md`):** three gaps folded in: `Best` (and `Default`) held to the sizes `§34` stamped with on every sample, so a faster search cannot buy speed with size; the zlib-ng comparison run by the checkpoint itself against the fresh Release build, failing on any missing result; and the zlib-ng backend required and reported, never assumed. Measured on this host with Python's zlib-ng 2.2.4 at level 6 (median of seven): content 55.0 MB/s and 363,179 bytes, image rows 55.6 MB/s and 48,947 bytes, collisions 30.3 MB/s and 61,593 bytes; at level 9 collisions run at 1.3 MB/s.
+
 Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`): `§34`'s compressor meets its targets (at most 1.05 of zlib's size, 20 MB/s) but on this host Python's zlib-ng 2.2.4 compresses the content sample at 65 MB/s at level 6 against `Default`'s 39 MB/s, and `Best` falls to 1.9 MB/s on `flate/collisions.bin`, where every chain is long and every match short. -> XREF: D01 T02 §34
 
 **Phase:** 1
@@ -1098,10 +1100,11 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engin
 2. Raise the gates in `tests/recto-tests/pdf_filters_tests.cpp`. Done when: the new targets below hold in Release x64.
 
 - [ ] `Default` at zlib-ng level 6's throughput or better on `flate/content-stream.txt`, `flate/image-rows.bin` and `flate/collisions.bin`, at no larger output, both measured on the same host (throughput is not a fixture): candidates such as SIMD match comparison (SSE2 and NEON), a medium-effort parser and hashing tuned per level, each kept only when it measures. Done when: a new `scripts/flate-bench.py` times Python's zlib-ng at level 6 on the three samples (median of seven runs), runs `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed`, and passes only when `Default` is at least as fast and no larger on each, and `PdfFilters.FlateCompressRatio` holds `Default` to at most 1.00 of the recorded level-6 sizes.
-- [ ] `Best` at 10 MB/s or more on `flate/collisions.bin` without larger output on any sample: a search that stops when longer candidates stop appearing, or a binary-tree match finder as libdeflate's high levels use. Done when: `PdfFilters.FlateCompressSpeed` holds the floor.
+- [ ] `Best` at 10 MB/s or more on `flate/collisions.bin` without larger output on any sample: a search that stops when longer candidates stop appearing, or a binary-tree match finder as libdeflate's high levels use. Done when: `PdfFilters.FlateCompressSpeed` holds the floor, and `PdfFilters.FlateCompressLevels` holds `Default` and `Best` on every file `reference-sizes.json` lists to no more than the sizes `§34` stamped with (recorded in the test from `5eed8f8`), each read back strictly.
+- [ ] `scripts/flate-bench.py` requires Python's zlib to be zlib-ng 2.2 or later (`zlib.ZLIBNG_VERSION`), prints the version it measured against and refuses (exit 2) when the backend is absent, times zlib-ng at level 6 and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed` (which prints each level's median per sample) with the executable given on its command line, and exits 1 when a sample is missing, the test is skipped or fails, or `Default` is slower or larger than zlib-ng on any sample. Done when: `python -m unittest tests.scripts.test_flate_bench` checks the refusals, the missing-result failure and the comparison with a fake executable, and the script passes against the Release build.
 - [ ] Commit: `pdf: Flate compressor at zlib-ng speed`
 
-**Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes with the raised gates, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
+**Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes with the raised gates, `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
 
 ## 38. Cancellable Flate compression (`CancelToken` polled per block)
 
