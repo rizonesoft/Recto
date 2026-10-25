@@ -74,7 +74,7 @@ Sections: 98 | Checklist items: 579
 | [x]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host              | 4     |
 | [x]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [x]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 4     |
-| [ ]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 4     |
+| [x]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 4     |
 | [ ]    | D01 T02 §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains            | windows-host              | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
@@ -912,6 +912,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 73/843 verified sections, 36 ready to run now.
+Progress: 74/843 verified sections, 36 ready to run now.
 
 Checklist: 458/6167 items completed (includes Commit items).

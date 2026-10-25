@@ -93,7 +93,7 @@ track: M1
 | 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
-| 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [ ] |
+| 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
 | 37 | §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains | §34 | [ ] |
 | 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
 
@@ -1079,6 +1079,9 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 - [x] Commit: `pdf: encrypt new objects with the document's security handler`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCrypto.Encrypt*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-25 | §36 | eb1143c79ffaca75921b9160eb188c82a29e3030
+> **Review:** `docs/reviews/d01-t02-s36.json`
 
 ## 37. Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains
 

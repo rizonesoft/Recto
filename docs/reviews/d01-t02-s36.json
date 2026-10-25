@@ -1,0 +1,117 @@
+{
+  "ref": "D01 T02 \u00a736",
+  "title": "Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)",
+  "implementation_sha": "eb1143c79ffaca75921b9160eb188c82a29e3030",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s36.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s36.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s36.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s36.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s36.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfCrypto.* -> 0 Warning(s), [  PASSED  ] 15 tests (EncryptMemory skipped under ASan)",
+    "build/build.ps1 -Platform x64 -Configuration Debug -TestFilter PdfCrypto.* -> [  PASSED  ] 16 tests",
+    ".\\build.cmd -> exit 0, 0 Warning(s), [  PASSED  ] 258 tests (Debug), [  PASSED  ] 259 tests (Release)",
+    "python -m unittest discover -s tests/scripts -> Ran 445 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s36.md",
+    "verdict": "filed",
+    "candidate": "21a23a35fb16b4fc6536a085ac5319612703fba5",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a75",
+      "D06 T03 \u00a713",
+      "D02 T01 \u00a78",
+      "D01 T02 \u00a713",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 5,
+  "round_cap": 33,
+  "cap_outcome": "Round 5 found one P3 (the untyped annotation case never reached the annotation guards), fixed in eb1143c; the loop ends on the first round with no P1 or P2.",
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s36.md",
+    "candidate": "415aa35963e4b458d15d8c6931fb54ee960f14fc",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
