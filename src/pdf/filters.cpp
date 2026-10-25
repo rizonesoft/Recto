@@ -2450,20 +2450,23 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		};
 
 		// After /Rows rows a row that fails to decode ends the image, as /Rows says, unless /EndOfBlock true overrides
-		// /Rows (Table 11) and Table 11 recovery can apply: /EndOfLine true and K non-negative, and either an EOL
-		// introduced the row (an EOL starts a row, so what follows it is a row: recovered at the next EOL, or refused
-		// when none follows, D06 T05 section 34 round 1) or an EOL ahead of it to resynchronize at. Then the row is
-		// damage and the rows after it decoded. Without that, what follows /Rows rows is not rows (leftover code bits,
-		// padding), so the image ends there.
+		// /Rows (Table 11) and the row is a row: an EOL introduced it (an EOL starts a row whatever /EndOfLine says, since
+		// EOLs are always accepted, so its damage is recovered at the next EOL, or refused saying why, recovery off
+		// included: D06 T05 section 34 rounds 1 and 2), or Table 11 recovery can apply (/EndOfLine true, K non-negative)
+		// and an EOL lies ahead to resynchronize at. Then the row is damage and the rows after it decoded. Without that,
+		// what follows /Rows rows is not rows (leftover code bits, padding), so the image ends there.
 		const auto rows_done_without_recovery = [&](size_t from, bool after_eol) noexcept -> bool {
 			if (params.rows <= 0 || decoded_rows < static_cast<uint64_t>(params.rows)) {
 				return false;
 			}
-			if (!params.end_of_block || !params.end_of_line || params.k < 0) {
+			if (!params.end_of_block) {
 				return true;
 			}
 			if (after_eol) {
 				return false;
+			}
+			if (!params.end_of_line || params.k < 0) {
+				return true;
 			}
 			uint32_t zeros = 0;
 			for (size_t b = from; b < reader.total_bits(); ++b) {

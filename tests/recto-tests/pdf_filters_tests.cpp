@@ -7151,6 +7151,28 @@ TEST(PdfFilters, CcittRecoveryRoundOne)
 			EXPECT_EQ(decoded.error().code, ErrorCode::DamagedFormat);
 		}
 	}
+	// Round 2: the same after /Rows rows with /EndOfLine false, where recovery is off: the EOL-introduced damaged row is
+	// refused as recovery-off, not the end of a shorter image, in pure and mixed Group 3.
+	{
+		const std::string eol = "000000000001";
+		const std::string good = "1011" "000101" "1011";
+		for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+			const std::string tag = k > 0 ? "1" : "";
+			std::string bits = eol + tag + good + eol + tag + "00000001" + eol + tag + "101010";
+			for (int i = 0; i < 6; ++i) {
+				bits += eol + tag;
+			}
+			std::vector<uint8_t> bytes = pack_bitstring(bits);
+			if (k == 0) {
+				ASSERT_EQ(bytes, (std::vector<uint8_t>{0x00, 0x1B, 0x16, 0xC0, 0x04, 0x04, 0x00, 0x6A, 0x00, 0x10, 0x01, 0x00,
+									 0x10, 0x01, 0x00, 0x10, 0x01}));
+			}
+			auto decoded = decode(bytes, k, 1, 0, false, true, false);
+			ASSERT_FALSE(decoded.has_value()) << "K " << k;
+			EXPECT_EQ(decoded.error().code, ErrorCode::DamagedFormat);
+			EXPECT_EQ(decoded.error().refusal_reason, RefusalReason::DamagedRowRecoveryOff) << "K " << k;
+		}
+	}
 	// Finding 2: a patterned row, an empty row without its tag, a white row, then RTC.
 	{
 		auto decoded = decode({0x00, 0x1D, 0x8B, 0x60, 0x02, 0x00, 0x3A, 0x80, 0x06, 0x00, 0x30, 0x01, 0x80, 0x0C,

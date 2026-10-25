@@ -39,3 +39,45 @@ OVERALL: needs-attention
 - Fixed: source-defect 3 (`/EndOfLine false` with T.4-filled EOLs under `/EncodedByteAlign`): a first row that starts with an EOL marks the stream as one with EOLs (Table 11 accepts them whatever `/EndOfLine` says), and then no alignment precedes the EOL scan. The reproduction decodes to `FF 00 FF FF`.
 - Fixed: source-defect 4 (fill over 64 zeros rejected): `try_consume_eol` takes fill of any length, and recovery finds the next EOL with `find_eol`, one pass, instead of trying `try_consume_eol` at every bit (which the cap had kept linear). The reproduction decodes to `FF 00 FF FF`; a damaged row followed by a MiB of zeros is refused in 34 ms.
 - Mutants killed: each fix reverted (`after-eol-ignored`, `tag-boundary`, `eol-rows-declared-only`, `fill-cap`), and the per-bit scan without a cap, which hung the test (stopped after 527 CPU seconds against 34 ms for the real code).
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T22:39:38Z
+- Effort: medium
+- Lenses: adversarial
+- Lines: 28
+- Digest: aed402f9e660f320
+
+## adversarial: needs-attention
+
+1. **P1**, `src/pdf/filters.cpp:2462`: `/EndOfLine false` bypasses damaged-row refusal after `/Rows` is satisfied, despite `/EndOfBlock true`. The helper returns true before checking `after_eol`, so the caller silently returns truncated output instead of reporting recovery is off.
+
+   Reproduce by opening a PDF containing a 16 × 3 monochrome image with `/CCITTFaxDecode` and:
+
+   ```text
+   /DecodeParms <<
+     /K 0 /Columns 16 /Rows 1
+     /EndOfLine false /EndOfBlock true
+     /DamagedRowsBeforeError 0
+   >>
+   ```
+
+   Use stream bytes:
+
+   ```text
+   001b16c00404006a001001001001001001
+   ```
+
+   These encode a patterned row, an EOL-introduced damaged row, a white row and RTC. The candidate returns success with only `F0 0F`. Expected: `DamagedFormat` with `DamagedRowRecoveryOff`. EOLs remain accepted with `/EndOfLine false`; disabling recovery cannot make identifiable damage a successful end of image.
+
+   Remove the recovery-eligibility shortcut for EOL-introduced rows when `/EndOfBlock true`. Extend the existing recovery-off regression to reach damage after `/Rows` is satisfied.
+
+Evidence: candidate source inspection and bit-position tracing. The fixture was not executed natively; no files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Writer note: round 2 dispositions
+
+- Fixed: adversarial 1 (with `/EndOfLine false`, an EOL-introduced damaged row after `/Rows` rows ended the image as a success): under `/EndOfBlock true` a row an EOL introduced is a row whatever `/EndOfLine` says, so its damage goes to recovery, which refuses it as `DamagedRowRecoveryOff`; the eligibility check now comes after that. The reproduction (its bytes asserted) and its mixed Group 3 twin are refused with that reason in `PdfFilters.CcittRecoveryRoundOne`. Mutant killed: the recovery-off shortcut restored before the EOL check.
