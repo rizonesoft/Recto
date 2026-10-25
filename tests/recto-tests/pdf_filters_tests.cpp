@@ -3560,6 +3560,114 @@ TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
 	}
 }
 
+// D06 T05 §33 completion review, gaps 1 and 2: a raw three-component decode is charged what its path holds (the
+// planes at the sizes WIC gives them, or the marked copy at the stream's size plus its marker) only once the path is
+// chosen, so an exact fit decodes, and a refusal one byte short keeps the bytes needed and the ceiling through the
+// diagnostic ring.
+TEST(PdfFilters, DctRawPathsChargeWhatTheyHold)
+{
+	const auto jpeg = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-no-marker.jpg"));
+	PdfDict parms;
+	parms.set("ColorTransform", PdfValue(int64_t{0}));
+	const uint64_t samples = 16u * 8u * 3u;
+	const auto smallest_fit = [&] {
+		size_t lo = 1u;
+		size_t hi = 1u << 16u;
+		while (lo < hi) {
+			const size_t mid = lo + (hi - lo) / 2u;
+			if (decode_dct_image(jpeg, &parms, mid, DctOutput::Samples).has_value()) {
+				hi = mid;
+			} else {
+				lo = mid + 1u;
+			}
+		}
+		return uint64_t{lo};
+	};
+	for (const bool planar : {true, false}) {
+		SCOPED_TRACE(planar ? "planes" : "marked copy");
+		std::optional<detail::ScopedDctNoPlanar> no_planar;
+		if (!planar) {
+			no_planar.emplace();
+		}
+		// Three full-size planes (every component is sampled 1x1), or the stream and its 16-byte Adobe segment.
+		const uint64_t needed = samples + (planar ? 3u * 16u * 8u : jpeg.size() + 16u);
+		EXPECT_EQ(smallest_fit(), needed);
+		auto fits = decode_dct_image(jpeg, &parms, static_cast<size_t>(needed), DctOutput::Samples);
+		ASSERT_TRUE(fits.has_value()) << fits.error().message.view();
+		EXPECT_EQ(std::vector<int>(fits->pixels.begin(), fits->pixels.begin() + 3), (std::vector<int>{200, 90, 40}));
+		auto refused = decode_dct_image(jpeg, &parms, static_cast<size_t>(needed - 1u), DctOutput::Samples);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::DecompressionLimitExceeded);
+		EXPECT_EQ(refused.error().refusal_reason, RefusalReason::WorkingBytes);
+		EXPECT_EQ(refused.error().observed, std::optional<uint64_t>(needed));
+		EXPECT_EQ(refused.error().bound, std::optional<uint64_t>(needed - 1u));
+		clear_diagnostics();
+		record_diagnostic(refused.error());
+		const auto tail = diagnostics_tail(1);
+		ASSERT_EQ(tail.size(), 1u);
+		EXPECT_EQ(tail[0].refusal_reason, RefusalReason::WorkingBytes);
+		EXPECT_EQ(tail[0].observed, std::optional<uint64_t>(needed));
+		EXPECT_EQ(tail[0].bound, std::optional<uint64_t>(needed - 1u));
+	}
+	clear_diagnostics();
+}
+
+// D06 T05 §33 completion review, gap 3: the same 29 x 13, 4:2:0 image as a baseline and as a progressive JPEG (an
+// odd size, eight flat Y blocks, flat chroma that saturates a channel at both ends, scripts/build-corpus.py
+// make_dc_only_jpeg_420), checked over every pixel: as stored for /ColorTransform 0, through WIC's planes or the
+// marked copy, and converted by default within one level of the JFIF equations worked out here.
+TEST(PdfFilters, DctSubsampledAndProgressive)
+{
+	constexpr uint32_t kW = 29u;
+	constexpr uint32_t kH = 13u;
+	constexpr std::array<std::array<int, 4>, 2> kY = {{{40, 90, 140, 200}, {60, 120, 180, 230}}};
+	constexpr int kCb = 100;
+	constexpr int kCr = 170;
+	const auto clamp8 = [](double v) { return static_cast<int>(std::clamp(std::lround(v), 0L, 255L)); };
+	for (const std::string_view name :
+		{std::string_view("dct-3c-420-odd.jpg"), std::string_view("dct-3c-420-odd-progressive.jpg")}) {
+		SCOPED_TRACE(name);
+		const auto bytes = recto::test::read_file_bytes(recto::test::corpus_path(std::string("images/") + std::string(name)));
+		PdfDict raw_parms;
+		raw_parms.set("ColorTransform", PdfValue(int64_t{0}));
+		for (const bool planar : {true, false}) {
+			SCOPED_TRACE(planar ? "planes when WIC has them" : "marked copy");
+			std::optional<detail::ScopedDctNoPlanar> no_planar;
+			if (!planar) {
+				no_planar.emplace();
+			}
+			auto raw = decode_dct_image(bytes, &raw_parms, kMaxDecodedStreamBytes, DctOutput::Samples);
+			ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
+			ASSERT_EQ(raw->width, kW);
+			ASSERT_EQ(raw->height, kH);
+			ASSERT_EQ(raw->pixels.size(), size_t{kW} * kH * 3u);
+			size_t wrong = 0;
+			for (uint32_t y = 0; y < kH; ++y) {
+				for (uint32_t x = 0; x < kW; ++x) {
+					const uint8_t* got = raw->pixels.data() + (size_t{y} * kW + x) * 3u;
+					wrong += (got[0] != kY[y / 8u][x / 8u] || got[1] != kCb || got[2] != kCr) ? 1u : 0u;
+				}
+			}
+			EXPECT_EQ(wrong, 0u);
+		}
+		auto converted = decode_dct_image(bytes, nullptr, kMaxDecodedStreamBytes, DctOutput::Samples);
+		ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
+		size_t off = 0;
+		for (uint32_t y = 0; y < kH; ++y) {
+			for (uint32_t x = 0; x < kW; ++x) {
+				const double yy = kY[y / 8u][x / 8u];
+				const std::array<int, 3> want = {clamp8(yy + 1.402 * (kCr - 128)),
+					clamp8(yy - 0.344136 * (kCb - 128) - 0.714136 * (kCr - 128)), clamp8(yy + 1.772 * (kCb - 128))};
+				const uint8_t* got = converted->pixels.data() + (size_t{y} * kW + x) * 3u;
+				for (size_t c = 0; c < 3u; ++c) {
+					off += std::abs(int{got[c]} - want[c]) > 1 ? 1u : 0u;
+				}
+			}
+		}
+		EXPECT_EQ(off, 0u);
+	}
+}
+
 // D06 T05 §33 plan review, gap 2: the colour transform through the PDF pipeline (decode_stream), with /DecodeParms
 // direct and indirect, /ColorTransform direct and indirect, an Adobe marker over a conflicting /ColorTransform, and an
 // Adobe CMYK image's /Decode inversion applied once. Every expected colour is worked out here from the fixtures'
@@ -3644,11 +3752,16 @@ TEST(PdfFilters, DctColorTransformThroughPipeline)
 		RECTO_ASSERT_OK(out);
 		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
 	}
-	// An Adobe transform of 0 wins over /ColorTransform 1, direct or indirect.
+	// An Adobe transform of 0 wins over /ColorTransform 1, direct or indirect, and one of 1 over /ColorTransform 0.
 	for (const PdfValue& ct : {PdfValue(int64_t{1}), PdfValue(IndirectRef{52u, 0u})}) {
 		auto out = run("dct-3c-adobe-rgb.jpg", Parms::Direct, ct, false);
 		RECTO_ASSERT_OK(out);
 		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
+	}
+	for (const PdfValue& ct : {PdfValue(int64_t{0}), PdfValue(IndirectRef{51u, 0u})}) {
+		auto out = run("dct-3c-adobe-ycc.jpg", Parms::Direct, ct, false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_TRUE(close_to(px(*out, 3u, 0u), converted_rgb, 1));
 	}
 
 	// Adobe CMYK, shown as RGBA: the stored inks without /Decode, the inverted inks with the Adobe /Decode, each once.

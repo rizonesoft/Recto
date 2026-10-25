@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 602
+Sections: 98 | Checklist items: 603
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -101,7 +101,7 @@ Sections: 98 | Checklist items: 602
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
-| [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 6     |
+| [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 8     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 9     |
 | [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 7     |
@@ -157,7 +157,7 @@ Sections: 98 | Checklist items: 602
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1307
+Sections: 148 | Checklist items: 1308
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -303,7 +303,7 @@ Sections: 148 | Checklist items: 1307
 | [ ]    | D02 T01 §22 | Cold-launch path: Home interactive within the 400 ms budget                              | windows-host, display-session | 8     |
 | [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 4     |
 | [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 9     |
-| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 7     |
+| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 8     |
 | [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks           | windows-host, display-session | 14    |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 80/846 verified sections, 39 ready to run now.
 
-Checklist: 500/6204 items completed (includes Commit items).
+Checklist: 501/6206 items completed (includes Commit items).

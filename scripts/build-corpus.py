@@ -543,9 +543,79 @@ def make_dc_only_jpeg(
     return out + segment(0xDB, dqt) + segment(0xC0, sof0) + segment(0xC4, dht) + segment(0xDA, sos) + bytes(scan) + b"\xFF\xD9"
 
 
+def make_dc_only_jpeg_420(
+    width: int, height: int, y_blocks: list[list[int]], cb: int, cr: int, progressive: bool
+) -> bytes:
+    """A JPEG of `width` x `height` pixels, three components with Y at 2x2 sampling and Cb, Cr at 1x1 (4:2:0), a JFIF
+    marker and no Adobe marker, whose every block is flat: Y block (bx, by) is the sample `y_blocks[by][bx]`, and
+    every chroma block is `cb` and `cr`, so upsampling cannot blur what a decoder returns. The size must make the Y
+    block grid exactly two blocks per MCU each way (so no MCU pads a component). Baseline (SOF0, one interleaved scan),
+    or progressive (SOF2: an interleaved DC scan, then one AC scan per component holding only end-of-band codes)."""
+    mcus_x, mcus_y = -(-width // 16), -(-height // 16)
+    if len(y_blocks) != 2 * mcus_y or any(len(row) != 2 * mcus_x for row in y_blocks):
+        raise ValueError("y_blocks must be two Y blocks per MCU each way")
+    if -(-width // 8) != 2 * mcus_x or -(-height // 8) != 2 * mcus_y:
+        raise ValueError("the size leaves a padded Y block column or row")
+    dc_codes = _canonical_codes(_DC_BITS, _DC_VALUES)
+
+    def stuffed(bits: list[str]) -> bytes:
+        stream = "".join(bits)
+        stream += "1" * (-len(stream) % 8)
+        out = bytearray()
+        for i in range(0, len(stream), 8):
+            byte = int(stream[i : i + 8], 2)
+            out.append(byte)
+            if byte == 0xFF:
+                out.append(0x00)
+        return bytes(out)
+
+    def dc_bits(bits: list[str], value: int, previous: list[int], c: int) -> None:
+        dc = 8 * (value - 128)
+        diff = dc - previous[c]
+        previous[c] = dc
+        size = abs(diff).bit_length()
+        bits.append(dc_codes[size])
+        if size:
+            bits.append(format(diff if diff > 0 else diff + (1 << size) - 1, f"0{size}b"))
+
+    def segment(marker: int, payload: bytes) -> bytes:
+        return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+    # The interleaved scan: per MCU, its four Y blocks in raster order, then Cb, then Cr.
+    previous = [0, 0, 0]
+    interleaved: list[str] = []
+    for my in range(mcus_y):
+        for mx in range(mcus_x):
+            for by, bx in ((0, 0), (0, 1), (1, 0), (1, 1)):
+                dc_bits(interleaved, y_blocks[2 * my + by][2 * mx + bx], previous, 0)
+                if not progressive:
+                    interleaved.append("0")  # AC: end of block
+            for c, value in ((1, cb), (2, cr)):
+                dc_bits(interleaved, value, previous, c)
+                if not progressive:
+                    interleaved.append("0")
+    dqt = bytes([0] + [1] * 64)
+    sof = struct.pack(">BHHB", 8, height, width, 3) + bytes([1, 0x22, 0, 2, 0x11, 0, 3, 0x11, 0])
+    dht = bytes([0x00]) + bytes(_DC_BITS) + bytes(_DC_VALUES)
+    dht += bytes([0x10]) + bytes([1] + [0] * 15) + bytes([0x00])
+    out = b"\xFF\xD8" + segment(0xE0, b"JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00")
+    out += segment(0xDB, dqt) + segment(0xC2 if progressive else 0xC0, sof) + segment(0xC4, dht)
+    se = 0 if progressive else 63
+    out += segment(0xDA, bytes([3, 1, 0x00, 2, 0x00, 3, 0x00, 0, se, 0])) + stuffed(interleaved)
+    if progressive:
+        # One AC scan per component (bands 1 to 63), each block an end-of-band code: the component's blocks in raster
+        # order, which here are its MCU-covered blocks (T.81 G.1.1.1.1, A.2.2).
+        for c, blocks in ((1, 4 * mcus_x * mcus_y), (2, mcus_x * mcus_y), (3, mcus_x * mcus_y)):
+            out += segment(0xDA, bytes([1, c, 0x00, 1, 63, 0])) + stuffed(["0"] * blocks)
+    return out + b"\xFF\xD9"
+
+
 # The colour fixtures of D06 T05 section 33: two flat blocks per component with distinct, non-neutral values.
 DCT_THREE = [[200, 30], [90, 160], [40, 220]]
 DCT_FOUR = [[20, 230], [200, 10], [120, 90], [60, 180]]
+# The 4:2:0 fixtures (29 x 13 pixels): eight Y blocks from dark to light, chroma that saturates a channel at each end.
+DCT_420_Y = [[40, 90, 140, 200], [60, 120, 180, 230]]
+DCT_420_CB, DCT_420_CR = 100, 170
 
 
 def make_ccitt_group4_16x16() -> bytes:
@@ -2810,6 +2880,65 @@ def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, 
         raise ValueError(f"{rel_path}: JPEG header cut short ({exc})") from exc
 
 
+def validate_jpeg_frames(
+    rel_path: str, data: bytes, sof_marker: int, width: int, height: int, sampling: tuple[int, ...], scans: int
+) -> None:
+    """A JPEG read marker by marker across all its scans: SOI, length-prefixed segments, one frame header `sof_marker`
+    (8-bit, width x height, one component per `sampling` byte, in order), `scans` SOS segments each followed by
+    entropy-coded data (0xFF only as a stuffed 0xFF 0x00, no restart markers), then EOI and nothing after. What the
+    scans decode to is checked by the C++ tests and was checked against libjpeg when the fixtures were made."""
+    try:
+        _validate_jpeg_frames(rel_path, data, sof_marker, width, height, sampling, scans)
+    except (struct.error, IndexError) as exc:
+        raise ValueError(f"{rel_path}: JPEG header cut short ({exc})") from exc
+
+
+def _validate_jpeg_frames(
+    rel_path: str, data: bytes, sof_marker: int, width: int, height: int, sampling: tuple[int, ...], scans: int
+) -> None:
+    if not data.startswith(b"\xFF\xD8"):
+        raise ValueError(f"{rel_path}: JPEG does not start with SOI")
+    pos, frame, seen_scans = 2, False, 0
+    while True:
+        if pos + 2 > len(data) or data[pos] != 0xFF:
+            raise ValueError(f"{rel_path}: JPEG marker expected at byte {pos}")
+        marker = data[pos + 1]
+        if marker == 0xD9:
+            if pos + 2 != len(data):
+                raise ValueError(f"{rel_path}: JPEG has bytes after EOI")
+            break
+        (length,) = struct.unpack(">H", data[pos + 2 : pos + 4])
+        body = data[pos + 4 : pos + 2 + length]
+        if length < 2 or len(body) != length - 2:
+            raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} length {length} does not fit")
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            p, y, x, n = struct.unpack(">BHHB", body[:6])
+            factors = tuple(body[7 + 3 * i] for i in range(n))
+            if marker != sof_marker or frame or (p, y, x) != (8, height, width) or factors != sampling:
+                raise ValueError(f"{rel_path}: JPEG frame is not {sof_marker:#04x}, 8-bit {width}x{height}, {sampling}")
+            if len(body) != 6 + 3 * n:
+                raise ValueError(f"{rel_path}: JPEG frame header length does not match its components")
+            frame = True
+        pos += 2 + length
+        if marker == 0xDA:
+            if not frame:
+                raise ValueError(f"{rel_path}: JPEG scan before its frame header")
+            seen_scans += 1
+            while True:
+                if pos + 1 >= len(data):
+                    raise ValueError(f"{rel_path}: JPEG entropy-coded data runs past the end")
+                if data[pos] != 0xFF:
+                    pos += 1
+                elif data[pos + 1] == 0x00:
+                    pos += 2
+                elif 0xD0 <= data[pos + 1] <= 0xD7:
+                    raise ValueError(f"{rel_path}: JPEG restart marker where none is written")
+                else:
+                    break
+    if seen_scans != scans:
+        raise ValueError(f"{rel_path}: JPEG has {seen_scans} scans, not {scans}")
+
+
 def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, components: int) -> None:
     if not data.startswith(b"\xFF\xD8"):
         raise ValueError(f"{rel_path}: JPEG does not start with SOI")
@@ -4228,6 +4357,11 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_flate_fixture(rel_path, data)
     elif rel_path.startswith("crypto/"):
         validate_crypto_fixture(rel_path, data)
+    elif rel_path.startswith("images/dct-3c-420-") and rel_path.endswith(".jpg"):
+        validate_jpeg_frames(
+            rel_path, data, 0xC2 if "progressive" in rel_path else 0xC0, 29, 13, (0x22, 0x11, 0x11),
+            4 if "progressive" in rel_path else 1,
+        )
     elif rel_path.startswith("images/dct-") and rel_path.endswith(".jpg"):
         validate_jpeg_baseline(rel_path, data, 16, 8, 4 if "-4c-" in rel_path else 3)
     else:
@@ -4852,6 +4986,9 @@ CORPUS_PURPOSES: dict[str, str] = {
     "images/dct-4c-adobe-ycck.jpg": "Baseline JPEG, 4 components, the same values, Adobe APP14 transform 2 (YCCK)",
     "images/dct-3c-jfif.jpg": "Baseline JPEG, 3 components, the same blocks as dct-3c-no-marker.jpg, a JFIF APP0 marker and no Adobe marker",
     "images/dct-4c-no-marker.jpg": "Baseline JPEG, 4 components, the same values as dct-4c-adobe-cmyk.jpg, no Adobe marker (/ColorTransform decides)",
+    "images/dct-3c-adobe-ycc.jpg": "Baseline JPEG, 3 components, the same blocks as dct-3c-no-marker.jpg, Adobe APP14 transform 1 (YCbCr)",
+    "images/dct-3c-420-odd.jpg": "Baseline JPEG, 29x13, 4:2:0, eight flat Y blocks and flat chroma, JFIF marker",
+    "images/dct-3c-420-odd-progressive.jpg": "Progressive JPEG (SOF2), the same image as dct-3c-420-odd.jpg: a DC scan and three AC scans",
     "render/simple-1p.pdf": "Single-page PDF 1.7 with Helvetica text and stroked/filled vector rectangle",
     "render/compressed-xref-2p.pdf": "Two-page PDF 1.7 using Type 2 ObjStm and Flate-compressed /XRef stream",
     "render/incremental-2rev.pdf": "Two-revision incremental PDF with /Prev xref chain overriding page 1 content",
@@ -4954,6 +5091,9 @@ def expected_corpus_files() -> dict[str, bytes]:
         "images/dct-4c-adobe-ycck.jpg": make_dc_only_jpeg(2, DCT_FOUR, 2),
     "images/dct-3c-jfif.jpg": make_dc_only_jpeg(2, DCT_THREE, None, jfif=True),
     "images/dct-4c-no-marker.jpg": make_dc_only_jpeg(2, DCT_FOUR, None),
+    "images/dct-3c-adobe-ycc.jpg": make_dc_only_jpeg(2, DCT_THREE, 1),
+    "images/dct-3c-420-odd.jpg": make_dc_only_jpeg_420(29, 13, DCT_420_Y, DCT_420_CB, DCT_420_CR, False),
+    "images/dct-3c-420-odd-progressive.jpg": make_dc_only_jpeg_420(29, 13, DCT_420_Y, DCT_420_CB, DCT_420_CR, True),
         "fonts/truetype-full-short-loca.ttf": build_truetype_font(long_loca=False, stripped=False),
         "fonts/truetype-full-long-loca.ttf": build_truetype_font(long_loca=True, stripped=False),
         "fonts/truetype-subset-short-loca.ttf": build_truetype_font(long_loca=False, stripped=True, num_hmetrics=5),

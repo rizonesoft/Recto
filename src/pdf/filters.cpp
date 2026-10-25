@@ -6938,19 +6938,24 @@ uintptr_t current_thread_wic_factory_id() noexcept
 
 // Whether `w` x `h` pixels at `bpp` bytes fit `limit`, exactly (an exact fit decodes); a refusal carries the bytes
 // needed and the ceiling as numbers the diagnostic ring keeps (D01 T02 section 23).
-[[nodiscard]] PdfResult<void> dct_fits(uint64_t w, uint64_t h, uint64_t bpp, size_t limit) noexcept
+[[nodiscard]] PdfError dct_refusal(uint64_t needed, size_t limit) noexcept
 {
-	if (w == 0u || (w <= limit / bpp && h <= (limit / bpp) / w)) {
-		return {};
-	}
 	PdfError refusal = make_filter_error(
 		ErrorCode::DecompressionLimitExceeded,
 		DiagnosticId::DecompressionLimitExceeded,
 		"DCTDecode decoded image buffers exceed the decoded-bytes ceiling");
 	refusal.refusal_reason = RefusalReason::WorkingBytes;
-	refusal.observed = w * h * bpp; // JPEG dimensions are 16-bit, so this cannot wrap
+	refusal.observed = needed;
 	refusal.bound = static_cast<uint64_t>(limit);
 	return refusal;
+}
+
+[[nodiscard]] PdfResult<void> dct_fits(uint64_t w, uint64_t h, uint64_t bpp, size_t limit) noexcept
+{
+	if (w == 0u || (w <= limit / bpp && h <= (limit / bpp) / w)) {
+		return {};
+	}
+	return dct_refusal(w * h * bpp, limit); // JPEG dimensions are 16-bit, so this cannot wrap
 }
 
 namespace {
@@ -6968,8 +6973,10 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 
 // Reads a three-component JPEG's planes as stored, before any colour conversion, through WIC's planar transform
 // (IWICPlanarBitmapSourceTransform, Windows 8.1 and later), into `samples` interleaved, a subsampled plane repeated
-// over the pixels it covers. False when WIC offers no planar transform for this image.
-[[nodiscard]] PdfResult<bool> read_jpeg_planes(IWICBitmapFrameDecode* frame, UINT w, UINT h, std::span<uint8_t> samples)
+// over the pixels it covers. False when WIC offers no planar transform for this image. The planes are charged at the
+// sizes WIC gives them, beside the `held` bytes already charged.
+[[nodiscard]] PdfResult<bool> read_jpeg_planes(
+	IWICBitmapFrameDecode* frame, UINT w, UINT h, std::span<uint8_t> samples, uint64_t held, size_t limit)
 {
 	ComPtr<IWICPlanarBitmapSourceTransform> planar;
 	if (detail::g_dct_no_planar || FAILED(frame->QueryInterface(IID_PPV_ARGS(&planar))) || !planar) {
@@ -6985,12 +6992,19 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 		!supported || pw != w || ph != h) {
 		return false;
 	}
-	std::array<std::vector<uint8_t>, 3> planes;
-	WICBitmapPlane wic_planes[3]{};
+	uint64_t plane_bytes = 0;
 	for (size_t i = 0; i < 3u; ++i) {
 		if (desc[i].Width == 0u || desc[i].Height == 0u || desc[i].Width > w || desc[i].Height > h) {
 			return false;
 		}
+		plane_bytes += static_cast<uint64_t>(desc[i].Width) * desc[i].Height;
+	}
+	if (plane_bytes > limit - held) {
+		return dct_refusal(held + plane_bytes, limit);
+	}
+	std::array<std::vector<uint8_t>, 3> planes;
+	WICBitmapPlane wic_planes[3]{};
+	for (size_t i = 0; i < 3u; ++i) {
 		planes[i].resize(static_cast<size_t>(desc[i].Width) * desc[i].Height);
 		wic_planes[i] = WICBitmapPlane{desc[i].Format, planes[i].data(), desc[i].Width, static_cast<UINT>(planes[i].size())};
 	}
@@ -7149,8 +7163,8 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			}
 		}
 		// Three components the stream says were not transformed, where WIC transforms: the samples are read as the
-		// codestream's planes (IWICPlanarBitmapSourceTransform), three more bytes per pixel at the peak, or where WIC
-		// has no planar transform for the image, decoded from a copy of the stream marked as not transformed.
+		// codestream's planes (IWICPlanarBitmapSourceTransform), or where WIC has no planar transform for the image,
+		// decoded from a copy of the stream marked as not transformed; each is charged when its path is chosen.
 		const bool raw_three = !is_cmyk && !is_gray && transform == 0u && !hdr.has_adobe_app14;
 
 		// The buffers this decode builds. A stream filter returns the samples, or for CMYK one 8-bit layout: RGBA unless
@@ -7163,8 +7177,9 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// One 8-bit layout alone is one buffer: the samples are decoded into its tail and expanded in place, front to
 		// back, which never overwrites a sample not yet read. Otherwise the samples are their own buffer.
 		const bool single_layout = !keep_samples;
-		RECTO_PDF_RETURN_IF_ERROR(dct_fits(
-			w64, h64, dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes) + (raw_three ? 3ULL : 0ULL), effective_limit));
+		const uint64_t peak_bpp = dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes);
+		RECTO_PDF_RETURN_IF_ERROR(dct_fits(w64, h64, peak_bpp, effective_limit));
+		const uint64_t held = w64 * h64 * peak_bpp; // at most effective_limit, just checked
 		std::vector<uint8_t>& store = !single_layout ? result.pixels : (want == DctOutput::Rgba ? result.rgba_pixels : result.bgra_pixels);
 		store.resize(single_layout ? pixel_count * 4u : pixel_count * static_cast<size_t>(comp_bytes));
 		const size_t sample_bytes = pixel_count * static_cast<size_t>(comp_bytes);
@@ -7270,7 +7285,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		bool bgr_order = false;
 		bool raw_read = false;
 		if (raw_three) {
-			RECTO_PDF_TRY(raw_read, read_jpeg_planes(frame.Get(), w, h, samples));
+			RECTO_PDF_TRY(raw_read, read_jpeg_planes(frame.Get(), w, h, samples, held, effective_limit));
 		}
 		IWICBitmapFrameDecode* source = frame.Get();
 		WICPixelFormatGUID source_format = pixel_format;
@@ -7283,10 +7298,9 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			// the Adobe APP14 transform flag, so the stream's "not transformed" (/ColorTransform 0) is given to it in
 			// that flag: a copy marked with an APP14 transform of 0 decodes to the samples as stored, exactly. The copy
 			// is charged beside the buffers already held (the planes it replaces were never allocated).
-			const uint64_t held = w64 * h64 * dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes);
-			if (static_cast<uint64_t>(input.size()) + kAdobeUntransformed.size() > effective_limit - held) {
-				return make_filter_error(ErrorCode::DecompressionLimitExceeded, DiagnosticId::DecompressionLimitExceeded,
-					"DCTDecode untransformed copy exceeds ceiling");
+			const uint64_t copy_bytes = static_cast<uint64_t>(input.size()) + kAdobeUntransformed.size();
+			if (copy_bytes > effective_limit - held) {
+				return dct_refusal(held + copy_bytes, effective_limit);
 			}
 			marked = jpeg_marked_untransformed(input);
 			RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, marked, marked_stream, marked_decoder, marked_frame));
