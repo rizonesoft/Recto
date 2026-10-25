@@ -215,6 +215,8 @@ Build the repeatable benchmark harness (`tests/perf/run_perf.ps1` and `tests/rec
 4. **Zoom step (`Ctrl+wheel`):** target `< 16 ms` scaled bitmap preview in the same frame and `< 150 ms` sharp viewport tile swap.
 5. **Working set on 500-page mixed PDF:** target `< 600 MB` working set (`GetProcessMemoryInfo` `WorkingSetSize` under the shipping default `512 MB` tile cache cap after scrolling 20 pages).
 
+`D01 T02 §39` (Flate compressor at zlib-ng parity) waits on this harness. -> XREF: D01 T02 §39
+
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** no

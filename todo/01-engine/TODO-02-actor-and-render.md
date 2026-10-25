@@ -96,7 +96,7 @@ track: M1
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
 | 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [x] |
 | 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
-| 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37 | [ ] |
+| 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37, D06 T01 §7 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1138,7 +1138,9 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only disc
 
 Filed 2026-10-25 from `§37` by owner decision: the parity `§37` was filed for, which tuning did not reach. On this host (zlib-ng 2.2.4, level 6, median of seven) zlib-ng compresses content at 55.0 MB/s to 363,179 bytes, image rows at 55.6 MB/s to 48,947 and collisions at 30.3 MB/s to 61,593; `§37`'s `Default` reaches 47, 53 and 20 MB/s at 360,736, 48,758 and 62,161 bytes. Its measurements showed lazy matching costs about 45% of `Default`'s time, and that even 8 links per position leave content near 52 MB/s, so the remaining gap is the parser and the per-position work, not the search depth. -> XREF: D01 T02 §37
 
-**Phase:** 1
+Scheduled by the same decision after the v1 engine (Phase 6, M6 Ship), once `D06 T01 §7`'s benchmark harness can hold the gain per machine; nothing before it waits on parity, since the writers consume `flate_compress` through its unchanged API. -> XREF: D06 T01 §7
+
+**Phase:** 6
 **Needs:** windows-host
 **Surface:** no
 **Freeze check:** Verify that `flate_compress` stays a pure function of its input and level with the same API, output format and bounds as `§34`.
