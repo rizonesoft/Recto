@@ -6,8 +6,9 @@ Usage:
 
 Requires Python's zlib to be zlib-ng 2.2 or later (`zlib.ZLIBNG_VERSION`), the backend the targets were measured
 against, and refuses (exit 2) without it. Times zlib-ng at level 6 on the three samples in `tests/corpus/flate/`
-(median of seven), runs `PdfFilters.FlateCompressSpeed` from the given test executable, which prints each level's
-median and size per sample, and compares `Default`:
+(median of seven), runs `PdfFilters.FlateCompressSpeed` from the given test executable with `RECTO_CORPUS_DIR` set to
+the same corpus, which prints each level's median and size per sample, and compares `Default`, refusing a result
+whose input size is not the size of the file zlib-ng was timed on:
 
 - by default (section 37), `Default` is no larger than zlib-ng on the content and image samples, and its speed is at
   least 0.62, 0.60 and 0.54 of zlib-ng's on content, image rows and collisions: about 10% under the lowest of five
@@ -21,6 +22,7 @@ not printed), 2 when the comparison cannot be made (no zlib-ng, no executable).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import statistics
 import subprocess
@@ -37,7 +39,7 @@ MIN_ZLIBNG = (2, 2)
 RUNS = 7
 LINE = re.compile(
     r"^flate_compress (?P<level>\w+)\s+(?P<sample>\S+)\s+median\s+(?P<median>[\d.]+) MB/s, "
-    r"slowest\s+(?P<slowest>[\d.]+) MB/s, (?P<bytes>\d+) bytes$")
+    r"slowest\s+(?P<slowest>[\d.]+) MB/s, (?P<input>\d+) -> (?P<bytes>\d+) bytes$")
 
 
 def zlibng_version() -> tuple[int, ...] | None:
@@ -59,19 +61,21 @@ def time_zlib(data: bytes) -> tuple[float, int]:
     return len(data) / 1e6 / statistics.median(seconds), size
 
 
-def run_recto(exe: Path) -> tuple[int, str]:
+def run_recto(exe: Path, corpus: Path) -> tuple[int, str]:
+    """Run the speed test on the corpus this script times zlib-ng on (the test reads `RECTO_CORPUS_DIR`)."""
+    env = dict(os.environ, RECTO_CORPUS_DIR=str(corpus.resolve()))
     result = subprocess.run([str(exe), "--gtest_filter=PdfFilters.FlateCompressSpeed"], cwd=ROOT,
-                            capture_output=True, text=True, timeout=600)
+                            capture_output=True, text=True, timeout=600, env=env)
     return result.returncode, result.stdout
 
 
-def recto_results(output: str) -> dict[str, tuple[float, int]]:
-    """`Default`'s median MB/s and size per sample from the speed test's lines."""
+def recto_results(output: str) -> dict[str, tuple[float, int, int]]:
+    """`Default`'s median MB/s, input size and output size per sample from the speed test's lines."""
     found = {}
     for line in output.splitlines():
         m = LINE.match(line.strip())
         if m and m["level"] == "Default":
-            found[m["sample"]] = (float(m["median"]), int(m["bytes"]))
+            found[m["sample"]] = (float(m["median"]), int(m["input"]), int(m["bytes"]))
     return found
 
 
@@ -92,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"flate-bench: zlib-ng {zlib.ZLIBNG_VERSION} at level 6, against {args.exe}")
 
-    code, output = run_recto(args.exe)
+    code, output = run_recto(args.exe, args.corpus)
     if code != 0 or "[  SKIPPED ]" in output or "[  PASSED  ] 1 test" not in output:
         print(f"flate-bench: PdfFilters.FlateCompressSpeed did not pass and run (exit {code})")
         return 1
@@ -104,8 +108,11 @@ def main(argv: list[str] | None = None) -> int:
             failures.append(f"{sample}: no Default result from the test")
             continue
         data = (args.corpus / sample).read_bytes()
+        speed, input_size, size = recto[sample]
+        if input_size != len(data):
+            failures.append(f"{sample}: the test compressed {input_size} bytes, not this corpus's {len(data)}")
+            continue
         ng_speed, ng_size = time_zlib(data)
-        speed, size = recto[sample]
         floor = 1.0 if args.parity else SPEED_FLOORS[sample]
         ratio = speed / ng_speed
         print(f"  {sample:26} Recto {speed:6.1f} MB/s {size:8} bytes   zlib-ng {ng_speed:6.1f} MB/s {ng_size:8} bytes"

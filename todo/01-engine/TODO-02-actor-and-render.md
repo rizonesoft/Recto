@@ -1094,6 +1094,8 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 
 Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`). -> XREF: D01 T02 §34
 
+Its completion review filed the end-to-end comparison of save time and size with the competitors. -> XREF: D06 T01 §10
+
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no

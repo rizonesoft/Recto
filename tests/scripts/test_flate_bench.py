@@ -16,8 +16,11 @@ SPEC.loader.exec_module(bench)
 PASSED = "[  PASSED  ] 1 test.\n"
 
 
-def line(sample: str, median: float, size: int, level: str = "Default") -> str:
-    return f"flate_compress {level:<7} {sample:<26} median {median:6.1f} MB/s, slowest {median - 1:6.1f} MB/s, {size} bytes\n"
+def line(sample: str, median: float, size: int, level: str = "Default", input_size: int | None = None) -> str:
+    if input_size is None:
+        input_size = (ROOT / "tests" / "corpus" / sample).stat().st_size
+    return (f"flate_compress {level:<7} {sample:<26} median {median:6.1f} MB/s, slowest {median - 1:6.1f} MB/s, "
+            f"{input_size} -> {size} bytes\n")
 
 
 # zlib-ng's measurements the cases compare against: content, image rows, collisions.
@@ -47,10 +50,12 @@ class FlateBench(unittest.TestCase):
         self.addCleanup(self.time.stop)
 
     def run_with(self, output: str, code: int = 0, *extra: str) -> tuple[int, str]:
-        with mock.patch.object(bench, "run_recto", return_value=(code, output)):
+        with mock.patch.object(bench, "run_recto", return_value=(code, output)) as run:
             buf = io.StringIO()
             with redirect_stdout(buf):
                 result = bench.main(["--exe", str(self.exe), *extra])
+        if run.called:
+            self.assertEqual(run.call_args.args[1], ROOT / "tests" / "corpus")
         return result, buf.getvalue()
 
     def test_passes_at_the_measured_ratios(self):
@@ -87,6 +92,21 @@ class FlateBench(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertIn(why, out)
 
+    def test_a_result_on_other_input_fails(self):
+        # The test executable read another corpus than the one zlib-ng was timed on: the comparison is refused.
+        other = GOOD.replace(line("flate/image-rows.bin", 53.3, 48_758), line("flate/image-rows.bin", 53.3, 48_758, input_size=1))
+        code, out = self.run_with(other)
+        self.assertEqual(code, 1)
+        self.assertIn("flate/image-rows.bin: the test compressed 1 bytes", out)
+
+    def test_the_speed_test_reads_the_timed_corpus(self):
+        # run_recto hands the executable the corpus this script reads, through the variable the tests honour.
+        corpus = Path(self.tmp.name) / "corpus"
+        with mock.patch.object(bench.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="")
+            bench.run_recto(self.exe, corpus)
+        self.assertEqual(run.call_args.kwargs["env"]["RECTO_CORPUS_DIR"], str(corpus.resolve()))
+
     def test_collisions_size_is_held_only_at_parity(self):
         # Collisions are larger than zlib-ng's at section 37 and must not be at section 39's parity, nor slower.
         self.assertEqual(self.run_with(GOOD)[0], 0)
@@ -97,7 +117,8 @@ class FlateBench(unittest.TestCase):
 
     def test_parses_the_speed_test_lines(self):
         results = bench.recto_results(GOOD)
-        self.assertEqual(results["flate/content-stream.txt"], (47.4, 360_736))
+        size = (ROOT / "tests" / "corpus" / "flate" / "content-stream.txt").stat().st_size
+        self.assertEqual(results["flate/content-stream.txt"], (47.4, size, 360_736))
         self.assertEqual(len(results), 3)  # Fast is not Default
 
 

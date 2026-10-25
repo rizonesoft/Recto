@@ -713,11 +713,12 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 73 | Checklist items: 532
+Sections: 74 | Checklist items: 536
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
 | [ ]    | D06 T01 §9  | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF                 | windows-host, attended, third-party | 4     |
+| [ ]    | D06 T01 §10 | Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF            | windows-host, attended, third-party | 4     |
 | [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                        | 7     |
 | [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host                        | 7     |
 | [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                | 6     |
@@ -913,6 +914,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 74/844 verified sections, 36 ready to run now.
+Progress: 74/845 verified sections, 36 ready to run now.
 
-Checklist: 461/6171 items completed (includes Commit items).
+Checklist: 461/6175 items completed (includes Commit items).

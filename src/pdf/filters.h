@@ -326,10 +326,11 @@ private:
 
 } // namespace detail
 
-// How hard `flate_compress` searches for matches (D01 T02 section 34). Per position it follows at most 8, 32 or
-// 1,024 hash-chain links (a quarter of them once the match it holds is 8 or 32 bytes, for `Default` and `Best`),
+// How hard `flate_compress` searches for matches (D01 T02 sections 34 and 37). Per position it follows at most 8, 64
+// or 1,024 hash-chain links (a quarter of them once the match it holds is 8 or 32 bytes, for `Default` and `Best`),
 // stops at a match of 16, 128 or 258 bytes, and tries the next position for a longer match (lazy matching) never,
-// while the current match is under 32 bytes, or always up to 258.
+// while the current match is under 6 bytes, or always up to 258. `Fast` and `Best` also look up length-3 matches in
+// a one-slot table; `Default` does not.
 enum class FlateLevel : uint8_t {
 	Fast,
 	Default,

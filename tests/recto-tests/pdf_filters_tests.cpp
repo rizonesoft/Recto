@@ -7153,9 +7153,10 @@ TEST(PdfFilters, FlateCompressSpeed)
 		for (const FlateLevel level : kLevels) {
 			const auto [median, slowest, bytes] = measure(data, level);
 			const char* level_name = level == FlateLevel::Fast ? "Fast" : level == FlateLevel::Default ? "Default" : "Best";
-			// One line per level and sample, which scripts/flate-bench.py reads: level, sample, median, slowest, bytes.
-			std::printf("flate_compress %-7s %-26s median %6.1f MB/s, slowest %6.1f MB/s, %zu bytes\n", level_name,
-				std::string(name).c_str(), median, slowest, bytes);
+			// One line per level and sample, which scripts/flate-bench.py reads: level, sample, median, slowest, and the
+			// input and output sizes (the script refuses a result on other input than it timed zlib-ng on).
+			std::printf("flate_compress %-7s %-26s median %6.1f MB/s, slowest %6.1f MB/s, %zu -> %zu bytes\n", level_name,
+				std::string(name).c_str(), median, slowest, data.size(), bytes);
 			RecordProperty(std::string("mb_per_s:") + level_name + ":" + std::string(name), std::to_string(median));
 			if (name == "flate/content-stream.txt" && level == FlateLevel::Default) {
 				mb_per_s = median;

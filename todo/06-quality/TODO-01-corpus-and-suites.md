@@ -56,6 +56,7 @@ track: M1
 | 7 | §7 | Automated performance targets harness (`tests/perf/` and `recto-cli bench`) | §2, D01 T03 §3, D01 T03 §7, D02 T01 §7, D02 T01 §11, D02 T02 §6, D02 T03 §6, D02 T03 §7, D02 T03 §8, D02 T03 §10, D02 T04 §7, D02 T04 §8, D00 T01 §5, D10 T01 §2, D10 T01 §5 | [ ] |
 | 8 | §8 | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`) | §7 | [ ] |
 | 9 | §9 | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF | D06 T05 §34 | [ ] |
+| 10 | §10 | Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF | §7, D01 T02 §5, D04 T02 §2 | [ ] |
 
 ## 1. Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)
 
@@ -275,6 +276,25 @@ The completion review of `D06 T05 §34` (`docs/reviews/06-quality/D06-T05-s34.md
 - [ ] Commit: `corpus: damaged-fax fixtures compared with four readers`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Corpus.DamagedFaxMatchesTable11` passes and `docs/benchmarks/damaged-fax.md` holds the comparison table.
+
+## 10. Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF
+
+The completion review of `D01 T02 §37` (`docs/reviews/01-engine/D01-T02-s37.md`, excellence 3) found that Recto's compressor is measured only against zlib-ng on stream samples: nothing shows what a user saving the same document gets from the competitors, in time or in bytes. Product ambition (`AGENTS.md`) asks for measured claims; this section measures them end to end, through the save paths. -> XREF: D01 T02 §37
+
+**Phase:** 6
+**Needs:** windows-host, attended, third-party
+**Surface:** no
+
+**Build order:**
+
+1. Measure Recto's saves on the `§7` benchmark documents and record each competitor's beside them. Done when: the table in `docs/benchmarks/save.md` has a row per document, operation and product.
+
+- [ ] Add `recto-cli bench save` timing an incremental save (`D01 T02 §5`) after one annotation edit and a full rewrite (`D04 T02 §2`) of `perf-100p-text.pdf`, `perf-500p-mixed.pdf` and three real-world corpus files, reporting the median and slowest of seven runs, the output size, and a strict read-back (the saved file reopens and renders the same pages). Done when: it prints one JSON row per document and operation, and a save that fails to read back exits non-zero.
+- [ ] Third party: perform the same edit and save, and a full "Save As" with lossless settings (no image recompression, no font subsetting change), in recorded versions of Acrobat Pro, Foxit PDF Editor, PDFelement and UPDF, and record time (median of five, timed from the command to the file closing), output size and whether the file reopens, in `docs/benchmarks/save.md` beside Recto's rows. Done when: every document has a row per product with the version and date.
+- [ ] Where Recto is slower or larger than the best competitor on any row, file the owning section through `add-todo` with the measured gap as its target. Done when: every such row names its owner in the table.
+- [ ] Commit: `bench: save time and size compared with four editors`
+
+**Test checkpoint:** `recto-cli bench save --json` passes on the five documents with every read-back true, and `docs/benchmarks/save.md` holds the comparison table.
 
 ## Verification
 
