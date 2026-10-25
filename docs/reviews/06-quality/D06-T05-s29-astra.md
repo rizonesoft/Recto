@@ -72,3 +72,27 @@ Source-traced reproduction, not executed. No files were modified.
 
 HIGHEST: P1
 OVERALL: needs-attention
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T16:18:00Z
+- Effort: low
+- Lenses: adversarial
+- Lines: 14
+- Digest: 4504db541be78cd8
+
+## adversarial: needs-attention
+
+1. **[P1] A stale integer length bypasses the incomplete-reading safeguard.** `src/pdf/xref.cpp:1978` rejects incomplete candidate exploration only when `sized_by` is absent. An earlier integer can match an embedded terminator while the actual length remains hidden in an unexplored container reading.
+
+   Reproduce using the 16-decoy fixture at `tests/recto-tests/pdf_xref_tests.cpp:475`: insert `88 0 obj\n0\nendobj\n` before container 20. Keep its compressed replacement for object 88, the 16 zero definitions of object 2, and the payload containing the fake catalog.
+
+   Stream 30 accepts the obsolete zero length, so `sized_by` is populated. Deferred decoding sees the payload’s `/N 0`; the 16 alternative readings never reach `/N 1`. Consequently, no longer length is discovered, the new safeguard does not fire, and recovery returns the payload-injected catalog.
+
+   Open this crafted PDF through `Document::open_memory`, without `startxref`, with genuine and injected catalogs pointing to different valid page trees outside the stream. Recovery selects the injected document contents. An accepted provisional integer must not establish trust when exploration of its replacement remains incomplete.
+
+Source-traced reproduction, not executed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention

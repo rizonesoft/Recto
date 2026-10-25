@@ -1969,13 +1969,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			if (exhausted) {
 				readings_incomplete = true;
 			}
-			// A stream whose indirect /Length the scan could not settle was sized at its first `endstream`, so what
-			// follows that keyword may be its own payload; only a complete reading of the containers can supply the
-			// length that decides it. When that reading was cut short, the table cannot be trusted (a payload can
-			// imitate a catalog), so recovery refuses rather than present it; a rescan with a self-consistent length
-			// still recovers the file (see recover_damaged_xref).
-			if (readings_incomplete && std::any_of(stream_uses.begin(), stream_uses.end(),
-										   [](const StreamUse& use) { return !use.sized_by.has_value(); })) {
+			// Every stream here has an indirect /Length, sized by the integer the scan had met so far (perhaps an
+			// obsolete one) or at its first `endstream`; a reading left out may hold the definition that decides it, and
+			// what follows the extent the scan took may be the stream's own payload. When the readings were cut short,
+			// the table cannot be trusted (a payload can imitate a catalog), so recovery refuses rather than present it;
+			// a rescan with a self-consistent length still recovers the file (see recover_damaged_xref).
+			if (readings_incomplete) {
 				ambiguous_extent = true;
 			}
 		}

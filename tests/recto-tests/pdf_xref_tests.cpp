@@ -472,11 +472,16 @@ TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 	const std::string fake = "\nendstream\nendobj\n2 0 obj\n0\nendobj\n"
 		"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
 	const std::string members = hex("88 0 " + std::to_string(fake.size()));
-	for (const int decoys : {15, 16}) {
+	for (const auto& [decoys, stale] : std::vector<std::pair<int, bool>>{{15, false}, {16, false}, {16, true}}) {
 		std::string pdf = "%PDF-1.7\n";
 		const size_t genuine_at = pdf.size();
-		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
-			"20 0 obj\n<< /Type /ObjStm /N 2 0 R /First 5 /Filter /ASCIIHexDecode /Length " +
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		if (stale) {
+			// Round 3: an obsolete length 0 sizes the stream at its first `endstream` just as well, and the update
+			// that replaces it sits in the reading that was left out.
+			pdf += "88 0 obj\n0\nendobj\n";
+		}
+		pdf += "20 0 obj\n<< /Type /ObjStm /N 2 0 R /First 5 /Filter /ASCIIHexDecode /Length " +
 			std::to_string(members.size()) + " >>\nstream\n" + members + "\nendstream\nendobj\n";
 		for (int i = 0; i < decoys; ++i) {
 			pdf += "2 0 obj\n0\nendobj\n";
@@ -488,6 +493,7 @@ TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 			ASSERT_NE(rec->find(1), nullptr);
 			EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
 		} else {
+			SCOPED_TRACE(stale ? "stale length" : "no length");
 			RECTO_EXPECT_ERR(rec, ErrorCode::DamagedFormat);
 		}
 	}
