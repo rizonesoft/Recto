@@ -59,6 +59,7 @@ FILED = re.compile(r"^- Filed: (D\d{2} T\d{2} §[1-9]\d*)(?![\w§]|\.\d)")
 PIN = ".conclave/reviewers.toml"
 PLAN_KEYS = {"report", "candidate", "reviewer", "model", "effort", "lenses"}
 STARTED = re.compile(r"^> \*\*Started:\*\* .+$", re.M)
+UNSTAMPED = re.compile(r"^> \*\*Unstamped:\*\* ", re.M)
 # A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
 ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
@@ -338,21 +339,29 @@ def section_text(text, number):
     return text[head.start():head.end() + end.start() if end else len(text)]
 
 
+def unstamped_notes(body):
+    """How many times `unstamp` reopened the section: its `> **Unstamped:**` notes, which are never removed."""
+    return len(UNSTAMPED.findall(body or ""))
+
+
 def build_start(root, path, body, ref):
     """The commit the section's build began at: the first commit of its TODO file in which the section's own text
     holds its whole `> **Started:**` line (another section's identical or longer Started line does not count), or,
-    for a section that never recorded one, the first commit naming the section outside todo/ and docs/."""
+    for a section that never recorded one, the first commit naming the section outside todo/ and docs/. A reopened
+    section's build is its repair: the first commit that holds the Started line and every Unstamped note, so the
+    repair's plan review must come after the unstamp and the repair records a fresh Started line after it."""
     started = STARTED.search(body or "")
     first = None
     if started:
         line = started[0].rstrip("\r")
+        notes = unstamped_notes(body)
         number = ref.rsplit("§", 1)[1]
         out = subprocess.run(["git", "-C", str(root), "log", "--reverse", "--format=%H", "--", path],
                              capture_output=True, text=True, timeout=60)
         for sha in out.stdout.split() if out.returncode == 0 else []:
             shown = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{path}"], capture_output=True, timeout=30)
             section = section_text(shown.stdout.decode("utf-8", "replace"), number) if shown.returncode == 0 else None
-            if section is not None and line in section.splitlines():
+            if section is not None and line in section.splitlines() and unstamped_notes(section) >= notes:
                 first = sha
                 break
     else:
@@ -368,12 +377,17 @@ def build_start(root, path, body, ref):
 
 def section_findings(root, ref):
     """The section's own findings file, `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`, the domain being the one
-    `todo/<NN-domain>/` folder its domain number names."""
+    `todo/<NN-domain>/` folder its domain number names. A section `unstamp` reopened n times reviews its repair in a
+    fresh file, `D<NN>-T<NN>-s<N>-cycle<n+1>.md`: the earlier cycle's passes ran on work that regressed."""
     m = re.fullmatch(r"D(\d{2}) T(\d{2}) §([1-9]\d*)", ref)
     require(m is not None, f"not a full section reference: {ref}")
     domains = sorted(d.name for d in (Path(root) / "todo").iterdir() if d.is_dir() and d.name.startswith(f"{m[1]}-"))
     require(len(domains) == 1, f"no single todo/{m[1]}-<domain> folder for: {ref}")
-    return f"docs/reviews/{domains[0]}/D{m[1]}-T{m[2]}-s{m[3]}.md"
+    files = sorted((Path(root) / "todo" / domains[0]).glob(f"TODO-{m[2]}-*.md"))
+    require(len(files) == 1, f"no single todo/{domains[0]}/TODO-{m[2]}-*.md file for: {ref}")
+    notes = unstamped_notes(section_text(read_text(files[0]), m[3]))
+    cycle = f"-cycle{notes + 1}" if notes else ""
+    return f"docs/reviews/{domains[0]}/D{m[1]}-T{m[2]}-s{m[3]}{cycle}.md"
 
 
 def plan_record(root, report, ref, commits=None, start=None):
@@ -586,6 +600,13 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
         if root is not None:
             require(plan_record(root, recorded["report"], ref, commits if commits is not None else set()) == recorded,
                     f"receipt plan does not match its findings file {recorded['report']}: {ref}")
+            # A reopened section re-stamps on its repair's own reviews: the completion review and every round come
+            # from its cycle findings file too, so the passes that approved the regressed work cannot be reused.
+            own = recorded["report"]
+            if re.search(r"-cycle[0-9]+\.md$", own):
+                require(data["completion"]["report"] == own and all(r["report"] == own for r in rounds),
+                        f"a reopened section's completion review and rounds must come from its repair's findings "
+                        f"file {own}: {ref}")
             require(pin_schedule(root, stamp_sha, ref) == data["schedule"],
                     f"receipt schedule is not the [schedule] in {PIN} at the stamped commit: {ref}")
             schedule_ok(root, data, ref, surface)
@@ -861,7 +882,7 @@ def graph(root=ROOT):
                 # A stamped section may sit on an open prerequisite only when an audit reopened that prerequisite
                 # (its Unstamped note): the consumer is then suspect until the prerequisite re-stamps, not unstamped.
                 require(not sections[ref].done or sections[dep].done
-                        or re.search(r"^> \*\*Unstamped:\*\* ", sections[dep].body, re.M) is not None,
+                        or unstamped_notes(sections[dep].body) > 0,
                         f"stamped section has open dependency: {ref}")
                 if dep not in visited:
                     visiting.add(dep)

@@ -39,7 +39,7 @@ If the section carries `windows-host`, `arm64-host`, `display-session`, `office`
 
 Before the first edit in a session, read `todo/README.md` (the format every TODO edit must keep). Before any write, stop here if another writer holds the tree. Check `git status` for unfamiliar uncommitted work you do not understand, and ask before building over it.
 
-Write `Started:` now. If the section body carries no `> **Started:**` line, add one directly under its heading with the current UTC instant. Do not overwrite an existing one on resume.
+`Started:` is not written here: the build start is the first commit that holds the section's `> **Started:**` line, and `stamp` refuses a plan review whose candidate is later than it, so the line is written in step 3a, after the plan review.
 
 ## Execution discipline
 
@@ -92,7 +92,9 @@ Once the section is corrected, commit it (with `plan --sync`) so the reviewer re
 python scripts/review-dispatch.py --kind plan --candidate <full SHA of that commit> --writer claude --prompt <scratch-plan-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
-The dispatcher sets the effort and the `plan` lens from the pin's `[schedule] plan` step and appends a `## Plan review` section; it is not a round, it does not move the round schedule, and a findings file takes one returned plan review. Fix every `P1` and `P2` gap in the section the same way as step 3 (corrected in place, dated), and file a `P3` you do not take through `add-todo`. Under the plan review in the findings file, add one line per gap: `- Planned: <gap> in <commit>` or `- Filed: DNN TNN §N (<gap>)`. When the dispatcher exits 1, run the pass again before building. `stamp` requires this review as `--plan '<findings file>'`, naming the section's own findings file (the `--record` path above; another section's file refuses), refuses one whose candidate is later than the commit that records `Started:`, and refuses one run at another effort or lenses than the schedule's `plan` step; a section stamped before 2026-10-24 has no plan review and stays valid only as frozen in `docs/reviews/legacy-receipts.json`.
+The dispatcher sets the effort and the `plan` lens from the pin's `[schedule] plan` step and appends a `## Plan review` section; it is not a round, it does not move the round schedule, and a findings file takes one returned plan review. Fix every `P1` and `P2` gap in the section the same way as step 3 (corrected in place, dated), and file a `P3` you do not take through `add-todo`. Under the plan review in the findings file, add one line per gap: `- Planned: <gap> in <commit>` or `- Filed: DNN TNN §N (<gap>)`. When the dispatcher exits 1, run the pass again before building.
+
+Then write `Started:`: add `> **Started:** <current UTC instant>` directly under the section heading and commit it (with `plan --sync`) before the first line of the build. On resume, never overwrite a `Started:` line that was committed after the section's plan review. A line committed before any plan review existed (a section started before the plan review, a session that paused between writing it and the review, or a section `unstamp` reopened) is replaced once with the current instant after the plan review, since the build start is the first commit holding the exact line (and, in a reopened section, every `Unstamped:` note). `stamp` requires this review as `--plan '<findings file>'`, naming the section's own findings file (the `--record` path above; another section's file refuses), refuses one whose candidate is later than the commit that records `Started:`, and refuses one run at another effort or lenses than the schedule's `plan` step; a section stamped before 2026-10-24 has no plan review and stays valid only as frozen in `docs/reviews/legacy-receipts.json`.
 
 ### 4. Build the corrected contract
 

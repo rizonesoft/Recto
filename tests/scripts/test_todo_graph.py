@@ -1168,8 +1168,55 @@ class Stamp(Tree):
         self.assertIn("> **Unstamped:** 2026-10-21: checkpoint fails", text)
         self.assertIn("- [ ] Commit:", text)
         tg.projections(self.root)  # the plan was synced
-        self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-22", sync_plan=True)
+        self.restamp_after_repair()
+
+    def restamp_after_repair(self):
+        """A reopened section re-stamps on its repair: a plan review, a fresh Started line, a completion review and
+        rounds, all in its cycle findings file. The regressed cycle's evidence refuses."""
+        unstamped = self.commit("unstamp")
+        cycle = "docs/reviews/00-workspace/D00-T01-s1-cycle2.md"
+        self.assertEqual(tg.section_findings(self.root, "D00 T01 §1"), cycle)
+        # The first cycle's plan review, completion review and rounds approved the work that regressed.
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", unstamped, self.reviews, ["true -> ok"], "2026-10-22",
+                     completion={"report": self.COMPLETION, "verdict": "complete"}, plan=self.PLAN)
+        self.assertIn(f"--plan must be the section's own findings file {cycle}", str(ctx.exception))
+        # The repair's plan review against the reopened contract, but the old Started line kept: the build start is
+        # the unstamp commit, so a plan review made after it is not before the build.
+        (self.root / cycle).write_text("# Review findings\n\n", encoding="utf-8")
+        self.write_plan(path=cycle, keep=True, candidate=self.commit("repair plan reviewed"))
+        self.write_completion(path=cycle, keep=True, candidate=unstamped)
+        with open(self.root / cycle, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n" + envelope(1))
+        repaired = self.commit("repair reviewed")
+        cycle_rounds = [{"round": 1, "report": cycle, "verdict": "clean"}]
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", repaired, cycle_rounds, ["true -> ok"], "2026-10-22",
+                     completion={"report": cycle, "verdict": "complete"}, plan=cycle)
+        self.assertIn("is not the commit the build began at", str(ctx.exception))
+        # A fresh Started line, committed after the repair's plan review, starts the repair's build.
+        path = self.root / "todo/00-workspace/TODO-01-a.md"
+        path.write_text(path.read_text(encoding="utf-8").replace(STARTED.strip(), "> **Started:** 2026-10-22T00:00Z", 1),
+                        encoding="utf-8")
+        tg.projections(self.root, sync=True)
+        started = self.commit("repair started")
+        plan_text = (self.root / self.PLAN).read_text(encoding="utf-8")
+        (self.root / cycle).unlink()
+        self.write_plan(path=cycle, keep=True, candidate=unstamped)
+        self.write_completion(path=cycle, keep=True, candidate=started)
+        with open(self.root / cycle, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n" + envelope(1))
+        repaired = self.commit("repair reviewed again")
+        # Rounds or a completion review from the regressed cycle's files refuse even with the repair's plan review.
+        for rounds, completion in ((self.reviews, cycle), (cycle_rounds, self.COMPLETION)):
+            with self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T01 §1", repaired, rounds, ["true -> ok"], "2026-10-22",
+                         completion={"report": completion, "verdict": "complete"}, plan=cycle)
+            self.assertIn("must come from its repair's findings file", str(ctx.exception))
+        tg.stamp(self.root, "D00 T01 §1", repaired, cycle_rounds, ["true -> ok"], "2026-10-22", sync_plan=True,
+                 completion={"report": cycle, "verdict": "complete"}, plan=cycle)
         self.assertTrue(tg.graph(self.root)["D00 T01 §1"].done)
+        self.assertEqual((self.root / self.PLAN).read_text(encoding="utf-8"), plan_text)
 
     def test_unstamping_a_prerequisite_leaves_its_consumers_stamped_and_suspect(self):
         path = self.root / "todo/00-workspace/TODO-02-b.md"
