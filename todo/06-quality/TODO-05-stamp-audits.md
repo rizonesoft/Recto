@@ -669,7 +669,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Resolved:** JBIG2 striped pages, MMR halftone plane alignment and HENABLESKIP -> XREF: D06 T05 §31 (2026-10-23: closed by D06 T05 §31, which grows a page of unknown height with its stripes under T.88's stripe rules, aligns and terminates MMR halftone bitplanes, and honours HENABLESKIP)
 
-> **Deferred:** JPX per-component precision and sampling, and the full coding-style set -> XREF: D06 T05 §32
+> **Resolved:** JPX per-component precision and sampling, and the full coding-style set -> XREF: D06 T05 §32 (2026-10-25: closed by D06 T05 §32, which reads each component's precision, signedness and sampling, decodes every Part 1 coding style and RGN, and keeps the JP2 colour, palette and channel definitions)
 
 > **Deferred:** DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding -> XREF: D06 T05 §33
 
