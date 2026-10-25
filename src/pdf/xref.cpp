@@ -814,6 +814,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 		struct DeferredObjStm {
 			uint32_t obj_num = 0;
 			size_t pos = 0;
+			bool type_indirect = false; // a container only if its /Type resolves to /ObjStm (ISO 32000-1 7.5.7)
 		};
 		// Rows read from every recovered cross-reference stream, against one budget for the whole recovery.
 		uint64_t recovered_xref_rows = 0;
@@ -1676,6 +1677,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u) {
 									// Unpacked after the scan, in file order against the definitions around it.
 									deferred_objstms.push_back(DeferredObjStm{obj_num, pos});
+								} else if (const PdfValue* type_val = sdict.get("Type");
+									type_val != nullptr && type_val->is_ref() && gen_num == 0u) {
+									// An indirect /Type: perhaps a container, known once the type resolves after the scan.
+									deferred_objstms.push_back(DeferredObjStm{obj_num, pos, true});
 								}
 							}
 
@@ -1716,6 +1721,21 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			const PdfStream* container = container_value->as_stream();
 			if (container == nullptr) {
 				continue;
+			}
+			if (deferred.type_indirect) {
+				auto is_container = is_object_stream(container->dict, &scan_resolver);
+				if (!is_container.has_value()) {
+					if (resolver_over_budget) {
+						return over_budget_error(deferred.pos);
+					}
+					if (is_container.error().code == ErrorCode::OutOfMemory) {
+						return is_container.error();
+					}
+					continue; // a type that does not resolve is not /ObjStm
+				}
+				if (!*is_container) {
+					continue;
+				}
 			}
 			// The metered-filter rule above, read through the resolved /Filter.
 			auto view = container_view(container->dict, scan_resolver);
@@ -1797,7 +1817,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						named.push_back(*ref);
 					}
 				};
-				for (const char* key : {"N", "First", "Filter", "DecodeParms"}) {
+				for (const char* key : {"Type", "N", "First", "Filter", "DecodeParms"}) {
 					const PdfValue* v = container->dict.get(key);
 					if (v == nullptr) {
 						continue;
@@ -1853,7 +1873,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						return PdfValue(PdfNull{});
 					};
 					auto view = container_view(container->dict, chosen);
-					if (view.has_value() && filters_are_metered_lossless(view->filters)) {
+					// Under this combination the stream must be a container at all (its /Type may be indirect).
+					auto is_container = is_object_stream(container->dict, &chosen);
+					if (!is_container.has_value() && is_container.error().code == ErrorCode::OutOfMemory) {
+						return is_container.error();
+					}
+					if (view.has_value() && is_container.has_value() && *is_container &&
+						filters_are_metered_lossless(view->filters)) {
 						detail::ScopedDecodeWorkMeter decode_work;
 						auto decoded = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(
 							kMaxDecodedStreamBytes, max_recovery_decoded_objstm_bytes / 2u - cumulative_decoded_objstm_bytes)),

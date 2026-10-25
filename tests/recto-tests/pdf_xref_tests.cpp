@@ -350,6 +350,137 @@ TEST(PdfXref, RecoveryDeferredContainerEdges)
 // lookups after the first copy a few scalars, not the object; an intact xref row naming a deferred container's
 // member does not stop that member's catalog being recognised; and an escaped /Encr#79pt key still marks the file
 // as possibly encrypted, so its containers are not decoded before authentication.
+// Plan review of D06 T05 §29, gap 1: a container whose /Type is an indirect reference (ISO 32000-1 section 7.5.7 lets
+// any uncompressed dictionary value be indirect) is recognised once the type resolves, whether the type object comes
+// before or after it; a stream whose indirect /Type is something else is not read as a container.
+TEST(PdfXref, RecoveryIndirectObjStmType)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const std::string data = hex("3 0 << /Type /Catalog /Pages 4 0 R /Marker 77 >>");
+	const std::string stream = "1 0 obj\n<< /Type 2 0 R /N 1 /First 4 /Filter /ASCIIHexDecode /Length " +
+		std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n";
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string header = "%PDF-1.7\n";
+	const std::string objstm_type = "2 0 obj\n/ObjStm\nendobj\n";
+	for (const bool type_first : {false, true}) {
+		const std::string pdf = type_first ? header + objstm_type + stream + pages + "%%EOF\n"
+										   : header + stream + objstm_type + pages + "%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{3u, 0u})) << type_first;
+		ASSERT_NE(rec->find(3), nullptr) << type_first;
+		EXPECT_TRUE(rec->find(3)->is_compressed()) << type_first;
+		auto catalog = rec->resolve_object(as_bytes(pdf), IndirectRef{3u, 0u});
+		RECTO_ASSERT_OK(catalog);
+		ASSERT_NE(catalog->as_dict(), nullptr);
+		EXPECT_EQ(catalog->as_dict()->get_int("Marker"), 77) << type_first;
+	}
+	// An indirect /Type that is not /ObjStm: not a container; the independent catalog 7 is the root.
+	const std::string other = header + stream + "2 0 obj\n/XObject\nendobj\n" + pages +
+		"7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n%%EOF\n";
+	auto rec = XrefTable::recover_damaged_xref(as_bytes(other), 64);
+	RECTO_ASSERT_OK(rec);
+	EXPECT_EQ(rec->root_ref(), (IndirectRef{7u, 0u}));
+	EXPECT_EQ(rec->find(3), nullptr);
+}
+
+// The /Length candidate readings check the type too: a stream whose indirect /Type is /XObject, though its payload
+// reads like a container defining the integer a stream's indirect /Length names, offers no length. So the stream
+// stays sized at its first `endstream`, and the object after that keyword is still recovered.
+TEST(PdfXref, RecoveryIndirectTypeFeedsNoLengths)
+{
+	const std::string payload = "AAA\nendstream\nendobj\n12 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\nBBB";
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const std::string fake = hex("11 0 " + std::to_string(payload.size()));
+	const std::string pdf = std::string("%PDF-1.7\n") + "7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" +
+		"10 0 obj\n<< /Length 11 0 R >>\nstream\n" + payload + "\nendstream\nendobj\n" +
+		"1 0 obj\n<< /Type 2 0 R /N 1 /First 5 /Filter /ASCIIHexDecode /Length " + std::to_string(fake.size()) +
+		" >>\nstream\n" + fake + "\nendstream\nendobj\n" + "2 0 obj\n/XObject\nendobj\n" +
+		"4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n%%EOF\n";
+	auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+	RECTO_ASSERT_OK(rec);
+	ASSERT_NE(rec->find(12), nullptr); // read as an object: no length candidate came from the /XObject stream
+	EXPECT_TRUE(rec->find(12)->is_uncompressed());
+	EXPECT_EQ(rec->find(11), nullptr);
+}
+
+// Plan review of D06 T05 §29, gap 2: a wrong-generation reference and a two-object reference cycle leave the container
+// out with the independent catalog kept, and a real predictor (Flate with PNG Up rows, its /DecodeParms indirect and
+// its /Columns an indirect integer) decodes to the member values.
+TEST(PdfXref, RecoveryResolverEdges)
+{
+	const std::string header = "%PDF-1.7\n";
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string catalog7 = "7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n";
+	const std::string members = "3 0 << /Type /Catalog /Pages 4 0 R /Marker 91 >>";
+	const auto hex_container = [&](const std::string& keys) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string data;
+		for (const unsigned char c : members) {
+			data += kHex[c >> 4u];
+			data += kHex[c & 0x0Fu];
+		}
+		data += ">";
+		return "1 0 obj\n<< /Type /ObjStm " + keys + " /Filter /ASCIIHexDecode /Length " + std::to_string(data.size()) +
+			" >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	for (const auto& [keys, extra] : std::vector<std::pair<std::string, std::string>>{
+			 {"/N 5 1 R /First 4", "5 0 obj\n1\nendobj\n"},                            // wrong generation
+			 {"/N 5 0 R /First 4", "5 0 obj\n6 0 R\nendobj\n6 0 obj\n5 0 R\nendobj\n"}, // a cycle
+		 }) {
+		const std::string pdf = header + catalog7 + hex_container(keys) + extra + pages + "%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{7u, 0u})) << keys;
+		EXPECT_EQ(rec->find(3), nullptr) << keys;
+	}
+
+	// PNG Up predictor rows of 8 columns, Flate-compressed.
+	constexpr size_t kColumns = 8u;
+	std::string raw = members;
+	raw.append((kColumns - raw.size() % kColumns) % kColumns, ' ');
+	std::vector<uint8_t> predicted;
+	for (size_t row = 0; row < raw.size() / kColumns; ++row) {
+		predicted.push_back(2u); // Up
+		for (size_t c = 0; c < kColumns; ++c) {
+			const uint8_t above = row == 0u ? 0u : static_cast<uint8_t>(raw[(row - 1u) * kColumns + c]);
+			predicted.push_back(static_cast<uint8_t>(static_cast<uint8_t>(raw[row * kColumns + c]) - above));
+		}
+	}
+	auto packed = flate_compress(predicted);
+	RECTO_ASSERT_OK(packed);
+	const std::string data(packed->begin(), packed->end());
+	const std::string pdf = header + "1 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /DecodeParms 2 0 R /Length " +
+		std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n" +
+		"2 0 obj\n<< /Predictor 12 /Columns 8 0 R >>\nendobj\n8 0 obj\n" + std::to_string(kColumns) + "\nendobj\n" +
+		pages + "%%EOF\n";
+	auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+	RECTO_ASSERT_OK(rec);
+	EXPECT_EQ(rec->root_ref(), (IndirectRef{3u, 0u}));
+	ASSERT_NE(rec->find(3), nullptr);
+	EXPECT_TRUE(rec->find(3)->is_compressed());
+	auto catalog = rec->resolve_object(as_bytes(pdf), IndirectRef{3u, 0u});
+	RECTO_ASSERT_OK(catalog);
+	ASSERT_NE(catalog->as_dict(), nullptr);
+	EXPECT_EQ(catalog->as_dict()->get_int("Marker"), 91);
+}
+
 TEST(PdfXref, RecoveryRoundOneFixes)
 {
 	const auto hex = [](const std::string& text) {

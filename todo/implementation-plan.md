@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 593
+Sections: 98 | Checklist items: 595
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -97,7 +97,7 @@ Sections: 98 | Checklist items: 593
 | [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 4     |
 | [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
 | [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
-| [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 5     |
+| [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 4     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 7     |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 77/846 verified sections, 35 ready to run now.
 
-Checklist: 489/6195 items completed (includes Commit items).
+Checklist: 491/6197 items completed (includes Commit items).
