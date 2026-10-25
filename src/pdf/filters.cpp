@@ -2468,7 +2468,11 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		// and decodes until an end-of-block marker (EOFB or RTC) or end of data.
 		while (params.end_of_block || params.rows == 0 ||
 			   decoded_rows < static_cast<uint64_t>(params.rows)) {
-			if (params.encoded_byte_align && decoded_rows > 0) {
+			// /EncodedByteAlign: each row's codes begin on a byte boundary (Table 11). With EOLs (K non-negative and
+			// /EndOfLine true) the fill zeros come before each EOL so that it ends on the boundary (ITU-T T.4 4.1.2), and
+			// the EOL scan takes any run of 11 or more zeros, so it finds the boundary itself: aligning first could cut into
+			// the EOL (D06 T05 section 34, plan review). Rows without EOLs are aligned here.
+			if (params.encoded_byte_align && decoded_rows > 0 && !(params.end_of_line && params.k >= 0)) {
 				reader.align_to_byte();
 			}
 			if (reader.at_end()) {

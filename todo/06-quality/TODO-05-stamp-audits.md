@@ -1013,9 +1013,13 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [x] Resynchronize at the next EOL after a damaged row and substitute per Table 11 (the previous good row once, then white) up to `/DamagedRowsBeforeError`, in the CCITT decoder in `src/pdf/filters.cpp`. Done when: the `K = 0` case yields the good row followed by a white row.
 - [x] Apply the same recovery to mixed Group 3 (`K > 0`), honouring each row's 1D/2D tag bit. Done when: the `K > 0` case recovers instead of being refused.
 - [x] Add `PdfFilters.CcittDamagedRowRecovery` for both cases and for exceeding `/DamagedRowsBeforeError`. Done when: it fails on the code before this section.
-- [ ] Commit: `pdf: CCITT damaged-row recovery per ISO 32000-1 Table 11`
+- [x] With `/EncodedByteAlign true` and EOLs (K non-negative, `/EndOfLine true`), do not align before the EOL scan in the CCITT decoder in `src/pdf/filters.cpp`: the fill zeros come before each EOL so that it ends on a byte boundary (ITU-T T.4 4.1.2), and the scan takes any run of 11 or more zeros. Done when: `PdfFilters.CcittRecoveryPlanReviewCases` decodes T.4-filled good rows exactly and recovers damage ending at every bit offset, for `K = 0` and `K = 2`.
+- [x] Prove the rest of Table 11's recovery in `PdfFilters.CcittRecoveryPlanReviewCases`: a 2D row whose reference is a substituted row (the repeated good row, and the white row of a second substitution), the substitution order after a good row between damaged runs, mixed Group 3 damage with no EOL to resume at refused with `/Rows` and with `/EndOfBlock true`, and substituted rows charged against the decoded-bytes ceiling like decoded ones. Done when: the test passes and fails with the substituted row not kept as the reference, the first substitution made white, or a damaged row without an EOL after it accepted.
+- [x] Commit: `pdf: CCITT damaged-row recovery per ISO 32000-1 Table 11`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery`.
+> **Corrected 2026-10-26:** (plan review, `docs/reviews/06-quality/D06-T05-s34.md`) the plan said nothing of `/EncodedByteAlign`, and proved mixed Group 3 only with 1D rows, substitution only after a non-white good row once, and no-EOL refusal only in pure Group 3; the two items above add them. Building them found the decoder aligning before every EOL scan, which cut into the EOL whenever T.4 fill left fewer than 11 zeros past the boundary (a row of 8 white and 8 black ending at bit 27, say), so such a stream lost its next row even without damage.
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery` and `PdfFilters.CcittRecoveryPlanReviewCases`.
 
 ## 35. JBIG2 decoder work and memory bounded at every allocation and loop
 

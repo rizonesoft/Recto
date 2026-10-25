@@ -6977,6 +6977,153 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 	}
 }
 
+// D06 T05 §34 plan review: the cases its first build did not prove. The fill a T.4 encoder writes (zeros before each
+// EOL so that the EOL ends on a byte boundary and the row after it begins on one, ITU-T T.4 4.1.2) with
+// /EncodedByteAlign true, for good rows and for damage ending at every bit offset; a 2D row whose reference is a
+// substituted row; the substitution order after a good row between damaged runs; no EOL to resume at in mixed
+// Group 3; and substituted rows held to the decoded-bytes ceiling.
+TEST(PdfFilters, CcittRecoveryPlanReviewCases)
+{
+	const std::string eol = "000000000001";
+	const std::string good = "1011" "000101" "1011"; // 4 white, 8 black, 4 white: 0xF0 0x0F
+	const std::string halves = "10011" "000101";      // 8 white, 8 black: 0xFF 0x00
+	const std::string white = "101010";               // 16 white
+	const auto parms_for = [](int64_t k, int64_t rows, int64_t allowance) {
+		PdfDict parms;
+		parms.set("K", PdfValue(k));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		parms.set("Rows", PdfValue(rows));
+		parms.set("EndOfLine", PdfValue(true));
+		parms.set("DamagedRowsBeforeError", PdfValue(allowance));
+		return parms;
+	};
+	// Each row as T.4 writes it with fill: zeros, then an EOL ending on a byte boundary, then the tag (mixed mode) and
+	// the row's codes; RTC the same way.
+	const auto aligned = [&eol](const std::vector<std::string>& rows, const std::string& tag) {
+		std::string bits;
+		const auto signal = [&] {
+			while ((bits.size() + eol.size()) % 8u != 0u) {
+				bits += '0';
+			}
+			bits += eol;
+		};
+		for (const std::string& row : rows) {
+			signal();
+			bits += tag + row;
+		}
+		for (int i = 0; i < 6; ++i) {
+			signal();
+			bits += tag;
+		}
+		return bits;
+	};
+
+	// Good rows with T.4 fill and /EncodedByteAlign true decode exactly, whatever bit their codes end on.
+	for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+		const std::string tag = k > 0 ? "1" : "";
+		PdfDict parms = parms_for(k, 3, 0);
+		parms.set("EncodedByteAlign", PdfValue(true));
+		auto decoded = decode_ccitt_fax(pack_bitstring(aligned({good, halves, white}, tag)), &parms);
+		ASSERT_TRUE(decoded.has_value()) << "K " << k << ": " << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xFFu, 0x00u, 0xFFu, 0xFFu})) << "K " << k;
+	}
+	// Damage ending at each bit offset: the row after it survives exactly.
+	for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+		const std::string tag = k > 0 ? "1" : "";
+		for (size_t extra = 0; extra < 8u; ++extra) {
+			const std::string damaged = "00000001" + std::string(extra, '1');
+			PdfDict parms = parms_for(k, 3, 1);
+			parms.set("EncodedByteAlign", PdfValue(true));
+			auto decoded = decode_ccitt_fax(pack_bitstring(aligned({good, damaged, halves}, tag)), &parms);
+			ASSERT_TRUE(decoded.has_value()) << "K " << k << ", extra " << extra << ": " << decoded.error().message.view();
+			EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0x00u}))
+				<< "K " << k << ", extra " << extra;
+		}
+	}
+
+	// A damaged 2D row is replaced by the good row before it, and that substituted row is the reference of the 2D row
+	// after it: three V0 codes copy it (a white reference would end the row at the first).
+	{
+		const std::string bits = eol + "1" + good + eol + "0" + "011" + eol + "0" + "111" + eol + "1" + eol + "1" + eol +
+			"1" + eol + "1" + eol + "1" + eol + "1";
+		const PdfDict parms = parms_for(2, 3, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xF0u, 0x0Fu}));
+	}
+
+	// After a second damaged row (substituted white) the next 2D row's reference is that white row: one V0 code is a
+	// white row (on the good row before the damage it would end at column 4 and the row be damaged a third time).
+	{
+		const std::string bits = eol + "1" + good + eol + "0" + "011" + eol + "0" + "011" + eol + "0" + "1" + eol + "1" +
+			eol + "1" + eol + "1" + eol + "1" + eol + "1" + eol + "1";
+		const PdfDict parms = parms_for(2, 4, 2);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+	}
+
+	// After a good row between damaged runs, the next damage repeats that row once, then white.
+	for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+		const std::string tag = k > 0 ? "1" : "";
+		const std::string damaged = "00000001";
+		const std::string bits = eol + tag + good + eol + tag + damaged + eol + tag + halves + eol + tag + damaged + eol +
+			tag + damaged + aligned({}, tag);
+		const PdfDict parms = parms_for(k, 5, 2);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << "K " << k << ": " << decoded.error().message.view();
+		EXPECT_EQ(*decoded,
+			(std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0x00u, 0xFFu, 0x00u, 0xFFu, 0xFFu}))
+			<< "K " << k;
+	}
+
+	// Mixed Group 3 with nothing to resume at: a damaged 1D or 2D row with no EOL after it is refused, with /Rows and
+	// with /EndOfBlock true alike, never returned as a shorter image.
+	for (const std::string& tail : {std::string("1") + "00000001", std::string("0") + "011"}) {
+		for (const bool end_of_block : {true, false}) {
+			PdfDict parms = parms_for(2, 2, 1);
+			parms.set("EndOfBlock", PdfValue(end_of_block));
+			auto decoded = decode_ccitt_fax(pack_bitstring(eol + "1" + good + eol + tail), &parms);
+			ASSERT_FALSE(decoded.has_value()) << "tail " << tail << ", EndOfBlock " << end_of_block;
+			EXPECT_EQ(decoded.error().code, ErrorCode::DamagedFormat);
+			EXPECT_NE(decoded.error().message.view().find("no EOL follows"), std::string_view::npos)
+				<< decoded.error().message.view();
+		}
+	}
+
+	// Substituted rows count against the decoded-bytes ceiling like decoded ones: under /EndOfBlock true with /Rows 1
+	// (so the check before decoding charges one row), four rows of which two are substituted need the same smallest
+	// ceiling as the same four rows decoded, at least four rows of the expanded bitmap (16 x 4 x 4 bytes), and one byte
+	// less is refused.
+	{
+		const std::string damaged = "00000001";
+		const auto smallest_fit = [](const std::vector<uint8_t>& bytes, const PdfDict& parms) {
+			size_t lo = 1u;
+			size_t hi = 1u << 20u;
+			while (lo < hi) {
+				const size_t mid = lo + (hi - lo) / 2u;
+				if (decode_ccitt_fax(bytes, &parms, mid).has_value()) {
+					hi = mid;
+				} else {
+					lo = mid + 1u;
+				}
+			}
+			return lo;
+		};
+		PdfDict parms = parms_for(0, 1, 2);
+		parms.set("EndOfBlock", PdfValue(true));
+		const auto recovered = pack_bitstring(eol + good + eol + damaged + eol + damaged + eol + white + aligned({}, ""));
+		const auto decoded = pack_bitstring(eol + good + eol + good + eol + white + eol + white + aligned({}, ""));
+		auto full = decode_ccitt_fax(recovered, &parms);
+		ASSERT_TRUE(full.has_value()) << full.error().message.view();
+		ASSERT_EQ(*full, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+		const size_t limit = smallest_fit(recovered, parms);
+		EXPECT_EQ(limit, smallest_fit(decoded, parms));
+		EXPECT_GE(limit, size_t{16u * 4u * 4u});
+		RECTO_EXPECT_ERR(decode_ccitt_fax(recovered, &parms, limit - 1u), ErrorCode::DecompressionLimitExceeded);
+	}
+}
+
 // A recovered fax stream records one outcome with the rows replaced and the first of them, an intact one none, and
 // every refusal cause (the allowance spent, no EOL to resume at, /EndOfLine false, Group 4) records exactly one entry
 // with its reason, row and allowance in the PdfError, the ring and ETW alike; a stream that recovers a row and is then
