@@ -639,7 +639,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Resolved:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29 (2026-10-25: closed by D06 T05 §29, whose recovery scan defers every container and resolves its parameters, `/Type` included, through the scan's own definitions)
 
-> **Deferred:** damaged-file recovery of an encrypted file's compressed objects (xref-stream rows dropped, containers decoded before authentication) -> XREF: D06 T05 §30
+> **Resolved:** damaged-file recovery of an encrypted file's compressed objects (xref-stream rows dropped, containers decoded before authentication) -> XREF: D06 T05 §30 (2026-10-25: closed by D06 T05 §30, which imports intact xref-stream rows, leaves encrypted containers to authenticated resolution and requires a recovered root named /Catalog)
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §6"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 

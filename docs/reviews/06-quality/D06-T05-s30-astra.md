@@ -31,3 +31,21 @@ These findings are source-traced, not executed reproductions. Existing binaries 
 
 HIGHEST: P1
 OVERALL: needs-attention
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T18:02:12Z
+- Effort: medium
+- Lenses: adversarial
+- Lines: 8
+- Digest: a86257342c02c5aa
+
+### adversarial: approve
+
+No new in-scope findings. The length-candidate behavior explicitly accepted in this request is not re-raised.
+
+Source review only; no tests or ASan runs performed. No files modified.
+
+HIGHEST: none
+OVERALL: approve
