@@ -1,0 +1,98 @@
+{
+  "ref": "D01 T02 \u00a713",
+  "title": "`ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`",
+  "implementation_sha": "df40805611166b8afd978b9ca9240da9ba4d6d0c",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s13.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfStagedRevisions.*:PdfIncrementalWriter.*:PdfError.* -> 0 Warning(s), [  PASSED  ] 50 tests (AllocationFailureIsTyped skipped under ASan, run in Debug and Release)",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 293 tests and [  PASSED  ] 294 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "undo-without-truncate fails PdfStagedRevisions.PushPopRedo; mutants: 22 of 23 killed (mutate_s13.py), the 23rd changes only the default history limit the tests override"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s13.md",
+    "verdict": "filed",
+    "candidate": "ab1d001479e7092a7440b5c9f52644f14b8d8508",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a740",
+      "D06 T01 \u00a710",
+      "D01 T02 \u00a738",
+      "D01 T02 \u00a714",
+      "D02 T01 \u00a78",
+      "D02 T01 \u00a712"
+    ]
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "cap_outcome": "Round 1 found three P3s (revision ids equal to the base id or wrapping, a reopen-failure test still under the write injection, and a stale mutant binary), fixed in df40805 with the gates rerun on a clean build; the loop ends on the first round with no P1 or P2.",
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s13.md",
+    "candidate": "12fb6484308ac57ef36bf3b58e377b7843cc239c",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

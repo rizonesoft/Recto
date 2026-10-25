@@ -70,7 +70,7 @@ track: M1
 | 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
 | 11 | §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity | §9 | [ ] |
 | 12 | §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur` | §8, D02 T02 §12 | [ ] |
-| 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5, §18 | [ ] |
+| 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5, §18 | [x] |
 | 14 | §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation` | §8, §13, §18, D02 T03 §7 | [ ] |
 | 15 | §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer | §3, §4, §6 | [ ] |
 | 16 | §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer | §4, §6 | [ ] |
@@ -519,6 +519,9 @@ Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the
 - [x] Commit: `pdf: add ObjectChangeSet and the in-memory StagedRevisionChain`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes under ASan, and making `undo` reopen the working document without truncating the bytes fails `PdfStagedRevisions.PushPopRedo`.
+
+> **Verified:** 2026-10-25 | §13 | df40805611166b8afd978b9ca9240da9ba4d6d0c
+> **Review:** `docs/reviews/d01-t02-s13.json`
 
 ## 14. `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`
 
