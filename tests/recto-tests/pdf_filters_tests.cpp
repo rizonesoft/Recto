@@ -6077,6 +6077,121 @@ TEST(PdfFilters, JpxSegmentRecordsCharged)
 	RECTO_EXPECT_ERR(decode_jpx_image(layered, nullptr, six_limit), ErrorCode::DecompressionLimitExceeded);
 }
 
+// A `side` x `side`, 8-bit, one-component codestream of `tile` x `tile` tiles (each one code-block, no decomposition,
+// one layer), every sample `value`: small tiles keep the per-tile buffers small next to the whole image's.
+[[nodiscard]] std::vector<uint8_t> make_j2k_tiled_flat(uint32_t side, uint32_t tile, uint8_t value)
+{
+	constexpr uint32_t kMb = 8u;
+	std::vector<uint8_t> cs = {0xFFu, 0x4Fu};
+	const auto u8 = [&cs](uint32_t v) { cs.push_back(static_cast<uint8_t>(v)); };
+	const auto u16 = [&cs](uint32_t v) {
+		cs.push_back(static_cast<uint8_t>(v >> 8u));
+		cs.push_back(static_cast<uint8_t>(v));
+	};
+	const auto u32 = [&u16](uint32_t v) {
+		u16(v >> 16u);
+		u16(v & 0xFFFFu);
+	};
+	u16(0xFF51u); // SIZ
+	u16(41u);
+	u16(0u);
+	u32(side);
+	u32(side);
+	u32(0u);
+	u32(0u);
+	u32(tile);
+	u32(tile);
+	u32(0u);
+	u32(0u);
+	u16(1u);
+	u8(7u);
+	u8(1u);
+	u8(1u);
+	u16(0xFF52u); // COD: LRCP, one layer, no MCT, no decomposition, 64 x 64 code-blocks, no style, 5-3
+	u16(12u);
+	u8(0u);
+	u8(0u);
+	u16(1u);
+	u8(0u);
+	u8(0u);
+	u8(4u);
+	u8(4u);
+	u8(0u);
+	u8(1u);
+	u16(0xFF5Cu); // QCD: one guard bit, no quantization, epsilon 8
+	u16(4u);
+	u8(0x20u);
+	u8(8u << 3u);
+	const uint32_t tiles = (side / tile) * (side / tile);
+	const std::vector<int32_t> coeffs(static_cast<size_t>(tile) * tile, static_cast<int32_t>(value) - 128);
+	const EncodedJ2kBlock block = encode_j2k_block(coeffs, tile, tile, kMb, 0u);
+	TestBitWriter bw;
+	bw.write_bit(1u);
+	bw.write_bit(1u); // inclusion
+	for (uint32_t z = 0; z < block.zero_bitplanes; ++z) {
+		bw.write_bit(0u);
+	}
+	bw.write_bit(1u);
+	bw.encode_num_passes(block.num_passes);
+	const size_t len = block.segments[0].bytes.size();
+	const uint32_t extra = block.num_passes <= 1u ? 0u : static_cast<uint32_t>(std::bit_width(block.num_passes) - 1u);
+	uint32_t lblock = 3u;
+	while (static_cast<uint32_t>(std::bit_width(len)) > lblock + extra) {
+		++lblock;
+	}
+	for (uint32_t i = 3u; i < lblock; ++i) {
+		bw.write_bit(1u);
+	}
+	bw.write_bit(0u);
+	bw.write_bits(static_cast<uint32_t>(len), lblock + extra);
+	bw.flush_aligned();
+	std::vector<uint8_t> packet = bw.bytes();
+	packet.insert(packet.end(), block.segments[0].bytes.begin(), block.segments[0].bytes.end());
+	for (uint32_t t_idx = 0; t_idx < tiles; ++t_idx) {
+		u16(0xFF90u); // SOT
+		u16(10u);
+		u16(t_idx);
+		u32(static_cast<uint32_t>(12u + 2u + packet.size()));
+		u8(0u);
+		u8(1u);
+		u16(0xFF93u); // SOD
+		cs.insert(cs.end(), packet.begin(), packet.end());
+	}
+	u16(0xFFD9u); // EOC
+	return cs;
+}
+
+// Round 4 of D06 T05 §32 under the second schedule: a palette expands one component into four CMYK columns, so the
+// output the ceiling must cover is the expanded layout and every buffer live with it (samples, palette indices, four
+// colours, two four-byte display buffers): at least 14 bytes a pixel, where the codestream's one component suggests
+// 9. Small tiles keep the tile buffers from deciding the limit first.
+TEST(PdfFilters, JpxPaletteExpansionCharged)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	constexpr uint32_t kSide = 64u;
+	const std::vector<uint8_t> pclr = {0u, 1u, 4u, 7u, 7u, 7u, 7u, 10u, 20u, 30u, 40u};
+	const std::vector<uint8_t> cmap = {0u, 0u, 1u, 0u, 0u, 0u, 1u, 1u, 0u, 0u, 1u, 2u, 0u, 0u, 1u, 3u};
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> boxes = {{
+		{"colr", std::vector<uint8_t>{1u, 0u, 0u, 0u, 0u, 0u, 12u}}, {"pclr", pclr}, {"cmap", cmap}}};
+	const auto jp2 = make_jp2(make_j2k_tiled_flat(kSide, 8u, 0u), kSide, kSide, 1u, boxes);
+	auto img = decode_jpx_image(jp2);
+	ASSERT_TRUE(img.has_value()) << img.error().message.view();
+	ASSERT_EQ(img->components, 4u);
+	EXPECT_EQ(img->pixels[3], 40u);
+	size_t lo = 1u;
+	size_t hi = 1u << 22u;
+	while (lo < hi) {
+		const size_t mid = lo + (hi - lo) / 2u;
+		if (decode_jpx_image(jp2, nullptr, mid).has_value()) {
+			hi = mid;
+		} else {
+			lo = mid + 1u;
+		}
+	}
+	EXPECT_GE(lo, size_t{kSide} * kSide * 14u);
+	RECTO_EXPECT_ERR(decode_jpx_image(jp2, nullptr, lo - 1u), ErrorCode::DecompressionLimitExceeded);
+}
+
 TEST(PdfFilters, JpxDefaultPathRoutesChannelsNative)
 {
 	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};

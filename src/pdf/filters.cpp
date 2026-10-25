@@ -10722,6 +10722,17 @@ struct Jp2Palette {
 		return make_filter_error(ErrorCode::UnsupportedFeature, DiagnosticId::DamagedStream,
 			"JPXDecode channel layout has no supported colour space");
 	}
+	// Everything live from here to the return, charged before any of it is allocated: the decoded samples and palette
+	// indices already held, the colour layout (a palette can expand one component into four), its alpha, and the two
+	// four-byte display buffers (D06 T05 §32, round 4).
+	{
+		const uint64_t live = static_cast<uint64_t>(out_img.pixels.size()) + raw_index.size() +
+			static_cast<uint64_t>(pixels) * (colour_count + (opacity_channel >= 0 ? 1u : 0u) + 8u);
+		if (live > effective_limit) {
+			return make_filter_error(ErrorCode::DecompressionLimitExceeded, DiagnosticId::DecompressionLimitExceeded,
+				"JPXDecode output buffers for the image's colour layout exceed ceiling");
+		}
+	}
 	std::vector<uint8_t> colour(pixels * colour_count, 0u);
 	std::vector<uint8_t> alpha(opacity_channel >= 0 ? pixels : 0u, 255u);
 	for (size_t ch = 0; ch < channel_count; ++ch) {
