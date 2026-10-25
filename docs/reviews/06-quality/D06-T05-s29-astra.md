@@ -96,3 +96,31 @@ Source-traced reproduction, not executed. No files were modified.
 
 HIGHEST: P1
 OVERALL: needs-attention
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T16:23:03Z
+- Effort: medium
+- Lenses: adversarial
+- Lines: 18
+- Digest: 25441905947e798c
+
+## adversarial: needs-attention
+
+1. **[P1] Correcting one stream bypasses the incomplete-reading safeguard for another.** `src/pdf/xref.cpp:1807` disables candidate exploration and its ambiguity check on every rescan. The consistency check at `src/pdf/xref.cpp:2059` checks only streams supplied by the oracle, leaving other streams unchecked.
+
+   Reproduce from `PdfXref.RecoveryRefusesWhenReadingsAreCut`, using its 16-decoy case. Before stream 30, add an independent stream 40 with `/Length 89 0 R`, payload `\nendstream\nendobj\n%padding\n`, and its real terminator. Define integer object 89 after stream 40 as the complete payload length. This supplies a valid correction plan for stream 40 while container 20’s genuine length remains undiscovered.
+
+   The first pass rejects the ambiguous file, but the wrapper retries because the plan is nonempty. The rescan corrects stream 40, still scans stream 30’s injected catalog, skips the incomplete-reading safeguard, and passes consistency because object 89 matches. Opening this PDF through `Document::open_memory`, with genuine and injected catalogs naming different valid page trees, selects the injected document contents.
+
+2. **[P1] Candidate discovery still misses supported nested predictor references.** `src/pdf/xref.cpp:1866` expands only the initially named references. References discovered during that expansion are never expanded themselves, yet the decoder resolves parameter-array elements and their dictionary values.
+
+   Reproduce with container 20 holding integer 88, the complete length of stream 30, using `/Filter /FlateDecode /DecodeParms 2 0 R`. Define object 2 as `[3 0 R]`, object 3 as `<< /Predictor 12 /Columns 5 0 R >>`, and object 5 as the correct positive column count. Encode the container with that predictor. Stream 30 uses `/Length 88 0 R`; after an embedded `endstream/endobj`, its payload redefines object 5 as zero and replaces catalog 1.
+
+   Normal decoding sees the poisoned column count. Candidate discovery finds objects 2 and 3 but never object 5, so its resolver returns null for `/Columns` and extracts no length. Exploration nevertheless counts as complete, allowing the injected catalog to survive. Opening the crafted PDF without `startxref` through `Document::open_memory` exposes the substituted pages.
+
+Both reproductions are source-traced, not executed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention

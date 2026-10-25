@@ -710,10 +710,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 	// rescans; with none consistent, the first pass's table stands.
 	LengthPlan plan;
 	try {
-		auto first = recover_damaged_xref_with(file_bytes, max_total_entries, nullptr, &plan, nullptr);
+		bool ambiguous = false;
+		auto first = recover_damaged_xref_with(file_bytes, max_total_entries, nullptr, &plan, nullptr, &ambiguous);
 		// A first pass that failed for want of something a rescan can supply (its only catalog swallowed by a wrongly
-		// sized stream, say) is still repaired by one; memory and the hard limits are not retried.
-		if (plan.empty() || (!first.has_value() && (first.error().code == ErrorCode::OutOfMemory ||
+		// sized stream, say) is still repaired by one; memory and the hard limits are not retried. A first pass whose
+		// /Length readings were cut short is final: a rescan checks only the streams it corrects, so it cannot vouch
+		// for the others.
+		if (plan.empty() || ambiguous || (!first.has_value() && (first.error().code == ErrorCode::OutOfMemory ||
 														first.error().code == ErrorCode::DecompressionLimitExceeded ||
 														first.error().code == ErrorCode::ResourceLimit))) {
 			return first;
@@ -758,7 +761,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 	uint64_t max_total_entries,
 	const std::unordered_map<uint64_t, int64_t>* length_oracle,
 	LengthPlan* plan_out,
-	std::vector<std::pair<uint64_t, int64_t>>* inconsistent_out) noexcept
+	std::vector<std::pair<uint64_t, int64_t>>* inconsistent_out,
+	bool* ambiguous_out) noexcept
 {
 	try {
 		const uint64_t effective_max_entries =
@@ -1840,30 +1844,39 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						}
 					}
 				};
-				for (const char* key : {"Type", "N", "First", "Filter", "DecodeParms"}) {
-					const PdfValue* v = container->dict.get(key);
-					if (v == nullptr) {
-						continue;
-					}
-					note_ref(*v);
-					if (const PdfArray* arr = v->as_array()) {
-						for (const PdfValue& item : *arr) {
-							note_ref(item);
-							if (const PdfDict* d = item.as_dict()) {
-								for (const auto& [k, inner] : *d) {
-									note_ref(inner);
-								}
+				// Every reference a value holds, however deeply nested, within a walk budget per container.
+				size_t walk_budget = 4096u;
+				const auto note_refs_in = [&](const PdfValue& root) {
+					std::vector<const PdfValue*> stack{&root};
+					while (!stack.empty()) {
+						if (walk_budget == 0u) {
+							readings_incomplete = true;
+							return;
+						}
+						--walk_budget;
+						const PdfValue* v = stack.back();
+						stack.pop_back();
+						note_ref(*v);
+						if (const PdfArray* arr = v->as_array()) {
+							for (const PdfValue& item : *arr) {
+								stack.push_back(&item);
+							}
+						} else if (const PdfDict* d = v->as_dict()) {
+							for (const auto& [k, inner] : *d) {
+								stack.push_back(&inner);
 							}
 						}
-					} else if (const PdfDict* d = v->as_dict()) {
-						for (const auto& [k, inner] : *d) {
-							note_ref(inner);
-						}
+					}
+				};
+				for (const char* key : {"Type", "N", "First", "Filter", "DecodeParms"}) {
+					if (const PdfValue* v = container->dict.get(key)) {
+						note_refs_in(*v);
 					}
 				}
-				// One level further: the references inside the named objects' own definitions (a /Filter 2 0 R whose object
-				// 2 is [3 0 R]), so the combinations reach every object a parameter's value depends on.
-				for (size_t i = 0, direct = named.size(); i < direct; ++i) {
+				// Transitively: the references inside the named objects' own definitions (a /Filter 2 0 R whose object 2 is
+				// [3 0 R], whose object 3 names /Columns 5 0 R), so the combinations reach every object a parameter's value
+				// depends on; `named` grows as this runs, up to its cap (past which the readings are incomplete).
+				for (size_t i = 0; i < named.size(); ++i) {
 					const auto defs = definitions_of.find(named[i].obj_num);
 					if (defs == definitions_of.end()) {
 						continue;
@@ -1879,16 +1892,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							}
 							continue;
 						}
-						note_ref(*value);
-						if (const PdfArray* arr = value->as_array()) {
-							for (const PdfValue& item : *arr) {
-								note_ref(item);
-							}
-						} else if (const PdfDict* d = value->as_dict()) {
-							for (const auto& [k, inner] : *d) {
-								note_ref(inner);
-							}
-						}
+						note_refs_in(*value);
 					}
 				}
 				if (named.empty() && !encrypted) {
@@ -2128,6 +2132,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 				header_off);
 		}
 		if (ambiguous_extent) {
+			if (ambiguous_out != nullptr) {
+				*ambiguous_out = true;
+			}
 			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedXRef,

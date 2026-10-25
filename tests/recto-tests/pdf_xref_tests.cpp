@@ -454,8 +454,8 @@ TEST(PdfXref, RecoveryLengthRoundOne)
 }
 
 // Round 2 of D06 T05 §29 under the second schedule: decoy definitions of a container's indirect /N can use up the
-// combinations the /Length readings try. With every combination read (15 decoys and the genuine one), the genuine
-// catalog stands; with one more decoy the readings are cut short, the stream that payload follows is still sized at
+// combinations the /Length readings try. With every combination read (14 decoys, the genuine one and the payload's),
+// the genuine catalog stands; with more decoys the readings are cut short, the stream that payload follows is still sized at
 // its first `endstream`, and recovery refuses rather than trust a table the payload may have forged.
 TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 {
@@ -472,7 +472,7 @@ TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 	const std::string fake = "\nendstream\nendobj\n2 0 obj\n0\nendobj\n"
 		"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
 	const std::string members = hex("88 0 " + std::to_string(fake.size()));
-	for (const auto& [decoys, stale] : std::vector<std::pair<int, bool>>{{15, false}, {16, false}, {16, true}}) {
+	for (const auto& [decoys, stale] : std::vector<std::pair<int, bool>>{{14, false}, {16, false}, {16, true}}) {
 		std::string pdf = "%PDF-1.7\n";
 		const size_t genuine_at = pdf.size();
 		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
@@ -488,7 +488,7 @@ TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 		}
 		pdf += "2 0 obj\n1\nendobj\n30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
 		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
-		if (decoys == 15) {
+		if (decoys == 14) {
 			RECTO_ASSERT_OK(rec);
 			ASSERT_NE(rec->find(1), nullptr);
 			EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
@@ -496,6 +496,72 @@ TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
 			SCOPED_TRACE(stale ? "stale length" : "no length");
 			RECTO_EXPECT_ERR(rec, ErrorCode::DamagedFormat);
 		}
+	}
+}
+
+// Round 4 of D06 T05 §29 under the second schedule.
+TEST(PdfXref, RecoveryLengthRoundFour)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string fake_catalog = "1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+
+	// Finding 1: a cut-short reading is final. Stream 40's length is found and corrected by a rescan, but stream
+	// 30's is still hidden by sixteen decoys; the rescan checks only stream 40, so it cannot vouch for stream 30.
+	{
+		const std::string fake = "\nendstream\nendobj\n2 0 obj\n0\nendobj\n" + fake_catalog;
+		const std::string members = hex("88 0 " + std::to_string(fake.size()));
+		const std::string padding = "\nendstream\nendobj\n%padding\n";
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			"40 0 obj\n<< /Length 89 0 R >>\nstream\n" + padding + "\nendstream\nendobj\n89 0 obj\n" +
+			std::to_string(padding.size()) + "\nendobj\n" +
+			"20 0 obj\n<< /Type /ObjStm /N 2 0 R /First 5 /Filter /ASCIIHexDecode /Length " +
+			std::to_string(members.size()) + " >>\nstream\n" + members + "\nendstream\nendobj\n";
+		for (int i = 0; i < 16; ++i) {
+			pdf += "2 0 obj\n0\nendobj\n";
+		}
+		pdf += "2 0 obj\n1\nendobj\n30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(pdf), 64), ErrorCode::DamagedFormat);
+	}
+
+	// Finding 2: discovery follows references however deep: /DecodeParms [3 0 R] (object 2), whose object 3 names
+	// /Columns 5 0 R. Stream 30's payload redefines object 5 as 0; the readings still reach the genuine 5 and the
+	// container's whole length for stream 30, so the genuine catalog stands.
+	{
+		const std::string fake = "\nendstream\nendobj\n5 0 obj\n0\nendobj\n" + fake_catalog;
+		constexpr size_t kColumns = 6u;
+		std::string raw = "88 0 " + std::to_string(fake.size());
+		raw.append((kColumns - raw.size() % kColumns) % kColumns, ' ');
+		std::vector<uint8_t> predicted;
+		for (size_t row = 0; row < raw.size() / kColumns; ++row) {
+			predicted.push_back(2u); // Up
+			for (size_t c = 0; c < kColumns; ++c) {
+				const uint8_t above = row == 0u ? 0u : static_cast<uint8_t>(raw[(row - 1u) * kColumns + c]);
+				predicted.push_back(static_cast<uint8_t>(static_cast<uint8_t>(raw[row * kColumns + c]) - above));
+			}
+		}
+		auto packed = flate_compress(predicted);
+		RECTO_ASSERT_OK(packed);
+		const std::string data(packed->begin(), packed->end());
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "2 0 obj\n[3 0 R]\nendobj\n" +
+			"3 0 obj\n<< /Predictor 12 /Columns 5 0 R >>\nendobj\n5 0 obj\n" + std::to_string(kColumns) + "\nendobj\n" +
+			"20 0 obj\n<< /Type /ObjStm /N 1 /First 5 /Filter [/FlateDecode] /DecodeParms 2 0 R /Length " +
+			std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
 	}
 }
 

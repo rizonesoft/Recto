@@ -229,7 +229,8 @@ private:
 		uint64_t max_total_entries,
 		const std::unordered_map<uint64_t, int64_t>* length_oracle,
 		LengthPlan* plan_out,
-		std::vector<std::pair<uint64_t, int64_t>>* inconsistent_out) noexcept;
+		std::vector<std::pair<uint64_t, int64_t>>* inconsistent_out,
+		bool* ambiguous_out = nullptr) noexcept;
 
 public:
 
