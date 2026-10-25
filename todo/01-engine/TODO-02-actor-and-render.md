@@ -484,6 +484,8 @@ Acrobat Pro plays page transitions and honours automatic page timing in Full Scr
 
 ## 13. `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`
 
+> **Started:** 2026-10-25T15:20Z
+
 > **Groomed 2026-10-23:** the chain bound returned `ErrorCode::UnsupportedFeature`; it now returns `ErrorCode::ResourceLimit`, which `§18` adds (the code did not exist), and `§13` and `§14` depend on `§18`.
 
 Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the user saves, and undoes it on request. Recto's rule is stricter: authoring always works on a copy and never modifies the open viewer document in place, and `recto::pdf::Document` is read-only. This section gives the engine the two pieces an actor needs for that: `ObjectChangeSet`, a plain value listing replaced and newly allocated indirect objects, and `StagedRevisionChain`, which appends each change set as one incremental revision (`§5`) to an in-memory copy of the opened bytes, reopens a working `Document` from that copy, undoes by truncating the last revision, and exports one squashed revision for the save path. It writes no file. It must not break `§5`'s byte-prefix rule (existing signatures stay valid), the `PdfResult<T>` contract, or the bounds on hostile input. The Recto improvement it keeps: the original file and the viewer's opened bytes are never touched until the save path (`D02 T01 §8`) writes a new file by temp-file-then-replace.
