@@ -6038,6 +6038,23 @@ TEST(PdfFilters, JpxSegmentRecordsCharged)
 	const size_t limit = lo + 512u; // less than 163 more segment records take
 	RECTO_ASSERT_OK(decode_jpx_image(one, nullptr, limit));
 	const auto many = make_j2k_empty_segments(164u);
+	// Round 3: one packet's pending list and the kept segments are live together, so the smallest limit 164 of them
+	// decode under covers both lists (each grown to capacity 256, each record at least 20 bytes), not only the larger.
+	{
+		size_t many_lo = 1u;
+		size_t many_hi = 1u << 20u;
+		while (many_lo < many_hi) {
+			const size_t mid = many_lo + (many_hi - many_lo) / 2u;
+			if (decode_jpx_image(many, nullptr, mid).has_value()) {
+				many_hi = mid;
+			} else {
+				many_lo = mid + 1u;
+			}
+		}
+		// Measured on x64: about 256 x 80 bytes for both lists, 256 x 40 for the larger alone; half again the larger
+		// alone is the bound.
+		EXPECT_GE(many_lo - lo, 256u * 60u);
+	}
 	RECTO_ASSERT_OK(decode_jpx_image(many)); // a valid header, decoded under the default ceiling
 	RECTO_EXPECT_ERR(decode_jpx_image(many, nullptr, limit), ErrorCode::DecompressionLimitExceeded);
 

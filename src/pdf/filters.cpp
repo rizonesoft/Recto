@@ -7288,6 +7288,13 @@ PdfResult<std::vector<uint8_t>> decode_dct(
 
 namespace {
 
+// The bytes a vector's next push allocates beyond what it holds: nothing while it has room, else up to double its
+// capacity (an upper bound on the standard library's growth), so a ceiling charged with this is never passed.
+[[nodiscard]] constexpr uint64_t j2k_vector_growth(size_t size, size_t capacity, size_t element) noexcept
+{
+	return size < capacity ? 0u : static_cast<uint64_t>(std::max<size_t>(1u, capacity)) * element;
+}
+
 // The most channels a JP2 image can map: one per component, and SIZ allows 16,384 (T.800 A.5.1).
 constexpr size_t kMaxJp2Channels = 16'384u;
 
@@ -10031,8 +10038,9 @@ struct Jp2Palette {
 				};
 				std::vector<PendingBody> pending;
 				// The packet's pending bodies count against the ceiling while they wait, as the segments they become
-				// count while the tile lives: a packet header of zero-length segments costs nothing in compressed bytes
-				// (D06 T05 §32, round 2).
+				// count while the tile lives, both by the capacity a growth would reach (doubling, an upper bound on
+				// the library's): a packet header of zero-length segments costs nothing in compressed bytes, and both
+				// lists are live at once (D06 T05 §32, rounds 2 and 3).
 				uint64_t pending_bytes = 0;
 
 				if (non_empty != 0u) {
@@ -10145,13 +10153,14 @@ struct Jp2Palette {
 											DiagnosticId::DamagedStream,
 											"Truncated code-block data length in JPXDecode packet header");
 									}
-									if (tile_live_bytes + pending_bytes + sizeof(PendingBody) > effective_limit) {
+									const uint64_t grow = j2k_vector_growth(pending.size(), pending.capacity(), sizeof(PendingBody));
+								if (tile_live_bytes + pending_bytes + grow > effective_limit) {
 									return make_filter_error(
 										ErrorCode::DecompressionLimitExceeded,
 										DiagnosticId::DecompressionLimitExceeded,
 										"JPXDecode packet segment list exceeds ceiling");
 								}
-								pending_bytes += sizeof(PendingBody);
+								pending_bytes += grow;
 								pending.push_back({&cb, seg_len, pass_at, in_segment});
 									pass_at += in_segment;
 									passes_left -= in_segment;
@@ -10199,13 +10208,14 @@ struct Jp2Palette {
 						segs.back().passes += item.passes; // a later layer continues the unfinished segment
 						segs.back().length += seg_span.size();
 					} else {
-						if (tile_live_bytes + sizeof(J2kSegment) > effective_limit) {
+						const uint64_t grow = j2k_vector_growth(segs.size(), segs.capacity(), sizeof(J2kSegment));
+						if (tile_live_bytes + pending_bytes + grow > effective_limit) {
 							return make_filter_error(
 								ErrorCode::DecompressionLimitExceeded,
 								DiagnosticId::DecompressionLimitExceeded,
 								"JPXDecode code-block segment list exceeds ceiling");
 						}
-						tile_live_bytes += sizeof(J2kSegment);
+						tile_live_bytes += grow;
 						segs.push_back(J2kSegment{item.passes, held, seg_span.size()});
 					}
 					if (item.cb->single_segment.empty() && item.cb->compressed.empty()) {
