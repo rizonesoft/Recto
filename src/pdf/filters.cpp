@@ -8424,6 +8424,21 @@ void idwt_97_2d_float(
 	const PdfDict* decode_parms,
 	size_t effective_limit);
 
+// WIC's output here is converted to gray or RGB by the codestream's component count, which would turn CMYK into RGB,
+// drop an opacity channel and reduce a palette image to gray; a JP2 header that asks for any of them (CMYK enumerated,
+// or four channels and no colour specification, a palette, or a cdef opacity channel) goes to the native decoder, which
+// keeps the channels as the header defines them (T.800 Annex I).
+[[nodiscard]] bool jpx_wic_keeps_layout(const JpxHeaderInfo& hdr) noexcept
+{
+	bool keeps = !(hdr.enumerated_colour == 12u || (!hdr.saw_colour && hdr.components == 4u) || !hdr.palette.empty());
+	const std::span<const uint8_t> cdef = hdr.channel_definition;
+	for (size_t at = 2u; keeps && at + 6u <= cdef.size(); at += 6u) {
+		const uint16_t type = read_u16_be(cdef.data() + at + 2u);
+		keeps = type != 1u && type != 2u;
+	}
+	return keeps;
+}
+
 [[nodiscard]] PdfResult<WicDecodedImage> decode_jpx_internal(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms,
@@ -8438,17 +8453,7 @@ void idwt_97_2d_float(
 	// Why WIC did not decode the stream, kept so a native failure after it still names the first cause.
 	std::optional<PdfError> wic_cause;
 	IWICImagingFactory* factory = nullptr;
-	// WIC's output here is converted to gray or RGB by the codestream's component count, which would turn CMYK into
-	// RGB, drop an opacity channel and reduce a palette image to gray; a JP2 header that asks for any of them (CMYK
-	// enumerated, or four channels and no colour specification, a palette, or a cdef opacity channel) goes to the
-	// native decoder, which keeps the channels as the header defines them (T.800 Annex I).
-	bool wic_keeps_layout =
-		!(hdr.enumerated_colour == 12u || (!hdr.saw_colour && hdr.components == 4u) || !hdr.palette.empty());
-	const std::span<const uint8_t> cdef = hdr.channel_definition;
-	for (size_t at = 2u; wic_keeps_layout && at + 6u <= cdef.size(); at += 6u) {
-		const uint16_t type = read_u16_be(cdef.data() + at + 2u);
-		wic_keeps_layout = type != 1u && type != 2u;
-	}
+	const bool wic_keeps_layout = jpx_wic_keeps_layout(hdr);
 	if (jpx_path != detail::JpxPath::NativeOnly && (wic_keeps_layout || jpx_path == detail::JpxPath::WicOnly)) {
 		if (const HRESULT factory_hr = thread_local_wic_factory(factory); FAILED(factory_hr)) {
 			if (!wic_failure_may_fall_back(factory_hr)) {
@@ -10739,6 +10744,16 @@ struct Jp2Palette {
 }
 
 } // namespace
+
+namespace detail {
+
+PdfResult<bool> jpx_default_path_is_native(std::span<const uint8_t> input) noexcept
+{
+	RECTO_PDF_TRY(const JpxHeaderInfo hdr, inspect_jpx_header(input, kMaxDecodedStreamBytes));
+	return !jpx_wic_keeps_layout(hdr);
+}
+
+} // namespace detail
 
 PdfResult<WicDecodedImage> decode_jpx_image(
 	std::span<const uint8_t> input,

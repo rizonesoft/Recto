@@ -5852,6 +5852,70 @@ TEST(PdfFilters, DISABLED_JpxStyleCodestreamsForCrossCheck)
 	std::printf("wrote %s\n", dir.string().c_str());
 }
 
+
+// Plan review of D06 T05 §32, gap 6: on the default path (WIC when a codec is registered) the images whose JP2 channels
+// WIC would misread go to Recto's own decoder: the routing rule sends a palette image, a CMYK image and one with a cdef
+// opacity channel native and leaves plain sRGB to WIC, on any host; and the default path decodes each exactly as the
+// native one. Whether WIC is registered on this host is printed: the WIC-equivalence half needs a host with a codec.
+TEST(PdfFilters, JpxDefaultPathRoutesChannelsNative)
+{
+	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+	const std::vector<uint8_t> enum_cmyk = {1u, 0u, 0u, 0u, 0u, 0u, 12u};
+	const std::array<J2kTestComponent, 1> idx = {J2kTestComponent{{0u, 1u, 1u, 0u}, 2u, 2u, 8u, 1u, 1u}};
+	const std::vector<uint8_t> pclr = {0u, 2u, 3u, 7u, 7u, 7u, 255u, 0u, 0u, 0u, 0u, 255u};
+	const std::vector<uint8_t> cmap = {0u, 0u, 1u, 0u, 0u, 0u, 1u, 1u, 0u, 0u, 1u, 2u};
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> palette_boxes = {{
+		{"colr", enum_srgb}, {"pclr", pclr}, {"cmap", cmap}}};
+	std::array<J2kTestComponent, 4> four{};
+	for (uint32_t c = 0; c < 4u; ++c) {
+		four[c] = J2kTestComponent{{static_cast<uint16_t>(40u * c), static_cast<uint16_t>(40u * c + 10u)}, 2u, 1u, 8u, 1u, 1u};
+	}
+	const auto cs4 = make_j2k_codestream(four, 2u, 1u);
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 1> cmyk_boxes = {{{"colr", enum_cmyk}}};
+	const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u,
+		0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> alpha_boxes = {{
+		{"colr", enum_srgb}, {"cdef", cdef}}};
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> files = {{
+		{"palette", make_jp2(make_j2k_codestream(idx, 2u, 2u), 2u, 2u, 1u, palette_boxes)},
+		{"cmyk", make_jp2(cs4, 2u, 1u, 4u, cmyk_boxes)},
+		{"opacity", make_jp2(cs4, 2u, 1u, 4u, alpha_boxes)},
+	}};
+	{
+		const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+		const detail::ScopedJpxPath wic(detail::JpxPath::WicOnly);
+		std::printf("JPX WIC codec registered on this host: %s\n",
+			decode_jpx_image(make_genuine_jp2_2x2_rgb(rgb, true))
+					.has_value() ? "yes" : "no");
+	}
+	for (const auto& [name, file] : files) {
+		auto routed = detail::jpx_default_path_is_native(file);
+		ASSERT_TRUE(routed.has_value()) << name;
+		EXPECT_TRUE(*routed) << name;
+	}
+	{
+		const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+		auto plain = detail::jpx_default_path_is_native(make_genuine_jp2_2x2_rgb(rgb, true));
+		ASSERT_TRUE(plain.has_value());
+		EXPECT_FALSE(*plain); // plain sRGB may go to WIC
+	}
+	for (const auto& [name, file] : files) {
+		PdfResult<WicDecodedImage> native = make_pdf_error(ErrorCode::InternalError, "not run");
+		{
+			const detail::ScopedJpxPath only(detail::JpxPath::NativeOnly);
+			native = decode_jpx_image(file);
+		}
+		ASSERT_TRUE(native.has_value()) << name;
+		const detail::ScopedJpxPath automatic(detail::JpxPath::Default);
+		auto chosen = decode_jpx_image(file);
+		ASSERT_TRUE(chosen.has_value()) << name;
+		EXPECT_EQ(chosen->components, native->components) << name;
+		EXPECT_EQ(chosen->is_cmyk, native->is_cmyk) << name;
+		EXPECT_EQ(chosen->pixels, native->pixels) << name;
+		EXPECT_EQ(chosen->rgba_pixels, native->rgba_pixels) << name;
+	}
+}
+
 TEST(PdfFilters, JpxPathPinned)
 {
 	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};

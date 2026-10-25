@@ -240,6 +240,11 @@ private:
 // Which JPXDecode implementation a decode on this thread may use. WIC is tried first when a JPEG 2000 codec is
 // registered, and the native decoder otherwise, so which one ran depends on the machine. Tests pin it while the
 // scope lives (and restore the previous choice on exit) so a test of either path cannot silently run the other.
+// Tests only: whether the default path decodes `input` with Recto's own decoder whatever codecs are registered (a
+// palette, CMYK or a cdef opacity channel, which WIC's gray-or-RGB output would lose), so the routing is proven on a
+// host without a JPEG 2000 codec too.
+[[nodiscard]] PdfResult<bool> jpx_default_path_is_native(std::span<const uint8_t> input) noexcept;
+
 enum class JpxPath : uint8_t {
 	Default, // WIC when a codec is registered, else native
 	NativeOnly,

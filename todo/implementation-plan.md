@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 597
+Sections: 98 | Checklist items: 600
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -100,7 +100,7 @@ Sections: 98 | Checklist items: 597
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
-| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 7     |
+| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 4     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 8     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 9     |
@@ -153,7 +153,7 @@ Sections: 98 | Checklist items: 597
 | [ ]    | D06 T05 §51 | Font inventory over every resource path, with checked embedding and Type3 classification | windows-host              | 4     |
 | [ ]    | D06 T05 §52 | Cancellable document opening and extraction                                              | windows-host              | 3     |
 | [ ]    | D06 T05 §53 | JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels       | windows-host              | 5     |
-| [ ]    | D06 T05 §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder               | windows-host, third-party | 4     |
+| [ ]    | D06 T05 §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder               | windows-host, third-party | 6     |
 
 ### Phase 2: M2 Viewer
 
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 79/846 verified sections, 38 ready to run now.
 
-Checklist: 495/6199 items completed (includes Commit items).
+Checklist: 497/6202 items completed (includes Commit items).
