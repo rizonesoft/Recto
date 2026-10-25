@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 608
+Sections: 98 | Checklist items: 612
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -91,8 +91,8 @@ Sections: 98 | Checklist items: 608
 | [x]    | D01 T02 §3  | Content-stream interpreter: graphics state, paths, painting, clipping and device colour  | windows-host              | 7     |
 | [x]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 16    |
 | [x]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 12    |
-| [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 8     |
-| [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
+| [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 9     |
+| [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 7     |
 | [ ]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 5     |
 | [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 4     |
 | [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
@@ -102,7 +102,7 @@ Sections: 98 | Checklist items: 608
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
-| [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 8     |
+| [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host              | 9     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 9     |
 | [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 7     |
 | [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 7     |
@@ -127,7 +127,7 @@ Sections: 98 | Checklist items: 608
 | [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host              | 8     |
 | [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host              | 7     |
 | [ ]    | D01 T03 §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths               | windows-host              | 6     |
-| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 7     |
+| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 8     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host              | 8     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 82/846 verified sections, 37 ready to run now.
 
-Checklist: 512/6211 items completed (includes Commit items).
+Checklist: 513/6215 items completed (includes Commit items).

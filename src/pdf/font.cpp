@@ -1631,9 +1631,12 @@ namespace {
 // The largest system font file a standard face is read from: Windows' own faces are a few megabytes.
 constexpr uint64_t kMaxStandard14FaceBytes = uint64_t{64} << 20u;
 
-// The faces loaded so far, each kept for the life of the process once loaded (a failure is not kept).
+// The faces loaded so far, each kept for the life of the process once loaded (a failure is not kept). One caller at a
+// time loads each font, so callers that ask at once wait for the one read and decode instead of each doing their own.
 std::mutex g_standard14_mutex;
 std::array<std::shared_ptr<const LoadedFont>, kStandard14FontCount> g_standard14_faces;
+std::array<std::mutex, kStandard14FontCount> g_standard14_load_mutexes;
+std::atomic<uint64_t> g_standard14_face_reads{0};
 
 // A family or face Windows does not have: named, never replaced by another font.
 [[nodiscard]] PdfError standard14_face_missing(std::wstring_view family, Standard14Font font, std::string_view what) noexcept
@@ -1688,8 +1691,13 @@ struct Standard14Program {
 			if (FAILED(hr)) {
 				return hr;
 			}
-			// A face DirectWrite would only simulate (bolding or slanting another) is not the face the font needs.
-			simulated = system_font->GetSimulations() != DWRITE_FONT_SIMULATIONS_NONE;
+			// DirectWrite returns the closest face it has: one it would only simulate (bolding or slanting another), or a
+			// real face of another weight, stretch or style, is not the face the font needs.
+			const DWRITE_FONT_STYLE style = system_font->GetStyle();
+			simulated = system_font->GetSimulations() != DWRITE_FONT_SIMULATIONS_NONE ||
+				system_font->GetWeight() != (want.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL) ||
+				system_font->GetStretch() != DWRITE_FONT_STRETCH_NORMAL ||
+				(want.italic ? style == DWRITE_FONT_STYLE_NORMAL : style != DWRITE_FONT_STYLE_NORMAL);
 			return simulated ? S_OK : system_font->CreateFontFace(face.ReleaseAndGetAddressOf());
 		});
 		if (FAILED(find_hr)) {
@@ -1699,7 +1707,7 @@ struct Standard14Program {
 			return standard14_face_missing(family, font, "font family");
 		}
 		if (simulated) {
-			return standard14_face_missing(family, font, want.bold || want.italic ? "real bold or italic face" : "face");
+			return standard14_face_missing(family, font, "face of the font's weight, width and style");
 		}
 		const DWRITE_FONT_FACE_TYPE type = face->GetType();
 		if ((type != DWRITE_FONT_FACE_TYPE_TRUETYPE && type != DWRITE_FONT_FACE_TYPE_CFF) || face->GetIndex() != 0u) {
@@ -1752,6 +1760,7 @@ struct Standard14Program {
 		if (FAILED(read_hr)) {
 			return dwrite_failure(read_hr, "system font file read", DecoderStep::DWriteFontFile);
 		}
+		g_standard14_face_reads.fetch_add(1u, std::memory_order_relaxed);
 		return Standard14Program{std::move(bytes),
 			type == DWRITE_FONT_FACE_TYPE_CFF ? FontProgramFormat::OpenType : FontProgramFormat::TrueType};
 	} catch (const std::bad_alloc&) {
@@ -1772,13 +1781,27 @@ void reset_standard14_faces() noexcept
 	}
 }
 
+uint64_t standard14_face_reads() noexcept
+{
+	return g_standard14_face_reads.load(std::memory_order_relaxed);
+}
+
 } // namespace detail
 
 PdfResult<std::shared_ptr<const LoadedFont>> load_standard14_face(Standard14Font font) noexcept
 {
 	const size_t slot = static_cast<size_t>(font);
 	const bool overridden = detail::g_standard14_family_font == font;
+	std::unique_lock<std::mutex> loading;
 	if (!overridden) {
+		{
+			const std::lock_guard lock(g_standard14_mutex);
+			if (g_standard14_faces[slot] != nullptr) {
+				return g_standard14_faces[slot];
+			}
+		}
+		// The font's loader lock, then the slot again: a caller that waited finds the face the first one loaded.
+		loading = std::unique_lock(g_standard14_load_mutexes[slot]);
 		const std::lock_guard lock(g_standard14_mutex);
 		if (g_standard14_faces[slot] != nullptr) {
 			return g_standard14_faces[slot];

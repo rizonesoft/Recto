@@ -10,8 +10,11 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -32,6 +35,7 @@
 #endif
 #include <windows.h>
 #include <dwrite.h>
+#include <wrl/client.h>
 
 namespace recto::pdf {
 namespace {
@@ -732,26 +736,116 @@ TEST(PdfFont, Standard14Aliases)
 	}
 }
 
-// Adobe's zapfdingbats.txt (adobe-type-tools/agl-aglfn at 4036a9c) for the codes 0x21 to 0x7E: the Unicode scalar
-// each glyph stands for. The test table only; the encoding itself is D01 T02 section 28's.
+// Adobe's zapfdingbats.txt (adobe-type-tools/agl-aglfn at 4036a9c): the Unicode scalar each ZapfDingbats glyph
+// stands for, by code, every glyph but space. The test table only; the encoding itself is D01 T02 section 28's.
 struct CodeUnicode {
 	uint8_t code;
 	char32_t unicode;
-}; std::array<CodeUnicode, 94> kZapfDingbatsUnicode = {{{0x21, 0x2701}, {0x22, 0x2702},
-	{0x23, 0x2703}, {0x24, 0x2704}, {0x25, 0x260E}, {0x26, 0x2706}, {0x27, 0x2707}, {0x28, 0x2708}, {0x29, 0x2709},
-	{0x2A, 0x261B}, {0x2B, 0x261E}, {0x2C, 0x270C}, {0x2D, 0x270D}, {0x2E, 0x270E}, {0x2F, 0x270F}, {0x30, 0x2710},
-	{0x31, 0x2711}, {0x32, 0x2712}, {0x33, 0x2713}, {0x34, 0x2714}, {0x35, 0x2715}, {0x36, 0x2716}, {0x37, 0x2717},
-	{0x38, 0x2718}, {0x39, 0x2719}, {0x3A, 0x271A}, {0x3B, 0x271B}, {0x3C, 0x271C}, {0x3D, 0x271D}, {0x3E, 0x271E},
-	{0x3F, 0x271F}, {0x40, 0x2720}, {0x41, 0x2721}, {0x42, 0x2722}, {0x43, 0x2723}, {0x44, 0x2724}, {0x45, 0x2725},
-	{0x46, 0x2726}, {0x47, 0x2727}, {0x48, 0x2605}, {0x49, 0x2729}, {0x4A, 0x272A}, {0x4B, 0x272B}, {0x4C, 0x272C},
-	{0x4D, 0x272D}, {0x4E, 0x272E}, {0x4F, 0x272F}, {0x50, 0x2730}, {0x51, 0x2731}, {0x52, 0x2732}, {0x53, 0x2733},
-	{0x54, 0x2734}, {0x55, 0x2735}, {0x56, 0x2736}, {0x57, 0x2737}, {0x58, 0x2738}, {0x59, 0x2739}, {0x5A, 0x273A},
-	{0x5B, 0x273B}, {0x5C, 0x273C}, {0x5D, 0x273D}, {0x5E, 0x273E}, {0x5F, 0x273F}, {0x60, 0x2740}, {0x61, 0x2741},
-	{0x62, 0x2742}, {0x63, 0x2743}, {0x64, 0x2744}, {0x65, 0x2745}, {0x66, 0x2746}, {0x67, 0x2747}, {0x68, 0x2748},
-	{0x69, 0x2749}, {0x6A, 0x274A}, {0x6B, 0x274B}, {0x6C, 0x25CF}, {0x6D, 0x274D}, {0x6E, 0x25A0}, {0x6F, 0x274F},
-	{0x70, 0x2750}, {0x71, 0x2751}, {0x72, 0x2752}, {0x73, 0x25B2}, {0x74, 0x25BC}, {0x75, 0x25C6}, {0x76, 0x2756},
-	{0x77, 0x25D7}, {0x78, 0x2758}, {0x79, 0x2759}, {0x7A, 0x275A}, {0x7B, 0x275B}, {0x7C, 0x275C}, {0x7D, 0x275D},
-	{0x7E, 0x275E}}};
+};
+constexpr std::array<CodeUnicode, 201> kZapfDingbatsUnicode = {{
+	{0x21, 0x2701}, {0x22, 0x2702}, {0x23, 0x2703}, {0x24, 0x2704}, {0x25, 0x260E}, {0x26, 0x2706}, {0x27, 0x2707},
+	{0x28, 0x2708}, {0x29, 0x2709}, {0x2A, 0x261B}, {0x2B, 0x261E}, {0x2C, 0x270C}, {0x2D, 0x270D}, {0x2E, 0x270E},
+	{0x2F, 0x270F}, {0x30, 0x2710}, {0x31, 0x2711}, {0x32, 0x2712}, {0x33, 0x2713}, {0x34, 0x2714}, {0x35, 0x2715},
+	{0x36, 0x2716}, {0x37, 0x2717}, {0x38, 0x2718}, {0x39, 0x2719}, {0x3A, 0x271A}, {0x3B, 0x271B}, {0x3C, 0x271C},
+	{0x3D, 0x271D}, {0x3E, 0x271E}, {0x3F, 0x271F}, {0x40, 0x2720}, {0x41, 0x2721}, {0x42, 0x2722}, {0x43, 0x2723},
+	{0x44, 0x2724}, {0x45, 0x2725}, {0x46, 0x2726}, {0x47, 0x2727}, {0x48, 0x2605}, {0x49, 0x2729}, {0x4A, 0x272A},
+	{0x4B, 0x272B}, {0x4C, 0x272C}, {0x4D, 0x272D}, {0x4E, 0x272E}, {0x4F, 0x272F}, {0x50, 0x2730}, {0x51, 0x2731},
+	{0x52, 0x2732}, {0x53, 0x2733}, {0x54, 0x2734}, {0x55, 0x2735}, {0x56, 0x2736}, {0x57, 0x2737}, {0x58, 0x2738},
+	{0x59, 0x2739}, {0x5A, 0x273A}, {0x5B, 0x273B}, {0x5C, 0x273C}, {0x5D, 0x273D}, {0x5E, 0x273E}, {0x5F, 0x273F},
+	{0x60, 0x2740}, {0x61, 0x2741}, {0x62, 0x2742}, {0x63, 0x2743}, {0x64, 0x2744}, {0x65, 0x2745}, {0x66, 0x2746},
+	{0x67, 0x2747}, {0x68, 0x2748}, {0x69, 0x2749}, {0x6A, 0x274A}, {0x6B, 0x274B}, {0x6C, 0x25CF}, {0x6D, 0x274D},
+	{0x6E, 0x25A0}, {0x6F, 0x274F}, {0x70, 0x2750}, {0x71, 0x2751}, {0x72, 0x2752}, {0x73, 0x25B2}, {0x74, 0x25BC},
+	{0x75, 0x25C6}, {0x76, 0x2756}, {0x77, 0x25D7}, {0x78, 0x2758}, {0x79, 0x2759}, {0x7A, 0x275A}, {0x7B, 0x275B},
+	{0x7C, 0x275C}, {0x7D, 0x275D}, {0x7E, 0x275E}, {0x80, 0x2768}, {0x81, 0x2769}, {0x82, 0x276A}, {0x83, 0x276B},
+	{0x84, 0x276C}, {0x85, 0x276D}, {0x86, 0x276E}, {0x87, 0x276F}, {0x88, 0x2770}, {0x89, 0x2771}, {0x8A, 0x2772},
+	{0x8B, 0x2773}, {0x8C, 0x2774}, {0x8D, 0x2775}, {0xA1, 0x2761}, {0xA2, 0x2762}, {0xA3, 0x2763}, {0xA4, 0x2764},
+	{0xA5, 0x2765}, {0xA6, 0x2766}, {0xA7, 0x2767}, {0xA8, 0x2663}, {0xA9, 0x2666}, {0xAA, 0x2665}, {0xAB, 0x2660},
+	{0xAC, 0x2460}, {0xAD, 0x2461}, {0xAE, 0x2462}, {0xAF, 0x2463}, {0xB0, 0x2464}, {0xB1, 0x2465}, {0xB2, 0x2466},
+	{0xB3, 0x2467}, {0xB4, 0x2468}, {0xB5, 0x2469}, {0xB6, 0x2776}, {0xB7, 0x2777}, {0xB8, 0x2778}, {0xB9, 0x2779},
+	{0xBA, 0x277A}, {0xBB, 0x277B}, {0xBC, 0x277C}, {0xBD, 0x277D}, {0xBE, 0x277E}, {0xBF, 0x277F}, {0xC0, 0x2780},
+	{0xC1, 0x2781}, {0xC2, 0x2782}, {0xC3, 0x2783}, {0xC4, 0x2784}, {0xC5, 0x2785}, {0xC6, 0x2786}, {0xC7, 0x2787},
+	{0xC8, 0x2788}, {0xC9, 0x2789}, {0xCA, 0x278A}, {0xCB, 0x278B}, {0xCC, 0x278C}, {0xCD, 0x278D}, {0xCE, 0x278E},
+	{0xCF, 0x278F}, {0xD0, 0x2790}, {0xD1, 0x2791}, {0xD2, 0x2792}, {0xD3, 0x2793}, {0xD4, 0x2794}, {0xD5, 0x2192},
+	{0xD6, 0x2194}, {0xD7, 0x2195}, {0xD8, 0x2798}, {0xD9, 0x2799}, {0xDA, 0x279A}, {0xDB, 0x279B}, {0xDC, 0x279C},
+	{0xDD, 0x279D}, {0xDE, 0x279E}, {0xDF, 0x279F}, {0xE0, 0x27A0}, {0xE1, 0x27A1}, {0xE2, 0x27A2}, {0xE3, 0x27A3},
+	{0xE4, 0x27A4}, {0xE5, 0x27A5}, {0xE6, 0x27A6}, {0xE7, 0x27A7}, {0xE8, 0x27A8}, {0xE9, 0x27A9}, {0xEA, 0x27AA},
+	{0xEB, 0x27AB}, {0xEC, 0x27AC}, {0xED, 0x27AD}, {0xEE, 0x27AE}, {0xEF, 0x27AF}, {0xF1, 0x27B1}, {0xF2, 0x27B2},
+	{0xF3, 0x27B3}, {0xF4, 0x27B4}, {0xF5, 0x27B5}, {0xF6, 0x27B6}, {0xF7, 0x27B7}, {0xF8, 0x27B8}, {0xF9, 0x27B9},
+	{0xFA, 0x27BA}, {0xFB, 0x27BB}, {0xFC, 0x27BC}, {0xFD, 0x27BD}, {0xFE, 0x27BE}
+}};
+
+// Adobe's glyphlist.txt (the Adobe Glyph List, adobe-type-tools/agl-aglfn at 4036a9c): the Unicode scalar of each of
+// the 315 glyph names in the twelve Latin Core14 AFM files, sorted by name, but for `commaaccent`, which the list
+// maps to Adobe's private-use U+F6C3 that no Windows face has: here its Unicode character, U+0326 COMBINING COMMA
+// BELOW. The test table only (D01 T02 section 28 owns the list, and that mapping).
+struct NameUnicode {
+	std::string_view name;
+	char32_t unicode;
+};
+constexpr std::array<NameUnicode, 315> kLatinUnicode = {{
+	{"A", 0x0041}, {"AE", 0x00C6}, {"Aacute", 0x00C1}, {"Abreve", 0x0102}, {"Acircumflex", 0x00C2},
+	{"Adieresis", 0x00C4}, {"Agrave", 0x00C0}, {"Amacron", 0x0100}, {"Aogonek", 0x0104}, {"Aring", 0x00C5},
+	{"Atilde", 0x00C3}, {"B", 0x0042}, {"C", 0x0043}, {"Cacute", 0x0106}, {"Ccaron", 0x010C}, {"Ccedilla", 0x00C7},
+	{"D", 0x0044}, {"Dcaron", 0x010E}, {"Dcroat", 0x0110}, {"Delta", 0x2206}, {"E", 0x0045}, {"Eacute", 0x00C9},
+	{"Ecaron", 0x011A}, {"Ecircumflex", 0x00CA}, {"Edieresis", 0x00CB}, {"Edotaccent", 0x0116}, {"Egrave", 0x00C8},
+	{"Emacron", 0x0112}, {"Eogonek", 0x0118}, {"Eth", 0x00D0}, {"Euro", 0x20AC}, {"F", 0x0046}, {"G", 0x0047},
+	{"Gbreve", 0x011E}, {"Gcommaaccent", 0x0122}, {"H", 0x0048}, {"I", 0x0049}, {"Iacute", 0x00CD},
+	{"Icircumflex", 0x00CE}, {"Idieresis", 0x00CF}, {"Idotaccent", 0x0130}, {"Igrave", 0x00CC}, {"Imacron", 0x012A},
+	{"Iogonek", 0x012E}, {"J", 0x004A}, {"K", 0x004B}, {"Kcommaaccent", 0x0136}, {"L", 0x004C}, {"Lacute", 0x0139},
+	{"Lcaron", 0x013D}, {"Lcommaaccent", 0x013B}, {"Lslash", 0x0141}, {"M", 0x004D}, {"N", 0x004E},
+	{"Nacute", 0x0143}, {"Ncaron", 0x0147}, {"Ncommaaccent", 0x0145}, {"Ntilde", 0x00D1}, {"O", 0x004F},
+	{"OE", 0x0152}, {"Oacute", 0x00D3}, {"Ocircumflex", 0x00D4}, {"Odieresis", 0x00D6}, {"Ograve", 0x00D2},
+	{"Ohungarumlaut", 0x0150}, {"Omacron", 0x014C}, {"Oslash", 0x00D8}, {"Otilde", 0x00D5}, {"P", 0x0050},
+	{"Q", 0x0051}, {"R", 0x0052}, {"Racute", 0x0154}, {"Rcaron", 0x0158}, {"Rcommaaccent", 0x0156}, {"S", 0x0053},
+	{"Sacute", 0x015A}, {"Scaron", 0x0160}, {"Scedilla", 0x015E}, {"Scommaaccent", 0x0218}, {"T", 0x0054},
+	{"Tcaron", 0x0164}, {"Tcommaaccent", 0x0162}, {"Thorn", 0x00DE}, {"U", 0x0055}, {"Uacute", 0x00DA},
+	{"Ucircumflex", 0x00DB}, {"Udieresis", 0x00DC}, {"Ugrave", 0x00D9}, {"Uhungarumlaut", 0x0170},
+	{"Umacron", 0x016A}, {"Uogonek", 0x0172}, {"Uring", 0x016E}, {"V", 0x0056}, {"W", 0x0057}, {"X", 0x0058},
+	{"Y", 0x0059}, {"Yacute", 0x00DD}, {"Ydieresis", 0x0178}, {"Z", 0x005A}, {"Zacute", 0x0179}, {"Zcaron", 0x017D},
+	{"Zdotaccent", 0x017B}, {"a", 0x0061}, {"aacute", 0x00E1}, {"abreve", 0x0103}, {"acircumflex", 0x00E2},
+	{"acute", 0x00B4}, {"adieresis", 0x00E4}, {"ae", 0x00E6}, {"agrave", 0x00E0}, {"amacron", 0x0101},
+	{"ampersand", 0x0026}, {"aogonek", 0x0105}, {"aring", 0x00E5}, {"asciicircum", 0x005E}, {"asciitilde", 0x007E},
+	{"asterisk", 0x002A}, {"at", 0x0040}, {"atilde", 0x00E3}, {"b", 0x0062}, {"backslash", 0x005C}, {"bar", 0x007C},
+	{"braceleft", 0x007B}, {"braceright", 0x007D}, {"bracketleft", 0x005B}, {"bracketright", 0x005D},
+	{"breve", 0x02D8}, {"brokenbar", 0x00A6}, {"bullet", 0x2022}, {"c", 0x0063}, {"cacute", 0x0107},
+	{"caron", 0x02C7}, {"ccaron", 0x010D}, {"ccedilla", 0x00E7}, {"cedilla", 0x00B8}, {"cent", 0x00A2},
+	{"circumflex", 0x02C6}, {"colon", 0x003A}, {"comma", 0x002C}, {"commaaccent", 0x0326}, {"copyright", 0x00A9},
+	{"currency", 0x00A4}, {"d", 0x0064}, {"dagger", 0x2020}, {"daggerdbl", 0x2021}, {"dcaron", 0x010F},
+	{"dcroat", 0x0111}, {"degree", 0x00B0}, {"dieresis", 0x00A8}, {"divide", 0x00F7}, {"dollar", 0x0024},
+	{"dotaccent", 0x02D9}, {"dotlessi", 0x0131}, {"e", 0x0065}, {"eacute", 0x00E9}, {"ecaron", 0x011B},
+	{"ecircumflex", 0x00EA}, {"edieresis", 0x00EB}, {"edotaccent", 0x0117}, {"egrave", 0x00E8}, {"eight", 0x0038},
+	{"ellipsis", 0x2026}, {"emacron", 0x0113}, {"emdash", 0x2014}, {"endash", 0x2013}, {"eogonek", 0x0119},
+	{"equal", 0x003D}, {"eth", 0x00F0}, {"exclam", 0x0021}, {"exclamdown", 0x00A1}, {"f", 0x0066}, {"fi", 0xFB01},
+	{"five", 0x0035}, {"fl", 0xFB02}, {"florin", 0x0192}, {"four", 0x0034}, {"fraction", 0x2044}, {"g", 0x0067},
+	{"gbreve", 0x011F}, {"gcommaaccent", 0x0123}, {"germandbls", 0x00DF}, {"grave", 0x0060}, {"greater", 0x003E},
+	{"greaterequal", 0x2265}, {"guillemotleft", 0x00AB}, {"guillemotright", 0x00BB}, {"guilsinglleft", 0x2039},
+	{"guilsinglright", 0x203A}, {"h", 0x0068}, {"hungarumlaut", 0x02DD}, {"hyphen", 0x002D}, {"i", 0x0069},
+	{"iacute", 0x00ED}, {"icircumflex", 0x00EE}, {"idieresis", 0x00EF}, {"igrave", 0x00EC}, {"imacron", 0x012B},
+	{"iogonek", 0x012F}, {"j", 0x006A}, {"k", 0x006B}, {"kcommaaccent", 0x0137}, {"l", 0x006C}, {"lacute", 0x013A},
+	{"lcaron", 0x013E}, {"lcommaaccent", 0x013C}, {"less", 0x003C}, {"lessequal", 0x2264}, {"logicalnot", 0x00AC},
+	{"lozenge", 0x25CA}, {"lslash", 0x0142}, {"m", 0x006D}, {"macron", 0x00AF}, {"minus", 0x2212}, {"mu", 0x00B5},
+	{"multiply", 0x00D7}, {"n", 0x006E}, {"nacute", 0x0144}, {"ncaron", 0x0148}, {"ncommaaccent", 0x0146},
+	{"nine", 0x0039}, {"notequal", 0x2260}, {"ntilde", 0x00F1}, {"numbersign", 0x0023}, {"o", 0x006F},
+	{"oacute", 0x00F3}, {"ocircumflex", 0x00F4}, {"odieresis", 0x00F6}, {"oe", 0x0153}, {"ogonek", 0x02DB},
+	{"ograve", 0x00F2}, {"ohungarumlaut", 0x0151}, {"omacron", 0x014D}, {"one", 0x0031}, {"onehalf", 0x00BD},
+	{"onequarter", 0x00BC}, {"onesuperior", 0x00B9}, {"ordfeminine", 0x00AA}, {"ordmasculine", 0x00BA},
+	{"oslash", 0x00F8}, {"otilde", 0x00F5}, {"p", 0x0070}, {"paragraph", 0x00B6}, {"parenleft", 0x0028},
+	{"parenright", 0x0029}, {"partialdiff", 0x2202}, {"percent", 0x0025}, {"period", 0x002E},
+	{"periodcentered", 0x00B7}, {"perthousand", 0x2030}, {"plus", 0x002B}, {"plusminus", 0x00B1}, {"q", 0x0071},
+	{"question", 0x003F}, {"questiondown", 0x00BF}, {"quotedbl", 0x0022}, {"quotedblbase", 0x201E},
+	{"quotedblleft", 0x201C}, {"quotedblright", 0x201D}, {"quoteleft", 0x2018}, {"quoteright", 0x2019},
+	{"quotesinglbase", 0x201A}, {"quotesingle", 0x0027}, {"r", 0x0072}, {"racute", 0x0155}, {"radical", 0x221A},
+	{"rcaron", 0x0159}, {"rcommaaccent", 0x0157}, {"registered", 0x00AE}, {"ring", 0x02DA}, {"s", 0x0073},
+	{"sacute", 0x015B}, {"scaron", 0x0161}, {"scedilla", 0x015F}, {"scommaaccent", 0x0219}, {"section", 0x00A7},
+	{"semicolon", 0x003B}, {"seven", 0x0037}, {"six", 0x0036}, {"slash", 0x002F}, {"space", 0x0020},
+	{"sterling", 0x00A3}, {"summation", 0x2211}, {"t", 0x0074}, {"tcaron", 0x0165}, {"tcommaaccent", 0x0163},
+	{"thorn", 0x00FE}, {"three", 0x0033}, {"threequarters", 0x00BE}, {"threesuperior", 0x00B3}, {"tilde", 0x02DC},
+	{"trademark", 0x2122}, {"two", 0x0032}, {"twosuperior", 0x00B2}, {"u", 0x0075}, {"uacute", 0x00FA},
+	{"ucircumflex", 0x00FB}, {"udieresis", 0x00FC}, {"ugrave", 0x00F9}, {"uhungarumlaut", 0x0171},
+	{"umacron", 0x016B}, {"underscore", 0x005F}, {"uogonek", 0x0173}, {"uring", 0x016F}, {"v", 0x0076}, {"w", 0x0077},
+	{"x", 0x0078}, {"y", 0x0079}, {"yacute", 0x00FD}, {"ydieresis", 0x00FF}, {"yen", 0x00A5}, {"z", 0x007A},
+	{"zacute", 0x017A}, {"zcaron", 0x017E}, {"zdotaccent", 0x017C}, {"zero", 0x0030}
+}};
 
 // A face glyph for `key` with an outline, beside the AFM glyph's advance.
 void expect_drawn(Standard14Font font, char32_t key, const Standard14Glyph& afm_glyph)
@@ -785,7 +879,7 @@ TEST(PdfFont, Standard14Faces)
 				}
 			}
 		} else if (font == Standard14Font::ZapfDingbats) {
-			for (const auto& [code, unicode] : kZapfDingbatsUnicode) {
+			for (const auto& [code, unicode] : kZapfDingbatsUnicode) { // every glyph but space
 				const Standard14Glyph* g = standard14_glyph_by_code(font, code);
 				ASSERT_NE(g, nullptr) << int{code};
 				expect_drawn(font, unicode, *g);
@@ -800,9 +894,10 @@ TEST(PdfFont, Standard14Faces)
 			}
 		}
 	}
-	// Threads that load a face at once all get the same one: the first face stored is the one every caller shares.
+	// Threads that load a face at once all get the same one, read once: the others wait for it (completion review gap 1).
 	{
 		detail::reset_standard14_faces();
+		const uint64_t reads_before = detail::standard14_face_reads();
 		constexpr size_t kThreads = 8u;
 		std::array<std::shared_ptr<const LoadedFont>, kThreads> got;
 		std::atomic<size_t> ready{0};
@@ -826,7 +921,21 @@ TEST(PdfFont, Standard14Faces)
 			ASSERT_NE(face, nullptr);
 			EXPECT_EQ(face.get(), got[0].get());
 		}
+		EXPECT_EQ(detail::standard14_face_reads(), reads_before + 1u);
+		const auto warm_started = std::chrono::steady_clock::now();
 		EXPECT_EQ(load_standard14_face(Standard14Font::HelveticaBold)->get(), got[0].get());
+		const auto warm = std::chrono::steady_clock::now() - warm_started;
+		EXPECT_EQ(detail::standard14_face_reads(), reads_before + 1u); // a warm lookup reads nothing
+		detail::reset_standard14_faces();
+		const auto cold_started = std::chrono::steady_clock::now();
+		ASSERT_TRUE(load_standard14_face(Standard14Font::TimesRoman).has_value());
+		const auto cold = std::chrono::steady_clock::now() - cold_started;
+		const auto us = [](auto d) { return std::chrono::duration_cast<std::chrono::microseconds>(d).count(); };
+		::testing::Test::RecordProperty("cold_load_us", std::to_string(us(cold)));
+		::testing::Test::RecordProperty("warm_load_us", std::to_string(us(warm)));
+		std::printf("Standard 14 face load: cold %lld us, warm %lld us\n", static_cast<long long>(us(cold)),
+			static_cast<long long>(us(warm)));
+		EXPECT_LT(us(warm), 1000);
 	}
 	// Symbol's Euro, which the Windows Symbol face lacks, comes from Segoe UI Symbol; every other Symbol code from Symbol.
 	{
@@ -850,6 +959,121 @@ TEST(PdfFont, Standard14Faces)
 	EXPECT_EQ(standard14_face(Standard14Font::ZapfDingbats).family, L"Segoe UI Symbol");
 }
 
+// Completion review gap 5: every glyph of every standard font draws, and draws the right glyph. Arial, Times New Roman
+// and Courier New are metric-compatible with Helvetica, Times and Courier, as Windows' Symbol is with Adobe's, so each
+// face glyph's advance matches the AFM width (within 2/1000 em of rounding) wherever the face is the font's own; a wrong
+// glyph would show a different width. ZapfDingbats is drawn from Segoe UI Symbol, a different design, so its glyphs are
+// checked for presence and outline only. Space has an advance and no outline.
+// The glyphs whose Arial or Times New Roman design is not as wide as Adobe's (reviewed 2026-10-26 on Windows 11): the
+// accents, signs and caron letters Adobe added to the Core14 set in 1997, which Monotype did not match. Layout keeps the
+// AFM width; drawing fits the face's glyph to it (D01 T02 section 4). And `commaaccent`, a spacing accent in the AFM,
+// drawn from the combining U+0326, which has no advance. Courier New and Symbol match everywhere.
+constexpr std::array<std::string_view, 15> kKnownWidthDifferences = {"Lcaron", "commaaccent", "dcaron", "divide", "imacron", "lcaron",
+	"lozenge", "macron", "mu", "partialdiff", "periodcentered", "plusminus", "radical", "summation", "tcaron"};
+
+TEST(PdfFont, Standard14Repertoire)
+{
+	const auto unicode_of = [](std::string_view name) -> std::optional<char32_t> {
+		const auto it = std::lower_bound(kLatinUnicode.begin(), kLatinUnicode.end(), name,
+			[](const NameUnicode& row, std::string_view key) { return row.name < key; });
+		return it != kLatinUnicode.end() && it->name == name ? std::optional<char32_t>(it->unicode) : std::nullopt;
+	};
+	for (const Standard14Font font : kAllStandard14) {
+		const Standard14Metrics& m = standard14_metrics(font);
+		SCOPED_TRACE(std::string(m.base_font));
+		std::vector<std::string> missing;
+		std::vector<std::string> wrong_width;
+		size_t known_differences = 0;
+		size_t checked = 0;
+		size_t unencoded = 0;
+		const auto check = [&](const Standard14Glyph& g, char32_t key, bool own_face) {
+			auto glyph = standard14_face_glyph(font, key);
+			ASSERT_TRUE(glyph.has_value()) << glyph.error().message.view();
+			if (!glyph->has_value()) {
+				missing.emplace_back(g.name);
+				return;
+			}
+			const LoadedFont& face = *(*glyph)->face;
+			auto advance = face.advance((*glyph)->glyph);
+			ASSERT_TRUE(advance.has_value());
+			if (own_face && std::abs(*advance * 1000.0 - g.width) > 2.0) {
+				if (std::find(kKnownWidthDifferences.begin(), kKnownWidthDifferences.end(), g.name) !=
+					kKnownWidthDifferences.end()) {
+					++known_differences;
+				} else {
+					wrong_width.push_back(std::string(g.name) + " " + std::to_string(*advance * 1000.0) + " vs " +
+						std::to_string(g.width));
+				}
+			}
+			auto outline = face.outline((*glyph)->glyph);
+			ASSERT_TRUE(outline.has_value()) << g.name;
+			EXPECT_EQ(outline->points.empty(), g.name == "space") << g.name;
+			++checked;
+		};
+		if (font == Standard14Font::Symbol) {
+			for (const Standard14Glyph& g : m.glyphs) {
+				if (g.code < 0) {
+					++unencoded; // Adobe's apple: no code reaches it, and no Unicode scalar names it
+					continue;
+				}
+				check(g, static_cast<char32_t>(g.code), g.name != "Euro");
+			}
+		} else if (font == Standard14Font::ZapfDingbats) {
+			for (const auto& [code, unicode] : kZapfDingbatsUnicode) {
+				const Standard14Glyph* g = standard14_glyph_by_code(font, code);
+				ASSERT_NE(g, nullptr) << int{code};
+				check(*g, unicode, false);
+			}
+			check(*standard14_glyph_by_name(font, "space"), U' ', false);
+		} else {
+			for (const Standard14Glyph& g : m.glyphs) {
+				const std::optional<char32_t> unicode = unicode_of(g.name);
+				ASSERT_TRUE(unicode.has_value()) << g.name;
+				check(g, *unicode, true);
+			}
+		}
+		EXPECT_EQ(checked + unencoded, m.glyphs.size());
+		EXPECT_EQ(unencoded, font == Standard14Font::Symbol ? 1u : 0u);
+		EXPECT_TRUE(missing.empty()) << "no face glyph: " << ::testing::PrintToString(missing);
+		EXPECT_TRUE(wrong_width.empty()) << "advance differs from the AFM: " << ::testing::PrintToString(wrong_width);
+		EXPECT_LE(known_differences, kKnownWidthDifferences.size());
+	}
+}
+
+// The first system family whose closest match to bold (700) is a real face of another weight, not a simulation.
+[[nodiscard]] std::optional<std::wstring> partial_bold_family()
+{
+	Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+	Microsoft::WRL::ComPtr<IDWriteFontCollection> collection;
+	if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+			reinterpret_cast<IUnknown**>(factory.GetAddressOf()))) ||
+		FAILED(factory->GetSystemFontCollection(collection.GetAddressOf(), FALSE))) {
+		return std::nullopt;
+	}
+	for (UINT32 i = 0; i < collection->GetFontFamilyCount(); ++i) {
+		Microsoft::WRL::ComPtr<IDWriteFontFamily> family;
+		Microsoft::WRL::ComPtr<IDWriteFont> font;
+		Microsoft::WRL::ComPtr<IDWriteLocalizedStrings> names;
+		if (FAILED(collection->GetFontFamily(i, family.GetAddressOf())) ||
+			FAILED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STRETCH_NORMAL,
+				DWRITE_FONT_STYLE_NORMAL, font.GetAddressOf())) ||
+			font->GetSimulations() != DWRITE_FONT_SIMULATIONS_NONE || font->GetWeight() == DWRITE_FONT_WEIGHT_BOLD ||
+			font->GetStretch() != DWRITE_FONT_STRETCH_NORMAL || FAILED(family->GetFamilyNames(names.GetAddressOf()))) {
+			continue;
+		}
+		UINT32 length = 0;
+		if (FAILED(names->GetStringLength(0, &length))) {
+			continue;
+		}
+		std::wstring name(length + 1u, L'\0');
+		if (SUCCEEDED(names->GetString(0, name.data(), length + 1u))) {
+			name.resize(length);
+			return name;
+		}
+	}
+	return std::nullopt;
+}
+
 TEST(PdfFont, Standard14FaceFailures)
 {
 	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);
@@ -864,6 +1088,19 @@ TEST(PdfFont, Standard14FaceFailures)
 		EXPECT_NE(face.error().message.view().find("Recto No Such Family"), std::string_view::npos)
 			<< face.error().message.view();
 		EXPECT_NE(face.error().message.view().find("Helvetica"), std::string_view::npos);
+	}
+	// A family whose closest face to bold is a real face of another weight (no simulation) is refused, not drawn in
+	// that weight (completion review gap 2). Which families are partial depends on the fonts installed, so the test finds
+	// one in the system collection, the first whose closest match to bold is real and not 700.
+	if (const std::optional<std::wstring> family = partial_bold_family(); !family.has_value()) {
+		std::printf("Standard 14 weight check not run: no installed family has a real face nearest bold that is not bold\n");
+	} else {
+		const detail::ScopedStandard14Family partial(Standard14Font::HelveticaBold, *family);
+		auto face = load_standard14_face(Standard14Font::HelveticaBold);
+		ASSERT_FALSE(face.has_value());
+		EXPECT_EQ(face.error().code, ErrorCode::UnsupportedFeature);
+		EXPECT_NE(face.error().message.view().find("weight, width and style"), std::string_view::npos)
+			<< face.error().message.view();
 	}
 	// Each DirectWrite step's failure keeps its step and HRESULT, and is not kept: the next call loads the face.
 	const std::array<std::tuple<detail::FontLoaderStage, DecoderStep, int32_t, ErrorCode>, 4> cases = {{
@@ -901,6 +1138,7 @@ TEST(PdfFont, Standard14FaceFailures)
 	ASSERT_TRUE(outline.has_value()) << outline.error().message.view();
 	EXPECT_FALSE(outline->points.empty());
 }
+
 
 } // namespace
 } // namespace recto::pdf

@@ -285,6 +285,9 @@ private:
 // Forgets the Standard 14 faces loaded so far (the fonts callers hold stay valid), so a test can load one afresh.
 void reset_standard14_faces() noexcept;
 
+// How many Standard 14 face files this process has read, for tests of once-per-process loading.
+[[nodiscard]] uint64_t standard14_face_reads() noexcept;
+
 // While the object lives, `font`'s face is looked up under `family` on this thread, bypassing the shared faces: a
 // family Windows lacks can be tried on any machine. Test use only.
 class ScopedStandard14Family {
