@@ -913,6 +913,9 @@ enum class DecoderStep : uint16_t {
 	DWriteFontReference, // the in-memory font file reference over the font program
 	DWriteFontFace,      // the DirectWrite font face
 	NativeGlyf,          // Recto's own TrueType glyf outline reader
+	// Standard 14 faces (D01 T02 section 27).
+	DWriteSystemFont, // the system font collection, its family, font and face
+	DWriteFontFile,   // reading a system font file's bytes through its loader
 };
 
 // True for the font-loading steps, whose failures concern a font, not an image.
@@ -920,7 +923,7 @@ enum class DecoderStep : uint16_t {
 {
 	return step == DecoderStep::DWriteFactory || step == DecoderStep::DWriteFontLoader ||
 		step == DecoderStep::DWriteFontReference || step == DecoderStep::DWriteFontFace ||
-		step == DecoderStep::NativeGlyf;
+		step == DecoderStep::NativeGlyf || step == DecoderStep::DWriteSystemFont || step == DecoderStep::DWriteFontFile;
 }
 
 // What a font-loading failure means to a person reading the log, by its code (D01 T02 section 2).
@@ -985,6 +988,10 @@ enum class DecoderStep : uint16_t {
 		return "DWriteFontFace";
 	case DecoderStep::NativeGlyf:
 		return "NativeGlyf";
+	case DecoderStep::DWriteSystemFont:
+		return "DWriteSystemFont";
+	case DecoderStep::DWriteFontFile:
+		return "DWriteFontFile";
 	}
 	return "UnknownStep";
 }

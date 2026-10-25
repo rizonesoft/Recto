@@ -26,3 +26,6 @@ LICENSE text eol=lf
 # Byte-exact compressor fixtures (their SHA-256 is recorded in reference-sizes.json).
 tests/corpus/flate/*.txt binary
 scripts/hooks/* text eol=lf
+# Vendored Adobe Core14 AFM files and their notice stay byte for byte as published (third_party/adobe-core14-afm/README.md).
+third_party/adobe-core14-afm/*.afm -text
+third_party/adobe-core14-afm/MustRead.html -text

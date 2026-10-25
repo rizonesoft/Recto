@@ -14,10 +14,13 @@
 #include "error.h"
 #include "object.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <vector>
 
 struct IDWriteFontFace;
@@ -163,6 +166,89 @@ private:
 	std::shared_ptr<const std::vector<uint8_t>> program,
 	FontProgramFormat format) noexcept;
 
+// The fourteen standard fonts (ISO 32000-1 section 9.6.2.2), whose metrics a reader knows without an embedded program
+// (D01 T02 section 27). The metrics are Adobe's Core14 AFM files (`third_party/adobe-core14-afm`), generated into
+// `constexpr` tables by `scripts/build-font-metrics.py`; the face drawn with is a Windows face, loaded once into an
+// immutable `LoadedFont` that every thread shares. Layout takes the AFM width, so text drawn through the face never
+// reflows; which glyph name and Unicode a PDF code means is the encoding's (D01 T02 section 28).
+enum class Standard14Font : uint8_t {
+	Courier = 0,
+	CourierBold,
+	CourierOblique,
+	CourierBoldOblique,
+	Helvetica,
+	HelveticaBold,
+	HelveticaOblique,
+	HelveticaBoldOblique,
+	TimesRoman,
+	TimesBold,
+	TimesItalic,
+	TimesBoldItalic,
+	Symbol,
+	ZapfDingbats,
+};
+inline constexpr size_t kStandard14FontCount = 14u;
+
+// One glyph of an AFM file, in AFM units of 1/1000 em (text space times 1000).
+struct Standard14Glyph {
+	std::string_view name;
+	int16_t code; // in the font's built-in encoding, or -1 for a glyph it does not encode
+	int16_t width;
+	std::array<int16_t, 4> box; // llx, lly, urx, ury
+};
+
+// One font's AFM metrics. A field the AFM does not give (`Symbol` and `ZapfDingbats` give no ascender, descender or
+// cap height) is none, never zero.
+struct Standard14Metrics {
+	std::string_view base_font;
+	std::array<int16_t, 4> font_box; // llx, lly, urx, ury
+	std::optional<int16_t> ascender;
+	std::optional<int16_t> descender;
+	std::optional<int16_t> cap_height;
+	double italic_angle;
+	bool fixed_pitch;
+	std::span<const Standard14Glyph> glyphs; // sorted by name in byte order
+	std::span<const int16_t, 256> code_glyph; // each code's index into `glyphs`, or -1
+};
+
+// The standard font a `/BaseFont` names: the fourteen names, after a subset prefix (`ABCDEF+`), and the aliases
+// producers write for them (`Arial`, `ArialMT`, `Arial,Bold`, `Arial-BoldItalicMT`, `TimesNewRoman`,
+// `TimesNewRomanPS-BoldMT`, `CourierNew`, `CourierNewPSMT` and their style suffixes). None for any other name.
+[[nodiscard]] std::optional<Standard14Font> standard14_from_base_font(std::string_view base_font) noexcept;
+
+[[nodiscard]] const Standard14Metrics& standard14_metrics(Standard14Font font) noexcept;
+
+// The glyph of that name, or of that built-in code, or null.
+[[nodiscard]] const Standard14Glyph* standard14_glyph_by_name(Standard14Font font, std::string_view name) noexcept;
+[[nodiscard]] const Standard14Glyph* standard14_glyph_by_code(Standard14Font font, uint8_t code) noexcept;
+
+// The Windows face a standard font is drawn with: `Courier New`, `Arial` or `Times New Roman` at the font's weight and
+// style, `Symbol` for Symbol, `Segoe UI Symbol` for ZapfDingbats.
+struct Standard14Face {
+	std::wstring_view family;
+	bool bold;
+	bool italic;
+};
+[[nodiscard]] Standard14Face standard14_face(Standard14Font font) noexcept;
+
+// The face as a `LoadedFont`, read from the system font file once per process and shared (a failure is not kept, so a
+// later call tries again). A family or face Windows lacks is `UnsupportedFeature` naming it, never another font; a
+// DirectWrite failure keeps its step and `HRESULT`; allocation failure is `OutOfMemory`.
+[[nodiscard]] PdfResult<std::shared_ptr<const LoadedFont>> load_standard14_face(Standard14Font font) noexcept;
+
+// A glyph to draw and the face it is in.
+struct Standard14FaceGlyph {
+	std::shared_ptr<const LoadedFont> face;
+	uint16_t glyph{0};
+};
+
+// The glyph a standard font draws for a Unicode scalar, through its face's `cmap`; for `Symbol`, whose face has only a
+// symbol `cmap`, a code point below 256 is the built-in code (looked up at `0xF000 + code`), and the one code the
+// Windows face lacks (the Euro at 0xA0, which Adobe added to Symbol in 1997) is drawn from `Segoe UI Symbol` at
+// U+20AC. None when no face has a glyph for it.
+[[nodiscard]] PdfResult<std::optional<Standard14FaceGlyph>> standard14_face_glyph(
+	Standard14Font font, char32_t code_point) noexcept;
+
 namespace detail {
 
 // The DirectWrite step a test makes fail (`ScopedFontLoaderFailure`).
@@ -171,6 +257,8 @@ enum class FontLoaderStage : uint8_t {
 	Loader = 1,
 	Reference = 2,
 	Face = 3,
+	SystemFont = 4, // a Standard 14 face: the system collection, family, font and face
+	SystemFontFile = 5, // a Standard 14 face: its file's reference key, loader and stream
 };
 
 // Makes the named DirectWrite step on the calling thread return `hresult`
@@ -193,6 +281,23 @@ private:
 
 // The font programs the loader's registry names (one per live DirectWrite font), for lifetime tests.
 [[nodiscard]] size_t registered_font_programs() noexcept;
+
+// Forgets the Standard 14 faces loaded so far (the fonts callers hold stay valid), so a test can load one afresh.
+void reset_standard14_faces() noexcept;
+
+// While the object lives, `font`'s face is looked up under `family` on this thread, bypassing the shared faces: a
+// family Windows lacks can be tried on any machine. Test use only.
+class ScopedStandard14Family {
+public:
+	ScopedStandard14Family(Standard14Font font, std::wstring_view family) noexcept;
+	~ScopedStandard14Family() noexcept;
+	ScopedStandard14Family(const ScopedStandard14Family&) = delete;
+	ScopedStandard14Family& operator=(const ScopedStandard14Family&) = delete;
+
+private:
+	std::optional<Standard14Font> previous_font_;
+	std::wstring_view previous_family_;
+};
 
 } // namespace detail
 

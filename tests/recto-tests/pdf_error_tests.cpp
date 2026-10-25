@@ -789,9 +789,9 @@ TEST(PdfError, ConversionCheckContextReachesRingAndEtw)
 // Decoder steps are only ever appended: every value from None up names its fixed step, uniquely (D01 T02 section 25).
 TEST(PdfError, DecoderStepNamesCoverEveryStep)
 {
-	constexpr std::array<std::string_view, 12> kNamesByValue = {"None", "WicFactory", "WicCreateDecoder",
+	constexpr std::array<std::string_view, 14> kNamesByValue = {"None", "WicFactory", "WicCreateDecoder",
 		"WicGetFrame", "WicConvertFormat", "WicCopyPixels", "NativeJpx", "DWriteFactory", "DWriteFontLoader",
-		"DWriteFontReference", "DWriteFontFace", "NativeGlyf"};
+		"DWriteFontReference", "DWriteFontFace", "NativeGlyf", "DWriteSystemFont", "DWriteFontFile"};
 	static_assert(noexcept(decoder_step_name(DecoderStep::None)));
 	static_assert(decoder_step_name(DecoderStep::NativeJpx) == "NativeJpx");
 	std::set<std::string_view> seen;

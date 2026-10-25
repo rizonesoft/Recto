@@ -45,6 +45,7 @@
     <ClCompile Include="filters.cpp" />
     <ClCompile Include="flate_compress.cpp" />
     <ClCompile Include="font.cpp" />
+    <ClCompile Include="standard14.cpp" />
     <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="serialize.cpp" />
     <ClCompile Include="incremental_writer.cpp" />
@@ -60,6 +61,7 @@
     <ClInclude Include="error.h" />
     <ClInclude Include="filters.h" />
     <ClInclude Include="font.h" />
+    <ClInclude Include="standard14_metrics.inc" />
     <ClInclude Include="interpreter.h" />
     <ClInclude Include="serialize.h" />
     <ClInclude Include="incremental_writer.h" />

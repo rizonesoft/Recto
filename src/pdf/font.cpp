@@ -1601,4 +1601,250 @@ PdfResult<std::unique_ptr<const LoadedFont::GlyfTables>> glyf_after_rejection(
 
 } // namespace
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Standard 14 faces (D01 T02 section 27)
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace detail {
+
+thread_local std::optional<Standard14Font> g_standard14_family_font;
+thread_local std::wstring_view g_standard14_family;
+
+ScopedStandard14Family::ScopedStandard14Family(Standard14Font font, std::wstring_view family) noexcept
+	: previous_font_(g_standard14_family_font)
+	, previous_family_(g_standard14_family)
+{
+	g_standard14_family_font = font;
+	g_standard14_family = family;
+}
+
+ScopedStandard14Family::~ScopedStandard14Family() noexcept
+{
+	g_standard14_family_font = previous_font_;
+	g_standard14_family = previous_family_;
+}
+
+} // namespace detail
+
+namespace {
+
+// The largest system font file a standard face is read from: Windows' own faces are a few megabytes.
+constexpr uint64_t kMaxStandard14FaceBytes = uint64_t{64} << 20u;
+
+// The faces loaded so far, each kept for the life of the process once loaded (a failure is not kept).
+std::mutex g_standard14_mutex;
+std::array<std::shared_ptr<const LoadedFont>, kStandard14FontCount> g_standard14_faces;
+
+// A family or face Windows does not have: named, never replaced by another font.
+[[nodiscard]] PdfError standard14_face_missing(std::wstring_view family, Standard14Font font, std::string_view what) noexcept
+{
+	const std::string_view base = standard14_metrics(font).base_font;
+	char text[200];
+	const int n = std::snprintf(text, sizeof(text), "Windows has no %.*s for the standard font %.*s (family \"%.*ls\")",
+		static_cast<int>(what.size()), what.data(), static_cast<int>(base.size()), base.data(),
+		static_cast<int>(std::min<size_t>(family.size(), 64u)), family.data());
+	return font_error(ErrorCode::UnsupportedFeature,
+		std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u),
+		DecoderStep::DWriteSystemFont);
+}
+
+struct Standard14Program {
+	std::shared_ptr<const std::vector<uint8_t>> bytes;
+	FontProgramFormat format = FontProgramFormat::TrueType;
+};
+
+// Finds `family` at the font's weight and style in the system collection and reads that face's file, whole, through
+// its own loader. Every DirectWrite object it goes through is released when it returns; the bytes are the font's own.
+[[nodiscard]] PdfResult<Standard14Program> read_standard14_program(Standard14Font font, std::wstring_view family) noexcept
+{
+	try {
+		const Standard14Face want = standard14_face(font);
+		IDWriteFactory5* factory = nullptr;
+		if (const HRESULT hr = shared_factory(factory); FAILED(hr)) {
+			return dwrite_failure(hr, "DWriteCreateFactory", DecoderStep::DWriteFactory);
+		}
+		const std::wstring family_name(family); // FindFamilyName takes a terminated string
+		ComPtr<IDWriteFontCollection> collection;
+		ComPtr<IDWriteFontFamily> font_family;
+		ComPtr<IDWriteFont> system_font;
+		ComPtr<IDWriteFontFace> face;
+		BOOL exists = FALSE;
+		bool simulated = false;
+		const HRESULT find_hr = dwrite_step(detail::FontLoaderStage::SystemFont, [&]() -> HRESULT {
+			HRESULT hr = factory->GetSystemFontCollection(collection.ReleaseAndGetAddressOf(), FALSE);
+			UINT32 index = 0;
+			if (SUCCEEDED(hr)) {
+				hr = collection->FindFamilyName(family_name.c_str(), &index, &exists);
+			}
+			if (FAILED(hr) || !exists) {
+				return hr;
+			}
+			hr = collection->GetFontFamily(index, font_family.ReleaseAndGetAddressOf());
+			if (SUCCEEDED(hr)) {
+				hr = font_family->GetFirstMatchingFont(want.bold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+					DWRITE_FONT_STRETCH_NORMAL, want.italic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+					system_font.ReleaseAndGetAddressOf());
+			}
+			if (FAILED(hr)) {
+				return hr;
+			}
+			// A face DirectWrite would only simulate (bolding or slanting another) is not the face the font needs.
+			simulated = system_font->GetSimulations() != DWRITE_FONT_SIMULATIONS_NONE;
+			return simulated ? S_OK : system_font->CreateFontFace(face.ReleaseAndGetAddressOf());
+		});
+		if (FAILED(find_hr)) {
+			return dwrite_failure(find_hr, "system font lookup", DecoderStep::DWriteSystemFont);
+		}
+		if (!exists) {
+			return standard14_face_missing(family, font, "font family");
+		}
+		if (simulated) {
+			return standard14_face_missing(family, font, want.bold || want.italic ? "real bold or italic face" : "face");
+		}
+		const DWRITE_FONT_FACE_TYPE type = face->GetType();
+		if ((type != DWRITE_FONT_FACE_TYPE_TRUETYPE && type != DWRITE_FONT_FACE_TYPE_CFF) || face->GetIndex() != 0u) {
+			return standard14_face_missing(family, font, "single TrueType or OpenType face file");
+		}
+
+		UINT32 file_count = 0;
+		ComPtr<IDWriteFontFile> file;
+		ComPtr<IDWriteFontFileLoader> loader;
+		ComPtr<IDWriteFontFileStream> stream;
+		UINT64 size = 0;
+		const HRESULT file_hr = dwrite_step(detail::FontLoaderStage::SystemFontFile, [&]() -> HRESULT {
+			HRESULT hr = face->GetFiles(&file_count, nullptr);
+			if (FAILED(hr) || file_count != 1u) {
+				return FAILED(hr) ? hr : DWRITE_E_FILEFORMAT;
+			}
+			hr = face->GetFiles(&file_count, file.ReleaseAndGetAddressOf());
+			const void* key = nullptr;
+			UINT32 key_size = 0;
+			if (SUCCEEDED(hr)) {
+				hr = file->GetReferenceKey(&key, &key_size);
+			}
+			if (SUCCEEDED(hr)) {
+				hr = file->GetLoader(loader.ReleaseAndGetAddressOf());
+			}
+			if (SUCCEEDED(hr)) {
+				hr = loader->CreateStreamFromKey(key, key_size, stream.ReleaseAndGetAddressOf());
+			}
+			return SUCCEEDED(hr) ? stream->GetFileSize(&size) : hr;
+		});
+		if (FAILED(file_hr)) {
+			return dwrite_failure(file_hr, "system font file", DecoderStep::DWriteFontFile);
+		}
+		if (size == 0u || size > kMaxStandard14FaceBytes) {
+			return font_error(ErrorCode::ResourceLimit, "A standard font's Windows face file is empty or too large to read",
+				DecoderStep::DWriteFontFile);
+		}
+		auto bytes = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size));
+		const HRESULT read_hr = dwrite_step(detail::FontLoaderStage::SystemFontFile, [&]() -> HRESULT {
+			const void* fragment = nullptr;
+			void* context = nullptr;
+			const HRESULT hr = stream->ReadFileFragment(&fragment, 0u, size, &context);
+			if (FAILED(hr)) {
+				return hr;
+			}
+			std::memcpy(bytes->data(), fragment, static_cast<size_t>(size));
+			stream->ReleaseFileFragment(context);
+			return S_OK;
+		});
+		if (FAILED(read_hr)) {
+			return dwrite_failure(read_hr, "system font file read", DecoderStep::DWriteFontFile);
+		}
+		return Standard14Program{std::move(bytes),
+			type == DWRITE_FONT_FACE_TYPE_CFF ? FontProgramFormat::OpenType : FontProgramFormat::TrueType};
+	} catch (const std::bad_alloc&) {
+		return font_error(ErrorCode::OutOfMemory, "Out of memory reading a standard font's Windows face",
+			DecoderStep::DWriteFontFile);
+	}
+}
+
+} // namespace
+
+namespace detail {
+
+void reset_standard14_faces() noexcept
+{
+	const std::lock_guard lock(g_standard14_mutex);
+	for (std::shared_ptr<const LoadedFont>& face : g_standard14_faces) {
+		face.reset();
+	}
+}
+
+} // namespace detail
+
+PdfResult<std::shared_ptr<const LoadedFont>> load_standard14_face(Standard14Font font) noexcept
+{
+	const size_t slot = static_cast<size_t>(font);
+	const bool overridden = detail::g_standard14_family_font == font;
+	if (!overridden) {
+		const std::lock_guard lock(g_standard14_mutex);
+		if (g_standard14_faces[slot] != nullptr) {
+			return g_standard14_faces[slot];
+		}
+	}
+	PdfResult<Standard14Program> program =
+		recorded(read_standard14_program(font, overridden ? detail::g_standard14_family : standard14_face(font).family));
+	if (!program.has_value()) {
+		return std::move(program.error());
+	}
+	// load_embedded_font records its own failure.
+	RECTO_PDF_TRY(std::shared_ptr<const LoadedFont> loaded, load_embedded_font(std::move(program->bytes), program->format));
+	if (overridden) {
+		return loaded;
+	}
+	const std::lock_guard lock(g_standard14_mutex);
+	if (g_standard14_faces[slot] == nullptr) {
+		g_standard14_faces[slot] = std::move(loaded); // the first face loaded is the one every caller shares
+	}
+	return g_standard14_faces[slot];
+}
+
+namespace {
+
+// The glyph `point` maps to in `font`'s face, or none.
+[[nodiscard]] PdfResult<std::optional<Standard14FaceGlyph>> glyph_in_face(Standard14Font font, UINT32 point) noexcept
+{
+	RECTO_PDF_TRY(std::shared_ptr<const LoadedFont> face, load_standard14_face(font));
+	IDWriteFontFace* dwrite = face->dwrite_face();
+	if (dwrite == nullptr) {
+		return recorded(PdfResult<std::optional<Standard14FaceGlyph>>(font_error(ErrorCode::UnsupportedFeature,
+			"A standard font's Windows face loaded without DirectWrite, so its cmap cannot be read",
+			DecoderStep::DWriteFontFace)));
+	}
+	UINT16 glyph = 0;
+	if (const HRESULT hr = dwrite->GetGlyphIndices(&point, 1u, &glyph); FAILED(hr)) {
+		return recorded(PdfResult<std::optional<Standard14FaceGlyph>>(
+			dwrite_failure(hr, "GetGlyphIndices", DecoderStep::DWriteFontFace)));
+	}
+	if (glyph == 0u) {
+		return std::optional<Standard14FaceGlyph>{};
+	}
+	return std::optional<Standard14FaceGlyph>{Standard14FaceGlyph{std::move(face), glyph}};
+}
+
+// Symbol codes the Windows `Symbol` face has no glyph for, and the Unicode scalar `Segoe UI Symbol` draws them with:
+// only the Euro, which Adobe added to Symbol in 1997 (Adobe Glyph List: Euro, U+20AC).
+constexpr std::array<std::pair<uint8_t, char32_t>, 1> kSymbolCodesFromSegoe = {{{uint8_t{0xA0}, char32_t{0x20AC}}}};
+
+} // namespace
+
+PdfResult<std::optional<Standard14FaceGlyph>> standard14_face_glyph(Standard14Font font, char32_t code_point) noexcept
+{
+	if (font != Standard14Font::Symbol || code_point >= 0x100u) {
+		return glyph_in_face(font, static_cast<UINT32>(code_point));
+	}
+	RECTO_PDF_TRY(std::optional<Standard14FaceGlyph> glyph, glyph_in_face(font, 0xF000u | static_cast<UINT32>(code_point)));
+	if (glyph.has_value()) {
+		return glyph;
+	}
+	for (const auto& [code, unicode] : kSymbolCodesFromSegoe) {
+		if (code == code_point) {
+			return glyph_in_face(Standard14Font::ZapfDingbats, static_cast<UINT32>(unicode)); // Segoe UI Symbol
+		}
+	}
+	return std::optional<Standard14FaceGlyph>{};
+}
+
 } // namespace recto::pdf
