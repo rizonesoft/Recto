@@ -671,7 +671,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Resolved:** JPX per-component precision and sampling, and the full coding-style set -> XREF: D06 T05 §32 (2026-10-25: closed by D06 T05 §32, which reads each component's precision, signedness and sampling, decodes every Part 1 coding style and RGN, and keeps the JP2 colour, palette and channel definitions)
 
-> **Deferred:** DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding -> XREF: D06 T05 §33
+> **Resolved:** DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding -> XREF: D06 T05 §33 (2026-10-25: closed by D06 T05 §33, which decides the colour transform from the Adobe marker or /ColorTransform and has WIC read every three-component JPEG marked with that choice, with Adobe CMYK, YCCK, JFIF, 4:2:0 and progressive fixtures)
 
 > **Deferred:** CCITT damaged-row recovery per ISO 32000-1 Table 11 -> XREF: D06 T05 §34
 
