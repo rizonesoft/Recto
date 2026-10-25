@@ -116,7 +116,8 @@ struct ExportedRevision {
 class StagedRevisionChain {
 public:
 	// A chain over `base` (copied), opened with `password` (empty for none), whose base state is `base_revision` and
-	// whose pushes are numbered from `first_new_revision` up. A base the writer cannot extend is refused with the
+	// whose pushes are numbered from `first_new_revision` up (after `base_revision`, or `InvalidArgument`, and refused
+	// with `ResourceLimit` once ids run out). A base the writer cannot extend is refused with the
 	// writer's error (a recovered cross-reference is `DamagedFormat`, so the caller saves a full copy), and so is one
 	// already at `kMaxXrefRevisions` revisions (`ResourceLimit`); a wrong password is the document's error.
 	[[nodiscard]] static PdfResult<std::unique_ptr<StagedRevisionChain>> create(std::span<const uint8_t> base,

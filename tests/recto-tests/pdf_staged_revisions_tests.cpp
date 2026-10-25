@@ -207,6 +207,19 @@ TEST(PdfStagedRevisions, FailedPushKeepsState)
 
 TEST(PdfStagedRevisions, RevisionIds)
 {
+	// Push ids must come after the base's: equal ones would let a change built on the base match the first push.
+	const Bytes simple = corpus("render/simple-1p.pdf");
+	RECTO_EXPECT_ERR(StagedRevisionChain::create(simple, {}, RevisionId{1u}, RevisionId{1u}), ErrorCode::InvalidArgument);
+	RECTO_EXPECT_ERR(StagedRevisionChain::create(simple, {}, RevisionId{5u}, RevisionId{2u}), ErrorCode::InvalidArgument);
+	{
+		// The last id is taken by one push; the next is refused, not wrapped.
+		auto last = make_chain(simple, {}, 1u, std::numeric_limits<uint64_t>::max() - 1u);
+		ASSERT_NE(last, nullptr);
+		static_cast<void>(push_edit(*last, 90, "last"));
+		ObjectChangeSet more = last->begin_change();
+		RECTO_ASSERT_OK(more.replace(IndirectRef(3u), page_at(last->working(), 180)));
+		RECTO_EXPECT_ERR(last->push(std::move(more)), ErrorCode::ResourceLimit);
+	}
 	const Bytes base = corpus("render/simple-1p.pdf");
 	auto chain = make_chain(base, {}, 7u, 50u);
 	ASSERT_NE(chain, nullptr);
@@ -684,27 +697,35 @@ TEST(PdfStagedRevisions, TransitionsAreAtomic)
 		// Walk down until an undo rebuilds (the bytes of the next state are not a prefix of these).
 		const auto now = chain->working().file_bytes().size();
 		const Snapshot before = snap();
+		bool rebuilt = false;
 		{
 			detail::ScopedSerializeAllocFailure fail(16u);
-			const bool ok = chain->undo().has_value();
-			if (!ok) {
-				same(before, "rebuilding undo, write failure");
-				detail::ScopedWorkingReopenFailure reopen_fail;
-				EXPECT_FALSE(chain->undo().has_value());
-				same(before, "rebuilding undo, reopen failure");
-				break;
-			}
+			rebuilt = !chain->undo().has_value();
+		}
+		if (rebuilt) {
+			same(before, "rebuilding undo, write failure");
+			// The write now succeeds, so the failure lands on the reopen.
+			detail::ScopedWorkingReopenFailure reopen_fail;
+			EXPECT_FALSE(chain->undo().has_value());
+			same(before, "rebuilding undo, reopen failure");
+			break;
 		}
 		ASSERT_LT(chain->working().file_bytes().size(), now);
 	}
 	ASSERT_GT(chain->depth(), 0u) << "no undo rebuilt";
 	RECTO_ASSERT_OK(chain->undo()); // now without injection
 	{
-		// A redo that rewrites (its stored revision belongs to the older layout): a write failure.
+		// A redo that rewrites (its stored revision belongs to the older layout): a write failure, then a reopen
+		// failure after a write that succeeds.
 		const Snapshot before = snap();
-		detail::ScopedSerializeAllocFailure fail(16u);
+		{
+			detail::ScopedSerializeAllocFailure fail(16u);
+			EXPECT_FALSE(chain->redo().has_value());
+			same(before, "rewriting redo, write failure");
+		}
+		detail::ScopedWorkingReopenFailure reopen_fail;
 		EXPECT_FALSE(chain->redo().has_value());
-		same(before, "rewriting redo");
+		same(before, "rewriting redo, reopen failure");
 	}
 	RECTO_ASSERT_OK(chain->redo());
 	RECTO_ASSERT_OK(chain->undo());

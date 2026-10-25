@@ -148,6 +148,10 @@ PdfResult<std::unique_ptr<StagedRevisionChain>> StagedRevisionChain::create(std:
 	std::string_view password, RevisionId base_revision, RevisionId first_new_revision) noexcept
 {
 	try {
+		// Push ids come after the base's, so a change built on the base can never match a push.
+		if (first_new_revision <= base_revision) {
+			return invalid_argument("The first new revision id must come after the base's");
+		}
 		std::unique_ptr<StagedRevisionChain> chain(new StagedRevisionChain());
 		chain->password_.assign(password.begin(), password.end());
 		chain->base_revision_ = base_revision;
@@ -383,6 +387,10 @@ PdfResult<void> StagedRevisionChain::push(ObjectChangeSet changes) noexcept
 		}
 		if (changes.empty()) {
 			return invalid_argument("An empty change is not a revision");
+		}
+		if (next_id_ == std::numeric_limits<uint64_t>::max()) {
+			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::HistoryStates, next_id_, next_id_,
+				"No revision id is left for another edit");
 		}
 		if (current_ + 1u > kMaxChainStates) {
 			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::HistoryStates, current_ + 1u,
