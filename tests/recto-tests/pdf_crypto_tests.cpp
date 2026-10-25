@@ -1304,6 +1304,18 @@ TEST(PdfCrypto, EncryptFailClosed)
 	PdfValue annot_back = annot_value;
 	RECTO_ASSERT_OK(handler.decrypt_object_values(annot_back, IndirectRef{30u, 0u}));
 	EXPECT_EQ(*annot_back.as_dict()->get("Contents"), *annot->get("Contents")); // decryption agrees
+	// Without a /Type (optional for annotations, ISO 32000-1 Table 164) an annotation is still not a signature, while
+	// an untyped dictionary in a signature's own shape still is.
+	auto untyped_annot = parse_dict_literal("<< /Subtype /Text /Rect [0 0 10 10] /Contents (secret) /ByteRange [] /Filter /Adobe.PPKLite >>");
+	auto untyped_sig = parse_dict_literal("<< /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 10 20 30] /Contents <0102> >>");
+	RECTO_ASSERT_OK(untyped_annot);
+	RECTO_ASSERT_OK(untyped_sig);
+	PdfValue untyped_annot_value{*untyped_annot};
+	PdfValue untyped_sig_value{*untyped_sig};
+	RECTO_ASSERT_OK(handler.encrypt_object_values(untyped_annot_value, IndirectRef{30u, 0u}));
+	RECTO_ASSERT_OK(handler.encrypt_object_values(untyped_sig_value, IndirectRef{30u, 0u}));
+	EXPECT_NE(*untyped_annot_value.as_dict()->get("Contents"), *untyped_annot->get("Contents"));
+	EXPECT_EQ(*untyped_sig_value.as_dict()->get("Contents"), *untyped_sig->get("Contents"));
 
 	// /EncryptMetadata false (an R=6 dictionary from scripts/build-corpus.py with the /Perms that says so): a
 	// /Metadata stream stays readable, any other stream is encrypted.

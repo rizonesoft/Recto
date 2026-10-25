@@ -1853,14 +1853,21 @@ thread_local detail::ScopedEncryptionFailure::Kind t_fail_kind = detail::ScopedE
 // ISO 32000-1 7.6.2: a signature dictionary's `/Contents` is never encrypted (`/Type /Sig` or `/DocTimeStamp`, or
 // the `/ByteRange` and `/Contents` of a signature value with its `/Filter` or `/SubFilter`).
 // A dictionary whose /Type names something else (an annotation with a /Contents, say) is not one, whatever other
-// keys it holds (ISO 32000-1 Table 252: /Type, when present, is /Sig).
+// keys it holds (ISO 32000-1 Table 252: /Type, when present, is /Sig). Without a /Type it is one only in a
+// signature's own shape: a name /Filter, a string /Contents and a non-empty /ByteRange array, and neither /Subtype
+// nor /Rect, which every annotation has (Table 164 requires /Subtype) and no signature dictionary does, so an untyped
+// annotation cannot borrow the exemption by holding the other keys.
 [[nodiscard]] bool is_signature_dict(const PdfDict& dict) noexcept
 {
 	if (const PdfValue* type = dict.get("Type"); type != nullptr && !type->is_null()) {
 		const auto type_name = type->as_name();
 		return type_name.has_value() && (*type_name == "Sig" || *type_name == "DocTimeStamp");
 	}
-	return dict.contains("ByteRange") && dict.contains("Contents") && (dict.contains("Filter") || dict.contains("SubFilter"));
+	const PdfValue* filter = dict.get("Filter");
+	const PdfValue* contents = dict.get("Contents");
+	const PdfArray* byte_range = dict.get_array("ByteRange");
+	return filter != nullptr && filter->is_name() && contents != nullptr && contents->is_string() &&
+		byte_range != nullptr && !byte_range->empty() && !dict.contains("Subtype") && !dict.contains("Rect");
 }
 
 } // namespace
