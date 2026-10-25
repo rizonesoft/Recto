@@ -565,6 +565,102 @@ TEST(PdfXref, RecoveryLengthRoundFour)
 	}
 }
 
+// Completion review of D06 T05 §29 (docs/reviews/06-quality/D06-T05-s29-completion.md, gap 5): real page content
+// survives this recovery path. The catalog lives only in a container with an indirect /Type; walking the recovered
+// root through its page tree to /Contents reads the same bytes as an undamaged control. In the ambiguous-length case
+// the genuine page's content is read, never the injected page's.
+TEST(PdfXref, RecoveryKeepsPageContent)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	// The first page's decoded content, walked from the table's root.
+	const auto page_content = [](const XrefTable& table, std::string_view pdf) -> std::string {
+		const auto bytes = as_bytes(pdf);
+		auto root = table.resolve_object(bytes, *table.root_ref());
+		if (!root.has_value() || root->as_dict() == nullptr) {
+			return "<no root>";
+		}
+		auto pages = table.resolve_value(bytes, *root->as_dict()->get("Pages"));
+		if (!pages.has_value() || pages->as_dict() == nullptr || pages->as_dict()->get_array("Kids") == nullptr ||
+			pages->as_dict()->get_array("Kids")->empty()) {
+			return "<no pages>";
+		}
+		auto page = table.resolve_value(bytes, pages->as_dict()->get_array("Kids")->front());
+		if (!page.has_value() || page->as_dict() == nullptr || page->as_dict()->get("Contents") == nullptr) {
+			return "<no page>";
+		}
+		auto contents = table.resolve_value(bytes, *page->as_dict()->get("Contents"));
+		if (!contents.has_value() || contents->as_stream() == nullptr) {
+			return "<no contents>";
+		}
+		auto decoded = decode_stream(*contents->as_stream());
+		return decoded.has_value() ? std::string(decoded->begin(), decoded->end()) : "<undecodable>";
+	};
+	const std::string content = "BT /F1 12 Tf 72 720 Td (Recovered page) Tj ET";
+	const std::string objects =
+		"4 0 obj\n<< /Type /Pages /Kids [5 0 R] /Count 1 >>\nendobj\n"
+		"5 0 obj\n<< /Type /Page /Parent 4 0 R /MediaBox [0 0 200 200] /Contents 6 0 R >>\nendobj\n"
+		"6 0 obj\n<< /Length " + std::to_string(content.size()) + " >>\nstream\n" + content + "\nendstream\nendobj\n";
+
+	// Undamaged control: the catalog uncompressed, a real cross-reference table.
+	std::string control = "%PDF-1.7\n";
+	std::vector<size_t> at(7u, 0u);
+	at[3] = control.size();
+	control += "3 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n";
+	for (const uint32_t n : {4u, 5u, 6u}) {
+		const std::string head = std::to_string(n) + " 0 obj\n";
+		at[n] = control.size() + objects.find(head);
+	}
+	control += objects;
+	const size_t xref_at = control.size();
+	control += "xref\n0 7\n0000000000 65535 f\r\n0000000000 00001 f\r\n0000000000 00001 f\r\n";
+	for (uint32_t n = 3; n <= 6; ++n) {
+		char row[24];
+		std::snprintf(row, sizeof(row), "%010zu 00000 n\r\n", at[n]);
+		control += row;
+	}
+	control += "trailer\n<< /Size 7 /Root 3 0 R >>\nstartxref\n" + std::to_string(xref_at) + "\n%%EOF\n";
+	auto control_table = XrefTable::parse(as_bytes(control), kMaxXrefTotalEntries, false);
+	RECTO_ASSERT_OK(control_table);
+	const std::string expected = page_content(*control_table, control);
+	ASSERT_EQ(expected, content);
+
+	// Damaged: no cross-reference, the catalog only in container 1 whose /Type is 2 0 R.
+	const std::string data = hex("3 0 << /Type /Catalog /Pages 4 0 R >>");
+	const std::string damaged = "%PDF-1.7\n1 0 obj\n<< /Type 2 0 R /N 1 /First 4 /Filter /ASCIIHexDecode /Length " +
+		std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n2 0 obj\n/ObjStm\nendobj\n" +
+		objects + "%%EOF\n";
+	auto rec = XrefTable::recover_damaged_xref(as_bytes(damaged), 64);
+	RECTO_ASSERT_OK(rec);
+	EXPECT_EQ(page_content(*rec, damaged), expected);
+
+	// Ambiguous length resolved by the readings: the genuine page's content, not the injected one's.
+	{
+		const std::string injected = "BT /F1 12 Tf 72 720 Td (Injected page) Tj ET";
+		const std::string fake = "\nendstream\nendobj\n9 0 obj\n0\nendobj\n"
+			"3 0 obj\n<< /Type /Catalog /Pages 14 0 R >>\nendobj\n"
+			"14 0 obj\n<< /Type /Pages /Kids [15 0 R] /Count 1 >>\nendobj\n"
+			"15 0 obj\n<< /Type /Page /Parent 14 0 R /Contents 16 0 R >>\nendobj\n"
+			"16 0 obj\n<< /Length " + std::to_string(injected.size()) + " >>\nstream\n" + injected + "\nendstream\nendobj\n";
+		const std::string members = hex("88 0 " + std::to_string(fake.size()));
+		const std::string pdf = "%PDF-1.7\n3 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + objects +
+			"9 0 obj\n/ASCIIHexDecode\nendobj\n"
+			"20 0 obj\n<< /Type /ObjStm /N 1 /First 5 /Filter 9 0 R /Length " + std::to_string(members.size()) +
+			" >>\nstream\n" + members + "\nendstream\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto ambiguous = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(ambiguous);
+		EXPECT_EQ(page_content(*ambiguous, pdf), expected);
+	}
+}
+
 // Plan review of D06 T05 §29, gap 1: a container whose /Type is an indirect reference (ISO 32000-1 section 7.5.7 lets
 // any uncompressed dictionary value be indirect) is recognised once the type resolves, whether the type object comes
 // before or after it; a stream whose indirect /Type is something else is not read as a container.
