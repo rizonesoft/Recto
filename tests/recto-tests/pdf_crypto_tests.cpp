@@ -1214,5 +1214,103 @@ TEST(PdfCrypto, EncryptFailures)
 	EXPECT_EQ(deep, deep_before);
 }
 
+TEST(PdfCrypto, EncryptFailClosed)
+{
+	const OpenedFixture fixture = open_encrypted("render/encrypted-aes-128.pdf");
+	ASSERT_NE(fixture.doc, nullptr);
+	const SecurityHandler& handler = *fixture.doc->security_handler(); // /StrF and /StmF AES-128
+	const auto stream_of = [](std::string_view dict_text, std::string_view payload) {
+		auto dict = parse_dict_literal(dict_text);
+		EXPECT_TRUE(dict.has_value());
+		PdfStream s;
+		s.dict = dict.has_value() ? *dict : PdfDict{};
+		s.raw_bytes.assign(payload.begin(), payload.end());
+		return PdfValue{std::move(s)};
+	};
+	const IndirectObjectResolver resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+		if (r == IndirectRef{42u, 0u}) {
+			return PdfValue{PdfArray{PdfValue{PdfName("Crypt")}, PdfValue{PdfName("FlateDecode")}}};
+		}
+		return make_pdf_error(ErrorCode::DamagedFormat, "a damaged object");
+	};
+
+	// Empty AES string and stream: the IV and one padding block each, never passed through as decryption passes
+	// empty ciphertext; a /DocTimeStamp's /Contents stays; an indirect /Filter whose chain starts with /Crypt takes
+	// the filter its direct /DecodeParms names (Identity here, so the payload stays as written).
+	PdfArray parts;
+	parts.push_back(PdfValue{PdfString(std::string_view(""))});
+	parts.push_back(stream_of("<< >>", ""));
+	auto stamp = parse_dict_literal("<< /Type /DocTimeStamp /Contents <0A0B> /Name (stamp) >>");
+	RECTO_ASSERT_OK(stamp);
+	parts.push_back(PdfValue{*stamp});
+	parts.push_back(stream_of("<< /Filter 42 0 R /DecodeParms << /Name /Identity >> >>", "indirect filter"));
+	PdfValue value{parts};
+	RECTO_ASSERT_OK(handler.encrypt_object_values(value, IndirectRef{30u, 0u}, &resolver));
+	const PdfArray& out = *value.as_array();
+	EXPECT_EQ(out[0].as_string()->bytes.size(), 32u);
+	EXPECT_EQ(out[1].as_stream()->raw_bytes.size(), 32u);
+	EXPECT_EQ(*out[2].as_dict()->get("Contents"), *stamp->get("Contents"));
+	EXPECT_NE(*out[2].as_dict()->get("Name"), *stamp->get("Name"));
+	const std::string_view indirect_payload = "indirect filter";
+	EXPECT_EQ(out[3].as_stream()->raw_bytes, std::vector<uint8_t>(indirect_payload.begin(), indirect_payload.end()));
+	PdfValue back = value;
+	RECTO_ASSERT_OK(handler.decrypt_object_values(back, IndirectRef{30u, 0u}, false, &resolver));
+	EXPECT_TRUE(back.as_array()->at(0).as_string()->bytes.empty());
+	EXPECT_TRUE(back.as_array()->at(1).as_stream()->raw_bytes.empty());
+
+	// Fail closed: a /DecodeParms, /Filter or /Type that does not resolve is refused, never read as absent (which
+	// would pick Identity or the default filter), and the value is unchanged.
+	for (const std::string_view dict : {std::string_view("<< /Filter /Crypt /DecodeParms 43 0 R >>"),
+			 std::string_view("<< /Filter 43 0 R >>"), std::string_view("<< /Type 43 0 R >>")}) {
+		SCOPED_TRACE(std::string(dict));
+		PdfValue damaged = stream_of(dict, "payload");
+		const PdfValue before = damaged;
+		RECTO_EXPECT_ERR(handler.encrypt_object_values(damaged, IndirectRef{30u, 0u}, &resolver), ErrorCode::DamagedFormat);
+		EXPECT_EQ(damaged, before);
+	}
+
+	// /EncryptMetadata false (an R=6 dictionary from scripts/build-corpus.py with the /Perms that says so): a
+	// /Metadata stream stays readable, any other stream is encrypted.
+	const std::vector<uint8_t> raw = read_corpus_bytes("crypto/encrypt-vectors.json");
+	const auto dicts = json_strings(std::string(raw.begin(), raw.end()), "metadata_false_dict");
+	ASSERT_EQ(dicts.size(), 1u);
+	auto parsed = parse_dict_literal(dicts[0]);
+	RECTO_ASSERT_OK(parsed);
+	auto made = SecurityHandler::create(*parsed, {}, IndirectRef{9u, 0u});
+	RECTO_ASSERT_OK(made);
+	RECTO_ASSERT_OK(made->authenticate("recto-test"));
+	ASSERT_FALSE(made->params().encrypt_metadata);
+	PdfArray pair{stream_of("<< /Type /Metadata /Subtype /XML >>", "<x:xmpmeta/>"), stream_of("<< >>", "page content")};
+	PdfValue streams{pair};
+	RECTO_ASSERT_OK(made->encrypt_object_values(streams, IndirectRef{31u, 0u}));
+	const std::string_view xmp = "<x:xmpmeta/>";
+	EXPECT_EQ(streams.as_array()->at(0).as_stream()->raw_bytes, std::vector<uint8_t>(xmp.begin(), xmp.end()));
+	EXPECT_EQ(streams.as_array()->at(1).as_stream()->raw_bytes.size(), 32u);
+}
+
+TEST(PdfCrypto, EncryptMemory)
+{
+#if defined(__SANITIZE_ADDRESS__)
+	GTEST_SKIP() << "the heap meter does not replace the allocator under ASan";
+#else
+	// A 64 MiB AES payload costs its ciphertext and no padded copy: the peak live heap of the call stays within the
+	// output plus a little, where a padded copy beside it would double it.
+	const OpenedFixture fixture = open_encrypted("render/encrypted-aes-256.pdf");
+	ASSERT_NE(fixture.doc, nullptr);
+	const SecurityHandler& handler = *fixture.doc->security_handler();
+	const std::vector<uint8_t> payload(size_t{64} << 20u, uint8_t{0x5A});
+	size_t peak = 0;
+	PdfResult<std::vector<uint8_t>> cipher = std::vector<uint8_t>{};
+	{
+		recto::test::ScopedHeapMeter meter;
+		cipher = handler.encrypt_bytes(payload, IndirectRef{30u, 0u}, CryptFilterMethod::AESV3);
+		peak = meter.peak_bytes();
+	}
+	RECTO_ASSERT_OK(cipher);
+	EXPECT_EQ(cipher->size(), payload.size() + 32u);
+	EXPECT_LE(peak, cipher->size() + (size_t{1} << 20u)) << "peak " << peak << " for " << cipher->size() << " bytes out";
+#endif
+}
+
 } // namespace
 } // namespace recto::pdf

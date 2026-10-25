@@ -1933,21 +1933,17 @@ PdfResult<SecurityHandler::StreamCrypt> SecurityHandler::stream_crypt(
 	if (type.has_value() && *type == "EmbeddedFile" && !params_.eff_f.empty()) {
 		method = params_.embedded_file_method;
 	}
-	// A value as it reads, an indirect one resolved one level when a resolver is given and never written back; a
-	// reference that does not resolve reads as nothing, unless memory ran out.
+	// A value as it reads, an indirect one resolved one level when a resolver is given and never written back. A
+	// reference that does not resolve is refused, never read as absent: an absent parameter means Identity or the
+	// default filter, so reading a damaged one as absent would choose a weaker filter than the file names (fail
+	// closed). Decryption passes no resolver here; its references are already written in.
 	const auto read = [&](const PdfValue* v) -> PdfResult<std::optional<PdfValue>> {
 		if (v == nullptr) {
 			return std::optional<PdfValue>{};
 		}
 		if (v->is_ref() && resolver != nullptr && *resolver) {
-			auto target = (*resolver)(*v->as_ref());
-			if (!target.has_value()) {
-				if (target.error().code == ErrorCode::OutOfMemory) {
-					return target.error();
-				}
-				return std::optional<PdfValue>{};
-			}
-			return std::optional<PdfValue>(std::move(*target));
+			RECTO_PDF_TRY(PdfValue target, (*resolver)(*v->as_ref()));
+			return std::optional<PdfValue>(std::move(target));
 		}
 		return std::optional<PdfValue>(*v);
 	};
@@ -2055,12 +2051,17 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::encrypt_bytes(
 				ref.obj_num,
 				ref.gen_num);
 		}
+		// One buffer: the IV, then the plaintext and its padding, encrypted in place (BCryptEncrypt allows the input and
+		// output to be the same buffer), so a payload costs its ciphertext and no padded copy.
 		const size_t pad = 16u - (plaintext.size() % 16u);
-		std::vector<uint8_t> padded(plaintext.begin(), plaintext.end());
-		padded.insert(padded.end(), pad, static_cast<uint8_t>(pad));
-		std::vector<uint8_t> out(16u + padded.size());
+		std::vector<uint8_t> out(16u + plaintext.size() + pad);
 		std::memcpy(out.data(), iv.data(), iv.size());
-		if (!cng_aes_cbc_raw(/*encrypt=*/true, key, iv, padded, std::span<uint8_t>(out).subspan(16u))) {
+		if (!plaintext.empty()) {
+			std::memcpy(out.data() + 16u, plaintext.data(), plaintext.size());
+		}
+		std::memset(out.data() + 16u + plaintext.size(), static_cast<int>(pad), pad);
+		const std::span<uint8_t> body = std::span<uint8_t>(out).subspan(16u);
+		if (!cng_aes_cbc_raw(/*encrypt=*/true, key, iv, body, body)) {
 			return make_crypto_error(
 				ErrorCode::InternalError,
 				DiagnosticId::InternalError,
@@ -2127,18 +2128,16 @@ PdfResult<void> SecurityHandler::encrypt_value_recursive(
 		return {};
 	}
 	if (PdfStream* stm = value.as_stream_mut()) {
-		// /Type as decryption reads it: direct, or one level through the resolver, never written back.
+		// /Type as decryption reads it: direct, or one level through the resolver, never written back; one that does
+		// not resolve is refused (it decides between /EFF and /StmF, and whether the stream is encrypted at all).
 		std::optional<std::string_view> stm_type = stm->dict.get_name("Type");
 		std::string resolved_type;
 		if (!stm_type.has_value() && resolver != nullptr && *resolver) {
 			if (const PdfValue* type_val = stm->dict.get("Type"); type_val != nullptr && type_val->is_ref()) {
-				if (auto target = (*resolver)(*type_val->as_ref()); target.has_value()) {
-					if (const auto name = target->as_name()) {
-						resolved_type.assign(name->begin(), name->end());
-						stm_type = resolved_type;
-					}
-				} else if (target.error().code == ErrorCode::OutOfMemory) {
-					return target.error();
+				RECTO_PDF_TRY(const PdfValue target, (*resolver)(*type_val->as_ref()));
+				if (const auto name = target.as_name()) {
+					resolved_type.assign(name->begin(), name->end());
+					stm_type = resolved_type;
 				}
 			}
 		}

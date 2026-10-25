@@ -2223,7 +2223,28 @@ def build_crypto_encrypt_vectors() -> bytes:
             cases.append({"plaintext": plain.hex(), "ciphertext": cipher.hex()})
         fixtures.append({"path": f"render/encrypted-{mode}.pdf", "method": method, "file_key": file_key.hex(),
                          "cases": cases})
-    listing = {"object": obj_num, "generation": gen_num, "iv": ENCRYPT_VECTOR_IV.hex(), "fixtures": fixtures}
+    # An R=6 dictionary with /EncryptMetadata false and the /Perms that says so (byte 8 'F'), for the metadata
+    # exemption, built as `_build_encrypted_pdf` builds its AES-256 one.
+    seed = "crypto/encrypt-vectors.json:metadata-false"
+    file_key = hashlib.sha256(f"recto-aes256-fkey:{seed}".encode("utf-8")).digest()
+    u_vsalt = hashlib.sha256(f"recto-uvs:{seed}".encode("utf-8")).digest()[:8]
+    u_ksalt = hashlib.sha256(f"recto-uks:{seed}".encode("utf-8")).digest()[:8]
+    o_vsalt = hashlib.sha256(f"recto-ovs:{seed}".encode("utf-8")).digest()[:8]
+    o_ksalt = hashlib.sha256(f"recto-oks:{seed}".encode("utf-8")).digest()[:8]
+    u_val = pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_vsalt, b"") + u_vsalt + u_ksalt
+    ue_val = aes_cbc_encrypt(pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_ksalt, b""), b"\x00" * 16, file_key, pad=False)
+    o_val = pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_vsalt, u_val) + o_vsalt + o_ksalt
+    oe_val = aes_cbc_encrypt(pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_ksalt, u_val), b"\x00" * 16, file_key, pad=False)
+    perms_pt = struct.pack("<I", CORPUS_PERMISSIONS_MASK & 0xFFFFFFFF) + b"\xFF\xFF\xFF\xFFFadbRcto"
+    perms_val = aes_encrypt_block(perms_pt, aes_expand_key(file_key))
+    metadata_false = (
+        f"<< /Filter /Standard /V 5 /R 6 /Length 256 /P {CORPUS_PERMISSIONS_MASK} /EncryptMetadata false "
+        f"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /AuthEvent /DocOpen /Length 32 >> >> "
+        f"/StmF /StdCF /StrF /StdCF /O <{o_val.hex().upper()}> /U <{u_val.hex().upper()}> "
+        f"/OE <{oe_val.hex().upper()}> /UE <{ue_val.hex().upper()}> /Perms <{perms_val.hex().upper()}> >>"
+    )
+    listing = {"object": obj_num, "generation": gen_num, "iv": ENCRYPT_VECTOR_IV.hex(), "fixtures": fixtures,
+               "metadata_false_dict": metadata_false}
     return (json.dumps(listing, indent=2, sort_keys=True) + "\n").encode("ascii")
 
 
