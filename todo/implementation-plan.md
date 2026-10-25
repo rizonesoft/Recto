@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 591
+Sections: 98 | Checklist items: 593
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -90,7 +90,7 @@ Sections: 98 | Checklist items: 591
 | [x]    | D01 T02 §2  | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback       | windows-host              | 7     |
 | [x]    | D01 T02 §3  | Content-stream interpreter: graphics state, paths, painting, clipping and device colour  | windows-host              | 7     |
 | [x]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host              | 16    |
-| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 11    |
+| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host              | 12    |
 | [ ]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 5     |
 | [ ]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 6     |
 | [ ]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 5     |
@@ -116,7 +116,7 @@ Sections: 98 | Checklist items: 591
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
-| [ ]    | D01 T02 §38 | Cancellable Flate compression and incremental revisions (`CancelToken`)                  | windows-host              | 3     |
+| [ ]    | D01 T02 §38 | Cancellable Flate compression and incremental revisions (`CancelToken`)                  | windows-host              | 4     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
@@ -712,13 +712,14 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 75 | Checklist items: 541
+Sections: 76 | Checklist items: 546
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
 | [ ]    | D01 T02 §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths                | windows-host                        | 4     |
+| [ ]    | D01 T02 §40 | Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history     | windows-host                        | 4     |
 | [ ]    | D06 T01 §9  | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF                 | windows-host, attended, third-party | 4     |
-| [ ]    | D06 T01 §10 | Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF            | windows-host, attended, third-party | 5     |
+| [ ]    | D06 T01 §10 | Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF            | windows-host, attended, third-party | 6     |
 | [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                        | 7     |
 | [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host                        | 7     |
 | [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                | 6     |
@@ -914,6 +915,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 76/845 verified sections, 35 ready to run now.
+Progress: 76/846 verified sections, 35 ready to run now.
 
-Checklist: 488/6188 items completed (includes Commit items).
+Checklist: 489/6195 items completed (includes Commit items).

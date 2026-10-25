@@ -134,7 +134,8 @@ public:
 	// `kMaxRetainedHistoryBytes` of history `ResourceLimit`. Every failure leaves the chain as it was.
 	[[nodiscard]] PdfResult<void> push(ObjectChangeSet changes) noexcept;
 
-	// Back one state, and forward again; nothing to undo or redo is `InvalidArgument`. All or nothing.
+	// Back one state, and forward again; nothing to undo or redo is `InvalidArgument`, and a state whose history would
+	// pass `kMaxRetainedHistoryBytes` `ResourceLimit`. All or nothing.
 	[[nodiscard]] PdfResult<void> undo() noexcept;
 	[[nodiscard]] PdfResult<void> redo() noexcept;
 
@@ -191,11 +192,19 @@ private:
 
 	[[nodiscard]] PdfResult<std::unique_ptr<Document>> reopen(std::vector<uint8_t> bytes) const noexcept;
 	[[nodiscard]] PdfResult<ObjectChangeSet> merged(size_t through) const noexcept;
+	// Folds `later` into `into` in place, with no per-edit ceiling (each set was accepted on its own). May throw
+	// `std::bad_alloc`; callers hold a local copy.
+	static void fold(ObjectChangeSet& into, const ObjectChangeSet& later);
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> squash_bytes(size_t through) const noexcept;
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> append_bytes(const Document& on, const ObjectChangeSet& changes) const noexcept;
 	[[nodiscard]] PdfResult<Candidate> forward(const State& next) const noexcept;
 	[[nodiscard]] size_t used_slots() const noexcept;
 	[[nodiscard]] uint64_t history_without_redo() const noexcept;
+	// The history a state would retain: `working_size` bytes, `current` states applied, `squashed` compacted, in
+	// `layout`, with `replaced` standing for state `replaced_index` when given. What `drop_stale_revisions` would leave.
+	[[nodiscard]] uint64_t projected_history(uint64_t working_size, size_t current, size_t squashed, uint64_t layout,
+		const State* replaced, size_t replaced_index) const noexcept;
+	[[nodiscard]] PdfResult<void> check_history(uint64_t projected) const noexcept;
 	// A stored revision written in another layout can never be appended again; it is dropped, and the history
 	// recounted.
 	void drop_stale_revisions() noexcept;

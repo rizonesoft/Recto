@@ -509,6 +509,132 @@ TEST(PdfStagedRevisions, Bounds)
 	}
 }
 
+TEST(PdfStagedRevisions, AllocationFailureIsTyped)
+{
+	// Running out of memory at any large allocation of a push or an export returns OutOfMemory and keeps the chain;
+	// it never ends the process. Every large allocation is failed in turn until the call succeeds.
+	if (!::recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	const Bytes base = corpus("render/simple-1p.pdf");
+	auto chain = make_chain(base);
+	ASSERT_NE(chain, nullptr);
+	ObjectChangeSet changes = chain->begin_change();
+	RECTO_ASSERT_OK(changes.allocate(PdfValue(dict_of("<< /Big (" + std::string(1u << 20u, 'x') + ") >>"))));
+	int failures = 0;
+	bool pushed = false;
+	for (uint32_t nth = 1; nth <= 60 && !pushed; ++nth) {
+		const std::string bytes = text_of(chain->working().file_bytes());
+		PdfResult<void> result = make_pdf_error(ErrorCode::InternalError, "not run");
+		ObjectChangeSet attempt = changes; // copied here: only the chain's own allocations are failed
+		{
+			::recto::test::ScopedAllocationFailure fail(nth, 512u * 1024u);
+			result = chain->push(std::move(attempt));
+		}
+		if (result.has_value()) {
+			pushed = true;
+		} else {
+			++failures;
+			EXPECT_EQ(result.error().code, ErrorCode::OutOfMemory) << nth;
+			EXPECT_EQ(text_of(chain->working().file_bytes()), bytes) << nth;
+			EXPECT_EQ(chain->depth(), 0u) << nth;
+		}
+	}
+	EXPECT_TRUE(pushed);
+	EXPECT_GE(failures, 3); // the state copy, the writer's copy and its serialization at least
+	bool exported = false;
+	for (uint32_t nth = 1; nth <= 60 && !exported; ++nth) {
+		::recto::test::ScopedAllocationFailure fail(nth, 512u * 1024u);
+		auto result = chain->export_squashed();
+		exported = result.has_value();
+		if (!exported) {
+			EXPECT_EQ(result.error().code, ErrorCode::OutOfMemory) << nth;
+		}
+	}
+	EXPECT_TRUE(exported);
+}
+
+TEST(PdfStagedRevisions, HistoryPastOneEditsLimit)
+{
+	// Two edits within the per-edit limit whose union passes it: compaction, export, undo and redo still work. The
+	// base has room for one revision, so every state is the base plus its changes merged.
+	const Bytes base = with_revisions(254u);
+	auto chain = make_chain(base);
+	ASSERT_NE(chain, nullptr);
+	const size_t per_edit = kMaxChangeSetObjects / 2u + 1'000u;
+	std::vector<IndirectRef> firsts;
+	for (int edit = 0; edit < 2; ++edit) {
+		ObjectChangeSet changes = chain->begin_change();
+		for (size_t i = 0; i < per_edit; ++i) {
+			auto ref = changes.allocate(PdfValue(static_cast<int64_t>(i)));
+			ASSERT_TRUE(ref.has_value());
+			if (i == 0u) {
+				firsts.push_back(*ref);
+			}
+		}
+		RECTO_ASSERT_OK(chain->push(std::move(changes)));
+	}
+	const auto value_of = [&](const Document& doc, IndirectRef ref) {
+		auto v = doc.resolve_object(ref);
+		return v.has_value() ? v->as_int() : std::nullopt;
+	};
+	EXPECT_EQ(value_of(chain->working(), firsts[1]), 0);
+	auto exported = chain->export_squashed();
+	RECTO_ASSERT_OK(exported);
+	ASSERT_TRUE(strict_ok(*exported->bytes));
+	auto doc = Document::open_memory(*exported->bytes);
+	RECTO_ASSERT_OK(doc);
+	EXPECT_EQ(value_of(**doc, IndirectRef(firsts[1].obj_num + 5u)), 5);
+	RECTO_ASSERT_OK(chain->undo());
+	EXPECT_FALSE(value_of(chain->working(), firsts[1]).has_value());
+	RECTO_ASSERT_OK(chain->redo());
+	EXPECT_EQ(value_of(chain->working(), firsts[1]), 0);
+	// A single set is still held to the per-edit limit when merged by its caller.
+	ObjectChangeSet a(RevisionId{1u}, 10u);
+	ObjectChangeSet b(RevisionId{1u}, 10u + static_cast<uint32_t>(per_edit));
+	for (size_t i = 0; i < per_edit; ++i) {
+		ASSERT_TRUE(a.allocate(PdfValue(int64_t{0})).has_value());
+		ASSERT_TRUE(b.allocate(PdfValue(int64_t{0})).has_value());
+	}
+	RECTO_EXPECT_ERR(a.merge(b), ErrorCode::ResourceLimit);
+	EXPECT_EQ(a.entries().size(), per_edit); // unchanged
+}
+
+TEST(PdfStagedRevisions, UndoRedoRespectHistory)
+{
+	// A redo whose state would pass the history limit (lowered after the edits) is refused with the chain unchanged;
+	// an undo that only shrinks the history goes ahead.
+	const Bytes base = corpus("render/simple-1p.pdf");
+	auto chain = make_chain(base);
+	ASSERT_NE(chain, nullptr);
+	uint32_t seed = 7u;
+	for (int i = 0; i < 3; ++i) {
+		Bytes data(128u * 1024u);
+		for (uint8_t& b : data) {
+			seed = seed * 1'103'515'245u + 12'345u;
+			b = static_cast<uint8_t>(seed >> 24u);
+		}
+		ObjectChangeSet changes = chain->begin_change();
+		RECTO_ASSERT_OK(changes.replace(IndirectRef(4u), PdfValue(PdfStream(PdfDict{}, std::move(data)))));
+		RECTO_ASSERT_OK(chain->push(std::move(changes)));
+	}
+	const uint64_t full = chain->retained_bytes();
+	RECTO_ASSERT_OK(chain->undo());
+	ASSERT_LT(chain->retained_bytes(), full);
+	{
+		detail::ScopedRetainedHistoryLimit limit(chain->retained_bytes() + 1u);
+		const std::string bytes = text_of(chain->working().file_bytes());
+		RECTO_EXPECT_ERR(chain->redo(), ErrorCode::ResourceLimit);
+		EXPECT_EQ(text_of(chain->working().file_bytes()), bytes);
+		EXPECT_EQ(chain->depth(), 2u);
+		EXPECT_EQ(chain->redo_depth(), 1u);
+		RECTO_ASSERT_OK(chain->undo()); // shrinks the history: allowed
+	}
+	RECTO_ASSERT_OK(chain->redo());
+	RECTO_ASSERT_OK(chain->redo());
+	EXPECT_EQ(chain->retained_bytes(), full);
+}
+
 TEST(PdfStagedRevisions, TransitionsAreAtomic)
 {
 	const Bytes base = corpus("render/simple-1p.pdf");

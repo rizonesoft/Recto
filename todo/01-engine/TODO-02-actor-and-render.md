@@ -97,6 +97,7 @@ track: M1
 | 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [x] |
 | 38 | §38 | Cancellable Flate compression and incremental revisions (`CancelToken`) | §5, §7, §34 | [ ] |
 | 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37, D06 T01 §7 | [ ] |
+| 40 | §40 | Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history | §13 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -514,6 +515,7 @@ Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the
 - [x] Support classic `xref`, `/Type /XRef` stream and encrypted bases through `IncrementalWriter`'s existing paths. Done when: `PdfStagedRevisions.CompressedAndEncrypted` pushes, undoes, redoes and squashes on `render/compressed-xref-2p.pdf` and on `render/encrypted-aes-256.pdf` with `recto-test`, reading every changed and allocated value back after each step (decrypted on the encrypted base, where the edited string is absent from the bytes in plain).
 - [x] Bound the chain at 1,000 states, 100,000 objects per change set and 256 MiB of retained history (the working bytes beyond the base, every stored revision's bytes and every state's change set, counted as `IncrementalWriter` counts staged values, exposed as `staged_value_bytes`), checked before anything is copied, returning a typed `PdfError` with `ErrorCode::ResourceLimit` (`§18`) naming the limit, and zero the retained password with `SecureZeroMemory` on destruction. Done when: `PdfStagedRevisions.Bounds` hits each limit with a typed error and the chain unchanged, the history limit reached by replacing a large compressible stream again and again across a compaction and an undo.
 - [x] Make every transition all or nothing: `push`, `undo`, `redo` and a compaction build the new bytes and reopen the new working document before changing anything, so a failure leaves the bytes, the working document, `current_revision()` and both history stacks as they were. Done when: `PdfStagedRevisions.TransitionsAreAtomic` injects a write failure (`detail::ScopedSerializeAllocFailure`) and a reopen failure (`detail::ScopedWorkingReopenFailure`) into a push, a truncating undo, a rebuilding undo across the compacted part, a redo that appends and a redo that writes again, and each time reads the same state, then succeeds without the injection.
+- [x] Completion review (`docs/reviews/01-engine/D01-T02-s13.md`): an allocation failure anywhere in a transition is `OutOfMemory`, never a terminated process; the history's union is not held to the per-edit object limit, so every accepted state exports; undo and redo check the history budget before they publish, and merges check their bound before copying. Done when: `PdfStagedRevisions.AllocationFailureIsTyped`, `PdfStagedRevisions.HistoryPastOneEditsLimit` and `PdfStagedRevisions.UndoRedoRespectHistory` pass. Shared bytes, latency and a longer history are `§40`'s; cancellation is `§38`'s. -> XREF: D01 T02 §40
 - [x] Commit: `pdf: add ObjectChangeSet and the in-memory StagedRevisionChain`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes under ASan, and making `undo` reopen the working document without truncating the bytes fails `PdfStagedRevisions.PushPopRedo`.
@@ -1160,6 +1162,7 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only disc
 
 - [ ] A token cancelled before the call returns `Cancelled` without work; one cancelled mid-stream returns `Cancelled` within 10 ms in Release x64 on `flate/collisions.bin` at `Best` (the slowest case), with no output; the next call compresses normally. Done when: `PdfFilters.FlateCompressCancel` checks the three cases and the latency.
 - [ ] `IncrementalWriter::revision` and `write` (`src/pdf/incremental_writer.h`) take the token and an optional progress callback (bytes written of the staged total, never decreasing), polled between objects and passed to each compression; a cancel returns `Cancelled` within 100 ms on a revision of 256 MiB of streams in Release x64, keeps the staged edits, and a retry writes the same revision. Done when: `PdfIncrementalWriter.Cancel` checks the latency, the kept edits, the retry and that progress never decreases and ends at the total.
+- [ ] `StagedRevisionChain::push`, `undo`, `redo` and `export_squashed` (`§13`) take the token and pass it to the writer, so a compaction or a rebuild below it stops within 100 ms and leaves the chain as it was (filed by the `§13` completion review). Done when: `PdfStagedRevisions.Cancel` cancels a compaction and a rebuilding undo and reads the same state after. -> XREF: D01 T02 §13
 - [ ] Commit: `pdf: cancellable Flate compression and incremental revisions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressCancel` passes under ASan with 0 warnings.
@@ -1186,6 +1189,27 @@ Scheduled by the same decision after the v1 engine (Phase 6, M6 Ship), once `D06
 - [ ] Commit: `pdf: Flate compressor at zlib-ng parity`
 
 **Test checkpoint:** `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe --parity` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
+
+## 40. Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history
+
+Filed 2026-10-25 by the `§13` completion review (`docs/reviews/01-engine/D01-T02-s13.md`, excellence 2 and 3): every push, undo and redo copies the whole working file into a new `Document` and reparses it, so a small edit on a large file costs time and memory in proportion to the file, and the history stops at 1,000 states where Foxit keeps 10,000 actions. -> XREF: D01 T02 §13
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that a working `Document` still owns its bytes through an immutable shared buffer used by its one actor thread, and that the base stays an untouched prefix.
+
+**Build order:**
+
+1. Let `Document` open over a shared immutable byte buffer, and let `StagedRevisionChain` reuse the parsed base cross-reference across revisions. Done when: every `PdfStagedRevisions.*` and `PdfIncrementalWriter.*` test passes.
+2. Measure and hold the gains. Done when: the checkpoint passes.
+
+- [ ] `Document::open_shared(std::shared_ptr<const std::vector<uint8_t>>, password)` keeps the caller's buffer instead of copying it, and the chain builds each new buffer once (base prefix shared by reference where the platform allows, otherwise one copy per transition rather than two). Done when: `PdfStagedRevisions.SharedBytes` shows one buffer allocation per push on a 64 MiB base with `::recto::test::ScopedHeapMeter`, and undo allocating no copy of the base.
+- [ ] Push, undo and redo of a one-object edit on a 100 MB base take under 100 ms at the 95th percentile in Release x64. Done when: `PdfStagedRevisions.LargeFileLatency` reports the percentiles and holds them on this host.
+- [ ] The history keeps 10,000 states within `kMaxRetainedHistoryBytes` by storing change sets compactly (values shared between states instead of copied). Done when: `PdfStagedRevisions.TenThousandEdits` pushes and undoes 10,000 small edits within the budget.
+- [ ] Commit: `pdf: staged revisions over shared bytes`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes in Release x64 with the latency gate held.
 
 ## Verification
 

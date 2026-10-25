@@ -118,6 +118,14 @@ PdfResult<IndirectRef> ObjectChangeSet::allocate(PdfValue value) noexcept
 PdfResult<void> ObjectChangeSet::merge(const ObjectChangeSet& later) noexcept
 {
 	try {
+		size_t union_size = entries_.size();
+		for (const auto& [number, entry] : later.entries_) {
+			static_cast<void>(entry);
+			union_size += entries_.contains(number) ? 0u : 1u;
+		}
+		if (union_size > kMaxChangeSetObjects) {
+			return too_many_objects(union_size);
+		}
 		std::map<uint32_t, Entry> merged = entries_;
 		for (const auto& [number, entry] : later.entries_) {
 			if (auto it = merged.find(number); it != merged.end()) {
@@ -127,9 +135,6 @@ PdfResult<void> ObjectChangeSet::merge(const ObjectChangeSet& later) noexcept
 			} else {
 				merged.emplace(number, entry);
 			}
-		}
-		if (merged.size() > kMaxChangeSetObjects) {
-			return too_many_objects(merged.size());
 		}
 		entries_ = std::move(merged);
 		next_free_ = std::max(next_free_, later.next_free_);
@@ -203,6 +208,27 @@ uint64_t StagedRevisionChain::history_without_redo() const noexcept
 	return total;
 }
 
+uint64_t StagedRevisionChain::projected_history(uint64_t working_size, size_t current, size_t squashed, uint64_t layout,
+	const State* replaced, size_t replaced_index) const noexcept
+{
+	uint64_t total = working_size - base_->file_bytes().size();
+	for (size_t i = 0; i < states_.size(); ++i) {
+		const State& s = (replaced != nullptr && i == replaced_index) ? *replaced : states_[i];
+		const bool reusable = s.revision_layout == layout && (i >= current || i >= squashed);
+		total += s.change_bytes + (reusable ? s.revision.size() : 0u);
+	}
+	return total;
+}
+
+PdfResult<void> StagedRevisionChain::check_history(uint64_t projected) const noexcept
+{
+	if (projected > t_history_limit) {
+		return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, projected, t_history_limit,
+			"The unsaved edits would hold more memory than their limit");
+	}
+	return {};
+}
+
 void StagedRevisionChain::drop_stale_revisions() noexcept
 {
 	uint64_t total = working_->file_bytes().size() - base_->file_bytes().size();
@@ -232,26 +258,29 @@ PdfResult<std::unique_ptr<Document>> StagedRevisionChain::reopen(std::vector<uin
 	return doc;
 }
 
+void StagedRevisionChain::fold(ObjectChangeSet& into, const ObjectChangeSet& later)
+{
+	for (const auto& [number, entry] : later.entries_) {
+		auto [it, inserted] = into.entries_.try_emplace(number, entry);
+		if (!inserted) {
+			const bool allocated = it->second.allocated || entry.allocated;
+			it->second = entry;
+			it->second.allocated = allocated;
+		}
+	}
+	into.next_free_ = std::max(into.next_free_, later.next_free_);
+}
+
 PdfResult<ObjectChangeSet> StagedRevisionChain::merged(size_t through) const noexcept
 {
 	try {
 		// Folded in place into one local copy (a `merge` per state would copy the whole set each time).
 		ObjectChangeSet all = states_[0].changes;
 		for (size_t i = 1; i < through; ++i) {
-			const ObjectChangeSet& later = states_[i].changes;
-			for (const auto& [number, entry] : later.entries_) {
-				auto [it, inserted] = all.entries_.try_emplace(number, entry);
-				if (!inserted) {
-					const bool allocated = it->second.allocated || entry.allocated;
-					it->second = entry;
-					it->second.allocated = allocated;
-				}
-			}
-			all.next_free_ = std::max(all.next_free_, later.next_free_);
+			fold(all, states_[i].changes);
 		}
-		if (all.entries_.size() > kMaxChangeSetObjects) {
-			return too_many_objects(all.entries_.size());
-		}
+		// No per-edit ceiling here: every set was accepted on its own, and the writer bounds the union by the rows a
+		// reader reads.
 		return all;
 	} catch (const std::bad_alloc&) {
 		return out_of_memory();
@@ -261,12 +290,16 @@ PdfResult<ObjectChangeSet> StagedRevisionChain::merged(size_t through) const noe
 PdfResult<std::vector<uint8_t>> StagedRevisionChain::append_bytes(const Document& on,
 	const ObjectChangeSet& changes) const noexcept
 {
-	RECTO_PDF_TRY(IncrementalWriter writer, IncrementalWriter::create(on));
-	for (const auto& [number, entry] : changes.entries()) {
-		PdfValue value = entry.value;
-		RECTO_CHAIN_TRY_VOID(writer.set_object(IndirectRef(number, entry.generation), std::move(value)));
+	try {
+		RECTO_PDF_TRY(IncrementalWriter writer, IncrementalWriter::create(on));
+		for (const auto& [number, entry] : changes.entries()) {
+			PdfValue value = entry.value; // a copy can run out of memory like any other
+			RECTO_CHAIN_TRY_VOID(writer.set_object(IndirectRef(number, entry.generation), std::move(value)));
+		}
+		return writer.write();
+	} catch (const std::bad_alloc&) {
+		return out_of_memory();
 	}
-	return writer.write();
 }
 
 PdfResult<std::vector<uint8_t>> StagedRevisionChain::squash_bytes(size_t through) const noexcept
@@ -324,7 +357,7 @@ PdfResult<StagedRevisionChain::Candidate> StagedRevisionChain::forward(const Sta
 			// Room for one revision only: every state is the base plus its changes merged.
 			RECTO_PDF_TRY(ObjectChangeSet all, current_ == 0u ? PdfResult<ObjectChangeSet>(next.changes) : merged(current_));
 			if (current_ != 0u) {
-				RECTO_CHAIN_TRY_VOID(all.merge(next.changes));
+				fold(all, next.changes);
 			}
 			RECTO_PDF_TRY(bytes, append_bytes(*base_, all));
 			c.squashed = k;
@@ -420,6 +453,7 @@ PdfResult<void> StagedRevisionChain::undo() noexcept
 			ends[target] = bytes.size();
 		}
 		RECTO_PDF_TRY(std::unique_ptr<Document> doc, reopen(std::move(bytes)));
+		RECTO_CHAIN_TRY_VOID(check_history(projected_history(doc->file_bytes().size(), target, squashed, layout, nullptr, 0u)));
 		working_ = std::move(doc);
 		current_ = target;
 		squashed_ = squashed;
@@ -439,6 +473,8 @@ PdfResult<void> StagedRevisionChain::redo() noexcept
 			return invalid_argument("There is nothing to redo");
 		}
 		RECTO_PDF_TRY(Candidate c, forward(states_[current_]));
+		RECTO_CHAIN_TRY_VOID(check_history(projected_history(c.working->file_bytes().size(), current_ + 1u, c.squashed,
+			c.layout, &*c.written, current_)));
 		states_[current_] = std::move(*c.written);
 		++current_;
 		working_ = std::move(c.working);
