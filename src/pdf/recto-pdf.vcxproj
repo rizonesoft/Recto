@@ -48,6 +48,7 @@
     <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="serialize.cpp" />
     <ClCompile Include="incremental_writer.cpp" />
+    <ClCompile Include="staged_revisions.cpp" />
     <ClCompile Include="lexer.cpp" />
     <ClCompile Include="object.cpp" />
     <ClCompile Include="parser.cpp" />
@@ -62,6 +63,7 @@
     <ClInclude Include="interpreter.h" />
     <ClInclude Include="serialize.h" />
     <ClInclude Include="incremental_writer.h" />
+    <ClInclude Include="staged_revisions.h" />
     <ClInclude Include="lexer.h" />
     <ClInclude Include="object.h" />
     <ClInclude Include="parser.h" />

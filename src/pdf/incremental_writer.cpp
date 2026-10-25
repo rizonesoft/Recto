@@ -46,9 +46,9 @@ thread_local uint64_t t_allocation_probes = 0;
 	return t_revision_limit;
 }
 
-// What a staged value holds, as `kMaxRevisionBytes` counts it: its string, name, key and stream bytes, and a fixed
-// share for every value and container entry, walked without recursion (a value can nest as deep as its caller made it).
-[[nodiscard]] uint64_t value_bytes(const PdfValue& root)
+} // namespace
+
+uint64_t staged_value_bytes(const PdfValue& root)
 {
 	constexpr uint64_t kPerValue = 16u;
 	uint64_t total = 0;
@@ -80,6 +80,8 @@ thread_local uint64_t t_allocation_probes = 0;
 	}
 	return total;
 }
+
+namespace {
 
 [[nodiscard]] PdfError invalid_argument(std::string_view message, std::optional<uint32_t> obj = std::nullopt)
 {
@@ -215,14 +217,7 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 			return make_pdf_error(ErrorCode::DamagedFormat, "The trailer has no valid /Size");
 		}
 		IncrementalWriter writer(base);
-		// New numbers start past every number the table holds as well as past /Size: a reader keeps an entry numbered
-		// /Size itself (Table 15 ignores only greater ones), so a /Size one short must not hand out a live number such
-		// as the /Encrypt dictionary's.
-		writer.base_size_ = static_cast<uint64_t>(*size);
-		for (const auto& [number, entry] : xref.entries()) { // a free one too: its number is not new
-			static_cast<void>(entry);
-			writer.base_size_ = std::max<uint64_t>(writer.base_size_, static_cast<uint64_t>(number) + 1u);
-		}
+		writer.base_size_ = first_new_number(base);
 		writer.next_mark_ = writer.base_size_;
 		// Rows listed past /Size are ignored unread; the new /Size must stay below the lowest, or they come back
 		// (valid or not). Even an edit of existing objects writes the base /Size, plus a stream's own number.
@@ -245,6 +240,21 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 	} catch (const std::bad_alloc&) {
 		return out_of_memory();
 	}
+}
+
+uint64_t IncrementalWriter::first_new_number(const Document& base) noexcept
+{
+	// New numbers start past every number the table holds as well as past /Size: a reader keeps an entry numbered
+	// /Size itself (Table 15 ignores only greater ones), so a /Size one short must not hand out a live number such as
+	// the /Encrypt dictionary's. A free entry counts too: its number is not new.
+	const XrefTable& xref = base.xref();
+	const auto size = xref.trailer().get_int("Size");
+	uint64_t first = size.has_value() && *size > 0 ? static_cast<uint64_t>(*size) : 1u;
+	for (const auto& [number, entry] : xref.entries()) {
+		static_cast<void>(entry);
+		first = std::max<uint64_t>(first, static_cast<uint64_t>(number) + 1u);
+	}
+	return first;
 }
 
 PdfResult<uint16_t> IncrementalWriter::check_existing(IndirectRef ref) const noexcept
@@ -738,7 +748,7 @@ PdfResult<std::vector<uint8_t>> IncrementalWriter::write() const noexcept
 uint64_t IncrementalWriter::staged_size(const Staged& staged)
 {
 	// A signature also holds its reserved /Contents, written as two hex digits per byte.
-	return value_bytes(staged.value) + static_cast<uint64_t>(staged.contents_bytes) * 2u;
+	return staged_value_bytes(staged.value) + static_cast<uint64_t>(staged.contents_bytes) * 2u;
 }
 
 namespace detail {

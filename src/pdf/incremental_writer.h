@@ -34,6 +34,11 @@ inline constexpr uint32_t kMaxPdfObjectNumber = 8'388'607u;
 // The largest signature value `add_signature` reserves room for.
 inline constexpr size_t kMaxSignatureContentsBytes = 16u * 1024u * 1024u;
 
+// What a staged value holds as `kMaxRevisionBytes` counts it: its string, name, key and stream bytes, and a fixed share
+// for every value and container entry, walked without recursion. Shared with the staged revision chain's history
+// budget (D01 T02 section 13). May throw `std::bad_alloc`.
+[[nodiscard]] uint64_t staged_value_bytes(const PdfValue& value);
+
 // Where a reserved signature's `/ByteRange` and `/Contents` sit in the written file (offsets from the start of the
 // whole file). `/ByteRange` is an array of four ten-digit integers, `[0 0000000000 0000000000 0000000000]`, which a
 // signer rewrites in place (padding with spaces before `]`); `/Contents` is `<` followed by two zero hex digits per
@@ -72,6 +77,10 @@ public:
 	// section listing rows past /Size, which a reader ignores unread, limits the new /Size to below the lowest of them:
 	// a base already there is `DamagedFormat`, and so is a new object that would reach it.
 	[[nodiscard]] static PdfResult<IncrementalWriter> create(const Document& base) noexcept;
+
+	// The first number a writer on `base` would allocate: one past the trailer's /Size or the highest number its
+	// cross-reference holds, whichever is greater. Needs no writer, so it answers for a base `create` would refuse.
+	[[nodiscard]] static uint64_t first_new_number(const Document& base) noexcept;
 
 	IncrementalWriter(IncrementalWriter&&) noexcept = default;
 	IncrementalWriter& operator=(IncrementalWriter&&) noexcept = default;

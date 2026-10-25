@@ -731,6 +731,8 @@ enum class RefusalReason : uint16_t {
 	XrefRevisions, // a file already at the cross-reference revisions a reader follows
 	XrefRows,      // cross-reference rows past what a reader reads across all revisions
 	ObjectNumber,  // an object number past the highest a reader must accept
+	// Appended (D01 T02 section 13): the staged revision chain behind undo.
+	HistoryStates, // more edits kept for undo than the history holds
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -794,6 +796,8 @@ enum class RefusalReason : uint16_t {
 		return "XrefRows";
 	case RefusalReason::ObjectNumber:
 		return "ObjectNumber";
+	case RefusalReason::HistoryStates:
+		return "HistoryStates";
 	}
 	return "UnknownReason";
 }
@@ -886,6 +890,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::ObjectNumber:
 		return "The file has run out of object numbers a PDF reader accepts (observed is the number, bound the "
 			   "highest allowed); save a full copy with Save As, which renumbers the objects";
+	case RefusalReason::HistoryStates:
+		return "The document holds as many unsaved edits as undo keeps (observed and bound count edits); save to keep "
+			   "editing";
 	}
 	return "";
 }

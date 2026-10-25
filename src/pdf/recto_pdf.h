@@ -20,6 +20,7 @@
 #include "interpreter.h"
 #include "serialize.h"
 #include "incremental_writer.h"
+#include "staged_revisions.h"
 
 namespace recto::pdf {
 

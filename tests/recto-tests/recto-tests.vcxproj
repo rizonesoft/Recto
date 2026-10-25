@@ -70,6 +70,7 @@
     <ClCompile Include="pdf_interpreter_tests.cpp" />
     <ClCompile Include="pdf_serialize_tests.cpp" />
     <ClCompile Include="pdf_incremental_writer_tests.cpp" />
+    <ClCompile Include="pdf_staged_revisions_tests.cpp" />
     <ClCompile Include="pdf_document_tests.cpp" />
     <ClCompile Include="pdf_error_tests.cpp" />
     <ClCompile Include="pdf_filters_tests.cpp" />
