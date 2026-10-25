@@ -727,6 +727,10 @@ enum class RefusalReason : uint16_t {
 	InlineImageFraming, // a filtered inline image whose end was not found within the decoding work limit
 	// Appended (D01 T02 section 35): the canonical serializer.
 	ObjectValues, // an object with more values, elements or payload bytes than the parser reads back
+	// Appended (D01 T02 section 5): the limits a reader puts on an incrementally updated file.
+	XrefRevisions, // a file already at the cross-reference revisions a reader follows
+	XrefRows,      // cross-reference rows past what a reader reads across all revisions
+	ObjectNumber,  // an object number past the highest a reader must accept
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -784,6 +788,12 @@ enum class RefusalReason : uint16_t {
 		return "InlineImageFraming";
 	case RefusalReason::ObjectValues:
 		return "ObjectValues";
+	case RefusalReason::XrefRevisions:
+		return "XrefRevisions";
+	case RefusalReason::XrefRows:
+		return "XrefRows";
+	case RefusalReason::ObjectNumber:
+		return "ObjectNumber";
 	}
 	return "UnknownReason";
 }
@@ -867,6 +877,15 @@ enum class RefusalReason : uint16_t {
 		return "An object to be written holds more values, entries or text than a PDF object can be read back with "
 			   "(observed and bound are values or bytes); nothing is written, and the edit that made it so large "
 			   "should be split";
+	case RefusalReason::XrefRevisions:
+		return "The file already holds as many saved revisions as a PDF reader follows (observed and bound count "
+			   "revisions); save a full copy with Save As, which writes one revision";
+	case RefusalReason::XrefRows:
+		return "The file's cross-reference would hold more entries than a PDF reader reads (observed and bound count "
+			   "entries); save a full copy with Save As";
+	case RefusalReason::ObjectNumber:
+		return "The file has run out of object numbers a PDF reader accepts (observed is the number, bound the "
+			   "highest allowed); save a full copy with Save As, which renumbers the objects";
 	}
 	return "";
 }

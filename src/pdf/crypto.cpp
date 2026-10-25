@@ -1112,6 +1112,26 @@ inline constexpr std::array<CodepointRange, 360> kRfc3454TableD2 = {{
 
 } // namespace
 
+PdfResult<std::array<uint8_t, 16>> md5_digest(std::span<const std::span<const uint8_t>> chunks) noexcept
+{
+	try {
+		std::array<uint8_t, 16> digest{};
+		for (const auto& chunk : chunks) {
+			if (chunk.size() > std::numeric_limits<ULONG>::max()) {
+				return make_pdf_error(ErrorCode::InternalError, "MD5 input chunk is larger than CNG takes at once");
+			}
+		}
+		if (!cng_hash(BCRYPT_MD5_ALGORITHM, chunks, digest)) {
+			return make_pdf_error(ErrorCode::InternalError, "CNG MD5 failed");
+		}
+		return digest;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory computing MD5");
+	} catch (...) {
+		return make_pdf_error(ErrorCode::InternalError, "Unexpected exception computing MD5");
+	}
+}
+
 PdfResult<std::vector<uint8_t>> SecurityHandler::prepare_saslprep_password(
 	std::string_view password) noexcept
 {

@@ -2243,8 +2243,17 @@ def build_crypto_encrypt_vectors() -> bytes:
         f"/StmF /StdCF /StrF /StdCF /O <{o_val.hex().upper()}> /U <{u_val.hex().upper()}> "
         f"/OE <{oe_val.hex().upper()}> /UE <{ue_val.hex().upper()}> /Perms <{perms_val.hex().upper()}> >>"
     )
+    # An R=3 RC4 dictionary keyed with no file identifier (D01 T02 section 5): a file without /ID derives its key from
+    # an empty first element, so a revision appended to it must not add one.
+    no_id_o = pdf_r34_compute_o(CORPUS_USER_PASSWORD, CORPUS_OWNER_PASSWORD)
+    no_id_key = pdf_r34_compute_file_key(CORPUS_USER_PASSWORD, no_id_o, CORPUS_PERMISSIONS_MASK, b"")
+    no_id_u = pdf_r34_compute_u(no_id_key, b"")
+    rc4_no_id = (
+        f"<< /Filter /Standard /V 2 /R 3 /Length 128 /P {CORPUS_PERMISSIONS_MASK} "
+        f"/O <{no_id_o.hex().upper()}> /U <{no_id_u.hex().upper()}> >>"
+    )
     listing = {"object": obj_num, "generation": gen_num, "iv": ENCRYPT_VECTOR_IV.hex(), "fixtures": fixtures,
-               "metadata_false_dict": metadata_false}
+               "metadata_false_dict": metadata_false, "rc4_no_id_dict": rc4_no_id}
     return (json.dumps(listing, indent=2, sort_keys=True) + "\n").encode("ascii")
 
 

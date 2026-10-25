@@ -2381,6 +2381,15 @@ PdfResult<XrefTable> XrefTable::parse(
 					current_xref_offset));
 			}
 
+			// The newest section, which an incremental revision chains to and must match (D01 T02 section 5).
+			if (table.revision_count_ == 1u) {
+				table.startxref_offset_ = raw_startxref;
+				table.newest_section_ = !kw_tok.is_keyword("xref") ? XrefSectionKind::Stream
+					: rev_trailer.contains("XRefStm")              ? XrefSectionKind::Hybrid
+																	: XrefSectionKind::Classic;
+				table.newest_trailer_ = rev_trailer;
+			}
+
 			// Follow `/Prev` incremental update chain if present.
 			const PdfValue* prev_val = rev_trailer.get("Prev");
 			if (prev_val == nullptr) {
@@ -2406,6 +2415,7 @@ PdfResult<XrefTable> XrefTable::parse(
 			current_xref_offset = raw_prev + header_off;
 		}
 
+		table.total_rows_ = total_rows_parsed;
 		if (!table.trailer_.contains("Root")) {
 			return try_recover(make_xref_error(
 				ErrorCode::DamagedFormat,

@@ -149,6 +149,10 @@ public:
 
 } // namespace detail
 
+// MD5 over the concatenation of `chunks` through CNG, as ISO 32000-1 section 14.4 suggests for file identifiers (never
+// for security: MD5 is broken for that). An allocation failure is `OutOfMemory`, a CNG failure `InternalError`.
+[[nodiscard]] PdfResult<std::array<uint8_t, 16>> md5_digest(std::span<const std::span<const uint8_t>> chunks) noexcept;
+
 class SecurityHandler {
 public:
 	SecurityHandler() = default;
@@ -223,6 +227,13 @@ public:
 	[[nodiscard]] std::optional<IndirectRef> encrypt_ref() const noexcept
 	{
 		return encrypt_ref_;
+	}
+
+	// The first element of the trailer `/ID` the key was derived with (empty when the file had none), which a revision
+	// appended to the document keeps (D01 T02 section 5).
+	[[nodiscard]] std::span<const uint8_t> file_id_0() const noexcept
+	{
+		return file_id_0_;
 	}
 
 	[[nodiscard]] size_t cached_object_count() const noexcept

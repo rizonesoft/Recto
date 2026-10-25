@@ -19,6 +19,7 @@
 #include "font.h"
 #include "interpreter.h"
 #include "serialize.h"
+#include "incremental_writer.h"
 
 namespace recto::pdf {
 

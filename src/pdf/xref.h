@@ -32,6 +32,15 @@ inline constexpr uint64_t kMaxXrefTotalEntries = 1'000'000;
 inline constexpr uint32_t kMaxObjStmEntries = 1'000'000;
 inline constexpr size_t kMaxCachedObjStreams = 64;
 
+// The kind of a file's newest cross-reference section (ISO 32000-1 sections 7.5.4, 7.5.8 and 7.5.8.4), which an
+// incremental revision appended to it must match (D01 T02 section 5). `None` when recovery rebuilt the table.
+enum class XrefSectionKind : uint8_t {
+	None,
+	Classic, // an `xref` table and `trailer`
+	Stream,  // a `/Type /XRef` cross-reference stream
+	Hybrid,  // an `xref` table whose trailer names a supplemental `/XRefStm`
+};
+
 enum class XrefEntryKind : uint8_t {
 	Free = 0,
 	Uncompressed = 1,
@@ -250,6 +259,30 @@ public:
 		return revision_count_;
 	}
 
+	// What the parse of the newest section saw (D01 T02 section 5): the offset written after the file's last
+	// `startxref` (relative to the header, as a `/Prev` names it), the section's kind, its own trailer or stream
+	// dictionary (not the merged trailer), and the rows read across every revision, which `parse` caps at its
+	// `max_total_entries`. A table rebuilt by recovery has kind `None`, offset 0 and an empty trailer.
+	[[nodiscard]] uint64_t startxref_offset() const noexcept
+	{
+		return startxref_offset_;
+	}
+
+	[[nodiscard]] XrefSectionKind newest_section() const noexcept
+	{
+		return newest_section_;
+	}
+
+	[[nodiscard]] const PdfDict& newest_trailer() const noexcept
+	{
+		return newest_trailer_;
+	}
+
+	[[nodiscard]] uint64_t total_rows() const noexcept
+	{
+		return total_rows_;
+	}
+
 	[[nodiscard]] bool recovered() const noexcept
 	{
 		return recovered_;
@@ -347,6 +380,10 @@ private:
 	uint64_t header_offset_{0};
 	std::string pdf_version_{"1.7"};
 	size_t revision_count_{0};
+	uint64_t startxref_offset_{0};
+	XrefSectionKind newest_section_{XrefSectionKind::None};
+	PdfDict newest_trailer_{};
+	uint64_t total_rows_{0};
 	bool recovered_{false};
 	EntryMap entries_{};
 	PdfDict trailer_{};
