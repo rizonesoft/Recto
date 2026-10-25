@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace recto::pdf {
@@ -6980,7 +6981,7 @@ TEST(PdfFilters, FlateCompressBlocks)
 TEST(PdfFilters, FlateCompressLevels)
 {
 	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
-	constexpr std::array<uint64_t, 3> kChainBudget = {8u, 32u, 1'024u};
+	constexpr std::array<uint64_t, 3> kChainBudget = {8u, 64u, 1'024u};
 	std::array<size_t, 3> sizes{};
 	for (const FlateLevel level : kLevels) {
 		FlateCompressStats stats;
@@ -6997,6 +6998,36 @@ TEST(PdfFilters, FlateCompressLevels)
 	EXPECT_LE(sizes[2], sizes[1]);
 	EXPECT_LE(sizes[1], sizes[0]);
 	EXPECT_LT(sizes[1], sizes[0]); // the levels differ in what they find, not only in name
+
+	// Size ceilings on every compressor input: `Default` at the sizes D01 T02 section 37 measured when it was tuned
+	// (smaller than section 34 on all but the hostile-budgets font, 11 bytes larger; section 39 owns that one), and
+	// `Best` at the sizes section 34 stamped with at 5eed8f8, so a faster search cannot buy speed with size.
+	struct Ceiling {
+		std::string_view path;
+		size_t default_bytes;
+		size_t best_bytes;
+	};
+	constexpr Ceiling kCeilings[] = {
+		{"flate/collisions.bin", 62'161u, 60'988u},
+		{"flate/content-stream.txt", 360'736u, 357'043u},
+		{"flate/image-rows.bin", 48'758u, 48'475u},
+		{"flate/random.bin", 65'552u, 65'552u},
+		{"fonts/opentype-cff.otf", 417u, 421u},
+		{"fonts/truetype-composites.ttf", 592u, 598u},
+		{"fonts/truetype-full-long-loca.ttf", 509u, 518u},
+		{"fonts/truetype-full-short-loca.ttf", 507u, 516u},
+		{"fonts/truetype-hostile-budgets.ttf", 1'339u, 1'096u},
+		{"fonts/truetype-subset-short-loca.ttf", 345u, 349u},
+	};
+	for (const Ceiling& c : kCeilings) {
+		const std::vector<uint8_t> data = flate_fixture(c.path);
+		for (const auto& [level, ceiling] : {std::pair{FlateLevel::Default, c.default_bytes}, std::pair{FlateLevel::Best, c.best_bytes}}) {
+			auto compressed = flate_compress(data, level);
+			ASSERT_TRUE(compressed.has_value()) << c.path;
+			expect_strict(*compressed, data, c.path);
+			EXPECT_LE(compressed->size(), ceiling) << c.path << (level == FlateLevel::Best ? " Best" : " Default");
+		}
+	}
 }
 
 TEST(PdfFilters, FlateCompressBounds)
@@ -7027,6 +7058,14 @@ TEST(PdfFilters, FlateCompressBounds)
 		EXPECT_GE(stats.blocks.size(), 2'000u);
 		EXPECT_LE(stats.working_bytes, 256u * 1024u);
 		EXPECT_LE(compressed->size(), large.size() + 5u * ((large.size() + 65'534u) / 65'535u) + 6u);
+	}
+	// A level that keeps no 3-byte table allocates none: Default (without it) holds at least its 64 KiB less than Best.
+	{
+		FlateCompressStats default_stats;
+		FlateCompressStats best_stats;
+		ASSERT_TRUE(flate_compress(text, FlateLevel::Default, &default_stats).has_value());
+		ASSERT_TRUE(flate_compress(text, FlateLevel::Best, &best_stats).has_value());
+		EXPECT_LE(default_stats.working_bytes + 64u * 1024u, best_stats.working_bytes);
 	}
 	// Input larger than a stream may be is refused before any work.
 	const std::span<const uint8_t> oversized(noise.data(), kMaxDecodedStreamBytes + 1u); // never read
@@ -7096,23 +7135,27 @@ TEST(PdfFilters, FlateCompressSpeed)
 	// the slowest of seven runs, so a regression on images or long chains shows in the log.
 	const auto measure = [](const std::vector<uint8_t>& data, FlateLevel level) {
 		std::array<double, 7> seconds{};
+		size_t bytes = 0;
 		for (double& s : seconds) {
 			const auto start = std::chrono::steady_clock::now();
-			EXPECT_TRUE(flate_compress(data, level).has_value());
+			auto out = flate_compress(data, level);
 			s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+			EXPECT_TRUE(out.has_value());
+			bytes = out.has_value() ? out->size() : 0u;
 		}
 		std::sort(seconds.begin(), seconds.end());
 		const double mb = static_cast<double>(data.size()) / 1e6;
-		return std::pair<double, double>{mb / seconds[3], mb / seconds.back()};
+		return std::tuple<double, double, size_t>{mb / seconds[3], mb / seconds.back(), bytes};
 	};
 	double mb_per_s = 0.0;
 	for (const std::string_view name : {"flate/content-stream.txt", "flate/image-rows.bin", "flate/collisions.bin"}) {
 		const std::vector<uint8_t> data = flate_fixture(name);
 		for (const FlateLevel level : kLevels) {
-			const auto [median, slowest] = measure(data, level);
+			const auto [median, slowest, bytes] = measure(data, level);
 			const char* level_name = level == FlateLevel::Fast ? "Fast" : level == FlateLevel::Default ? "Default" : "Best";
-			std::printf("flate_compress %-7s %-26s median %6.1f MB/s, slowest %6.1f MB/s\n", level_name,
-				std::string(name).c_str(), median, slowest);
+			// One line per level and sample, which scripts/flate-bench.py reads: level, sample, median, slowest, bytes.
+			std::printf("flate_compress %-7s %-26s median %6.1f MB/s, slowest %6.1f MB/s, %zu bytes\n", level_name,
+				std::string(name).c_str(), median, slowest, bytes);
 			RecordProperty(std::string("mb_per_s:") + level_name + ":" + std::string(name), std::to_string(median));
 			if (name == "flate/content-stream.txt" && level == FlateLevel::Default) {
 				mb_per_s = median;

@@ -8,6 +8,9 @@
 #include <bit>
 #include <cstring>
 #include <new>
+#if defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 #include <optional>
 
 namespace recto::pdf {
@@ -43,19 +46,23 @@ struct LevelParams {
 	size_t nice;     // stop searching at a match this long
 	size_t good;     // follow a quarter of the chain when the held match is already this long (0: never)
 	uint8_t flevel;  // RFC 1950 FLEVEL
+	bool three_byte; // also keep the one-slot 3-byte table for length-3 matches
 };
 
 [[nodiscard]] constexpr LevelParams params_for(FlateLevel level) noexcept
 {
 	switch (level) {
 	case FlateLevel::Fast:
-		return {8u, 0u, 16u, 0u, 1u};
+		return {8u, 0u, 16u, 0u, 1u, true};
+	// D01 T02 section 37 (measured on the corpus samples): a deeper chain with a short lazy window and no 3-byte table
+	// is both smaller and faster than the section 34 setting (32 links, lazy to 32 bytes, the 3-byte table); length-3
+	// matches cost about what their literals do at this level, and the second search they invite is the costly part.
 	case FlateLevel::Default:
-		return {32u, 32u, 128u, 8u, 2u};
+		return {64u, 6u, 128u, 8u, 2u, false};
 	case FlateLevel::Best:
-		return {1'024u, 258u, 258u, 32u, 3u};
+		return {1'024u, 258u, 258u, 32u, 3u, true};
 	}
-	return {32u, 32u, 128u, 8u, 2u};
+	return {64u, 6u, 128u, 8u, 2u, false};
 }
 
 // RFC 1951 3.2.5: the base and extra bits of each length code (257..285) and distance code (0..29).
@@ -444,11 +451,11 @@ public:
 		, out_(out)
 		, bits_(out)
 		, stats_(stats)
-		, head3_(kHashSize, kNoPosition)
+		, head3_(params_.three_byte ? kHashSize : 0u, kNoPosition)
 		, head_(kHashSize, kNoPosition)
 		, prev_(kWindow, uint16_t{0})
 	{
-		symbols_.reserve(kBlockSymbols);
+		symbols_.resize(kBlockSymbols);
 	}
 
 	void run()
@@ -462,7 +469,7 @@ public:
 		size_t pos = 0;
 		do {
 			const size_t start = pos;
-			symbols_.clear();
+			symbol_count_ = 0;
 			pos = params_.lazy == 0u ? parse_greedy(pos) : parse_lazy(pos);
 			write_block(start, pos, pos == input_.size());
 		} while (pos < input_.size());
@@ -488,10 +495,13 @@ private:
 	[[nodiscard]] Hashes hashes_at(size_t p) const noexcept
 	{
 		const uint8_t* d = input_.data() + p;
-		const uint32_t v3 = static_cast<uint32_t>(d[0]) | (static_cast<uint32_t>(d[1]) << 8u) | (static_cast<uint32_t>(d[2]) << 16u);
 		uint32_t v4 = 0;
+		uint32_t v3 = 0;
 		if (p + 4u <= input_.size()) {
-			std::memcpy(&v4, d, 4u);
+			std::memcpy(&v4, d, 4u); // one load gives both: the 3-byte hash is the low three bytes
+			v3 = v4 & 0x00FF'FFFFu;
+		} else {
+			v3 = static_cast<uint32_t>(d[0]) | (static_cast<uint32_t>(d[1]) << 8u) | (static_cast<uint32_t>(d[2]) << 16u);
 		}
 		return {(v3 * 2'654'435'761u) >> (32u - kHashBits), (v4 * 2'246'822'519u) >> (32u - kHashBits)};
 	}
@@ -505,13 +515,18 @@ private:
 
 	void insert(size_t p, Hashes h) noexcept
 	{
-		head3_[h.h3] = static_cast<uint32_t>(p);
+		if (params_.three_byte) {
+			head3_[h.h3] = static_cast<uint32_t>(p);
+		}
 		if (p + 4u > input_.size()) {
 			prev_[p & kWindowMask] = 0u;
 			return;
 		}
+		// The link back to the previous position with this hash, or 0: an empty head (`kNoPosition`) makes the
+		// distance wrap past the window, so one comparison covers both.
 		const uint32_t old = head_[h.h4];
-		prev_[p & kWindowMask] = old != kNoPosition && p - old <= kWindow ? static_cast<uint16_t>(p - old) : uint16_t{0};
+		const size_t distance = p - static_cast<size_t>(old);
+		prev_[p & kWindowMask] = static_cast<uint16_t>(distance <= kWindow ? distance : 0u);
 		head_[h.h4] = static_cast<uint32_t>(p);
 	}
 
@@ -553,7 +568,7 @@ private:
 		// A match already good enough is worth a shorter search for a better one (as zlib's good_length).
 		const uint32_t chain = params_.good != 0u && beat >= params_.good ? params_.chain / 4u : params_.chain;
 		uint32_t steps = 0;
-		if (best < kMinMatch) {
+		if (params_.three_byte && best < kMinMatch) {
 			const uint32_t cand3 = head3_[h.h3];
 			++steps;
 			if (cand3 != kNoPosition && cand3 >= limit) {
@@ -592,6 +607,9 @@ private:
 					break;
 				}
 				cand -= delta;
+#if defined(_M_X64)
+				_mm_prefetch(reinterpret_cast<const char*>(base + cand), _MM_HINT_T0); // the next candidate's bytes
+#endif
 			}
 		}
 		chain_steps_ += steps;
@@ -602,20 +620,26 @@ private:
 		return {best, best_dist};
 	}
 
-	void literal(size_t p)
+	// The block's symbols: a buffer of `kBlockSymbols` filled from the front; the parsers stop before it is full.
+	void literal(size_t p) noexcept
 	{
-		symbols_.push_back({input_[p], 0u});
+		symbols_[symbol_count_++] = {input_[p], 0u};
 	}
 
-	void match(size_t len, size_t dist)
+	void match(size_t len, size_t dist) noexcept
 	{
-		symbols_.push_back({static_cast<uint16_t>(len), static_cast<uint16_t>(dist)});
+		symbols_[symbol_count_++] = {static_cast<uint16_t>(len), static_cast<uint16_t>(dist)};
+	}
+
+	[[nodiscard]] std::span<const Symbol> block_symbols() const noexcept
+	{
+		return {symbols_.data(), symbol_count_};
 	}
 
 	// Greedy parsing (`Fast`): take the longest match at each position, inserting the positions it covers.
 	[[nodiscard]] size_t parse_greedy(size_t p)
 	{
-		while (p < input_.size() && symbols_.size() < kBlockSymbols) {
+		while (p < input_.size() && symbol_count_ < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
 			if (p + kMinMatch <= input_.size()) {
 				const Hashes h = hashes_at(p);
@@ -644,7 +668,7 @@ private:
 		bool held = false;    // a literal or match is pending at p - 1
 		size_t held_len = 0;  // its match length (0: none)
 		size_t held_dist = 0;
-		while (p < input_.size() && symbols_.size() + 1u < kBlockSymbols) {
+		while (p < input_.size() && symbol_count_ + 1u < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
 			if (p + kMinMatch <= input_.size()) {
 				const Hashes h = hashes_at(p);
@@ -720,7 +744,7 @@ private:
 	void write_symbols(std::span<const uint16_t> lit_codes, std::span<const uint8_t> lit_lengths,
 		std::span<const uint16_t> dist_codes, std::span<const uint8_t> dist_lengths)
 	{
-		for (const Symbol& s : symbols_) {
+		for (const Symbol& s : block_symbols()) {
 			if (s.dist == 0u) {
 				bits_.put(lit_codes[s.len_or_literal], lit_lengths[s.len_or_literal]);
 				continue;
@@ -744,7 +768,7 @@ private:
 	{
 		std::array<uint32_t, kLitLenCodes> lit_freq{};
 		std::array<uint32_t, kDistCodes> dist_freq{};
-		for (const Symbol& s : symbols_) {
+		for (const Symbol& s : block_symbols()) {
 			if (s.dist == 0u) {
 				lit_freq[s.len_or_literal]++;
 			} else {
@@ -879,6 +903,7 @@ private:
 	std::vector<uint32_t> head_;  // chain heads per 4-byte hash
 	std::vector<uint16_t> prev_;
 	std::vector<Symbol> symbols_{};
+	size_t symbol_count_{0};
 	DynamicTrees trees_{};
 	std::optional<size_t> stored_start_{};
 	size_t stored_end_{0};

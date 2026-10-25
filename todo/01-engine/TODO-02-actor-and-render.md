@@ -94,8 +94,9 @@ track: M1
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
-| 37 | §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains | §34 | [ ] |
+| 37 | §37 | Faster, smaller `Default` Flate level, measured against zlib-ng | §34 | [ ] |
 | 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
+| 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1002,7 +1003,7 @@ Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Index
 
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s34.md`):** five gaps folded in. A round trip through `decode_flate` proves little because it accepts a missing Adler-32 trailer and recovers damaged headers, so the stream is checked strictly; memory, search work and allocation failure have stated bounds and tests; the ratio and speed fixtures are generated and identified, and speed has its own Release gate; `FlateLevel` has a defined contract; block selection is checked against the costs.
 
-Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function) -> XREF: D01 T02 §37 (zlib-ng speed parity) -> XREF: D01 T02 §38 (cancellation)
+Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function) -> XREF: D01 T02 §37 (a faster, smaller `Default`, measured against zlib-ng) -> XREF: D01 T02 §38 (cancellation)
 
 **Phase:** 1
 **Needs:** windows-host
@@ -1083,13 +1084,15 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 > **Verified:** 2026-10-25 | §36 | eb1143c79ffaca75921b9160eb188c82a29e3030
 > **Review:** `docs/reviews/d01-t02-s36.json`
 
-## 37. Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains
+## 37. Faster, smaller `Default` Flate level, measured against zlib-ng
 
 > **Started:** 2026-10-25T02:10Z
 
+> **Corrected 2026-10-25 (owner decision):** re-targeted to what was measured. The section was filed for zlib-ng parity on every sample; tuning reached smaller output than zlib-ng on content and image rows and 20 to 23% more speed there, but not zlib-ng's speed, nor its size and speed on the collisions worst case, which need a new parser and SIMD paths. The owner chose to ship the measured gains and file the rest: full parity, `Best` on long chains and the `§34` size rule for every file move to `§39`. Was titled "Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains".
+
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s37.md`):** three gaps folded in: `Best` (and `Default`) held to the sizes `§34` stamped with on every sample, so a faster search cannot buy speed with size; the zlib-ng comparison run by the checkpoint itself against the fresh Release build, failing on any missing result; and the zlib-ng backend required and reported, never assumed. Measured on this host with Python's zlib-ng 2.2.4 at level 6 (median of seven): content 55.0 MB/s and 363,179 bytes, image rows 55.6 MB/s and 48,947 bytes, collisions 30.3 MB/s and 61,593 bytes; at level 9 collisions run at 1.3 MB/s.
 
-Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`): `§34`'s compressor meets its targets (at most 1.05 of zlib's size, 20 MB/s) but on this host Python's zlib-ng 2.2.4 compresses the content sample at 65 MB/s at level 6 against `Default`'s 39 MB/s, and `Best` falls to 1.9 MB/s on `flate/collisions.bin`, where every chain is long and every match short. -> XREF: D01 T02 §34
+Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`). -> XREF: D01 T02 §34
 
 **Phase:** 1
 **Needs:** windows-host
@@ -1098,15 +1101,14 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engin
 
 **Build order:**
 
-1. Speed up `src/pdf/flate_compress.cpp` behind the existing API. Done when: it compiles on `x64` and `ARM64` and every `PdfFilters.FlateCompress*` test still passes.
-2. Raise the gates in `tests/recto-tests/pdf_filters_tests.cpp`. Done when: the new targets below hold in Release x64.
+1. Tune `Default` in `src/pdf/flate_compress.cpp` behind the existing API. Done when: it compiles on `x64` and `ARM64` and every `PdfFilters.FlateCompress*` test passes.
+2. Add `scripts/flate-bench.py` and its tests, and raise the gates in `tests/recto-tests/pdf_filters_tests.cpp`. Done when: the checkpoint passes on this host.
 
-- [ ] `Default` at zlib-ng level 6's throughput or better on `flate/content-stream.txt`, `flate/image-rows.bin` and `flate/collisions.bin`, at no larger output, both measured on the same host (throughput is not a fixture): candidates such as SIMD match comparison (SSE2 and NEON), a medium-effort parser and hashing tuned per level, each kept only when it measures. Done when: a new `scripts/flate-bench.py` times Python's zlib-ng at level 6 on the three samples (median of seven runs), runs `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed`, and passes only when `Default` is at least as fast and no larger on each, and `PdfFilters.FlateCompressRatio` holds `Default` to at most 1.00 of the recorded level-6 sizes.
-- [ ] `Best` at 10 MB/s or more on `flate/collisions.bin` without larger output on any sample: a search that stops when longer candidates stop appearing, or a binary-tree match finder as libdeflate's high levels use. Done when: `PdfFilters.FlateCompressSpeed` holds the floor, and `PdfFilters.FlateCompressLevels` holds `Default` and `Best` on every file `reference-sizes.json` lists to no more than the sizes `§34` stamped with (recorded in the test from `5eed8f8`), each read back strictly.
-- [ ] `scripts/flate-bench.py` requires Python's zlib to be zlib-ng 2.2 or later (`zlib.ZLIBNG_VERSION`), prints the version it measured against and refuses (exit 2) when the backend is absent, times zlib-ng at level 6 and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed` (which prints each level's median per sample) with the executable given on its command line, and exits 1 when a sample is missing, the test is skipped or fails, or `Default` is slower or larger than zlib-ng on any sample. Done when: `python -m unittest tests.scripts.test_flate_bench` checks the refusals, the missing-result failure and the comparison with a fake executable, and the script passes against the Release build.
-- [ ] Commit: `pdf: Flate compressor at zlib-ng speed`
+- [x] `Default` searches 64 links per position with a lazy window to 6 bytes and no 3-byte table (`LevelParams::three_byte`, kept for `Fast` and `Best`), with no allocation for a table a level does not use. Measured on this host with both versions interleaved in one binary (median of nine, Release x64): content 360,736 bytes at 1.18 times `§34`'s speed (`§34`: 364,038), image rows 48,758 at 1.26 times (48,942), collisions 62,161 at 0.98 times, level within noise (63,205); `Fast` and `Best` write the same bytes as `§34`. Done when: `PdfFilters.FlateCompressLevels` holds `Default` to those sizes and its budgets (64 links), and `Best` to `§34`'s sizes on every file `reference-sizes.json` lists, each read back strictly.
+- [x] `scripts/flate-bench.py` requires Python's zlib to be zlib-ng 2.2 or later (`zlib.ZLIBNG_VERSION`), prints the version it measured against and refuses (exit 2) when the backend is absent, times zlib-ng at level 6 (median of seven) and runs `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed` (which prints each level's median and size per sample) from the executable given on its command line, and exits 1 when a sample is missing, the test is skipped or fails, `Default` is larger than zlib-ng on the content or image sample, or `Default`'s speed falls under 0.62, 0.60 or 0.54 of zlib-ng's on content, image rows or collisions (about 10% under the lowest of five runs of this gate on this host: 0.69 to 0.76, 0.68 to 0.86 and 0.60 to 0.65; the test binary runs slower than a standalone build, and zlib-ng's own speed varied from 53 to 61 MB/s between runs). **Corrected 2026-10-25:** was 0.80, 0.90 and 0.60, taken from a scratch build rather than the gate. Done when: `python -m unittest tests.scripts.test_flate_bench` checks the refusals, the missing-result failure and the comparisons with a fake executable, and the script passes against the Release build.
+- [x] Commit: `pdf: a faster, smaller Default Flate level, measured against zlib-ng`
 
-**Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes with the raised gates, `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
+**Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes, `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
 
 ## 38. Cancellable Flate compression (`CancelToken` polled per block)
 
@@ -1126,6 +1128,27 @@ Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only disc
 - [ ] Commit: `pdf: cancellable Flate compression`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressCancel` passes under ASan with 0 warnings.
+
+## 39. Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths
+
+Filed 2026-10-25 from `§37` by owner decision: the parity `§37` was filed for, which tuning did not reach. On this host (zlib-ng 2.2.4, level 6, median of seven) zlib-ng compresses content at 55.0 MB/s to 363,179 bytes, image rows at 55.6 MB/s to 48,947 and collisions at 30.3 MB/s to 61,593; `§37`'s `Default` reaches 47, 53 and 20 MB/s at 360,736, 48,758 and 62,161 bytes. Its measurements showed lazy matching costs about 45% of `Default`'s time, and that even 8 links per position leave content near 52 MB/s, so the remaining gap is the parser and the per-position work, not the search depth. -> XREF: D01 T02 §37
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `flate_compress` stays a pure function of its input and level with the same API, output format and bounds as `§34`.
+
+**Build order:**
+
+1. Rework the `Default` parser and the per-position work in `src/pdf/flate_compress.cpp`. Done when: every `PdfFilters.FlateCompress*` test passes on `x64` and `ARM64`.
+2. Raise `scripts/flate-bench.py`'s gates to parity. Done when: the checkpoint passes on this host.
+
+- [ ] `Default` at zlib-ng level 6's speed or better on content, image rows and collisions at no larger output on any of them: candidates such as zlib-ng's medium-effort parser (one search per match, looking ahead from the match's end and moving the next match back into it), SIMD match comparison and hashing (SSE4.2 and AVX2 on `x64`, NEON on `ARM64`), each kept only when it measures. Done when: `scripts/flate-bench.py` holds `Default` to 1.00 of zlib-ng's speed and size on all three samples.
+- [ ] No file larger than `§34` wrote it at the same level, the 1,339-byte `Default` output of `fonts/truetype-hostile-budgets.ttf` (`§34`: 1,328) included. Done when: `PdfFilters.FlateCompressLevels` holds every level to `§34`'s sizes on every listed file.
+- [ ] `Best` at 10 MB/s or more on `flate/collisions.bin` without larger output on any sample (zlib-ng level 9 runs it at 1.3 MB/s, `Best` at 1.9): a search that stops when longer candidates stop appearing, or a binary-tree match finder as libdeflate's high levels use. Done when: `PdfFilters.FlateCompressSpeed` holds the floor.
+- [ ] Commit: `pdf: Flate compressor at zlib-ng parity`
+
+**Test checkpoint:** `python scripts/flate-bench.py --exe build/bin/x64/Release/recto-tests/recto-tests.exe --parity` passes on this host, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
 
 ## Verification
 
