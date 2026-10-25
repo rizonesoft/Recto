@@ -1306,7 +1306,8 @@ TEST(PdfCrypto, EncryptFailClosed)
 	EXPECT_EQ(*annot_back.as_dict()->get("Contents"), *annot->get("Contents")); // decryption agrees
 	// Without a /Type (optional for annotations, ISO 32000-1 Table 164) an annotation is still not a signature, while
 	// an untyped dictionary in a signature's own shape still is.
-	auto untyped_annot = parse_dict_literal("<< /Subtype /Text /Rect [0 0 10 10] /Contents (secret) /ByteRange [] /Filter /Adobe.PPKLite >>");
+	auto untyped_annot = parse_dict_literal(
+		"<< /Subtype /Text /Rect [0 0 10 10] /Contents (secret) /ByteRange [0 10 20 30] /Filter /Adobe.PPKLite >>");
 	auto untyped_sig = parse_dict_literal("<< /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached /ByteRange [0 10 20 30] /Contents <0102> >>");
 	RECTO_ASSERT_OK(untyped_annot);
 	RECTO_ASSERT_OK(untyped_sig);
