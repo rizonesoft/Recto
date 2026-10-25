@@ -62,7 +62,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
-| 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [ ] |
+| 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [x] |
 | 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [ ] |
 | 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
@@ -875,6 +875,9 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 - [x] Commit: `pdf: recovery resolves indirect object-stream parameters`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesIndirectObjStmParameters`.
+
+> **Verified:** 2026-10-25 | §29 | 53343ba1879fb110f4a1b2dd122653f0209bcaa1
+> **Review:** `docs/reviews/d06-t05-s29.json`
 
 ## 30. Damaged-file recovery keeps an encrypted file's compressed objects
 

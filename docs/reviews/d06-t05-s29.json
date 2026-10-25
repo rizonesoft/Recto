@@ -1,0 +1,120 @@
+{
+  "ref": "D06 T05 \u00a729",
+  "title": "Damaged-file recovery resolves indirect object-stream parameters",
+  "implementation_sha": "53343ba1879fb110f4a1b2dd122653f0209bcaa1",
+  "date": "2026-10-25",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s29-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s29-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s29-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s29-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s29-astra.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfXref.*:PdfDocument.*:Corpus.* -> 0 Warning(s), [  PASSED  ] 57 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 299 tests and [  PASSED  ] 300 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "Debug PdfXref.* at 53343ba -> [  PASSED  ] 29 tests (RecoveryKeepsPageContent added)"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s29-completion.md",
+    "verdict": "filed",
+    "candidate": "ab341cf88b01ad518ca09d5b9827f554798b0d8f",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T03 \u00a72",
+      "D06 T03 \u00a73",
+      "D02 T01 \u00a75",
+      "D02 T01 \u00a711",
+      "D06 T05 \u00a742",
+      "D06 T05 \u00a741",
+      "D06 T05 \u00a743",
+      "D06 T05 \u00a744"
+    ]
+  },
+  "rounds_spent": 5,
+  "round_cap": 33,
+  "cap_outcome": "Round 5 found two P3s (stale comments and a redundant member copy), fixed in ab341cf; the loop ends on the first round with no P1 or P2. The completion review (rerun at the schedule step) added a test only, 53343ba.",
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T05-s29.md",
+    "candidate": "5f438c08bb2f8cf7307d7d9837a936d12b6d9538",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
