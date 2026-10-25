@@ -296,10 +296,7 @@ def completion_record(root, completion, ref, stamp_sha, commits=None):
     found = dispatch.read_completions(path.read_bytes().decode("utf-8"))
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Completion review; run review-dispatch.py --kind completion: {ref}")
-    returned = [e for e in found if e["reviewer"] and e["writer"] in dispatch.WRITER_FAMILY
-                and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
-                and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
-                in ("COMPLETION: complete", "COMPLETION: gaps")]
+    returned = [e for e in found if dispatch.returned_pass("completion", e)]
     require(len(returned) == 1, f"{report} must hold exactly one completion review returned by another model family "
                                 f"and ending COMPLETION: complete or COMPLETION: gaps, not {len(returned)}: {ref}")
     (entry,) = returned
@@ -322,12 +319,6 @@ def completion_record(root, completion, ref, stamp_sha, commits=None):
                 f"the completion review's candidate {candidate} is not the stamped commit or an ancestor of it: {ref}")
     return {"report": report, "verdict": verdict, "candidate": candidate, "reviewer": entry["reviewer"],
             "model": entry["model"], "filed": filed}
-
-
-def _other_family(dispatch, entry):
-    """A review returned by a reviewer of another model family than the writer: not an outage, not a self-review."""
-    return bool(entry["reviewer"]) and entry["writer"] in dispatch.WRITER_FAMILY \
-        and dispatch.FAMILY.get(entry["cli"]) not in (None, dispatch.WRITER_FAMILY[entry["writer"]])
 
 
 def section_text(text, number):
@@ -405,11 +396,7 @@ def plan_record(root, report, ref, commits=None, start=None):
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Plan review; run review-dispatch.py --kind plan: {ref}")
 
-    def verdict(entry):
-        lines = [x.strip() for x in entry["review"].splitlines() if x.strip()]
-        return len(lines) >= 2 and lines[-2] in ("PLAN: complete", "PLAN: gaps") \
-            and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
-    returned = [e for e in found if _other_family(dispatch, e) and verdict(e)]
+    returned = [e for e in found if dispatch.returned_pass("plan", e)]
     require(len(returned) == 1, f"{report} must hold exactly one plan review returned by another model family and "
                                 f"ending PLAN: complete or gaps, then OVERALL: approve or needs-attention, not "
                                 f"{len(returned)}: {ref}")
@@ -461,10 +448,8 @@ def schedule_ok(root, data, ref, surface):
         check(f"the plan review in {plan_report}", entry, dispatch.scheduled(schedule, "plan", [], surface))
     completion = data["completion"]["report"]
     completions = dispatch.read_completions((Path(root) / completion).read_bytes().decode("utf-8"))
-    require(sum(1 for e in completions if _other_family(dispatch, e)
-                and e["candidate"] == data["completion"]["candidate"]
-                and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
-                in ("COMPLETION: complete", "COMPLETION: gaps")) == 1,
+    require(sum(1 for e in completions if dispatch.returned_pass("completion", e)
+                and e["candidate"] == data["completion"]["candidate"]) == 1,
             f"{completion} must hold exactly one returned completion review: {ref}")
     for entry in completions:
         check(f"the completion review in {completion}", entry, dispatch.scheduled(schedule, "completion", [], surface))

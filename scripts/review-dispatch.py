@@ -599,6 +599,21 @@ def unreadable_heading(text):
     return f"; the first unreadable record starts at line {head + 1}: {canonical(lines[head])!r}" if head < len(lines) else ""
 
 
+def returned_pass(kind, entry):
+    """A recorded plan or completion review (kind "plan" or "completion") that is the one pass: a reviewer of another
+    model family than the writer ran and its reply ends with the prompt's verdict lines, `PLAN: complete` or `gaps`
+    then the `OVERALL:` line for a plan review, `COMPLETION: complete` or `gaps` for a completion review. An outage, a
+    self-review or a reply cut short is a recorded attempt that leaves the pass open. scripts/lib/todo_graph.py
+    `stamp` counts with this same predicate, so a pass the stamp would refuse never blocks the retry."""
+    lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
+    family = bool(entry.get("reviewer")) and entry.get("writer") in WRITER_FAMILY \
+        and FAMILY.get(entry.get("cli")) not in (None, WRITER_FAMILY[entry["writer"]])
+    if kind == "plan":
+        return family and len(lines) >= 2 and lines[-2] in ("PLAN: complete", "PLAN: gaps") \
+            and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
+    return family and bool(lines) and lines[-1] in ("COMPLETION: complete", "COMPLETION: gaps")
+
+
 def read_rounds(text):
     """The rounds `record` wrote in one findings file (completion reviews are not rounds), or None when the file is not
     as `record` and `record_completion` write it (see read_findings)."""
@@ -677,7 +692,7 @@ def record_completion(path, result, when, candidate, kind="completion"):
     if found is None:
         raise Unrecorded(f"{path} cannot be read back (a heading or line is not in the format --record writes"
                          f"{unreadable_heading(existing)}; {RESERVED_NAMES}), so the {what} was not recorded")
-    if any(entry["reviewer"] for entry in found[key]):
+    if any(returned_pass(kind, entry) for entry in found[key]):
         raise Unrecorded(f"{path} already holds a {what}; it is one pass, so this one was not recorded")
     who = f"{result['reviewer']} (`{result['model']}` via `{result['cli']}`)" if result["reviewer"] else "none"
     review = raw_lines(result["review"] or f"No reviewer returned a {what}. This pass is not an approval.")

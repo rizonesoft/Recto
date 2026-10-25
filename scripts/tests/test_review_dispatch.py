@@ -740,6 +740,18 @@ class Dispatch(Harness):
         self.assertFalse(summary["recorded"])
         self.assertEqual(record.read_bytes(), before, "a second completion review was appended")
 
+    def test_a_completion_reply_without_its_verdict_leaves_the_pass_open(self):
+        record = self.repo / "docs/reviews/c.md"
+        result, _ = self.complete(record, codex="say", say="1. Open file: present.")
+        self.assertIn("## Completion review: sol", record.read_text(encoding="utf-8"), "the attempt is recorded")
+        result, summary = self.complete(record, codex="completion")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(summary["recorded"], "a reply without COMPLETION: is not the pass, so the retry is recorded")
+        entries = self.module().read_completions(record.read_text(encoding="utf-8"))
+        self.assertEqual([self.module().returned_pass("completion", e) for e in entries], [False, True])
+        result, _ = self.complete(record, codex="completion")
+        self.assertIn("already holds a completion review", result.stderr)
+
     def test_a_completion_review_needs_a_full_candidate_and_a_round_takes_none(self):
         for candidate in (None, "abc1234", self.CANDIDATE.upper(), self.CANDIDATE + "0"):
             with self.subTest(candidate=candidate):
@@ -953,6 +965,20 @@ class Schedule(Harness):
         self.assertIn("already holds a plan review", result.stderr)
         summary, _ = self.round()
         self.assertEqual(summary["position"], 1, "the plan review does not move the round position")
+
+    def test_a_plan_reply_without_its_verdict_leaves_the_pass_open(self):
+        candidate = "a" * 40
+        plan = ("--writer", "claude", "--prompt", str(self.prompt), "--kind", "plan", "--candidate", candidate,
+                "--record", str(self.findings))
+        self.dispatch(*plan, codex="say", say="1. Keyboard reach: missing.\n\nOVERALL: needs-attention")
+        result, summary = self.dispatch(*plan, codex="say", say="1. Gap.\n\nPLAN: gaps\nOVERALL: needs-attention")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(summary["recorded"], "a reply without PLAN: is not the pass, so the retry is recorded")
+        entries = self.module().read_plans(self.findings.read_text(encoding="utf-8"))
+        self.assertEqual([self.module().returned_pass("plan", e) for e in entries], [False, True])
+        result, _ = self.dispatch(*plan, codex="say", say="PLAN: complete\nOVERALL: approve")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("already holds a plan review", result.stderr)
 
     def test_a_plan_review_needs_a_full_candidate(self):
         for extra in ((), ("--candidate", "abc123")):
