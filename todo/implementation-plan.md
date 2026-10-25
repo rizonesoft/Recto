@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 596
+Sections: 98 | Checklist items: 597
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -144,7 +144,7 @@ Sections: 98 | Checklist items: 596
 | [ ]    | D06 T05 §42 | Cancellable damaged-file recovery with progress                                          | windows-host              | 3     |
 | [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host              | 5     |
 | [ ]    | D06 T05 §44 | Damaged-file recovery measured against competitors on one corpus                         | windows-host              | 5     |
-| [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host              | 4     |
+| [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host              | 5     |
 | [ ]    | D06 T05 §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments       | windows-host              | 4     |
 | [ ]    | D06 T05 §47 | Standard security handler interoperability matrix and cancellable decryption             | windows-host              | 4     |
 | [ ]    | D06 T05 §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts   | windows-host, third-party | 5     |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 78/846 verified sections, 38 ready to run now.
 
-Checklist: 495/6198 items completed (includes Commit items).
+Checklist: 495/6199 items completed (includes Commit items).

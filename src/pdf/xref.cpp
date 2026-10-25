@@ -1793,11 +1793,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 		// container no longer unpacks and hides the integer that sizes that very stream. So while a stream waits on an
 		// indirect /Length, each container whose dictionary names any object is read again, for /Length candidates
 		// only, once for each combination of the definitions the file holds of the objects it names (at most 16
-		// combinations, each object's definitions in file order). One of them is the definition the container was
-		// written against; a reading that makes no sense yields nothing or a candidate the parser does not accept. This
-		// reading never fails recovery: it stops when half the decode budget is spent, and a reading that fails is
-		// skipped. When the first pass found an /Encrypt (possibly a trailer inside a stream it sized too short), every
-		// container is read this way, since the unpack above skipped them all.
+		// combinations, each object's definitions in file order, the references they name followed transitively). One
+		// of them is the definition the container was written against; a reading that makes no sense yields nothing or
+		// a candidate the parser does not accept, and a reading that fails is skipped. When the readings are cut short
+		// (their caps or half the decode budget), recovery refuses (below). A file that names /Encrypt is read this way
+		// too: the name may come from a trailer inside a stream sized too short, and skipping the readings would let
+		// that payload decide. A genuinely encrypted container decodes to ciphertext, which offers no candidate; an
+		// encrypted file whose readings are cut short is refused until they can run on decrypted containers after
+		// authentication (D06 T05 §45).
 		bool ambiguous_extent = false; // see the end of the readings below
 		if (length_oracle == nullptr && !stream_uses.empty()) {
 			std::unordered_map<uint32_t, std::vector<const ScannedDefinition*>> definitions_of;

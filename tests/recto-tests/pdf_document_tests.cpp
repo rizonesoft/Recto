@@ -320,12 +320,16 @@ TEST(PdfDocument, RecoveredEncryptedCompressedCatalog)
 	ASSERT_TRUE(content.has_value()) << content.error().message.view();
 	EXPECT_EQ(*content, *base_content);
 
-	// The compressed root is not a catalog: once its container can be read, the document is refused with a typed
-	// error.
-	const std::vector<uint8_t> bad = build("<< /Type /Pages /Kids [] /Count 0 >>");
-	auto refused = Document::open_memory(bad, "recto-test");
-	ASSERT_FALSE(refused.has_value());
-	EXPECT_EQ(refused.error().code, ErrorCode::DamagedFormat) << refused.error().message.view();
+	// The compressed root is not a catalog by name (another type, a non-name type, no type, a type that does not
+	// resolve): once its container can be read, the document is refused with a typed error (ISO 32000-1 Table 28).
+	for (const std::string_view catalog : {std::string_view("<< /Type /Pages /Kids [] /Count 0 >>"),
+			 std::string_view("<< /Type 42 /Pages 32 0 R >>"), std::string_view("<< /Pages 32 0 R >>"),
+			 std::string_view("<< /Type 99 0 R /Pages 32 0 R >>")}) {
+		const std::vector<uint8_t> bad = build(catalog);
+		auto refused = Document::open_memory(bad, "recto-test");
+		ASSERT_FALSE(refused.has_value()) << catalog;
+		EXPECT_EQ(refused.error().code, ErrorCode::DamagedFormat) << catalog;
+	}
 }
 
 // The audit of D01 T01 §9, round 2 (D06 T05 §23): in an encrypted file (Identity crypt filters, empty user password),

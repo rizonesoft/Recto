@@ -1999,8 +1999,11 @@ PdfResult<void> Document::load_document_structure()
 			root_ref_opt->obj_num,
 			root_ref_opt->gen_num);
 	}
+	// A /Type that names something else is refused; an intact file whose catalog omits /Type is read anyway, as
+	// readers do. A recovered file's root must be a catalog by name (ISO 32000-1 Table 28): an encrypted file's
+	// compressed root was taken on an intact xref stream's word before its container could be read (D06 T05 §30).
 	if (const auto root_type = entry_name(*root_dict, "Type");
-		root_type.has_value() && *root_type != "Catalog") {
+		(root_type.has_value() && *root_type != "Catalog") || (xref_.recovered() && root_type != "Catalog")) {
 		return make_doc_error(
 			ErrorCode::DamagedFormat,
 			DiagnosticId::DamagedDictionary,

@@ -661,6 +661,33 @@ TEST(PdfXref, RecoveryKeepsPageContent)
 	}
 }
 
+// Round 1 of D06 T05 §30 under the second schedule, a deliberate trade-off: the /Length readings also run on a file
+// that names /Encrypt (a trailer inside a stream's payload can name it to switch them off), so an encrypted file
+// whose readings are cut short (a container's /N with seventeen definitions, a stream with an indirect /Length) is
+// refused as ambiguous before the password, until D06 T05 §45 reads decrypted containers after authentication.
+TEST(PdfXref, RecoveryRefusesAmbiguousEncryptedFile)
+{
+	std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n"
+		"4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n"
+		"20 0 obj\n<< /Type /ObjStm /N 2 0 R /First 5 /Length 8 >>\nstream\n\x9c\x12\x8f\x01\xee\x45\x77\x30\nendstream\nendobj\n";
+	for (int i = 0; i < 17; ++i) {
+		pdf += "2 0 obj\n" + std::to_string(i) + "\nendobj\n";
+	}
+	pdf += "30 0 obj\n<< /Length 88 0 R >>\nstream\nabc\nendstream\nendobj\n"
+		"7 0 obj\n<< /Filter /Standard /V 1 /R 2 /P -4 /O <00> /U <00> >>\nendobj\n"
+		"trailer\n<< /Size 40 /Root 1 0 R /Encrypt 7 0 R >>\n%%EOF\n";
+	RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(pdf), 64), ErrorCode::DamagedFormat);
+	// With every reading possible (sixteen definitions) the file recovers, its /Encrypt kept for authentication.
+	const size_t extra = pdf.find("2 0 obj\n16\nendobj\n");
+	ASSERT_NE(extra, std::string::npos);
+	std::string fewer = pdf;
+	fewer.erase(extra, std::string("2 0 obj\n16\nendobj\n").size());
+	auto rec = XrefTable::recover_damaged_xref(as_bytes(fewer), 64);
+	RECTO_ASSERT_OK(rec);
+	EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+	EXPECT_TRUE(rec->trailer().contains("Encrypt"));
+}
+
 // Plan review of D06 T05 §29, gap 1: a container whose /Type is an indirect reference (ISO 32000-1 section 7.5.7 lets
 // any uncompressed dictionary value be indirect) is recognised once the type resolves, whether the type object comes
 // before or after it; a stream whose indirect /Type is something else is not read as a container.
