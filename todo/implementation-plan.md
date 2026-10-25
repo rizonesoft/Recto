@@ -132,7 +132,7 @@ Sections: 98 | Checklist items: 605
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
 | [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host              | 8     |
-| [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host              | 6     |
+| [x]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host              | 6     |
 | [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host              | 6     |
 | [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host              | 6     |
 | [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host              | 4     |
@@ -915,6 +915,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 81/846 verified sections, 38 ready to run now.
+Progress: 82/846 verified sections, 37 ready to run now.
 
 Checklist: 504/6208 items completed (includes Commit items).

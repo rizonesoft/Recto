@@ -67,7 +67,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [x] |
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [x] |
-| 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
+| 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [x] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
 | 36 | §36 | Native JPX decoder bounded by a cumulative work budget | §22 | [ ] |
 | 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [x] |
@@ -673,7 +673,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Resolved:** DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding -> XREF: D06 T05 §33 (2026-10-25: closed by D06 T05 §33, which decides the colour transform from the Adobe marker or /ColorTransform and has WIC read every three-component JPEG marked with that choice, with Adobe CMYK, YCCK, JFIF, 4:2:0 and progressive fixtures)
 
-> **Deferred:** CCITT damaged-row recovery per ISO 32000-1 Table 11 -> XREF: D06 T05 §34
+> **Resolved:** CCITT damaged-row recovery per ISO 32000-1 Table 11 -> XREF: D06 T05 §34 (2026-10-26: closed by D06 T05 §34, which recovers damaged pure and mixed Group 3 rows as Table 11 specifies, the previous good row once and then white, and refuses saying why where it cannot)
 
 > **Deferred:** a systematic JBIG2 work-and-memory pass, and the regression fixtures for the round-3 reference-charging, compositing-clip and unsigned HRX/HRY fixes -> XREF: D06 T05 §35
 
@@ -1022,6 +1022,9 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 > **Corrected 2026-10-26:** (plan review, `docs/reviews/06-quality/D06-T05-s34.md`) the plan said nothing of `/EncodedByteAlign`, and proved mixed Group 3 only with 1D rows, substitution only after a non-white good row once, and no-EOL refusal only in pure Group 3; the two items above add them. Building them found the decoder aligning before every EOL scan, which cut into the EOL whenever T.4 fill left fewer than 11 zeros past the boundary (a row of 8 white and 8 black ending at bit 27, say), so such a stream lost its next row even without damage.
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery` and `PdfFilters.CcittRecoveryPlanReviewCases`.
+
+> **Verified:** 2026-10-26 | §34 | d3cc4c41afc45ff1e9be83a675c341515e61c7c6
+> **Review:** `docs/reviews/d06-t05-s34.json`
 
 ## 35. JBIG2 decoder work and memory bounded at every allocation and loop
 

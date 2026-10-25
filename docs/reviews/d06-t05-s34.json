@@ -1,0 +1,106 @@
+{
+  "ref": "D06 T05 \u00a734",
+  "title": "CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies",
+  "implementation_sha": "d3cc4c41afc45ff1e9be83a675c341515e61c7c6",
+  "date": "2026-10-26",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s34-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s34-astra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s34-astra.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFilters.* -> 0 Warning(s), [  PASSED  ] 49 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 312 tests and [  PASSED  ] 313 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 455 tests, OK",
+    "mutants: every fix of the plan review and rounds 1 and 2 killed by its test (the per-bit EOL scan by a hang, stopped after 527 CPU seconds against 34 ms)"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s34.md",
+    "verdict": "filed",
+    "candidate": "ecfc931222bacfd5fe3b62fec0a6fba14f0094be",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D01 T02 \u00a726",
+      "D01 T03 \u00a71",
+      "D06 T04 \u00a730",
+      "D07 T03 \u00a712",
+      "D06 T01 \u00a79"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T05-s34.md",
+    "candidate": "ecfc931222bacfd5fe3b62fec0a6fba14f0094be",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

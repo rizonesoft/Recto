@@ -81,3 +81,19 @@ OVERALL: needs-attention
 ## Writer note: round 2 dispositions
 
 - Fixed: adversarial 1 (with `/EndOfLine false`, an EOL-introduced damaged row after `/Rows` rows ended the image as a success): under `/EndOfBlock true` a row an EOL introduced is a row whatever `/EndOfLine` says, so its damage goes to recovery, which refuses it as `DamagedRowRecoveryOff`; the eligibility check now comes after that. The reproduction (its bytes asserted) and its mixed Group 3 twin are refused with that reason in `PdfFilters.CcittRecoveryRoundOne`. Mutant killed: the recovery-off shortcut restored before the EOL check.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T22:42:58Z
+- Effort: low
+- Lenses: adversarial
+- Lines: 6
+- Digest: 27d994a2f9beb3b5
+
+## adversarial: approve
+
+No actionable findings identified in the scoped candidate. Evidence is source inspection and bit-position tracing; native tests and ASan were not run. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
