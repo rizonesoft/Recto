@@ -711,7 +711,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 	LengthPlan plan;
 	try {
 		auto first = recover_damaged_xref_with(file_bytes, max_total_entries, nullptr, &plan, nullptr);
-		if (!first.has_value() || plan.empty()) {
+		// A first pass that failed for want of something a rescan can supply (its only catalog swallowed by a wrongly
+		// sized stream, say) is still repaired by one; memory and the hard limits are not retried.
+		if (plan.empty() || (!first.has_value() && (first.error().code == ErrorCode::OutOfMemory ||
+														first.error().code == ErrorCode::DecompressionLimitExceeded ||
+														first.error().code == ErrorCode::ResourceLimit))) {
 			return first;
 		}
 		std::set<std::pair<uint64_t, int64_t>> excluded; // (stream position, length) found inconsistent
@@ -988,11 +992,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			uint64_t key = 0; // object number << 16 | generation of the /Length target
 			uint32_t obj_num = 0;
 			uint64_t extent = 0; // the first pass's payload length
+			std::optional<int64_t> sized_by{}; // the integer that sized it, when the parser accepted one
 		};
 		std::vector<StreamUse> stream_uses;
 		std::unordered_map<uint64_t, std::vector<int64_t>> length_candidates;
+		// Each object's values already noted, so a file defining one object a million times costs a lookup per
+		// definition, not a scan of every earlier value (D06 T05 §29, round 1 of the second schedule).
+		std::unordered_map<uint64_t, std::unordered_set<int64_t>> length_candidates_seen;
 		size_t length_candidate_count = 0;
 		std::optional<uint64_t> length_ref_used;
+		std::optional<int64_t> length_value_used; // what scan_length answered for that reference
 		struct OracleUse {
 			uint64_t obj_pos = 0;
 			IndirectRef ref{};
@@ -1003,9 +1012,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			if (length_oracle != nullptr || value < 0 || length_candidate_count >= effective_max_entries) {
 				return;
 			}
-			auto& values = length_candidates[(static_cast<uint64_t>(obj) << 16u) | gen];
-			if (std::find(values.begin(), values.end(), value) == values.end()) {
-				values.push_back(value);
+			const uint64_t key = (static_cast<uint64_t>(obj) << 16u) | gen;
+			if (length_candidates_seen[key].insert(value).second) {
+				length_candidates[key].push_back(value);
 				++length_candidate_count;
 			}
 		};
@@ -1298,6 +1307,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			// The integer the scan has met so far, which the parser keeps only when it lands on `endstream`.
 			if (const auto it = recovered_integers.find(len_ref.obj_num);
 				it != recovered_integers.end() && it->second.first == len_ref.gen_num) {
+				if (length_oracle == nullptr) {
+					length_value_used = it->second.second;
+				}
 				return it->second.second;
 			}
 			return make_pdf_error(
@@ -1411,6 +1423,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							Parser obj_parser(file_bytes);
 							obj_parser.seek(pos);
 							length_ref_used = std::nullopt;
+							length_value_used = std::nullopt;
 							const uint64_t obj_pos = static_cast<uint64_t>(pos);
 							auto parsed_obj = obj_parser.parse_indirect_object(
 								[&scan_length, obj_num, obj_pos](IndirectRef len_ref) -> PdfResult<int64_t> {
@@ -1419,7 +1432,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							if (parsed_obj.has_value() && length_ref_used.has_value() &&
 								stream_uses.size() < effective_max_entries) {
 								if (const PdfStream* used = parsed_obj->value.as_stream(); used != nullptr) {
-									stream_uses.push_back(StreamUse{obj_pos, *length_ref_used, obj_num, used->raw_length});
+									const bool sized_by_integer = length_value_used.has_value() && *length_value_used >= 0 &&
+									static_cast<uint64_t>(*length_value_used) == used->raw_length;
+								stream_uses.push_back(StreamUse{obj_pos, *length_ref_used, obj_num, used->raw_length,
+									sized_by_integer ? length_value_used : std::nullopt});
 								}
 							}
 							const size_t next_pos = std::max(obj_parser.lexer().position(), p + 3u);
@@ -1838,6 +1854,36 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						}
 					}
 				}
+				// One level further: the references inside the named objects' own definitions (a /Filter 2 0 R whose object
+				// 2 is [3 0 R]), so the combinations reach every object a parameter's value depends on.
+				for (size_t i = 0, direct = named.size(); i < direct; ++i) {
+					const auto defs = definitions_of.find(named[i].obj_num);
+					if (defs == definitions_of.end()) {
+						continue;
+					}
+					for (const ScannedDefinition* def : defs->second) {
+						if (def->generation != named[i].gen_num) {
+							continue;
+						}
+						auto value = parse_at(static_cast<size_t>(def->offset), named[i]);
+						if (!value.has_value()) {
+							if (value.error().code == ErrorCode::OutOfMemory) {
+								return value.error();
+							}
+							continue;
+						}
+						note_ref(*value);
+						if (const PdfArray* arr = value->as_array()) {
+							for (const PdfValue& item : *arr) {
+								note_ref(item);
+							}
+						} else if (const PdfDict* d = value->as_dict()) {
+							for (const auto& [k, inner] : *d) {
+								note_ref(inner);
+							}
+						}
+					}
+				}
 				if (named.empty() && !encrypted) {
 					continue;
 				}
@@ -1935,6 +1981,19 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 					}
 				}
 				std::sort(longer.begin(), longer.end(), std::greater<>());
+				// The first pass sized this stream by the integer it had met so far; if the file's final definition of
+				// that object (a container unpacked after the scan, or a later definition) is another integer, the first
+				// pass is not self-consistent, and that definition is tried first even when it is shorter. Its payload
+				// cannot have supplied it: an integer-sized stream's payload is never scanned for definitions.
+				if (use.sized_by.has_value()) {
+					const auto final_value = recovered_integers.find(static_cast<uint32_t>(use.key >> 16u));
+					if (final_value != recovered_integers.end() &&
+						final_value->second.first == static_cast<uint16_t>(use.key & 0xFFFFu) &&
+						final_value->second.second >= 0 && final_value->second.second != *use.sized_by) {
+						std::erase(longer, final_value->second.second);
+						longer.insert(longer.begin(), final_value->second.second);
+					}
+				}
 				for (const int64_t value : longer) {
 					if (static_cast<uint64_t>(value) > file_bytes.size() - use.obj_pos) {
 						continue; // longer than the rest of the file: never a stream's length

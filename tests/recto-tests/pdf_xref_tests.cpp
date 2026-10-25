@@ -3,7 +3,9 @@
 #include "recto_pdf.h"
 #include "test_support.h"
 
+#include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <span>
 #include <optional>
 #include <string>
@@ -350,6 +352,107 @@ TEST(PdfXref, RecoveryDeferredContainerEdges)
 // lookups after the first copy a few scalars, not the object; an intact xref row naming a deferred container's
 // member does not stop that member's catalog being recognised; and an escaped /Encr#79pt key still marks the file
 // as possibly encrypted, so its containers are not decoded before authentication.
+// Round 1 of D06 T05 §29 under the second schedule.
+TEST(PdfXref, RecoveryLengthRoundOne)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const auto container = [&](uint32_t num, const std::string& members, const std::string& keys) {
+		const std::string data = hex(members);
+		return std::to_string(num) + " 0 obj\n<< /Type /ObjStm " + keys + " /Length " + std::to_string(data.size()) +
+			" >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+
+	// Finding 1: the container's /Filter is 2 0 R, whose object 2 is [3 0 R]; stream 30's payload redefines object 3
+	// as 0 and replaces catalog 1. The /Length candidate readings follow the reference inside object 2, so the
+	// container still offers the stream's whole length and the genuine catalog stands.
+	{
+		const std::string fake = "\nendstream\nendobj\n3 0 obj\n0\nendobj\n"
+			"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "2 0 obj\n[3 0 R]\nendobj\n" +
+			"3 0 obj\n/ASCIIHexDecode\nendobj\n" +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter 2 0 R") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Finding 2: one object defined 200,000 times with distinct integers costs a lookup per definition. Bounded by
+	// the test's own clock: the old linear scan took minutes here.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		for (int i = 0; i < 200'000; ++i) {
+			pdf += "88 0 obj\n" + std::to_string(i) + "\nendobj\n";
+		}
+		pdf += "%%EOF\n";
+		const auto start = std::chrono::steady_clock::now();
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), kMaxXrefTotalEntries);
+		const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_LT(seconds, 30.0);
+	}
+
+	// Finding 3: an obsolete definition of the length object, met during the scan, lands on a later stream's
+	// `endstream`; the update's definition sits in a container unpacked after the scan. The first pass is not
+	// self-consistent (it sized the stream by the obsolete integer), so the update's shorter length is tried and
+	// the replacement catalog is not swallowed.
+	{
+		const auto build = [&](uint64_t m, size_t& replacement_at, size_t& payload_start, size_t& y_end) {
+			char obsolete[48];
+			std::snprintf(obsolete, sizeof(obsolete), "88 0 obj\n%06llu\nendobj\n", static_cast<unsigned long long>(m));
+			std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + obsolete +
+				container(20u, "88 0 1", "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+				"30 0 obj\n<< /Length 88 0 R >>\nstream\n";
+			payload_start = pdf.size();
+			pdf += "x\nendstream\nendobj\n";
+			replacement_at = pdf.size();
+			pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Replaced true >>\nendobj\n31 0 obj\n<< /Length 1 >>\nstream\n";
+			y_end = pdf.size() + 1u;
+			pdf += "y\nendstream\nendobj\n%%EOF\n";
+			return pdf;
+		};
+		size_t replacement_at = 0;
+		size_t payload_start = 0;
+		size_t y_end = 0;
+		(void)build(0u, replacement_at, payload_start, y_end);
+		const std::string pdf = build(y_end - payload_start, replacement_at, payload_start, y_end);
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, replacement_at);
+	}
+
+	// Finding 4: stream 30's payload redefines catalog 1 as null, so the first pass, sizing the stream at its first
+	// `endstream`, has no catalog at all; the container offers the stream's whole length, and the rescan with it
+	// recovers the genuine catalog instead of failing.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\nnull\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+}
+
 // Plan review of D06 T05 §29, gap 1: a container whose /Type is an indirect reference (ISO 32000-1 section 7.5.7 lets
 // any uncompressed dictionary value be indirect) is recognised once the type resolves, whether the type object comes
 // before or after it; a stream whose indirect /Type is something else is not read as a container.
