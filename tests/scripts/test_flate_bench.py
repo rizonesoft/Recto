@@ -3,6 +3,7 @@ the zlib-ng timing and the test executable replaced so no build is needed."""
 import importlib.util
 import io
 import tempfile
+import types
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -62,6 +63,15 @@ class FlateBench(unittest.TestCase):
         code, out = self.run_with(GOOD)
         self.assertEqual(code, 0, out)
         self.assertIn("zlib-ng", out)
+
+    def test_runs_where_python_has_classic_zlib(self):
+        # The comparison reads the version it checked, never the host's zlib module: with classic zlib (no
+        # ZLIBNG_VERSION) and the backend check passing, it still compares and names the version.
+        classic = types.SimpleNamespace(ZLIB_VERSION="1.3.1", compress=lambda data, level: b"")
+        with mock.patch.object(bench, "zlib", classic):
+            code, out = self.run_with(GOOD)
+        self.assertEqual(code, 0, out)
+        self.assertIn("zlib-ng 2.2.4 at level 6", out)
 
     def test_refuses_without_zlib_ng(self):
         for version in (None, (2, 1, 9), (1, 9)):

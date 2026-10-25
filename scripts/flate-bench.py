@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.exe.is_file():
         print(f"flate-bench: refused: no test executable at {args.exe}")
         return 2
-    print(f"flate-bench: zlib-ng {zlib.ZLIBNG_VERSION} at level 6, against {args.exe}")
+    print(f"flate-bench: zlib-ng {'.'.join(map(str, version))} at level 6, against {args.exe}")
 
     code, output = run_recto(args.exe, args.corpus)
     if code != 0 or "[  SKIPPED ]" in output or "[  PASSED  ] 1 test" not in output:
