@@ -1803,6 +1803,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 		// reading never fails recovery: it stops when half the decode budget is spent, and a reading that fails is
 		// skipped. When the first pass found an /Encrypt (possibly a trailer inside a stream it sized too short), every
 		// container is read this way, since the unpack above skipped them all.
+		bool ambiguous_extent = false; // see the end of the readings below
 		if (length_oracle == nullptr && !stream_uses.empty()) {
 			std::unordered_map<uint32_t, std::vector<const ScannedDefinition*>> definitions_of;
 			for (const ScannedDefinition& def : scanned_definitions) {
@@ -1810,6 +1811,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			}
 			constexpr size_t kMaxReadings = 16u;
 			bool exhausted = false;
+			// Whether any reading was left out (the reference or combination cap, or the budget): then a stream sized
+			// only by its first `endstream` may still hide definitions, and the scan's table is not trusted (below).
+			bool readings_incomplete = false;
 			for (const DeferredObjStm& deferred : deferred_objstms) {
 				if (exhausted) {
 					break;
@@ -1827,10 +1831,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 				}
 				// The objects the dictionary names, one level into arrays and dictionaries (where parameters nest).
 				std::vector<IndirectRef> named;
-				const auto note_ref = [&named](const PdfValue& v) {
-					if (const auto ref = v.as_ref(); ref.has_value() &&
-						std::find(named.begin(), named.end(), *ref) == named.end() && named.size() < 8u) {
-						named.push_back(*ref);
+				const auto note_ref = [&named, &readings_incomplete](const PdfValue& v) {
+					if (const auto ref = v.as_ref(); ref.has_value() && std::find(named.begin(), named.end(), *ref) == named.end()) {
+						if (named.size() < 8u) {
+							named.push_back(*ref);
+						} else {
+							readings_incomplete = true;
+						}
 					}
 				};
 				for (const char* key : {"Type", "N", "First", "Filter", "DecodeParms"}) {
@@ -1904,6 +1911,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 					choices.push_back(std::move(defs));
 				}
 				std::vector<size_t> pick(named.size(), 0u);
+				bool every_combination = false;
 				for (size_t reading = 0; reading < kMaxReadings; ++reading) {
 					if (cumulative_decoded_objstm_bytes >= max_recovery_decoded_objstm_bytes / 2u || resolver_over_budget) {
 						exhausted = true;
@@ -1950,9 +1958,25 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						++digit;
 					}
 					if (digit == pick.size()) {
+						every_combination = true;
 						break;
 					}
 				}
+				if (!every_combination) {
+					readings_incomplete = true;
+				}
+			}
+			if (exhausted) {
+				readings_incomplete = true;
+			}
+			// A stream whose indirect /Length the scan could not settle was sized at its first `endstream`, so what
+			// follows that keyword may be its own payload; only a complete reading of the containers can supply the
+			// length that decides it. When that reading was cut short, the table cannot be trusted (a payload can
+			// imitate a catalog), so recovery refuses rather than present it; a rescan with a self-consistent length
+			// still recovers the file (see recover_damaged_xref).
+			if (readings_incomplete && std::any_of(stream_uses.begin(), stream_uses.end(),
+										   [](const StreamUse& use) { return !use.sized_by.has_value(); })) {
+				ambiguous_extent = true;
 			}
 		}
 
@@ -2102,6 +2126,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedXRef,
 				"Damaged-file recovery could not locate any valid /Type /Catalog root object",
+				header_off);
+		}
+		if (ambiguous_extent) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Damaged-file recovery cannot tell a stream's data from the objects after it within its work limits",
 				header_off);
 		}
 

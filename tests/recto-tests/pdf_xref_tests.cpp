@@ -453,6 +453,46 @@ TEST(PdfXref, RecoveryLengthRoundOne)
 	}
 }
 
+// Round 2 of D06 T05 §29 under the second schedule: decoy definitions of a container's indirect /N can use up the
+// combinations the /Length readings try. With every combination read (15 decoys and the genuine one), the genuine
+// catalog stands; with one more decoy the readings are cut short, the stream that payload follows is still sized at
+// its first `endstream`, and recovery refuses rather than trust a table the payload may have forged.
+TEST(PdfXref, RecoveryRefusesWhenReadingsAreCut)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string fake = "\nendstream\nendobj\n2 0 obj\n0\nendobj\n"
+		"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+	const std::string members = hex("88 0 " + std::to_string(fake.size()));
+	for (const int decoys : {15, 16}) {
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			"20 0 obj\n<< /Type /ObjStm /N 2 0 R /First 5 /Filter /ASCIIHexDecode /Length " +
+			std::to_string(members.size()) + " >>\nstream\n" + members + "\nendstream\nendobj\n";
+		for (int i = 0; i < decoys; ++i) {
+			pdf += "2 0 obj\n0\nendobj\n";
+		}
+		pdf += "2 0 obj\n1\nendobj\n30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		if (decoys == 15) {
+			RECTO_ASSERT_OK(rec);
+			ASSERT_NE(rec->find(1), nullptr);
+			EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+		} else {
+			RECTO_EXPECT_ERR(rec, ErrorCode::DamagedFormat);
+		}
+	}
+}
+
 // Plan review of D06 T05 §29, gap 1: a container whose /Type is an indirect reference (ISO 32000-1 section 7.5.7 lets
 // any uncompressed dictionary value be indirect) is recognised once the type resolves, whether the type object comes
 // before or after it; a stream whose indirect /Type is something else is not read as a container.
