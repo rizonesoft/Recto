@@ -140,13 +140,29 @@ struct Row {
 };
 
 // A stream with neither `/Filter` nor `/DecodeParms` is compressed when that makes it smaller; XMP metadata stays as
-// it is so tools that scan for XMP find it (ISO 32000-1 section 14.3.2).
-[[nodiscard]] PdfResult<void> compress_if_unfiltered(PdfValue& value)
+// it is so tools that scan for XMP find it (ISO 32000-1 section 14.3.2), its `/Type` read through `resolver` when it is
+// indirect (7.3.10). A `/Type` that does not resolve leaves the stream as it is.
+[[nodiscard]] PdfResult<void> compress_if_unfiltered(PdfValue& value, const IndirectObjectResolver* resolver)
 {
 	PdfStream* stream = value.as_stream_mut();
-	if (stream == nullptr || stream->dict.contains("Filter") || stream->dict.contains("DecodeParms") ||
-		stream->dict.get_name("Type") == std::optional<std::string_view>("Metadata")) {
+	if (stream == nullptr || stream->dict.contains("Filter") || stream->dict.contains("DecodeParms")) {
 		return {};
+	}
+	if (const PdfValue* type = stream->dict.get("Type")) {
+		std::optional<std::string_view> name = type->as_name();
+		PdfValue resolved;
+		for (int hop = 0; !name.has_value() && type->as_ref().has_value() && resolver != nullptr && hop < 32; ++hop) {
+			auto next = (*resolver)(*type->as_ref());
+			if (!next.has_value()) {
+				return {};
+			}
+			resolved = std::move(*next);
+			type = &resolved;
+			name = type->as_name();
+		}
+		if (name == std::optional<std::string_view>("Metadata") || (!name.has_value() && type->as_ref().has_value())) {
+			return {};
+		}
 	}
 	RECTO_PDF_TRY(std::vector<uint8_t> packed, flate_compress(stream->raw_bytes, FlateLevel::Default));
 	if (packed.size() < stream->raw_bytes.size()) {
@@ -178,8 +194,9 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 				kMaxXrefRevisions - 1u, "The file already holds as many revisions as a reader follows");
 		}
 		// The smallest revision adds object 0's row and, after a stream, the stream's own.
-		if (xref.total_rows() + 2u > kMaxXrefTotalEntries) {
-			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::XrefRows, xref.total_rows() + 2u,
+		const uint64_t own_rows = xref.newest_section() == XrefSectionKind::Stream ? 2u : 1u;
+		if (xref.total_rows() + own_rows > kMaxXrefTotalEntries) {
+			return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::XrefRows, xref.total_rows() + own_rows,
 				kMaxXrefTotalEntries, "A revision would take the cross-reference past what a reader reads");
 		}
 		// A classic row and a reserved /ByteRange hold ten-digit offsets.
@@ -192,7 +209,14 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 			return make_pdf_error(ErrorCode::DamagedFormat, "The trailer has no valid /Size");
 		}
 		IncrementalWriter writer(base);
+		// New numbers start past every number the table holds as well as past /Size: a reader keeps an entry numbered
+		// /Size itself (Table 15 ignores only greater ones), so a /Size one short must not hand out a live number such
+		// as the /Encrypt dictionary's.
 		writer.base_size_ = static_cast<uint64_t>(*size);
+		for (const auto& [number, entry] : xref.entries()) { // a free one too: its number is not new
+			static_cast<void>(entry);
+			writer.base_size_ = std::max<uint64_t>(writer.base_size_, static_cast<uint64_t>(number) + 1u);
+		}
 		writer.next_mark_ = writer.base_size_;
 		if (const auto root = xref.root_ref()) {
 			writer.catalog_ = root->obj_num;
@@ -249,8 +273,9 @@ PdfResult<uint32_t> IncrementalWriter::next_free_number() const noexcept
 
 PdfResult<void> IncrementalWriter::check_rows(size_t staged_after) const noexcept
 {
-	// The rows a revision adds: one per staged number, object 0, and a cross-reference stream's own.
-	const uint64_t rows = base_->xref().total_rows() + staged_after + 2u;
+	// The rows a revision adds: one per staged number, object 0, and after a stream the cross-reference stream's own.
+	const uint64_t own_rows = base_->xref().newest_section() == XrefSectionKind::Stream ? 2u : 1u;
+	const uint64_t rows = base_->xref().total_rows() + staged_after + own_rows;
 	if (rows > kMaxXrefTotalEntries) {
 		return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::XrefRows, rows, kMaxXrefTotalEntries,
 			"The revision would take the cross-reference past what a reader reads");
@@ -407,7 +432,7 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 				continue;
 			}
 			RECTO_PDF_TRY(PdfValue value, staged.value.deep_clone());
-			RECTO_WRITER_TRY_VOID(compress_if_unfiltered(value));
+			RECTO_WRITER_TRY_VOID(compress_if_unfiltered(value, &resolver));
 			const uint64_t offset = base_size + out.size();
 			if (staged.kind == StagedKind::Value) {
 				plain.clear();
@@ -521,13 +546,20 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 		std::vector<uint8_t> id0;
 		std::vector<uint8_t> old_id1;
 		bool had_id = false;
-		if (const PdfValue* id = xref.trailer().get("ID"); id != nullptr && id->as_array() != nullptr &&
-			id->as_array()->size() == 2u && (*id->as_array())[0].as_string() != nullptr &&
-			(*id->as_array())[1].as_string() != nullptr) {
-			had_id = true;
-			const auto& parts = *id->as_array();
-			id0 = parts[0].as_string()->bytes;
-			old_id1 = parts[1].as_string()->bytes;
+		// The identifier may be indirect, as may its strings, when the file is not encrypted (ISO 32000-1 Table 15); the
+		// permanent first element is kept whichever way it was written (14.4).
+		if (const PdfValue* id = xref.trailer().get("ID")) {
+			auto array = base_->resolve_value(*id);
+			if (array.has_value() && array->as_array() != nullptr && array->as_array()->size() == 2u) {
+				auto first = base_->resolve_value((*array->as_array())[0]);
+				auto second = base_->resolve_value((*array->as_array())[1]);
+				if (first.has_value() && second.has_value() && first->as_string() != nullptr &&
+					second->as_string() != nullptr) {
+					had_id = true;
+					id0 = first->as_string()->bytes;
+					old_id1 = second->as_string()->bytes;
+				}
+			}
 		}
 		if (handler != nullptr) {
 			const auto handler_id0 = handler->file_id_0();
@@ -607,7 +639,7 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 			dict.set("W", PdfValue(PdfArray{PdfValue(int64_t{1}), PdfValue(static_cast<int64_t>(w2)),
 				PdfValue(static_cast<int64_t>(w3))}));
 			PdfValue stream_value(PdfStream(std::move(dict), std::move(data)));
-			RECTO_WRITER_TRY_VOID(compress_if_unfiltered(stream_value));
+			RECTO_WRITER_TRY_VOID(compress_if_unfiltered(stream_value, nullptr));
 			RECTO_WRITER_TRY_VOID(serialize_indirect(IndirectRef(self, 0u), stream_value, out, remaining()));
 			rev.objects.push_back(WrittenObject{IndirectRef(self, 0u), section_at});
 			std::sort(rev.objects.begin(), rev.objects.end(),

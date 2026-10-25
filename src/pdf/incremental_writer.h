@@ -61,6 +61,8 @@ struct IncrementalRevision {
 	std::optional<SignaturePlaceholder> signature;
 };
 
+// "The base /Size" below means the trailer's /Size, or one past the highest number the cross-reference holds when
+// that is greater (a reader keeps an entry numbered /Size itself), so a new number is never a live one.
 class IncrementalWriter {
 public:
 	// A writer for `base`, refused before any work when the base cannot be extended safely: a cross-reference rebuilt
@@ -130,7 +132,7 @@ private:
 	[[nodiscard]] static uint64_t staged_size(const Staged& staged); // may throw std::bad_alloc
 
 	const Document* base_;
-	uint64_t base_size_{0}; // the merged trailer's /Size
+	uint64_t base_size_{0}; // the merged trailer's /Size, or past the highest number the table holds
 	uint64_t next_mark_{0}; // every number from the base /Size up to this one is staged
 	std::optional<uint32_t> catalog_{};
 	std::optional<uint32_t> encrypt_{};

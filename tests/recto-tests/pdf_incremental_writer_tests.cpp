@@ -381,6 +381,109 @@ TEST(PdfIncrementalWriter, RefusesUnsafeBases)
 	}
 }
 
+TEST(PdfIncrementalWriter, RoundOneRegressions)
+{
+	{
+		// A /Size one short of the /Encrypt dictionary's number: the reader keeps that object, so allocation must
+		// not hand its number out, and writing it stays refused.
+		std::string text = text_of(corpus("render/encrypted-aes-256.pdf"));
+		const size_t at = text.rfind("/Size 8");
+		ASSERT_NE(at, std::string::npos);
+		text.replace(at, 7u, "/Size 7");
+		const Bytes base = bytes_of(text);
+		auto doc = open_doc(base, "recto-test");
+		ASSERT_NE(doc, nullptr);
+		IncrementalWriter writer = make_writer(*doc);
+		auto fresh = writer.allocate_object(PdfValue(dict_of("<< /Note (Kept secret) >>")));
+		RECTO_ASSERT_OK(fresh);
+		EXPECT_EQ(fresh->obj_num, 8u);
+		RECTO_EXPECT_ERR(writer.set_object(IndirectRef(7u), PdfValue{}), ErrorCode::InvalidArgument);
+		const Bytes out = write_ok(writer);
+		EXPECT_EQ(text_of(out).find("Kept secret"), std::string::npos);
+		auto reopened = open_doc(out, "recto-test");
+		ASSERT_NE(reopened, nullptr);
+		EXPECT_EQ(string_entry(resolve_dict(*reopened, *fresh), "Note"), "Kept secret");
+	}
+	{
+		// A classic base two rows short of the reader's limit takes a revision of one object (object 0 and it):
+		// only a stream adds a row of its own.
+		const uint32_t rows = static_cast<uint32_t>(kMaxXrefTotalEntries - 2u);
+		std::string out = "%PDF-1.7\n";
+		std::map<uint32_t, size_t> at;
+		for (const auto& [number, body] : kSmall) {
+			at[number] = out.size();
+			out += std::to_string(number) + " 0 obj\n" + body + "\nendobj\n";
+		}
+		const size_t xref_at = out.size();
+		out += "xref\n0 " + std::to_string(rows) + "\n0000000000 65535 f\r\n";
+		for (uint32_t n = 1; n < rows; ++n) {
+			char line[24];
+			if (n <= 3u) {
+				std::snprintf(line, sizeof(line), "%010zu 00000 n\r\n", at[n]);
+			} else {
+				std::snprintf(line, sizeof(line), "0000000000 00001 f\r\n");
+			}
+			out += line;
+		}
+		out += "trailer\n<< /Size " + std::to_string(rows) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref_at) +
+			"\n%%EOF\n";
+		const Bytes base = bytes_of(out);
+		auto doc = open_doc(base);
+		ASSERT_NE(doc, nullptr);
+		ASSERT_EQ(doc->xref().total_rows(), rows);
+		IncrementalWriter writer = make_writer(*doc);
+		RECTO_ASSERT_OK(writer.set_object(IndirectRef(3u), PdfValue(dict_of("<< /Type /Page /Parent 2 0 R >>"))));
+		RECTO_EXPECT_ERR(writer.allocate_object(PdfValue(int64_t{1})), ErrorCode::ResourceLimit);
+		const Bytes written = write_ok(writer);
+		EXPECT_STRICT(written, 2u, XrefSectionKind::Classic);
+		auto table = XrefTable::parse(written, kMaxXrefTotalEntries, false);
+		RECTO_ASSERT_OK(table);
+		EXPECT_EQ(table->total_rows(), kMaxXrefTotalEntries);
+	}
+	{
+		// An indirect /ID (allowed in an unencrypted file, Table 15) keeps its permanent first element (14.4).
+		std::map<uint32_t, std::string> objects = kSmall;
+		objects[5] = "[<0102030405060708090A0B0C0D0E0F10> <1112131415161718191A1B1C1D1E1F20>]";
+		const Bytes base = build_pdf(objects, "/ID 5 0 R ");
+		auto doc = open_doc(base);
+		ASSERT_NE(doc, nullptr);
+		IncrementalWriter writer = make_writer(*doc);
+		RECTO_ASSERT_OK(writer.set_object(IndirectRef(3u), PdfValue(dict_of("<< /Type /Page /Parent 2 0 R >>"))));
+		const auto [first, second] = trailer_id(write_ok(writer));
+		const Bytes kept = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10};
+		EXPECT_EQ(first, kept);
+		EXPECT_EQ(second.size(), 16u);
+		EXPECT_NE(second.front(), 0x11u);
+	}
+	{
+		// XMP whose /Type is indirect stays uncompressed, read through the base and through this revision.
+		std::map<uint32_t, std::string> objects = kSmall;
+		objects[4] = "/Metadata";
+		const Bytes base = build_pdf(objects);
+		auto doc = open_doc(base);
+		ASSERT_NE(doc, nullptr);
+		IncrementalWriter writer = make_writer(*doc);
+		const std::string xmp = "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">" + std::string(500, ' ') + "</x:xmpmeta>";
+		auto via_base = writer.allocate_object(stream_of("<< /Type 4 0 R /Subtype /XML >>", bytes_of(xmp)));
+		auto name = writer.allocate_object(PdfValue(PdfName("Metadata")));
+		RECTO_ASSERT_OK(via_base);
+		RECTO_ASSERT_OK(name);
+		auto via_staged = writer.allocate_object(stream_of(
+			"<< /Type " + std::to_string(name->obj_num) + " 0 R /Subtype /XML >>", bytes_of(xmp)));
+		RECTO_ASSERT_OK(via_staged);
+		const Bytes out = write_ok(writer);
+		auto reopened = open_doc(out);
+		ASSERT_NE(reopened, nullptr);
+		for (const IndirectRef ref : {*via_base, *via_staged}) {
+			auto value = reopened->resolve_object(ref);
+			RECTO_ASSERT_OK(value);
+			ASSERT_NE(value->as_stream(), nullptr);
+			EXPECT_FALSE(value->as_stream()->dict.contains("Filter")) << ref.obj_num;
+			EXPECT_EQ(text_of(value->as_stream()->raw_bytes), xmp);
+		}
+	}
+}
+
 TEST(PdfIncrementalWriter, StagingLimit)
 {
 	// Every staged value counts against the revision's limit (strings, containers and a signature's reservation,
