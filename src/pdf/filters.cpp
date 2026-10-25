@@ -98,6 +98,18 @@ ScopedDctForceConverter::~ScopedDctForceConverter() noexcept
 	g_dct_force_converter = previous_;
 }
 
+thread_local bool g_dct_no_planar = false;
+
+ScopedDctNoPlanar::ScopedDctNoPlanar() noexcept : previous_(g_dct_no_planar)
+{
+	g_dct_no_planar = true;
+}
+
+ScopedDctNoPlanar::~ScopedDctNoPlanar() noexcept
+{
+	g_dct_no_planar = previous_;
+}
+
 ScopedWicFailure::ScopedWicFailure(WicStage stage, int32_t hresult) noexcept
 	: previous_stage_(g_wic_failure_stage)
 	, previous_hresult_(g_wic_failure_hresult)
@@ -6960,7 +6972,7 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 [[nodiscard]] PdfResult<bool> read_jpeg_planes(IWICBitmapFrameDecode* frame, UINT w, UINT h, std::span<uint8_t> samples)
 {
 	ComPtr<IWICPlanarBitmapSourceTransform> planar;
-	if (FAILED(frame->QueryInterface(IID_PPV_ARGS(&planar))) || !planar) {
+	if (detail::g_dct_no_planar || FAILED(frame->QueryInterface(IID_PPV_ARGS(&planar))) || !planar) {
 		return false;
 	}
 	const WICPixelFormatGUID formats[3] = {GUID_WICPixelFormat8bppY, GUID_WICPixelFormat8bppCb, GUID_WICPixelFormat8bppCr};
@@ -7000,6 +7012,81 @@ void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& 
 	return true;
 }
 
+// The Adobe APP14 segment a JPEG not colour-transformed carries (Adobe Technical Note 5116, section 18): version 100,
+// no flags, transform 0.
+constexpr std::array<uint8_t, 16> kAdobeUntransformed = {
+	0xFFu, 0xEEu, 0x00u, 0x0Eu, 'A', 'd', 'o', 'b', 'e', 0x00u, 0x64u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u};
+
+// A copy of a JPEG marked as not colour-transformed: the Adobe segment above right after SOI, and every APP0 segment
+// before the first scan renamed APP15, so no JFIF marker claims YCbCr (T.81 B.1.1.3 and B.2.4.6). The walk stops at
+// the first scan or at anything malformed and leaves the rest as it is: the decoder reads that, as it would have.
+[[nodiscard]] std::vector<uint8_t> jpeg_marked_untransformed(std::span<const uint8_t> input)
+{
+	std::vector<uint8_t> out;
+	if (input.size() < 2u) {
+		out.assign(input.begin(), input.end());
+		return out;
+	}
+	out.reserve(input.size() + kAdobeUntransformed.size());
+	out.insert(out.end(), input.begin(), input.begin() + 2);
+	out.insert(out.end(), kAdobeUntransformed.begin(), kAdobeUntransformed.end());
+	out.insert(out.end(), input.begin() + 2, input.end());
+	size_t pos = 2u;
+	while (pos + 4u <= input.size() && input[pos] == 0xFFu) {
+		const uint8_t marker = input[pos + 1u];
+		if (marker == 0xFFu) {
+			++pos; // a fill byte before the marker
+			continue;
+		}
+		if (marker == 0xDAu || marker == 0xD9u) {
+			break;
+		}
+		if (marker == 0x01u || (marker >= 0xD0u && marker <= 0xD7u)) {
+			pos += 2u; // a marker without a length
+			continue;
+		}
+		const size_t len = (static_cast<size_t>(input[pos + 2u]) << 8u) | input[pos + 3u];
+		if (len < 2u || len > input.size() - pos - 2u) {
+			break;
+		}
+		if (marker == 0xE0u) {
+			out[pos + kAdobeUntransformed.size() + 1u] = 0xEFu;
+		}
+		pos += 2u + len;
+	}
+	return out;
+}
+
+// Opens `bytes` as a JPEG through WIC and returns its first frame; the stream and decoder are kept alive beside it.
+[[nodiscard]] PdfResult<void> open_jpeg_frame(IWICImagingFactory* factory, std::span<const uint8_t> bytes,
+	ComPtr<IWICStream>& wic_stream, ComPtr<IWICBitmapDecoder>& decoder, ComPtr<IWICBitmapFrameDecode>& frame)
+{
+	HRESULT hr = factory->CreateStream(&wic_stream);
+	if (FAILED(hr) || !wic_stream) {
+		return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateStream in DCTDecode", DecoderStep::WicCreateDecoder)
+						  : wic_no_result("IWICImagingFactory::CreateStream returned no stream in DCTDecode", DecoderStep::WicCreateDecoder);
+	}
+	hr = wic_stream->InitializeFromMemory(
+		const_cast<BYTE*>(bytes.data()),
+		static_cast<DWORD>(std::min<size_t>(
+			bytes.size(),
+			static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
+	if (FAILED(hr)) {
+		return wic_failure(hr, "IWICStream::InitializeFromMemory in DCTDecode", DecoderStep::WicCreateDecoder);
+	}
+	hr = create_wic_decoder(factory, wic_stream.Get(), decoder);
+	if (FAILED(hr) || !decoder) {
+		return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder)
+						  : wic_no_result("IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder);
+	}
+	hr = wic_step(detail::WicStage::GetFrame, [&] { return decoder->GetFrame(0, &frame); });
+	if (FAILED(hr) || !frame) {
+		return FAILED(hr) ? wic_failure(hr, "IWICBitmapDecoder::GetFrame(0) in DCTDecode", DecoderStep::WicGetFrame)
+						  : wic_no_result("IWICBitmapDecoder::GetFrame(0) failed in DCTDecode", DecoderStep::WicGetFrame);
+	}
+	return {};
+}
+
 } // namespace
 
 PdfResult<WicDecodedImage> decode_dct_image(
@@ -7021,37 +7108,13 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		}
 
 		ComPtr<IWICStream> wic_stream;
-		HRESULT hr = factory->CreateStream(&wic_stream);
-		if (FAILED(hr) || !wic_stream) {
-			return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateStream in DCTDecode", DecoderStep::WicCreateDecoder)
-							  : wic_no_result("IWICImagingFactory::CreateStream returned no stream in DCTDecode", DecoderStep::WicCreateDecoder);
-		}
-		hr = wic_stream->InitializeFromMemory(
-			const_cast<BYTE*>(input.data()),
-			static_cast<DWORD>(std::min<size_t>(
-				input.size(),
-				static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
-		if (FAILED(hr)) {
-			return wic_failure(hr, "IWICStream::InitializeFromMemory in DCTDecode", DecoderStep::WicCreateDecoder);
-		}
-
 		ComPtr<IWICBitmapDecoder> decoder;
-		hr = create_wic_decoder(factory, wic_stream.Get(), decoder);
-		if (FAILED(hr) || !decoder) {
-			return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder)
-							  : wic_no_result("IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder);
-		}
-
 		ComPtr<IWICBitmapFrameDecode> frame;
-		hr = wic_step(detail::WicStage::GetFrame, [&] { return decoder->GetFrame(0, &frame); });
-		if (FAILED(hr) || !frame) {
-			return FAILED(hr) ? wic_failure(hr, "IWICBitmapDecoder::GetFrame(0) in DCTDecode", DecoderStep::WicGetFrame)
-							  : wic_no_result("IWICBitmapDecoder::GetFrame(0) failed in DCTDecode", DecoderStep::WicGetFrame);
-		}
+		RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, input, wic_stream, decoder, frame));
 
 		UINT w = 0;
 		UINT h = 0;
-		hr = frame->GetSize(&w, &h);
+		HRESULT hr = frame->GetSize(&w, &h);
 		if (FAILED(hr) || w == 0u || h == 0u) {
 			return FAILED(hr) ? wic_failure(hr, "IWICBitmapFrameDecode::GetSize in DCTDecode", DecoderStep::WicGetFrame)
 							  : wic_no_result("IWICBitmapFrameDecode::GetSize failed in DCTDecode", DecoderStep::WicGetFrame);
@@ -7086,7 +7149,8 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			}
 		}
 		// Three components the stream says were not transformed, where WIC transforms: the samples are read as the
-		// codestream's planes (IWICPlanarBitmapSourceTransform), three more bytes per pixel at the peak.
+		// codestream's planes (IWICPlanarBitmapSourceTransform), three more bytes per pixel at the peak, or where WIC
+		// has no planar transform for the image, decoded from a copy of the stream marked as not transformed.
 		const bool raw_three = !is_cmyk && !is_gray && transform == 0u && !hdr.has_adobe_app14;
 
 		// The buffers this decode builds. A stream filter returns the samples, or for CMYK one 8-bit layout: RGBA unless
@@ -7208,13 +7272,44 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		if (raw_three) {
 			RECTO_PDF_TRY(raw_read, read_jpeg_planes(frame.Get(), w, h, samples));
 		}
+		IWICBitmapFrameDecode* source = frame.Get();
+		WICPixelFormatGUID source_format = pixel_format;
+		std::vector<uint8_t> marked;
+		ComPtr<IWICStream> marked_stream;
+		ComPtr<IWICBitmapDecoder> marked_decoder;
+		ComPtr<IWICBitmapFrameDecode> marked_frame;
+		if (raw_three && !raw_read) {
+			// WORKAROUND: WIC has no planar transform for this JPEG, and no switch for its YCbCr-to-RGB conversion but
+			// the Adobe APP14 transform flag, so the stream's "not transformed" (/ColorTransform 0) is given to it in
+			// that flag: a copy marked with an APP14 transform of 0 decodes to the samples as stored, exactly. The copy
+			// is charged beside the buffers already held (the planes it replaces were never allocated).
+			const uint64_t held = w64 * h64 * dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes);
+			if (static_cast<uint64_t>(input.size()) + kAdobeUntransformed.size() > effective_limit - held) {
+				return make_filter_error(ErrorCode::DecompressionLimitExceeded, DiagnosticId::DecompressionLimitExceeded,
+					"DCTDecode untransformed copy exceeds ceiling");
+			}
+			marked = jpeg_marked_untransformed(input);
+			RECTO_PDF_RETURN_IF_ERROR(open_jpeg_frame(factory, marked, marked_stream, marked_decoder, marked_frame));
+			UINT mw = 0;
+			UINT mh = 0;
+			hr = marked_frame->GetSize(&mw, &mh);
+			if (FAILED(hr) || mw != w || mh != h) {
+				return FAILED(hr) ? wic_failure(hr, "IWICBitmapFrameDecode::GetSize in DCTDecode", DecoderStep::WicGetFrame)
+								  : wic_no_result("The untransformed DCTDecode copy changed size", DecoderStep::WicGetFrame);
+			}
+			hr = marked_frame->GetPixelFormat(&source_format);
+			if (FAILED(hr)) {
+				return wic_failure(hr, "IWICBitmapFrameDecode::GetPixelFormat in DCTDecode", DecoderStep::WicGetFrame);
+			}
+			source = marked_frame.Get();
+		}
 		if (raw_read) {
 			// the samples are the codestream's planes, as stored
-		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
-			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
+		} else if (IsEqualGUID(source_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
+			RECTO_PDF_RETURN_IF_ERROR(copy_frame(source, w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
 			bgr_order = true;
-		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
-			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppRGB JPEG"));
+		} else if (IsEqualGUID(source_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
+			RECTO_PDF_RETURN_IF_ERROR(copy_frame(source, w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppRGB JPEG"));
 		} else {
 			ComPtr<IWICFormatConverter> converter;
 			hr = factory->CreateFormatConverter(&converter);
@@ -7224,7 +7319,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			}
 			hr = wic_step(detail::WicStage::ConvertFormat, [&] {
 				return converter->Initialize(
-					frame.Get(), GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+					source, GUID_WICPixelFormat24bppRGB, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
 			});
 			if (FAILED(hr)) {
 				return wic_failure(hr, "IWICFormatConverter::Initialize in DCTDecode", DecoderStep::WicConvertFormat);
@@ -7234,20 +7329,6 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		if (bgr_order) {
 			for (size_t p = 0; p < pixel_count; ++p) {
 				std::swap(samples[p * 3u + 0u], samples[p * 3u + 2u]);
-			}
-		}
-		if (raw_three && !raw_read) {
-			// WORKAROUND: WIC offers no planar transform for this JPEG (it does from Windows 8.1 for baseline YCbCr
-			// JPEGs), so its YCbCr-to-RGB conversion is undone by the forward JFIF equations; a channel WIC clipped at 0
-			// or 255 comes back approximate.
-			for (size_t p = 0; p < pixel_count; ++p) {
-				uint8_t* px = samples.data() + p * 3u;
-				const float r = px[0];
-				const float g = px[1];
-				const float b = px[2];
-				px[0] = static_cast<uint8_t>(std::clamp(std::lrintf(0.299f * r + 0.587f * g + 0.114f * b), 0L, 255L));
-				px[1] = static_cast<uint8_t>(std::clamp(std::lrintf(-0.168736f * r - 0.331264f * g + 0.5f * b + 128.0f), 0L, 255L));
-				px[2] = static_cast<uint8_t>(std::clamp(std::lrintf(0.5f * r - 0.418688f * g - 0.081312f * b + 128.0f), 0L, 255L));
 			}
 		}
 		apply_pdf_decode_array(samples, 3u, decode_parms);

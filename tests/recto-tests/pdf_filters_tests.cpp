@@ -3523,6 +3523,177 @@ TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
 		EXPECT_TRUE(within(pixel(*img, 0u), {246, 254, 107, 60}, 1));
 		EXPECT_TRUE(within(pixel(*img, 8u), {78, 0, 234, 180}, 1));
 	}
+	// A JFIF marker claims YCbCr, but /ColorTransform 0 still means the samples as stored; without it, converted.
+	{
+		auto raw = decode("dct-3c-jfif.jpg", 0);
+		ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
+		EXPECT_EQ(pixel(*raw, 0u), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(pixel(*raw, 8u), (std::vector<int>{30, 160, 220}));
+		auto converted = decode("dct-3c-jfif.jpg", std::nullopt);
+		ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
+		EXPECT_TRUE(within(pixel(*converted, 0u), {77, 255, 133}, 1));
+	}
+	// Where WIC has no planar transform the samples are still exact, though converting them saturates a channel (G
+	// 255 for the first block, G 0 for the second), with a JFIF marker or none (D06 T05 §33 plan review, gap 1).
+	{
+		const detail::ScopedDctNoPlanar no_planar;
+		for (const std::string_view name : {std::string_view("dct-3c-no-marker.jpg"), std::string_view("dct-3c-jfif.jpg")}) {
+			SCOPED_TRACE(name);
+			auto raw = decode(name, 0);
+			ASSERT_TRUE(raw.has_value()) << raw.error().message.view();
+			EXPECT_EQ(pixel(*raw, 0u), (std::vector<int>{200, 90, 40}));
+			EXPECT_EQ(pixel(*raw, 8u), (std::vector<int>{30, 160, 220}));
+			auto converted = decode(name, 1);
+			ASSERT_TRUE(converted.has_value()) << converted.error().message.view();
+			EXPECT_TRUE(within(pixel(*converted, 8u), {159, 0, 87}, 1));
+		}
+	}
+	// Four components and no Adobe marker: CMYK as stored by default, YCCK when /ColorTransform 1 says so.
+	{
+		auto cmyk = decode("dct-4c-no-marker.jpg", std::nullopt);
+		ASSERT_TRUE(cmyk.has_value()) << cmyk.error().message.view();
+		EXPECT_EQ(pixel(*cmyk, 0u), (std::vector<int>{20, 200, 120, 60}));
+		auto ycck = decode("dct-4c-no-marker.jpg", 1);
+		ASSERT_TRUE(ycck.has_value()) << ycck.error().message.view();
+		EXPECT_TRUE(within(pixel(*ycck, 0u), {246, 254, 107, 60}, 1));
+		EXPECT_TRUE(within(pixel(*ycck, 8u), {78, 0, 234, 180}, 1));
+	}
+}
+
+// D06 T05 §33 plan review, gap 2: the colour transform through the PDF pipeline (decode_stream), with /DecodeParms
+// direct and indirect, /ColorTransform direct and indirect, an Adobe marker over a conflicting /ColorTransform, and an
+// Adobe CMYK image's /Decode inversion applied once. Every expected colour is worked out here from the fixtures'
+// stored samples (scripts/build-corpus.py, DCT_THREE and DCT_FOUR) or libjpeg's conversion of them, and the
+// profile-less CMYK display formula (each ink and black multiply away their share of white).
+TEST(PdfFilters, DctColorTransformThroughPipeline)
+{
+	// Objects 50 (a /DecodeParms dictionary with /ColorTransform 0), 51 (the integer 0) and 52 (the integer 1).
+	const IndirectObjectResolver resolver = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num == 50u) {
+			PdfDict parms;
+			parms.set("ColorTransform", PdfValue(int64_t{0}));
+			return PdfValue{std::move(parms)};
+		}
+		if (ref.obj_num == 51u || ref.obj_num == 52u) {
+			return PdfValue(int64_t{ref.obj_num == 52u ? 1 : 0});
+		}
+		return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+	};
+	enum class Parms { None, Direct, IndirectDict };
+	const auto run = [&](std::string_view name, Parms parms, std::optional<PdfValue> color_transform, bool adobe_decode) {
+		const auto bytes = recto::test::read_file_bytes(recto::test::corpus_path(std::string("images/") + std::string(name)));
+		PdfDict dict;
+		dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		if (parms == Parms::Direct) {
+			PdfDict dp;
+			if (color_transform.has_value()) {
+				dp.set("ColorTransform", *color_transform);
+			}
+			dict.set("DecodeParms", PdfValue{std::move(dp)});
+		} else if (parms == Parms::IndirectDict) {
+			dict.set("DecodeParms", PdfValue(IndirectRef{50u, 0u}));
+		}
+		if (adobe_decode) {
+			PdfArray decode;
+			for (int c = 0; c < 4; ++c) {
+				decode.push_back(PdfValue(int64_t{1}));
+				decode.push_back(PdfValue(int64_t{0}));
+			}
+			dict.set("Decode", PdfValue(std::move(decode)));
+		}
+		return decode_stream(bytes, dict, kMaxDecodedStreamBytes, &resolver);
+	};
+	const auto px = [](const std::vector<uint8_t>& out, size_t components, size_t x) {
+		return std::vector<int>(out.begin() + static_cast<std::ptrdiff_t>(x * components),
+			out.begin() + static_cast<std::ptrdiff_t>(x * components + std::min<size_t>(components, 3u)));
+	};
+	const auto display = [](std::array<int, 4> cmyk) {
+		const int k = 255 - cmyk[3];
+		return std::vector<int>{((255 - cmyk[0]) * k + 127) / 255, ((255 - cmyk[1]) * k + 127) / 255,
+			((255 - cmyk[2]) * k + 127) / 255};
+	};
+	const auto inverted = [](std::array<int, 4> cmyk) {
+		return std::array<int, 4>{255 - cmyk[0], 255 - cmyk[1], 255 - cmyk[2], 255 - cmyk[3]};
+	};
+	const auto close_to = [](const std::vector<int>& got, const std::vector<int>& want, int tolerance) {
+		bool ok = got.size() == want.size();
+		for (size_t i = 0; ok && i < got.size(); ++i) {
+			ok = std::abs(got[i] - want[i]) <= tolerance;
+		}
+		return ok;
+	};
+	const std::vector<int> stored_rgb = {200, 90, 40};
+	const std::vector<int> converted_rgb = {77, 255, 133};
+
+	// Three components, no marker: converted by default; as stored for /ColorTransform 0 however it is given.
+	{
+		auto out = run("dct-3c-no-marker.jpg", Parms::None, std::nullopt, false);
+		RECTO_ASSERT_OK(out);
+		ASSERT_EQ(out->size(), 16u * 8u * 3u);
+		EXPECT_TRUE(close_to(px(*out, 3u, 0u), converted_rgb, 1));
+	}
+	for (const Parms parms : {Parms::Direct, Parms::IndirectDict}) {
+		SCOPED_TRACE(parms == Parms::Direct ? "direct /DecodeParms" : "indirect /DecodeParms");
+		auto out = run("dct-3c-no-marker.jpg", parms, PdfValue(int64_t{0}), false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
+	}
+	{
+		SCOPED_TRACE("indirect /ColorTransform 0");
+		auto out = run("dct-3c-jfif.jpg", Parms::Direct, PdfValue(IndirectRef{51u, 0u}), false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
+	}
+	// An Adobe transform of 0 wins over /ColorTransform 1, direct or indirect.
+	for (const PdfValue& ct : {PdfValue(int64_t{1}), PdfValue(IndirectRef{52u, 0u})}) {
+		auto out = run("dct-3c-adobe-rgb.jpg", Parms::Direct, ct, false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_EQ(px(*out, 3u, 0u), stored_rgb);
+	}
+
+	// Adobe CMYK, shown as RGBA: the stored inks without /Decode, the inverted inks with the Adobe /Decode, each once.
+	const std::array<int, 4> cmyk0 = {20, 200, 120, 60};
+	const std::array<int, 4> cmyk8 = {230, 10, 90, 180};
+	{
+		auto plain = run("dct-4c-adobe-cmyk.jpg", Parms::None, std::nullopt, false);
+		RECTO_ASSERT_OK(plain);
+		ASSERT_EQ(plain->size(), 16u * 8u * 4u);
+		EXPECT_EQ(px(*plain, 4u, 0u), display(cmyk0));
+		EXPECT_EQ(px(*plain, 4u, 8u), display(cmyk8));
+		auto inverted_once = run("dct-4c-adobe-cmyk.jpg", Parms::None, std::nullopt, true);
+		RECTO_ASSERT_OK(inverted_once);
+		EXPECT_EQ(px(*inverted_once, 4u, 0u), display(inverted(cmyk0)));
+		EXPECT_EQ(px(*inverted_once, 4u, 8u), display(inverted(cmyk8)));
+		EXPECT_NE(display(cmyk0), display(inverted(cmyk0)));
+		// An Adobe transform of 0 wins over /ColorTransform 1, direct or indirect: the inks are not taken for YCCK.
+		for (const PdfValue& ct : {PdfValue(int64_t{1}), PdfValue(IndirectRef{52u, 0u})}) {
+			auto out = run("dct-4c-adobe-cmyk.jpg", Parms::Direct, ct, false);
+			RECTO_ASSERT_OK(out);
+			EXPECT_EQ(px(*out, 4u, 0u), display(cmyk0));
+			EXPECT_EQ(px(*out, 4u, 8u), display(cmyk8));
+		}
+	}
+	// Adobe YCCK under a conflicting /ColorTransform 0, with the Adobe /Decode: the marker decides, then one inversion.
+	const std::array<int, 4> ycck0 = {246, 254, 107, 60};
+	const std::array<int, 4> ycck8 = {78, 0, 234, 180};
+	{
+		auto out = run("dct-4c-adobe-ycck.jpg", Parms::Direct, PdfValue(int64_t{0}), true);
+		RECTO_ASSERT_OK(out);
+		EXPECT_TRUE(close_to(px(*out, 4u, 0u), display(inverted(ycck0)), 2));
+		EXPECT_TRUE(close_to(px(*out, 4u, 8u), display(inverted(ycck8)), 2));
+	}
+	// Four components, no marker: CMYK by default, YCCK for /ColorTransform 1 direct or indirect.
+	{
+		auto out = run("dct-4c-no-marker.jpg", Parms::None, std::nullopt, false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_EQ(px(*out, 4u, 0u), display(cmyk0));
+	}
+	for (const PdfValue& ct : {PdfValue(int64_t{1}), PdfValue(IndirectRef{52u, 0u})}) {
+		auto out = run("dct-4c-no-marker.jpg", Parms::Direct, ct, false);
+		RECTO_ASSERT_OK(out);
+		EXPECT_TRUE(close_to(px(*out, 4u, 0u), display(ycck0), 2));
+		EXPECT_TRUE(close_to(px(*out, 4u, 8u), display(ycck8), 2));
+	}
 }
 
 TEST(PdfFilters, DctRgbAndCmyk)

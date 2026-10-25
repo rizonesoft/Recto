@@ -306,6 +306,19 @@ private:
 	bool previous_{false};
 };
 
+// Tests only: while the scope lives, WIC's planar transform is treated as unavailable for DCT decodes on this thread, so
+// the path for a JPEG it cannot read as planes is exercised on any machine.
+class ScopedDctNoPlanar {
+public:
+	ScopedDctNoPlanar() noexcept;
+	~ScopedDctNoPlanar() noexcept;
+	ScopedDctNoPlanar(const ScopedDctNoPlanar&) = delete;
+	ScopedDctNoPlanar& operator=(const ScopedDctNoPlanar&) = delete;
+
+private:
+	bool previous_{false};
+};
+
 // Tests only: how many native JPXDecode decodes this thread has started, so a test can tell whether WIC handed a
 // stream over.
 [[nodiscard]] uint64_t native_jpx_attempts() noexcept;
