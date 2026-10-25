@@ -5940,6 +5940,126 @@ TEST(PdfFilters, JpxRoundOneFixes)
 	}
 }
 
+// Round 2 of D06 T05 §32 under the second schedule: one 4 x 4 code-block coded "terminate each pass", whose packet
+// header declares `passes` zero-length segments. Zero-length bodies cost no compressed bytes, so only charging the
+// segment records stops a header of many of them; 164 of them need more than a limit that fits one with a margin.
+// With `layers` above 1, each later layer adds `later_passes` more zero-length segments (0: its packet is empty).
+[[nodiscard]] std::vector<uint8_t> make_j2k_empty_segments(uint32_t passes, uint32_t layers = 1u, uint32_t later_passes = 0u)
+{
+	std::vector<uint8_t> cs = {0xFFu, 0x4Fu};
+	const auto u8 = [&cs](uint32_t v) { cs.push_back(static_cast<uint8_t>(v)); };
+	const auto u16 = [&cs](uint32_t v) {
+		cs.push_back(static_cast<uint8_t>(v >> 8u));
+		cs.push_back(static_cast<uint8_t>(v));
+	};
+	const auto u32 = [&u16](uint32_t v) {
+		u16(v >> 16u);
+		u16(v & 0xFFFFu);
+	};
+	u16(0xFF51u); // SIZ: 4 x 4, one 4 x 4 tile, one 8-bit component
+	u16(41u);
+	u16(0u);
+	u32(4u);
+	u32(4u);
+	u32(0u);
+	u32(0u);
+	u32(4u);
+	u32(4u);
+	u32(0u);
+	u32(0u);
+	u16(1u);
+	u8(7u);
+	u8(1u);
+	u8(1u);
+	u16(0xFF52u); // COD: LRCP, one layer, no MCT, no decomposition, 4 x 4 code-blocks, terminate each pass, 5-3
+	u16(12u);
+	u8(0u);
+	u8(0u);
+	u16(layers);
+	u8(0u);
+	u8(0u);
+	u8(0u);
+	u8(0u);
+	u8(0x04u);
+	u8(1u);
+	u16(0xFF5Cu); // QCD: one guard bit, no quantization, epsilon 8
+	u16(4u);
+	u8(0x20u);
+	u8(8u << 3u);
+	std::vector<uint8_t> packet;
+	for (uint32_t layer = 0; layer < layers; ++layer) {
+		const uint32_t n = layer == 0u ? passes : later_passes;
+		TestBitWriter bw;
+		if (n == 0u) {
+			bw.write_bit(0u); // an empty packet
+		} else {
+			bw.write_bit(1u); // the packet is not empty
+			bw.write_bit(1u); // inclusion: in this layer (the first), or again (a later one)
+			if (layer == 0u) {
+				bw.write_bit(1u); // zero bitplanes: 0
+			}
+			bw.encode_num_passes(n);
+			bw.write_bit(0u); // Lblock stays 3
+			for (uint32_t i = 0; i < n; ++i) {
+				bw.write_bits(0u, 3u); // each pass its own segment, of length 0
+			}
+		}
+		bw.flush_aligned();
+		packet.insert(packet.end(), bw.bytes().begin(), bw.bytes().end());
+	}
+	u16(0xFF90u); // SOT
+	u16(10u);
+	u16(0u);
+	u32(static_cast<uint32_t>(12u + 2u + packet.size()));
+	u8(0u);
+	u8(1u);
+	u16(0xFF93u); // SOD
+	cs.insert(cs.end(), packet.begin(), packet.end());
+	u16(0xFFD9u); // EOC
+	return cs;
+}
+
+TEST(PdfFilters, JpxSegmentRecordsCharged)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	const auto one = make_j2k_empty_segments(1u);
+	RECTO_ASSERT_OK(decode_jpx_image(one));
+	// The smallest limit one empty segment decodes under.
+	size_t lo = 1u;
+	size_t hi = 1u << 20u;
+	while (lo < hi) {
+		const size_t mid = lo + (hi - lo) / 2u;
+		if (decode_jpx_image(one, nullptr, mid).has_value()) {
+			hi = mid;
+		} else {
+			lo = mid + 1u;
+		}
+	}
+	const size_t limit = lo + 512u; // less than 163 more segment records take
+	RECTO_ASSERT_OK(decode_jpx_image(one, nullptr, limit));
+	const auto many = make_j2k_empty_segments(164u);
+	RECTO_ASSERT_OK(decode_jpx_image(many)); // a valid header, decoded under the default ceiling
+	RECTO_EXPECT_ERR(decode_jpx_image(many, nullptr, limit), ErrorCode::DecompressionLimitExceeded);
+
+	// The kept segments are charged while the tile lives, not only one packet's: six layers of 160 segments each fit
+	// a limit that holds one packet's worth with room to spare, but not all 960 the code-block keeps.
+	const auto base6 = make_j2k_empty_segments(1u, 6u, 0u);
+	lo = 1u;
+	hi = 1u << 20u;
+	while (lo < hi) {
+		const size_t mid = lo + (hi - lo) / 2u;
+		if (decode_jpx_image(base6, nullptr, mid).has_value()) {
+			hi = mid;
+		} else {
+			lo = mid + 1u;
+		}
+	}
+	const size_t six_limit = lo + 160u * 64u; // room for one packet's 160 records, pending and kept, twice over
+	const auto layered = make_j2k_empty_segments(160u, 6u, 160u);
+	RECTO_ASSERT_OK(decode_jpx_image(layered));
+	RECTO_EXPECT_ERR(decode_jpx_image(layered, nullptr, six_limit), ErrorCode::DecompressionLimitExceeded);
+}
+
 TEST(PdfFilters, JpxDefaultPathRoutesChannelsNative)
 {
 	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};

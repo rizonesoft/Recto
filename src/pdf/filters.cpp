@@ -10030,6 +10030,10 @@ struct Jp2Palette {
 					uint32_t passes = 0u;
 				};
 				std::vector<PendingBody> pending;
+				// The packet's pending bodies count against the ceiling while they wait, as the segments they become
+				// count while the tile lives: a packet header of zero-length segments costs nothing in compressed bytes
+				// (D06 T05 §32, round 2).
+				uint64_t pending_bytes = 0;
 
 				if (non_empty != 0u) {
 					for (SubbandState& sb : rs.subbands) {
@@ -10141,7 +10145,14 @@ struct Jp2Palette {
 											DiagnosticId::DamagedStream,
 											"Truncated code-block data length in JPXDecode packet header");
 									}
-									pending.push_back({&cb, seg_len, pass_at, in_segment});
+									if (tile_live_bytes + pending_bytes + sizeof(PendingBody) > effective_limit) {
+									return make_filter_error(
+										ErrorCode::DecompressionLimitExceeded,
+										DiagnosticId::DecompressionLimitExceeded,
+										"JPXDecode packet segment list exceeds ceiling");
+								}
+								pending_bytes += sizeof(PendingBody);
+								pending.push_back({&cb, seg_len, pass_at, in_segment});
 									pass_at += in_segment;
 									passes_left -= in_segment;
 								}
@@ -10188,6 +10199,13 @@ struct Jp2Palette {
 						segs.back().passes += item.passes; // a later layer continues the unfinished segment
 						segs.back().length += seg_span.size();
 					} else {
+						if (tile_live_bytes + sizeof(J2kSegment) > effective_limit) {
+							return make_filter_error(
+								ErrorCode::DecompressionLimitExceeded,
+								DiagnosticId::DecompressionLimitExceeded,
+								"JPXDecode code-block segment list exceeds ceiling");
+						}
+						tile_live_bytes += sizeof(J2kSegment);
 						segs.push_back(J2kSegment{item.passes, held, seg_span.size()});
 					}
 					if (item.cb->single_segment.empty() && item.cb->compressed.empty()) {
