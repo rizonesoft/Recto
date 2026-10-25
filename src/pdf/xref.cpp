@@ -604,6 +604,7 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 				const uint32_t obj_num = static_cast<uint32_t>(sub.first_id + i);
 				if (static_cast<uint64_t>(obj_num) > governing_size) {
 					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedXRef, std::nullopt, obj_num, 0);
+					table.note_ignored_number(obj_num);
 					continue;
 				}
 
@@ -2267,6 +2268,7 @@ PdfResult<XrefTable> XrefTable::parse(
 					for (const OutOfBoundsRow& row : out_of_bounds_rows) {
 						if (merged_size.has_value() && *merged_size > 0 &&
 							static_cast<uint64_t>(row.obj_num) > static_cast<uint64_t>(*merged_size)) {
+							table.note_ignored_number(row.obj_num);
 							continue; // above /Size: missing, so its offset does not matter
 						}
 						return try_recover(make_xref_error(
@@ -2445,6 +2447,7 @@ PdfResult<XrefTable> XrefTable::parse(
 					std::nullopt,
 					it->first,
 					0);
+				table.note_ignored_number(it->first);
 				it = table.entries_.erase(it);
 			} else {
 				++it;

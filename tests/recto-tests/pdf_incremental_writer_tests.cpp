@@ -484,6 +484,82 @@ TEST(PdfIncrementalWriter, RoundOneRegressions)
 	}
 }
 
+TEST(PdfIncrementalWriter, RowsPastSizeStayIgnored)
+{
+	// A section listing rows past /Size (one pointing outside the file, one at a real offset): the reader ignores
+	// them unread, so a revision keeps /Size below the lowest. Edits of existing objects still save; a new object
+	// that would raise /Size to them is refused, and the save path writes a full copy instead.
+	std::map<uint32_t, std::string> objects = kSmall;
+	objects[4] = "<< /Note (four) >>";
+	std::string text = text_of(build_pdf(objects));
+	const size_t trailer = text.rfind("trailer\n");
+	ASSERT_NE(trailer, std::string::npos);
+	text.insert(trailer, "6 2\n9999999999 00000 n\r\n0000000009 00000 n\r\n");
+	const Bytes base = bytes_of(text);
+	auto table = XrefTable::parse(base, kMaxXrefTotalEntries, false);
+	RECTO_ASSERT_OK(table);
+	EXPECT_EQ(table->lowest_ignored_number(), std::optional<uint32_t>(6u));
+	auto doc = open_doc(base);
+	ASSERT_NE(doc, nullptr);
+	ASSERT_FALSE(doc->is_recovered());
+	IncrementalWriter writer = make_writer(*doc);
+	RECTO_EXPECT_ERR(writer.allocate_object(PdfValue(int64_t{1})), ErrorCode::DamagedFormat);
+	RECTO_EXPECT_ERR(writer.set_object(IndirectRef(5u), PdfValue(int64_t{1})), ErrorCode::DamagedFormat);
+	RECTO_ASSERT_OK(writer.set_object(IndirectRef(4u), PdfValue(dict_of("<< /Note (changed) >>"))));
+	const Bytes out = write_ok(writer);
+	EXPECT_STRICT(out, 2u, XrefSectionKind::Classic);
+	auto reopened = open_doc(out);
+	ASSERT_NE(reopened, nullptr);
+	EXPECT_FALSE(reopened->is_recovered());
+	EXPECT_EQ(string_entry(resolve_dict(*reopened, IndirectRef(4u)), "Note"), "changed");
+	EXPECT_EQ(reopened->xref().find(6u), nullptr);
+
+	// A base whose /Size already sits just below an ignored row has no room for any revision.
+	std::string tight = text_of(build_pdf(objects));
+	tight.insert(tight.rfind("trailer\n"), "5 1\n9999999999 00000 n\r\n");
+	auto tight_doc = open_doc(bytes_of(tight));
+	ASSERT_NE(tight_doc, nullptr);
+	RECTO_EXPECT_ERR(IncrementalWriter::create(*tight_doc), ErrorCode::DamagedFormat);
+
+	// A cross-reference stream's rows past /Size are recorded too, and a file without any reports none.
+	std::string stream = "%PDF-1.7\n";
+	std::map<uint32_t, size_t> at;
+	for (const auto& [number, body] : kSmall) {
+		at[number] = stream.size();
+		stream += std::to_string(number) + " 0 obj\n" + body + "\nendobj\n";
+	}
+	const size_t xref_at = stream.size();
+	std::string rows;
+	const auto row = [&rows](uint8_t type, size_t field, uint8_t gen) {
+		rows.push_back(static_cast<char>(type));
+		rows.push_back(static_cast<char>((field >> 8u) & 0xFFu));
+		rows.push_back(static_cast<char>(field & 0xFFu));
+		rows.push_back(static_cast<char>(gen));
+	};
+	row(0, 0u, 255);
+	for (uint32_t n = 1; n <= 3; ++n) {
+		row(1, at[n], 0);
+	}
+	row(1, xref_at, 0);
+	row(1, 0xFFFFu, 0); // object 7, past /Size 5 and past the file
+	stream += "4 0 obj\n<< /Type /XRef /Size 5 /Root 1 0 R /Index [0 5 7 1] /W [1 2 1] /Length " +
+		std::to_string(rows.size()) + " >>\nstream\n" + rows + "\nendstream\nendobj\nstartxref\n" + std::to_string(xref_at) +
+		"\n%%EOF\n";
+	auto stream_table = XrefTable::parse(bytes_of(stream), kMaxXrefTotalEntries, false);
+	RECTO_ASSERT_OK(stream_table);
+	EXPECT_EQ(stream_table->lowest_ignored_number(), std::optional<uint32_t>(7u));
+	auto stream_doc = open_doc(bytes_of(stream));
+	ASSERT_NE(stream_doc, nullptr);
+	IncrementalWriter stream_writer = make_writer(*stream_doc);
+	// After a stream the section takes number 5 itself (/Size 6), so object 5 would reach the ignored 7.
+	RECTO_EXPECT_ERR(stream_writer.allocate_object(PdfValue(int64_t{1})), ErrorCode::DamagedFormat);
+	RECTO_ASSERT_OK(stream_writer.set_object(IndirectRef(3u), PdfValue(dict_of("<< /Type /Page /Parent 2 0 R >>"))));
+	EXPECT_STRICT(write_ok(stream_writer), 2u, XrefSectionKind::Stream);
+	auto plain = XrefTable::parse(corpus("render/compressed-xref-2p.pdf"), kMaxXrefTotalEntries, false);
+	RECTO_ASSERT_OK(plain);
+	EXPECT_FALSE(plain->lowest_ignored_number().has_value());
+}
+
 TEST(PdfIncrementalWriter, StagingLimit)
 {
 	// Every staged value counts against the revision's limit (strings, containers and a signature's reservation,

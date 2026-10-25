@@ -68,7 +68,9 @@ public:
 	// A writer for `base`, refused before any work when the base cannot be extended safely: a cross-reference rebuilt
 	// by recovery is `DamagedFormat` (the save path then writes a full copy), an encrypted document not yet
 	// authenticated `NeedsPassword`, and a base already at `kMaxXrefRevisions` revisions or `kMaxXrefTotalEntries`
-	// rows, or too large for the ten-digit offsets a classic row holds (10 GB with its revision), `ResourceLimit`.
+	// rows, or too large for the ten-digit offsets a classic row holds (10 GB with its revision), `ResourceLimit`. A
+	// section listing rows past /Size, which a reader ignores unread, limits the new /Size to below the lowest of them:
+	// a base already there is `DamagedFormat`, and so is a new object that would reach it.
 	[[nodiscard]] static PdfResult<IncrementalWriter> create(const Document& base) noexcept;
 
 	IncrementalWriter(IncrementalWriter&&) noexcept = default;
@@ -126,14 +128,17 @@ private:
 	}
 
 	[[nodiscard]] PdfResult<uint16_t> check_existing(IndirectRef ref) const noexcept;
-	[[nodiscard]] PdfResult<uint32_t> next_free_number() const noexcept;
+	[[nodiscard]] PdfResult<uint32_t> next_free_number(bool for_section = false) const noexcept;
 	[[nodiscard]] PdfResult<void> check_rows(size_t staged_after) const noexcept;
+	[[nodiscard]] PdfResult<void> check_size_reach(uint64_t number, bool leave_section_room) const noexcept;
 	[[nodiscard]] PdfResult<void> stage(uint32_t number, Staged staged) noexcept;
 	[[nodiscard]] static uint64_t staged_size(const Staged& staged); // may throw std::bad_alloc
 
 	const Document* base_;
 	uint64_t base_size_{0}; // the merged trailer's /Size, or past the highest number the table holds
 	uint64_t next_mark_{0}; // every number from the base /Size up to this one is staged
+	bool stream_{false};    // the new section is a cross-reference stream, which takes a number of its own
+	std::optional<uint32_t> ignored_from_{}; // the lowest number a base section lists past /Size, which /Size must not reach
 	std::optional<uint32_t> catalog_{};
 	std::optional<uint32_t> encrypt_{};
 	std::map<uint32_t, Staged> staged_{};

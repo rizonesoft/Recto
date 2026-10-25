@@ -283,6 +283,14 @@ public:
 		return total_rows_;
 	}
 
+	// The lowest number a section lists above the newest /Size, which a reader ignores (ISO 32000-1 Table 15) without
+	// reading the row; a revision whose /Size reached it would bring the row back, valid or not (D01 T02 section 5).
+	[[nodiscard]] std::optional<uint32_t> lowest_ignored_number() const noexcept
+	{
+		return lowest_ignored_number_;
+	}
+
+
 	[[nodiscard]] bool recovered() const noexcept
 	{
 		return recovered_;
@@ -361,6 +369,13 @@ public:
 		const PdfValue& value) const noexcept;
 
 private:
+	void note_ignored_number(uint32_t number) noexcept
+	{
+		if (!lowest_ignored_number_.has_value() || number < *lowest_ignored_number_) {
+			lowest_ignored_number_ = number;
+		}
+	}
+
 	[[nodiscard]] PdfResult<IndirectObject> read_indirect_object_with_visited(
 		std::span<const uint8_t> file_bytes,
 		IndirectRef ref,
@@ -384,6 +399,7 @@ private:
 	XrefSectionKind newest_section_{XrefSectionKind::None};
 	PdfDict newest_trailer_{};
 	uint64_t total_rows_{0};
+	std::optional<uint32_t> lowest_ignored_number_{};
 	bool recovered_{false};
 	EntryMap entries_{};
 	PdfDict trailer_{};

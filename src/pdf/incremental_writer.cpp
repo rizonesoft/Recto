@@ -88,6 +88,12 @@ thread_local uint64_t t_allocation_probes = 0;
 	return err;
 }
 
+[[nodiscard]] PdfError exposes_ignored_rows()
+{
+	return make_pdf_error(ErrorCode::DamagedFormat,
+		"The file lists objects past its /Size, which a new object would bring back; write a full copy instead");
+}
+
 [[nodiscard]] PdfError out_of_memory()
 {
 	return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory writing an incremental revision");
@@ -218,6 +224,15 @@ PdfResult<IncrementalWriter> IncrementalWriter::create(const Document& base) noe
 			writer.base_size_ = std::max<uint64_t>(writer.base_size_, static_cast<uint64_t>(number) + 1u);
 		}
 		writer.next_mark_ = writer.base_size_;
+		// Rows listed past /Size are ignored unread; the new /Size must stay below the lowest, or they come back
+		// (valid or not). Even an edit of existing objects writes the base /Size, plus a stream's own number.
+		writer.stream_ = xref.newest_section() == XrefSectionKind::Stream;
+		if (const auto lowest = xref.lowest_ignored_number()) {
+			writer.ignored_from_ = *lowest;
+			if (writer.base_size_ + (writer.stream_ ? 1u : 0u) >= *lowest) {
+				return exposes_ignored_rows();
+			}
+		}
 		if (const auto root = xref.root_ref()) {
 			writer.catalog_ = root->obj_num;
 		}
@@ -254,7 +269,7 @@ PdfResult<uint16_t> IncrementalWriter::check_existing(IndirectRef ref) const noe
 	return generation;
 }
 
-PdfResult<uint32_t> IncrementalWriter::next_free_number() const noexcept
+PdfResult<uint32_t> IncrementalWriter::next_free_number(bool for_section) const noexcept
 {
 	// Every number from the base /Size up to the mark is staged, so the search starts at the mark.
 	uint64_t number = std::max(base_size_, next_mark_);
@@ -268,7 +283,18 @@ PdfResult<uint32_t> IncrementalWriter::next_free_number() const noexcept
 		return make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ObjectNumber, number, kMaxPdfObjectNumber,
 			"No object number a reader accepts is left");
 	}
+	RECTO_WRITER_TRY_VOID(check_size_reach(number, !for_section));
 	return static_cast<uint32_t>(number);
+}
+
+PdfResult<void> IncrementalWriter::check_size_reach(uint64_t number, bool leave_section_room) const noexcept
+{
+	// Writing `number` makes /Size at least number + 1; an object staged after a stream leaves the stream itself the
+	// next number.
+	if (ignored_from_.has_value() && number + 1u + (leave_section_room && stream_ ? 1u : 0u) >= *ignored_from_) {
+		return exposes_ignored_rows();
+	}
+	return {};
 }
 
 PdfResult<void> IncrementalWriter::check_rows(size_t staged_after) const noexcept
@@ -322,6 +348,7 @@ PdfResult<void> IncrementalWriter::set_object(IndirectRef ref, PdfValue value) n
 		if (ref.gen_num != 0u) {
 			return invalid_argument("A new object is written at generation 0", ref.obj_num);
 		}
+		RECTO_WRITER_TRY_VOID(check_size_reach(ref.obj_num, true));
 	}
 	return stage(ref.obj_num, Staged{StagedKind::Value, generation, std::move(value), 0u});
 }
@@ -599,7 +626,7 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 		uint64_t section_at = 0;
 		if (xref.newest_section() == XrefSectionKind::Stream) {
 			// A cross-reference stream (7.5.8) with its own number, listing itself.
-			RECTO_PDF_TRY(const uint32_t self, next_free_number());
+			RECTO_PDF_TRY(const uint32_t self, next_free_number(true));
 			size = std::max<uint64_t>(size, static_cast<uint64_t>(self) + 1u);
 			section_at = base_size + out.size();
 			if (section_at < header) {
@@ -634,6 +661,9 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 			}
 			PdfDict dict = std::move(trailer);
 			dict.set("Type", PdfValue(PdfName("XRef")));
+			if (ignored_from_.has_value() && size >= *ignored_from_) {
+				return exposes_ignored_rows();
+			}
 			dict.set("Size", PdfValue(static_cast<int64_t>(size)));
 			dict.set("Index", PdfValue(std::move(index)));
 			dict.set("W", PdfValue(PdfArray{PdfValue(int64_t{1}), PdfValue(static_cast<int64_t>(w2)),
@@ -667,6 +697,9 @@ PdfResult<IncrementalRevision> IncrementalWriter::revision() const noexcept
 					out.append(rows[k].in_use ? " n\r\n" : " f\r\n");
 				}
 				i = j;
+			}
+			if (ignored_from_.has_value() && size >= *ignored_from_) {
+				return exposes_ignored_rows();
 			}
 			trailer.set("Size", PdfValue(static_cast<int64_t>(size)));
 			out.append("trailer\n");
