@@ -1132,18 +1132,20 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md`, gap 6) found two layouts damaged-file recovery still loses: a container whose `/Type` is an indirect reference to `/ObjStm`, and a container whose parameter (`/DecodeParms`, `/N`, `/First`) is itself compressed in another recoverable container. `§29` resolves parameters only through uncompressed objects, one level. -> XREF: D06 T05 §29
 
+> **Corrected 2026-10-25:** `§29`'s plan review raised the indirect `/Type` as a gap of that section, so `§29` built it (`504e7c2`, `PdfXref.RecoveryIndirectObjStmType`); the first item and build step 1 are done there. What remains here is a parameter compressed in another container.
+
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Recognise an indirect container `/Type` once the scan has found every object, as the catalog check does with `catalog_names`. Done when: such a container is unpacked.
+1. ~~Recognise an indirect container `/Type`~~: built in `§29` (`504e7c2`). Done when: `PdfXref.RecoveryIndirectObjStmType` passes.
 2. Resolve a parameter through a member of another container, decoding containers in dependency order with a cycle guard, inside the existing budgets. Done when: an acyclic two-container chain recovers and a cycle is refused.
 
-- [ ] Record streams whose `/Type` is a reference in the recovery scan of `src/pdf/xref.cpp`, and treat them as containers when the named object is the name `/ObjStm`. Done when: a container with `/Type 9 0 R` (object 9 is `/ObjStm`, after it) recovers its members.
+- [x] Record streams whose `/Type` is a reference in the recovery scan of `src/pdf/xref.cpp`, and treat them as containers when the named object is the name `/ObjStm`. Done when: a container with `/Type 9 0 R` (object 9 is `/ObjStm`, after it) recovers its members. Built in `D06 T05 §29` (`504e7c2`): `PdfXref.RecoveryIndirectObjStmType`, the type object before and after the container. -> XREF: D06 T05 §29
 - [ ] Let the deferred-container resolver answer a reference to a compressed object from a container already unpacked, ordering the deferred containers by their dependencies and refusing a cycle, in `src/pdf/xref.cpp`. Done when: container A whose `/DecodeParms` is a member of container B recovers, and A and B naming each other leave both out without failing recovery.
-- [ ] Add `PdfXref.RecoveryResolvesCompressedParameters` covering both cases and the cycle. Done when: the test fails on the code before this section.
+- [ ] Add `PdfXref.RecoveryResolvesCompressedParameters` covering the compressed parameter and the cycle (the indirect `/Type` is covered by `§29`'s test). Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: recovery resolves compressed parameters and indirect container types`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesCompressedParameters`.

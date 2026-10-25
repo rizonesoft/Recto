@@ -124,3 +124,23 @@ Both reproductions are source-traced, not executed. No files were modified.
 
 HIGHEST: P1
 OVERALL: needs-attention
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-25T16:32:02Z
+- Effort: low
+- Lenses: quality
+- Lines: 10
+- Digest: 95569b15a13999c1
+
+### quality: needs-attention
+
+1. **[P3] Comments describe obsolete recovery behaviour.** `src/pdf/xref.cpp:814` says only containers needing parameter resolution are deferred and others unpack during scanning. Both branches actually defer them (`1689`, `1699`). Likewise, `1979-1980` says a rescan can recover after incomplete readings, but `recover_damaged_xref` explicitly returns when `ambiguous` is set. Reproduce by tracing these branches. Update the comments to describe the current algorithm.
+
+2. **[P3] Redundant member-header copy complicates unpacking.** `src/pdf/xref.cpp:1037` creates `InnerPair` and copies every object number from `recovered_stm.entries` into another vector solely to iterate it. The original entries remain available and unchanged throughout that loop. Any recovered container exercises this unnecessary allocation and copy. Iterate `recovered_stm.entries` directly.
+
+Static review only; no tests executed.
+
+HIGHEST: P3
+OVERALL: needs-attention

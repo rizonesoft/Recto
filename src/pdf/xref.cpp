@@ -814,9 +814,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 		// The file position of the definition each entry came from (an uncompressed object's own, or its container's),
 		// so a container unpacked after the scan overrides exactly the definitions before it in the file and none after.
 		std::unordered_map<uint32_t, uint64_t> defined_at;
-		// Containers whose /Filter, /DecodeParms, /N or /First is indirect: the object a reference names may lie after
-		// the container, so they are unpacked once the scan has found every object. Every other container is still
-		// unpacked where the scan meets it, so its integers keep serving a later indirect /Length.
+		// Every container the scan meets (a generation-0 stream whose /Type is /ObjStm, or an indirect /Type that may
+		// resolve to it) is unpacked after the scan, in file order, once every object a parameter may name is known.
 		// Only where each one is: an encrypted file's containers are never decoded during recovery, so their bytes are
 		// not kept; a container that is decoded is parsed again at its position after the scan.
 		struct DeferredObjStm {
@@ -1034,16 +1033,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 					// of failing, and keeps the rest of the container.
 					CachedObjStream recovered_stm = std::move(*header_opt);
 					recovered_stm.decoded_bytes = std::move(decoded);
-					struct InnerPair {
-						uint32_t obj_num = 0;
-					};
-					std::vector<InnerPair> inner_pairs;
-					inner_pairs.reserve(recovered_stm.entries.size());
-					for (const CachedObjStream::HeaderPair& pair : recovered_stm.entries) {
-						inner_pairs.push_back(InnerPair{pair.obj_num});
-					}
 					auto& member_vec = candidates_only ? discarded_members : objstm_members[obj_num];
-					for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
+					for (size_t idx = 0; idx < recovered_stm.entries.size(); ++idx) {
 						if (candidate_attempts >= effective_max_entries) {
 							return make_xref_error(
 								ErrorCode::DamagedFormat,
@@ -1052,7 +1043,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 								container_pos);
 						}
 						++candidate_attempts;
-						const uint32_t inner_id = inner_pairs[idx].obj_num;
+						const uint32_t inner_id = recovered_stm.entries[idx].obj_num;
 						// A definition later in the file than this container wins (only a container unpacked after the scan
 						// can meet one).
 						bool replaced_later = false;
@@ -1976,8 +1967,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			// Every stream here has an indirect /Length, sized by the integer the scan had met so far (perhaps an
 			// obsolete one) or at its first `endstream`; a reading left out may hold the definition that decides it, and
 			// what follows the extent the scan took may be the stream's own payload. When the readings were cut short,
-			// the table cannot be trusted (a payload can imitate a catalog), so recovery refuses rather than present it;
-			// a rescan with a self-consistent length still recovers the file (see recover_damaged_xref).
+			// the table cannot be trusted (a payload can imitate a catalog), so recovery refuses rather than present it,
+			// and does not rescan (see recover_damaged_xref: a rescan checks only the streams it corrects).
 			if (readings_incomplete) {
 				ambiguous_extent = true;
 			}
