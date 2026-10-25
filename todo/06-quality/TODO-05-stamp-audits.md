@@ -637,7 +637,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] On a confirmed regression, add a dated blocking note to `D01 T01 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [x] Commit: `review: audit D01 T01 §6 under the current review process`
 
-> **Deferred:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29
+> **Resolved:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29 (2026-10-25: closed by D06 T05 §29, whose recovery scan defers every container and resolves its parameters, `/Type` included, through the scan's own definitions)
 
 > **Deferred:** damaged-file recovery of an encrypted file's compressed objects (xref-stream rows dropped, containers decoded before authentication) -> XREF: D06 T05 §30
 
