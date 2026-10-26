@@ -42,8 +42,9 @@ enum class BaseEncoding : uint8_t {
 // `WinAnsiEncoding`, and `StandardEncoding`, which producers write though Table 112 does not list it.
 [[nodiscard]] std::optional<BaseEncoding> base_encoding_from_name(std::string_view name) noexcept;
 
-// The Mac OS standard Roman character set ISO 32000-1 9.6.6.4 uses for a TrueType `(1,0)` subtable: Annex D's
-// `MacRomanEncoding` and fifteen Mac OS characters it lacks. The code of a glyph name, or none.
+// The Mac OS standard Roman character set ISO 32000-1 9.6.6.4 uses for a TrueType `(1,0)` subtable (Table 115): Annex
+// D's `MacRomanEncoding`, fifteen Mac OS characters it lacks, and `Euro` in place of `currency`. The code of a glyph
+// name, or none.
 [[nodiscard]] std::optional<uint8_t> mac_os_roman_code(std::string_view name) noexcept;
 
 // The characters a glyph name stands for, by the Adobe Glyph List Specification's algorithm: the part after the first
@@ -152,10 +153,11 @@ private:
 
 // The glyph a code of a simple TrueType font draws (ISO 32000-1 9.6.6.4): when the font names `MacRomanEncoding` or
 // `WinAnsiEncoding`, has `/Differences`, or is flagged non-symbolic and not symbolic, the code's glyph name (its
-// encoding, then `StandardEncoding` for a code it leaves empty) through a `(3,1)` subtable by the name's Unicode, a
-// `(1,0)` subtable by the name's Mac OS Roman code, or the `post` names; otherwise, or when none of those finds it, a
-// `(3,0)` subtable at the code and at `0xF000`, `0xF100` and `0xF200` plus it, a `(1,0)` subtable at the code, and the
-// code as a glyph index. Glyph 0 when nothing maps it.
+// encoding, then `StandardEncoding` for a code it leaves empty) through a `(3,1)` subtable by the name's Unicode, or,
+// only when there is no `(3,1)`, a `(1,0)` subtable by the name's Mac OS standard Roman code (Table 115), and a name
+// neither maps through the `post` names; otherwise, or when none of those finds it, a `(3,0)` subtable at the code and
+// at `0xF000`, `0xF100` and `0xF200` plus it, and a `(1,0)` subtable at the code. The code itself as a glyph index
+// only for a font with no subtable at all; glyph 0 when nothing maps it.
 [[nodiscard]] uint16_t simple_truetype_glyph(const TrueTypeTables& tables, const SimpleEncoding& encoding, bool symbolic,
 	bool nonsymbolic, uint8_t code) noexcept;
 

@@ -240,7 +240,7 @@ inline constexpr std::array<std::string_view, 256> kEncodingMacOSRoman = {
 	"questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft",
 	"guillemotright", "ellipsis", "space", "Agrave", "Atilde", "Otilde", "OE", "oe",
 	"endash", "emdash", "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge",
-	"ydieresis", "Ydieresis", "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl",
+	"ydieresis", "Ydieresis", "fraction", "Euro", "guilsinglleft", "guilsinglright", "fi", "fl",
 	"daggerdbl", "periodcentered", "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute",
 	"Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex",
 	"apple", "Ograve", "Uacute", "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde",

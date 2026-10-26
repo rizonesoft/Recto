@@ -69,6 +69,7 @@ class BuildGlyphNames(unittest.TestCase):
             ("Standard against the AFM", b"StandardEncoding 101 A\n", b"StandardEncoding 101 B\n", "Times-Roman.afm"),
             ("Symbol against the AFM", b"Symbol 101 Alpha\n", b"", "Symbol.afm"),
             ("MacOSRoman extras", b"MacOSRoman 360 apple\n", b"", "fifteen"),
+            ("MacOSRoman Euro", b"MacOSRoman 333 Euro\n", b"MacOSRoman 333 currency\n", "Table 115"),
             ("a name no list has", b"MacExpertEncoding 041 exclamsmall\n", b"MacExpertEncoding 041 nosuchglyph\n",
              "neither list"),
             ("a code twice", b"WinAnsiEncoding 101 A\n", b"WinAnsiEncoding 101 A\nWinAnsiEncoding 101 A\n", "twice"),

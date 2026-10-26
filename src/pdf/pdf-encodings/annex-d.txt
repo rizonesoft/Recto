@@ -1330,7 +1330,7 @@ MacOSRoman 327 lozenge
 MacOSRoman 330 ydieresis
 MacOSRoman 331 Ydieresis
 MacOSRoman 332 fraction
-MacOSRoman 333 currency
+MacOSRoman 333 Euro
 MacOSRoman 334 guilsinglleft
 MacOSRoman 335 guilsinglright
 MacOSRoman 336 fi

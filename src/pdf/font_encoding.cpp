@@ -382,6 +382,11 @@ void add_single(std::vector<TrueTypeTables::Group>& groups, uint32_t code, uint3
 				sub.groups.push_back({start, end, (start + delta) & 0xFFFFu});
 				continue;
 			}
+			// The offset is from its own word to a word of the glyph array that follows the four segment arrays.
+			const size_t glyph_array = offsets + seg_x2;
+			if (range_offset % 2u != 0u || offsets + i * 2u + range_offset < glyph_array) {
+				return table_error("TrueType cmap format 4 idRangeOffset points outside the glyph array");
+			}
 			for (uint32_t code = start; code <= end; ++code) {
 				const size_t index_at = offsets + i * 2u + range_offset + size_t{code - start} * 2u;
 				if (!sub_reader.fits(index_at, 2u)) {
@@ -495,14 +500,19 @@ PdfResult<TrueTypeTables> TrueTypeTables::parse(std::span<const uint8_t> program
 			if (!cmap->fits(4u, size_t{count} * 8u)) {
 				return table_error("TrueType cmap encoding records do not fit the table");
 			}
+			std::vector<std::pair<uint16_t, uint16_t>> tried;
 			for (size_t i = 0; i < count; ++i) {
 				const uint16_t platform = cmap->u16(4u + i * 8u);
 				const uint16_t encoding = cmap->u16(4u + i * 8u + 2u);
 				const bool wanted = (platform == 3u && (encoding == 0u || encoding == 1u || encoding == 10u)) ||
 					(platform == 1u && encoding == 0u);
-				if (!wanted || tables.has(platform, encoding)) {
+				// The first record of each wanted subtable is read, damaged or not; a later one for it is ignored, so
+				// records repeating a damaged subtable cannot make it be read again and again.
+				const auto pair = std::pair{platform, encoding};
+				if (!wanted || std::find(tried.begin(), tried.end(), pair) != tried.end()) {
 					continue;
 				}
+				tried.push_back(pair);
 				PdfResult<std::optional<Subtable>> sub = parse_subtable(*cmap, cmap->u32(4u + i * 8u + 4u), platform, encoding);
 				if (!sub.has_value()) {
 					if (sub.error().code == ErrorCode::OutOfMemory) {
@@ -618,22 +628,24 @@ uint16_t simple_truetype_glyph(const TrueTypeTables& tables, const SimpleEncodin
 			name = base_encoding_name(BaseEncoding::Standard, code); // undefined entries come from StandardEncoding
 		}
 		if (!name.empty()) {
-			for (const uint16_t unicode_encoding : {uint16_t{10}, uint16_t{1}}) {
-				if (!tables.has(3u, unicode_encoding)) {
-					continue;
-				}
+			const bool unicode_subtable = tables.has(3u, 10u) || tables.has(3u, 1u);
+			if (unicode_subtable) {
+				// A (3,1) subtable: the name's Unicode through it (a (3,10) one, its superset, first).
 				const PdfResult<std::u32string> unicode = glyph_name_unicode(name);
 				if (unicode.has_value() && unicode->size() == 1u) {
-					if (const auto glyph = tables.lookup(3u, unicode_encoding, (*unicode)[0])) {
-						return *glyph;
+					for (const uint16_t unicode_encoding : {uint16_t{10}, uint16_t{1}}) {
+						if (const auto glyph = tables.lookup(3u, unicode_encoding, (*unicode)[0])) {
+							return *glyph;
+						}
 					}
 				}
-			}
-			if (const std::optional<uint8_t> mac = mac_os_roman_code(name); mac.has_value() && tables.has(1u, 0u)) {
+			} else if (const std::optional<uint8_t> mac = mac_os_roman_code(name); mac.has_value()) {
+				// Only without one, a (1,0) subtable through the name's Mac OS standard Roman code.
 				if (const auto glyph = tables.lookup(1u, 0u, *mac)) {
 					return *glyph;
 				}
 			}
+			// A name neither maps: the post table's names.
 			if (const auto glyph = tables.glyph_for_name(name)) {
 				return *glyph;
 			}
@@ -651,7 +663,10 @@ uint16_t simple_truetype_glyph(const TrueTypeTables& tables, const SimpleEncodin
 			return *glyph;
 		}
 	}
-	return code;
+	// The code as a glyph index only for a font with no subtable at all; a code its tables do not map is missing, not
+	// some other glyph (9.6.6.4 lets a processor choose only where no mapping applies).
+	const bool any_subtable = tables.has(3u, 0u) || tables.has(1u, 0u) || tables.has(3u, 1u) || tables.has(3u, 10u);
+	return any_subtable ? uint16_t{0} : uint16_t{code};
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -1274,7 +1274,8 @@ TEST(PdfFont, BaseEncodings)
 		EXPECT_EQ(mac_os_roman_code(name), std::optional<uint8_t>(static_cast<uint8_t>(code))) << name;
 	}
 	EXPECT_EQ(mac_os_roman_code("space"), std::optional<uint8_t>(uint8_t{0x20u})); // the first of its two codes
-	EXPECT_EQ(mac_os_roman_code("Euro"), std::nullopt);
+	EXPECT_EQ(mac_os_roman_code("Euro"), std::optional<uint8_t>(uint8_t{0xDBu})); // Table 115: Euro for currency
+	EXPECT_EQ(mac_os_roman_code("currency"), std::nullopt);
 	// MacExpertEncoding: Annex D's 165 codes, every name one the Glyph List knows.
 	size_t expert = 0;
 	for (int code = 0; code < 256; ++code) {
@@ -1603,10 +1604,17 @@ TEST(PdfFont, TrueTypeCmapSelection)
 		// Non-symbolic with no encoding: StandardEncoding names, the same path.
 		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, false), false, true, 0x41), 5u);
 	}
-	// The name path through (1,0): WinAnsi's 0xC4 is Adieresis, Mac OS Roman 0x80.
+	// The name path through (1,0): WinAnsi's 0xC4 is Adieresis, Mac OS Roman 0x80; WinAnsi's 0x80 is Euro, 0xDB there.
 	{
-		const auto t = tables(sfnt(cmap_table({{1, 0, format0({{0x80, 7}, {0x41, 3}})}})));
+		const auto t = tables(sfnt(cmap_table({{1, 0, format0({{0x80, 7}, {0xDB, 9}, {0x41, 3}})}})));
 		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0xC4), 7u);
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x80), 9u);
+	}
+	// With a (3,1) subtable the (1,0) one is not consulted for a name: a name (3,1) lacks goes to the post names.
+	{
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 2}})}, {1, 0, format0({{0x41, 7}})}}),
+			post2({".notdef", "x", "y", "A"})));
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 3u);
 	}
 	// The name path through the post names, a (3,1) subtable lacking the name.
 	{
@@ -1636,6 +1644,11 @@ TEST(PdfFont, TrueTypeCmapSelection)
 		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{1, 0, format6(0x40, {20, 21, 22})}}))), none, true, false, 0x41), 21u);
 		// No subtable at all: the code as a glyph index.
 		EXPECT_EQ(simple_truetype_glyph(tables(sfnt({})), none, true, false, 0x41), 0x41u);
+		// A subtable that does not map the code: missing, not the glyph at that index (whose Unicode is unrelated).
+		const auto miss = tables(sfnt(cmap_table({{3, 0, format4({{0xF042, 7}})}, {3, 1, format4({{0x5A, 0x41}})}})));
+		EXPECT_EQ(simple_truetype_glyph(miss, none, true, false, 0x41), 0u);
+		const SimpleFontText text{nullptr, &none, false, &miss, true, false};
+		EXPECT_EQ(*simple_font_unicode(text, 0x41), U""); // not Z
 	}
 	// A name the name path cannot find falls to the code path.
 	{
@@ -1741,6 +1754,44 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 			EXPECT_EQ(tables.glyph_for_name("A"), std::nullopt) << what;
 			EXPECT_EQ(tables.lookup(3u, 1u, 0x41), std::optional<uint16_t>(uint16_t{1u})) << what;
 		}
+	}
+	// Review round 1: a format 4 idRangeOffset into the segment arrays or not word-aligned reads no glyph from them.
+	{
+		std::vector<uint8_t> sub = format4({{0x41, 5}});
+		const size_t offsets = 14u + 4u + 2u + 4u + 4u;
+		sub[offsets + 1u] = 2u; // the first segment's offset points at the second segment's offset word
+		still_selects(damaged(beside(sub), "an idRangeOffset into the segment arrays"), "metadata");
+		// With a glyph array after the offsets, an odd offset would read across two of its words.
+		std::vector<uint8_t> odd = format4({{0x41, 5}});
+		odd.insert(odd.end(), {0x00, 0x09, 0x00, 0x0A});
+		odd[3] = static_cast<uint8_t>(odd[3] + 4u); // the subtable's length
+		odd[offsets + 1u] = 5u;
+		still_selects(damaged(beside(odd), "an unaligned idRangeOffset"), "unaligned");
+	}
+	// Review round 1: records repeating one damaged subtable read it once, not once each.
+	{
+		std::vector<std::array<uint32_t, 3>> groups;
+		for (uint32_t i = 0; i < 20000u; ++i) {
+			groups.push_back({i * 2u, i * 2u, 1u});
+		}
+		groups.push_back({0u, 1u, 1u}); // overlapping the first: damaged
+		const std::vector<uint8_t> bad = format12(groups);
+		std::vector<uint8_t> cmap;
+		be16(cmap, 0u);
+		be16(cmap, 0xFFFFu);
+		const uint32_t at = 4u + 8u * 0xFFFFu;
+		for (uint32_t i = 0; i < 0xFFFFu; ++i) {
+			be16(cmap, 3u);
+			be16(cmap, 10u);
+			be32(cmap, at);
+		}
+		cmap.insert(cmap.end(), bad.begin(), bad.end());
+		const auto started = std::chrono::steady_clock::now();
+		auto parsed = TrueTypeTables::parse(sfnt(cmap));
+		const auto elapsed = std::chrono::steady_clock::now() - started;
+		ASSERT_TRUE(parsed.has_value()) << parsed.error().message.view();
+		EXPECT_EQ(parsed->damage().size(), 1u);
+		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
 	}
 	// The work stays linear: one format 12 group over every Unicode scalar reads back quickly.
 	{
@@ -1930,6 +1981,16 @@ TEST(PdfFont, DrawableUnicode)
 		EXPECT_EQ(drawable_unicode(name), std::optional<char32_t>(scalar)) << name;
 	}
 	EXPECT_EQ(drawable_unicode("apple"), std::nullopt); // Symbol's apple, private use in the AGL
+	// Every Latin Core14 name against kLatinUnicode, the test's table from the pinned glyphlist.txt (U+0326 for
+	// commaaccent), and every ZapfDingbats code against kZapfDingbatsUnicode: scalar by scalar, so a digit drawn as
+	// another digit of the same width cannot pass.
+	for (const auto& [name, scalar] : kLatinUnicode) {
+		EXPECT_EQ(drawable_unicode(name), std::optional<char32_t>(scalar)) << name;
+	}
+	for (const auto& [code, scalar] : kZapfDingbatsUnicode) {
+		EXPECT_EQ(drawable_unicode(base_encoding_name(BaseEncoding::ZapfDingbats, code), true), std::optional<char32_t>(scalar))
+			<< int{code};
+	}
 	EXPECT_EQ(drawable_unicode("f_i"), std::nullopt);   // two characters: no single glyph
 	// Every name of the twelve Latin fonts draws in its own face, and every ZapfDingbats name in its face.
 	for (const Standard14Font font : kAllStandard14) {

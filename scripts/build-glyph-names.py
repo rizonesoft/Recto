@@ -108,8 +108,9 @@ def check_annex_d(tables: dict[str, dict[int, str]], afm_dir: Path, names: set[s
         raise SourceError("annex-d.txt: WinAnsiEncoding must map its unused codes above 040 to bullet")
     if mac.get(0o312) != "space" or len(mac) != 208:
         raise SourceError("annex-d.txt: MacRomanEncoding must have 208 codes, space also at 0312")
-    if mac_os != {**mac, **MAC_OS_EXTRAS}:
-        raise SourceError("annex-d.txt: MacOSRoman must be MacRomanEncoding and the fifteen Mac OS characters")
+    if mac_os != {**mac, **MAC_OS_EXTRAS, 0o333: "Euro"}:
+        raise SourceError("annex-d.txt: MacOSRoman must be MacRomanEncoding, the fifteen Mac OS characters and Euro "
+                          "for currency at 0333 (ISO 32000-1 Table 115)")
     for enc, table in tables.items():
         unknown = sorted(n for n in table.values() if n not in names)
         if unknown:
