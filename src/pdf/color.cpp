@@ -426,7 +426,15 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 				return list.error();
 			}
 			if (list.has_value() && list->is_array()) {
+				// Bounded work: each profile stream is tried once however often the intents name it, at most
+				// `kMaxOutputIntentProfiles` distinct ones, their decoded bytes within the profile budget.
+				std::set<uint32_t> tried;
+				size_t examined = 0;
+				size_t decoded_bytes = 0;
 				for (const PdfValue& item : *list->as_array()) {
+					if (examined >= kMaxOutputIntentProfiles || decoded_bytes >= kMaxCachedProfileBytes) {
+						break;
+					}
 					auto intent = document.resolve_value(item);
 					if (!intent.has_value() && intent.error().code == ErrorCode::OutOfMemory) {
 						return intent.error();
@@ -436,6 +444,9 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					}
 					const PdfValue* dest = intent->as_dict()->get("DestOutputProfile");
 					const std::optional<IndirectRef> ref = dest != nullptr ? dest->as_ref() : std::nullopt;
+					if (ref.has_value() && !tried.insert(ref->obj_num).second) {
+						continue; // this profile was tried already
+					}
 					auto stream = dest != nullptr ? document.resolve_value(*dest) : PdfResult<PdfValue>(PdfValue{});
 					if (!stream.has_value() && stream.error().code == ErrorCode::OutOfMemory) {
 						return stream.error();
@@ -451,6 +462,8 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					if (!n_value.has_value() || n_value->as_int() != 4) {
 						continue;
 					}
+					++examined;
+					g_profile_decodes.fetch_add(1u);
 					auto bytes = document.decode_stream(*stream->as_stream(), kMaxIccProfileBytes);
 					if (!bytes.has_value()) {
 						if (bytes.error().code == ErrorCode::OutOfMemory) {
@@ -458,6 +471,7 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 						}
 						continue;
 					}
+					decoded_bytes += bytes->size();
 					auto profile = IccProfile::make(std::move(*bytes), 4u, ref.has_value() ? ref->obj_num : 0u);
 					if (profile.has_value()) {
 						impl_->default_cmyk = std::move(*profile);

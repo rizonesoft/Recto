@@ -26,6 +26,7 @@ inline constexpr size_t kMaxIccProfileBytes = size_t{16} << 20u;
 inline constexpr size_t kMaxColorSpaceDepth = 8u;           // nested spaces: `/Alternate` chains, resources naming resources
 inline constexpr size_t kMaxCachedColorTransforms = 64u;    // per document
 inline constexpr size_t kMaxCachedProfileBytes = size_t{64} << 20u; // per document
+inline constexpr size_t kMaxOutputIntentProfiles = 16u; // distinct output intent profiles tried for DeviceCMYK
 
 // ISO 32000-1 8.6.5.8: an intent this reader does not know is RelativeColorimetric.
 enum class RenderingIntent : uint8_t {

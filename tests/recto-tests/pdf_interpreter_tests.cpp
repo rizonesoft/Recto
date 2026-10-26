@@ -1163,6 +1163,27 @@ TEST(PdfInterpreter, CalibratedCmyk)
 		objects.push_back(stream_object("/N 4", corpus_text("color/cmyk-lut.icc")));
 		expect_rgb8(painted(interpret(pdf_from_objects(objects))).fill_color, kCmykRelative, 2, "output intent");
 	}
+	// Output intents naming one damaged profile a thousand times try it once, then find the good one after them.
+	{
+		std::string damaged_cmyk = corpus_text("color/cmyk-lut.icc");
+		damaged_cmyk[36] = 'X';
+		std::string intents = "[";
+		for (int i = 0; i < 1000; ++i) {
+			intents += "6 0 R ";
+		}
+		intents += "<< /Type /OutputIntent /S /GTS_PDFX /DestOutputProfile 7 0 R >>]";
+		std::vector<std::string> objects;
+		objects.emplace_back("<< /Type /Catalog /Pages 2 0 R /OutputIntents " + intents + " >>");
+		objects.emplace_back("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+		objects.emplace_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>");
+		objects.push_back(stream_object("", ops));
+		objects.push_back(stream_object("/N 4", damaged_cmyk));
+		objects.emplace_back("<< /Type /OutputIntent /S /GTS_PDFX /DestOutputProfile 5 0 R >>");
+		objects.push_back(stream_object("/N 4", corpus_text("color/cmyk-lut.icc")));
+		const size_t decodes = detail::icc_profile_decodes_for_testing();
+		expect_rgb8(painted(interpret(pdf_from_objects(objects))).fill_color, kCmykRelative, 2, "the good intent after the repeats");
+		EXPECT_EQ(detail::icc_profile_decodes_for_testing() - decodes, 2u);
+	}
 	// No output intent: Windows' RSWOP.icm when present, its own Windows transform, not the formula.
 	const Rgb8 formula = {191, 63, 191}; // 1 - min(1, colourant + k) per channel: C 0, M 0.502, Y 0, K 0.251
 	const auto plain = painted(interpret(ops)).fill_color;
