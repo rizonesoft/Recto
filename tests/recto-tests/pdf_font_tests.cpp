@@ -598,7 +598,7 @@ struct AfmFile {
 [[nodiscard]] AfmFile read_afm(std::string_view font_name)
 {
 	const auto bytes = recto::test::read_file_bytes(
-		recto::test::repo_root() / "third_party" / "adobe-core14-afm" / (std::string(font_name) + ".afm"));
+		recto::test::repo_root() / "src" / "pdf" / "adobe-core14-afm" / (std::string(font_name) + ".afm"));
 	AfmFile afm;
 	std::string_view rest(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 	bool in_chars = false;

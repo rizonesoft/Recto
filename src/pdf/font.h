@@ -167,7 +167,7 @@ private:
 	FontProgramFormat format) noexcept;
 
 // The fourteen standard fonts (ISO 32000-1 section 9.6.2.2), whose metrics a reader knows without an embedded program
-// (D01 T02 section 27). The metrics are Adobe's Core14 AFM files (`third_party/adobe-core14-afm`), generated into
+// (D01 T02 section 27). The metrics are Adobe's Core14 AFM files (`src/pdf/adobe-core14-afm`), generated into
 // `constexpr` tables by `scripts/build-font-metrics.py`; the face drawn with is a Windows face, loaded once into an
 // immutable `LoadedFont` that every thread shares. Layout takes the AFM width, so text drawn through the face never
 // reflows; which glyph name and Unicode a PDF code means is the encoding's (D01 T02 section 28).

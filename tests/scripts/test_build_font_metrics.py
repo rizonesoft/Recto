@@ -17,7 +17,7 @@ metrics = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = metrics  # its dataclasses look their module up there
 SPEC.loader.exec_module(metrics)
 
-AFM_DIR = ROOT / "third_party" / "adobe-core14-afm"
+AFM_DIR = ROOT / "src" / "pdf" / "adobe-core14-afm"
 
 
 def run(*args: str) -> tuple[int, str]:
