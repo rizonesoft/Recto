@@ -31,3 +31,5 @@ src/pdf/adobe-core14-afm/*.afm -text
 src/pdf/adobe-core14-afm/MustRead.html -text
 # The vendored Adobe Glyph List files too (src/pdf/adobe-glyph-list/README.md).
 src/pdf/adobe-glyph-list/*.txt -text
+# The Annex D transcription and the Macintosh glyph names: LF everywhere, as the tooling tests edit them by line.
+src/pdf/pdf-encodings/*.txt text eol=lf
