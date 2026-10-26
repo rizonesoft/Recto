@@ -954,12 +954,14 @@ Character codes in a simple font (`/Type1`, `/TrueType`, `/Type3`) map to glyphs
 
 ## 29. Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)
 
+> **Started:** 2026-10-26T03:12Z
+
 Type 1 fonts (`/FontFile`) and bare CFF programs (`/FontFile3` with `/Type1C` or `/CIDFontType0C`) cannot be loaded by DirectWrite, so their glyphs are read into outlines here and drawn as paths (ISO 32000-1 sections 9.6.2 and 9.9; Adobe Type 1 Font Format; Adobe Technical Notes 5176 and 5177).
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that outlines are decoded once into the immutable `LoadedFont` on the `DocumentActor` thread, with no lazy decoding on `RenderPool` workers.
+**Freeze check:** Verify that a Type 1 or CFF program is parsed once (its decrypted charstrings and subroutines, `INDEX` offsets, charset, encoding, `FDSelect` and private dictionaries) into the immutable `LoadedFont` on the `DocumentActor` thread, and that each glyph's outline is computed per call from that immutable data with no lazy cache, as `font.h`'s contract has it, so `RenderPool` workers may call concurrently.
 
 **Build order:**
 
@@ -972,6 +974,8 @@ Type 1 fonts (`/FontFile`) and bare CFF programs (`/FontFile3` with `/Type1C` or
 - [ ] Hostile programs refused with typed errors and bounded work: offsets outside the buffer, `INDEX` counts past the data, subroutine recursion, stack overflow and underflow, a charstring longer than 65,535 bytes, a glyph past 100,000 path operators. Done when: `PdfFont.HostileCharstringsRefused` covers each without a crash under ASan.
 - [ ] Hand a Type 1 or CFF program's built-in encoding (its `/Encoding` array, `StandardEncoding`, or the CFF encoding and charset) to `§28`'s `SimpleEncoding::build` as its 256 glyph names (filed by the `§28` completion review). Done when: `PdfFont.Type1BuiltInEncoding` builds a `SimpleEncoding` from an embedded program's custom encoding with `/Differences` over it. -> XREF: D01 T02 §28
 - [ ] Commit: `pdf: Type 1 and CFF charstrings to glyph outlines`
+
+> **Corrected 2026-10-26:** (validation before the build) The Freeze check said outlines are "decoded once" with "no lazy decoding" on workers, which contradicts `font.h`'s frozen contract (outlines computed per call from immutable bytes, no lazy caches, as the stamped `glyf` path does) and would hold every glyph of a 20,000-glyph CID font in memory; it now asks for one parse into immutable data and per-call outlines. The section named no loader, no place in `LoadedFont`, no units and no source for CFF's predefined data; the contract is: `load_charstring_font(program, CharstringFormat, lengths)` in `src/pdf/font.h` (`CharstringFormat::Type1` with `/Length1` to `/Length3`, `Type1C`, `CIDFontType0C`), returning a `LoadedFont` of the appended kinds `LoadedFontKind::Type1` and `LoadedFontKind::Cff` with `glyph_for_name`, `glyph_for_cid` and `built_in_encoding()` (256 glyph names for `§28`); outlines and advances in text space through the program's `/FontMatrix` (the CFF default 0.001, an FD's matrix composed with the top one for CID fonts); a Type 2 width from the charstring's first odd operand plus `nominalWidthX`, else `defaultWidthX`; hint operators skipped; `seac` and `endchar`'s accent form through `StandardEncoding` (`§28`). The 391 CFF standard strings, the Expert and Expert Subset charsets and the CFF Expert encoding (Adobe Technical Note 5176, Appendices A to C) are generated into `src/pdf/cff_data.inc` by `scripts/build-cff-data.py` from a transcription in `src/pdf/pdf-encodings/cff-standard-data.txt`, taken from two independent transcriptions (pdf.js and Apache PDFBox) that must agree, with `--check` run by `tests/scripts`. Bounds: a program of at most 64 MiB, a charstring of 65,535 bytes, 100,000 path operators per glyph, a subroutine depth of 10, a stack of 24 (Type 1) and 48 (Type 2), `INDEX` counts and offsets inside their data.
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Type1*:PdfFont.Cff*:PdfFont.HostileCharstrings*` passes under ASan with 0 warnings.
 
