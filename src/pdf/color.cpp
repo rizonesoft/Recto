@@ -32,6 +32,7 @@ namespace {
 std::atomic<detail::IccFailureForTesting> g_icc_failure{detail::IccFailureForTesting::None};
 std::atomic<size_t> g_translate_calls{0u};
 std::atomic<bool> g_default_cmyk_enabled{true};
+std::atomic<size_t> g_profile_decodes{0u};
 
 [[nodiscard]] float unit(double v) noexcept
 {
@@ -219,7 +220,8 @@ PdfResult<std::shared_ptr<const IccProfile>> IccProfile::make(
 			return make_pdf_error(ErrorCode::DamagedFormat, "ICC profile header is malformed");
 		}
 		const auto space = std::string_view(reinterpret_cast<const char*>(bytes.data() + 16), 4u);
-		const bool matches = (components == 1u && space == "GRAY") || (components == 3u && space == "RGB ") ||
+		const bool lab = components == 3u && space == "Lab ";
+		const bool matches = (components == 1u && space == "GRAY") || (components == 3u && space == "RGB ") || lab ||
 			(components == 4u && space == "CMYK");
 		if (!matches) {
 			return make_pdf_error(ErrorCode::DamagedFormat, "ICC profile colour space does not match /N");
@@ -228,6 +230,7 @@ PdfResult<std::shared_ptr<const IccProfile>> IccProfile::make(
 		auto profile = std::make_shared<IccProfile>();
 		profile->bytes = std::move(bytes);
 		profile->components = components;
+		profile->lab = lab;
 		profile->key = key != 0u ? key : bytes_key(profile->bytes);
 		return std::shared_ptr<const IccProfile>(std::move(profile));
 	} catch (const std::bad_alloc&) {
@@ -237,6 +240,8 @@ PdfResult<std::shared_ptr<const IccProfile>> IccProfile::make(
 
 struct ColorProfileCache::Impl {
 	std::map<std::pair<uint64_t, uint8_t>, HTRANSFORM> transforms; // a null transform: it could not be built
+	std::map<uint64_t, std::shared_ptr<const IccProfile>> read;    // profiles decoded, by stream object number
+	size_t read_bytes = 0;
 	std::set<uint64_t> profiles;
 	size_t profile_bytes = 0;
 	bool default_read = false;
@@ -305,26 +310,29 @@ PdfResult<bool> ColorProfileCache::to_srgb(const IccProfile& profile, RenderingI
 		auto it = impl_->transforms.find(key);
 		if (it == impl_->transforms.end()) {
 			const bool new_profile = !impl_->profiles.contains(profile.key);
-			if (transform_count() >= kMaxCachedColorTransforms ||
+			// Every build attempted counts, a failed one too, so profiles Windows refuses cannot grow the cache.
+			if (impl_->transforms.size() >= kMaxCachedColorTransforms ||
 				(new_profile && impl_->profile_bytes + profile.bytes.size() > kMaxCachedProfileBytes)) {
 				(void)make_pdf_error(ErrorCode::ResourceLimit, "Colour transforms past the document's limit"); // recorded
 				return false;
+			}
+			if (new_profile) {
+				impl_->profiles.insert(profile.key);
+				impl_->profile_bytes += profile.bytes.size();
 			}
 			HTRANSFORM transform = impl_->build(profile, intent);
 			it = impl_->transforms.emplace(key, transform).first;
 			if (transform == nullptr) {
 				return unusable("ICC profile or its transform to sRGB could not be built");
 			}
-			if (new_profile) {
-				impl_->profiles.insert(profile.key);
-				impl_->profile_bytes += profile.bytes.size();
-			}
 		}
 		if (it->second == nullptr) {
 			return false; // its diagnostic was recorded when the build failed
 		}
 		COLORTYPE type = COLOR_GRAY;
-		if (profile.components == 3u) {
+		if (profile.lab) {
+			type = COLOR_Lab;
+		} else if (profile.components == 3u) {
 			type = COLOR_RGB;
 		} else if (profile.components == 4u) {
 			type = COLOR_CMYK;
@@ -336,6 +344,10 @@ PdfResult<bool> ColorProfileCache::to_srgb(const IccProfile& profile, RenderingI
 			const double* c = in.data() + i * profile.components;
 			if (type == COLOR_GRAY) {
 				source[i].gray.gray = word(c[0]);
+			} else if (type == COLOR_Lab) {
+				source[i].Lab.L = word(c[0]);
+				source[i].Lab.a = word(c[1]);
+				source[i].Lab.b = word(c[2]);
 			} else if (type == COLOR_RGB) {
 				source[i].rgb.red = word(c[0]);
 				source[i].rgb.green = word(c[1]);
@@ -363,6 +375,32 @@ PdfResult<bool> ColorProfileCache::to_srgb(const IccProfile& profile, RenderingI
 	}
 }
 
+std::shared_ptr<const IccProfile> ColorProfileCache::profile(uint64_t key) const noexcept
+{
+	if (impl_ == nullptr) {
+		return nullptr;
+	}
+	const auto it = impl_->read.find(key);
+	return it != impl_->read.end() ? it->second : nullptr;
+}
+
+void ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profile) noexcept
+{
+	try {
+		if (impl_ == nullptr) {
+			impl_ = std::make_unique<Impl>();
+		}
+		if (impl_->read_bytes + profile->bytes.size() > kMaxCachedProfileBytes) {
+			return; // past the budget it is read again when needed, never kept
+		}
+		if (impl_->read.emplace(profile->key, profile).second) {
+			impl_->read_bytes += profile->bytes.size();
+		}
+	} catch (const std::bad_alloc&) {
+		// not kept: it is read again when needed
+	}
+}
+
 PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(const Document& document) noexcept
 {
 	try {
@@ -379,9 +417,15 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 		// The first output intent with a four-component profile.
 		if (const PdfValue* intents = document.catalog().get("OutputIntents")) {
 			auto list = document.resolve_value(*intents);
+			if (!list.has_value() && list.error().code == ErrorCode::OutOfMemory) {
+				return list.error();
+			}
 			if (list.has_value() && list->is_array()) {
 				for (const PdfValue& item : *list->as_array()) {
 					auto intent = document.resolve_value(item);
+					if (!intent.has_value() && intent.error().code == ErrorCode::OutOfMemory) {
+						return intent.error();
+					}
 					if (!intent.has_value() || !intent->is_dict()) {
 						continue;
 					}
@@ -393,12 +437,18 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					}
 					auto bytes = document.decode_stream(*stream->as_stream(), kMaxIccProfileBytes);
 					if (!bytes.has_value()) {
+						if (bytes.error().code == ErrorCode::OutOfMemory) {
+							return bytes.error();
+						}
 						continue;
 					}
 					auto profile = IccProfile::make(std::move(*bytes), 4u, ref.has_value() ? ref->obj_num : 0u);
 					if (profile.has_value()) {
 						impl_->default_cmyk = std::move(*profile);
 						return impl_->default_cmyk;
+					}
+					if (profile.error().code == ErrorCode::OutOfMemory) {
+						return profile.error();
 					}
 				}
 			}
@@ -466,16 +516,28 @@ std::shared_ptr<const ColorSpace> ColorSpace::icc(
 	return space;
 }
 
-std::shared_ptr<const ColorSpace> ColorSpace::from_icc_profile(std::span<const uint8_t> bytes, uint32_t components)
+PdfResult<std::shared_ptr<const ColorSpace>> ColorSpace::from_icc_profile(
+	std::span<const uint8_t> bytes, uint32_t components) noexcept
 {
-	const ColorSpaceKind device_kind = components == 1u ? ColorSpaceKind::DeviceGray
-		: components == 4u ? ColorSpaceKind::DeviceCMYK
-						   : ColorSpaceKind::DeviceRGB;
-	auto profile = IccProfile::make(std::vector<uint8_t>(bytes.begin(), bytes.end()), components, 0u);
-	if (!profile.has_value()) {
-		return device(device_kind);
+	try {
+		const ColorSpaceKind device_kind = components == 1u ? ColorSpaceKind::DeviceGray
+			: components == 4u ? ColorSpaceKind::DeviceCMYK
+							   : ColorSpaceKind::DeviceRGB;
+		auto profile = IccProfile::make(std::vector<uint8_t>(bytes.begin(), bytes.end()), components, 0u);
+		if (!profile.has_value()) {
+			if (profile.error().code == ErrorCode::OutOfMemory) {
+				return profile.error();
+			}
+			return device(device_kind);
+		}
+		std::vector<double> range;
+		if ((*profile)->lab) {
+			range = {0.0, 100.0, -128.0, 127.0, -128.0, 127.0};
+		}
+		return icc(std::move(*profile), std::move(range), device(device_kind));
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading an image's ICC profile");
 	}
-	return icc(std::move(*profile), {}, device(device_kind));
 }
 
 size_t ColorSpace::components() const noexcept
@@ -495,7 +557,7 @@ size_t ColorSpace::components() const noexcept
 
 std::array<double, 4> ColorSpace::initial() const noexcept
 {
-	if (kind_ == ColorSpaceKind::DeviceCMYK || (kind_ == ColorSpaceKind::ICCBased && components() == 4u)) {
+	if (kind_ == ColorSpaceKind::DeviceCMYK) {
 		return {0.0, 0.0, 0.0, 1.0};
 	}
 	if (kind_ == ColorSpaceKind::Lab) {
@@ -530,7 +592,13 @@ PdfResult<void> ColorSpace::to_srgb(
 	std::span<const double> in, size_t count, RenderingIntent intent, const Document& document, std::span<double> out) const noexcept
 {
 	const size_t n = components();
-	ColorProfileCache& cache = document.color_profiles();
+	ColorProfileCache* cache_slot = nullptr;
+	try {
+		cache_slot = &document.color_profiles();
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory creating the colour profile cache");
+	}
+	ColorProfileCache& cache = *cache_slot;
 	const IccProfile* profile = profile_.get();
 	std::shared_ptr<const IccProfile> cmyk;
 	if (kind_ == ColorSpaceKind::DeviceCMYK) {
@@ -721,13 +789,35 @@ ColorSpaces::ColorSpaces(const Document& document, const PdfDict* color_space_re
 
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::device(ColorSpaceKind kind) noexcept
 {
-	return device_at(kind, 0u, true);
+	try {
+		const uint64_t key = static_cast<uint64_t>(kind) + 1u;
+		for (const auto& [k, space] : resolved_) {
+			if (k == key) {
+				return space;
+			}
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, device_at(kind, 0u, true));
+		resolved_.emplace_back(key, space);
+		return space;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory resolving a colour space");
+	}
 }
 
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view name) noexcept
 {
 	try {
-		return resolve_at(PdfValue(PdfName(name)), 0u, true);
+		const uint64_t key = name_key(name);
+		for (const auto& [k, space] : resolved_) {
+			if (k == key) {
+				return space;
+			}
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(PdfValue(PdfName(name)), 0u, true));
+		if (resolved_.size() < 4'096u) {
+			resolved_.emplace_back(key, space);
+		}
+		return space;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory resolving a colour space");
 	}
@@ -903,33 +993,54 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				if (rv.has_value() && rv->is_array() && rv->as_array()->size() == 2u * n) {
 					for (const PdfValue& e : *rv->as_array()) {
 						const std::optional<double> x = e.as_number();
-						if (!x.has_value()) {
+						if (!x.has_value() || !std::isfinite(*x)) {
 							range.clear();
 							break;
 						}
 						range.push_back(*x);
 					}
+					for (size_t i = 0; i + 1u < range.size(); i += 2u) {
+						if (!(range[i] < range[i + 1u])) {
+							range.clear(); // reversed or empty: the default ranges
+							break;
+						}
+					}
+				}
+				if (range.empty()) {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "ICCBased /Range is not ordered pairs, one per component");
 				}
 			}
 			if (n_value != 1 && n_value != 3 && n_value != 4) {
 				(void)make_pdf_error(ErrorCode::DamagedFormat, "ICCBased /N is not 1, 3 or 4"); // recorded
 				return alternate;
 			}
-			auto bytes = document_.decode_stream(*stream, kMaxIccProfileBytes);
-			if (!bytes.has_value()) {
-				if (bytes.error().code == ErrorCode::OutOfMemory) {
-					return bytes.error();
+			ColorProfileCache& cache = document_.color_profiles();
+			std::shared_ptr<const IccProfile> profile = ref.has_value() ? cache.profile(ref->obj_num) : nullptr;
+			if (profile == nullptr || profile->components != n) {
+				g_profile_decodes.fetch_add(1u);
+				auto bytes = document_.decode_stream(*stream, kMaxIccProfileBytes);
+				if (!bytes.has_value()) {
+					if (bytes.error().code == ErrorCode::OutOfMemory) {
+						return bytes.error();
+					}
+					return alternate; // the decode recorded its own diagnostic
 				}
-				return alternate; // the decode recorded its own diagnostic
-			}
-			auto profile = IccProfile::make(std::move(*bytes), n, ref.has_value() ? ref->obj_num : 0u);
-			if (!profile.has_value()) {
-				if (profile.error().code == ErrorCode::OutOfMemory) {
-					return profile.error();
+				auto made = IccProfile::make(std::move(*bytes), n, ref.has_value() ? ref->obj_num : 0u);
+				if (!made.has_value()) {
+					if (made.error().code == ErrorCode::OutOfMemory) {
+						return made.error();
+					}
+					return alternate; // recorded by make_pdf_error
 				}
-				return alternate; // recorded by make_pdf_error
+				profile = std::move(*made);
+				if (ref.has_value()) {
+					cache.remember(profile);
+				}
 			}
-			return ColorSpace::icc(std::move(*profile), std::move(range), std::move(alternate));
+			if (range.empty() && profile->lab) {
+				range = {0.0, 100.0, -128.0, 127.0, -128.0, 127.0}; // a Lab profile's data are L*, a* and b*
+			}
+			return ColorSpace::icc(std::move(profile), std::move(range), std::move(alternate));
 		}
 		return std::shared_ptr<const ColorSpace>{}; // Indexed, Separation, DeviceN, Pattern: section 33
 	} catch (const std::bad_alloc&) {
@@ -947,6 +1058,11 @@ void set_icc_failure_for_testing(IccFailureForTesting failure) noexcept
 size_t translate_calls_for_testing() noexcept
 {
 	return g_translate_calls.load();
+}
+
+size_t icc_profile_decodes_for_testing() noexcept
+{
+	return g_profile_decodes.load();
 }
 
 void set_default_cmyk_profile_enabled_for_testing(bool enabled) noexcept

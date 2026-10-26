@@ -5206,6 +5206,16 @@ def build_icc_cmyk() -> bytes:
     return _icc_profile(b"prtr", b"CMYK", b"Lab ", tags)
 
 
+def build_icc_lab() -> bytes:
+    """A colour space profile whose data are Lab: identity lookup tables to and from the Lab PCS, so it draws Lab colours
+    as the Lab space itself does (an ICCBased space a print workflow may hold)."""
+    corners = [(l, a, b) for l in (0, 1) for a in (0, 1) for b in (0, 1)]
+    identity = _icc_lut16(3, 3, 2, [(65535.0 * l, 65535.0 * a, 65535.0 * b) for l, a, b in corners])
+    tags = [(b"desc", _icc_desc("Recto test Lab")), (b"cprt", _icc_text("CC0-1.0")), (b"wtpt", _icc_xyz(*D50_WHITE)),
+            (b"A2B0", identity), (b"B2A0", identity)]
+    return _icc_profile(b"spac", b"Lab ", b"Lab ", tags)
+
+
 def validate_icc_profile(rel_path: str, data: bytes) -> None:
     """An ICC profile's declared size, `acsp` and tag table stay inside the file."""
     (size,) = struct.unpack(">I", data[:4])
@@ -5611,6 +5621,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "color/rgb-matrix.icc": "ICC v2 RGB matrix and curve profile: sRGB primaries adapted to D50, gamma 2.2",
     "color/gray-trc.icc": "ICC v2 Gray profile: a gamma 1.8 curve",
     "color/cmyk-lut.icc": "ICC v2 CMYK output profile: Lab lookup tables, the perceptual ones of opposite hue",
+    "color/lab-identity.icc": "ICC v2 colour space profile whose data are Lab: identity tables to and from the Lab PCS",
         "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
     "flate/content-stream.txt": "1 MiB of generated page content operators, the Flate compressor's ratio and speed sample",
     "flate/random.bin": "64 KiB of incompressible bytes from a fixed seed, the Flate compressor's stored-block sample",
@@ -5689,6 +5700,7 @@ def expected_corpus_files() -> dict[str, bytes]:
         "color/rgb-matrix.icc": build_icc_rgb_matrix(),
         "color/gray-trc.icc": build_icc_gray(),
         "color/cmyk-lut.icc": build_icc_cmyk(),
+        "color/lab-identity.icc": build_icc_lab(),
         "fonts/truetype-composites.ttf": build_truetype_composites(),
         "flate/content-stream.txt": build_flate_content_stream(),
         "flate/random.bin": build_flate_random(),

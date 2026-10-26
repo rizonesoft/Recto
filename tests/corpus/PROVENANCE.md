@@ -17,6 +17,7 @@ Every file under `tests/corpus/` (excluding `README.md` and `PROVENANCE.md`) is 
 | broken/truncated-stream.pdf | c216a4ef5ba39f888d6bec646134b2e83657dcac591dd234793da2f0d90868df | CC0-1.0 | scripts/build-corpus.py | Stream truncated mid-payload before endstream testing stream bounds enforcement |
 | color/cmyk-lut.icc | ed780e20d0ab475e66ea4403103d6f5c1fc1702e5cc31bdfbb183273078b1a66 | CC0-1.0 | scripts/build-corpus.py | ICC v2 CMYK output profile: Lab lookup tables, the perceptual ones of opposite hue |
 | color/gray-trc.icc | 1d1b1a34192e332229599499d185e4fd1117899164656182306f9f294488c868 | CC0-1.0 | scripts/build-corpus.py | ICC v2 Gray profile: a gamma 1.8 curve |
+| color/lab-identity.icc | fd338bfd8a98a85117bc470bde68f45c419d073d195c10b383cd6e6be7b441e6 | CC0-1.0 | scripts/build-corpus.py | ICC v2 colour space profile whose data are Lab: identity tables to and from the Lab PCS |
 | color/rgb-matrix.icc | dce2e3fa2f2e36243b4b83f4753bbd48fbcd2d9ec842a62438079a03e252918f | CC0-1.0 | scripts/build-corpus.py | ICC v2 RGB matrix and curve profile: sRGB primaries adapted to D50, gamma 2.2 |
 | convert/sample.docx | 525a2e2eb074c0adbe3e9a5ec00da63979246efd4408e0fe1a183e968da6dfa7 | CC0-1.0 | scripts/build-corpus.py | Minimal ECMA-376 WordprocessingML document with two plain paragraphs |
 | convert/sample.xlsx | 7bf22cb06a2a705e0c3445dcc2d97a645ece184287c8353350a56942f78d15aa | CC0-1.0 | scripts/build-corpus.py | Minimal ECMA-376 SpreadsheetML workbook with inline-string and numeric cells |

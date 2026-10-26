@@ -934,6 +934,41 @@ TEST(PdfInterpreter, IccBasedColors)
 		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 20u);
 		EXPECT_EQ(detail::translate_calls_for_testing() - before, 1u);
 	}
+	// Painting right after selecting a four-component ICC space: its components start at 0 (white), not black.
+	expect_rgb8(fill("/CMYKP cs"), {255, 255, 255}, 2, "initial ICC CMYK fill");
+	expect_rgb8(painted(interpret("/CMYKP CS 0 0 m 10 0 l S", icc_resources(), icc_objects())).stroke_color, {255, 255, 255}, 2,
+		"initial ICC CMYK stroke");
+	// A Lab ICC profile: its data are L*, a* and b* (its /Range, or Lab's when it gives none).
+	for (const std::string_view range : {std::string_view(" /Range [0 100 -128 127 -128 127]"), std::string_view("")}) {
+		const auto lab_icc = painted(interpret("/L cs 50.1960784314 40 -28 scn 0 0 10 10 re f", "<< /ColorSpace << /L [/ICCBased 5 0 R] >> >>",
+			{stream_object("/N 3" + std::string(range), corpus_text("color/lab-identity.icc"))}));
+		expect_rgb8(lab_icc.fill_color, {167, 92, 168}, 2, "Lab ICC profile");
+	}
+	// A reversed /Range is ignored (the default 0 to 1), with a diagnostic.
+	clear_diagnostics();
+	expect_rgb8(painted(interpret("/P cs " + component(30) + " " + component(180) + " " + component(90) + " scn 0 0 10 10 re f",
+					"<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+					{stream_object("/N 3 /Range [1 0 0 1 0 1]", corpus_text("color/rgb-matrix.icc"))}))
+					.fill_color,
+		kRgbMatrix30_180_90, 2, "reversed /Range ignored");
+	{
+		const auto tail = diagnostics_tail(32u);
+		// The ring keeps each diagnostic's code, not its message (error.h).
+		EXPECT_TRUE(std::any_of(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }));
+	}
+	// Twenty selections of one space and twenty fills: one profile decode, one translation.
+	{
+		std::string many;
+		for (int i = 0; i < 20; ++i) {
+			many += cmyk + " 0 0 10 10 re f ";
+		}
+		const size_t decodes = detail::icc_profile_decodes_for_testing();
+		const size_t translations = detail::translate_calls_for_testing();
+		const auto r = interpret(many, icc_resources(), icc_objects());
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(detail::icc_profile_decodes_for_testing() - decodes, 1u);
+		EXPECT_EQ(detail::translate_calls_for_testing() - translations, 1u);
+	}
 	// One transform per profile and intent, across interpretations of one document.
 	{
 		auto doc = Document::open_memory(one_page_pdf(cmyk + " 0 0 10 10 re f /Perceptual ri 0 0 5 5 re f", icc_resources(), icc_objects()));
@@ -951,7 +986,13 @@ TEST(PdfInterpreter, IccBasedColors)
 	};
 	std::string damaged = corpus_text("color/rgb-matrix.icc");
 	damaged[36] = 'X'; // not `acsp`
+	clear_diagnostics();
 	expect_rgb8(with_profile(stream_object("/N 3", damaged)), raw, 0, "damaged profile");
+	{
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_TRUE(std::any_of(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }))
+			<< "a fallback records its diagnostic";
+	}
 	// A damaged profile with a calibrated /Alternate draws through the alternate.
 	const auto cal_alternate = painted(interpret("/P cs 0.5 scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
 		{stream_object("/N 1 /Alternate [/CalGray << /WhitePoint [0.9505 1 1.089] /Gamma 2.2 >>]", damaged)}));
@@ -988,6 +1029,44 @@ TEST(PdfInterpreter, IccBasedColors)
 	expect_rgb8(painted(interpret("/A cs 0.3 sc 0 0 10 10 re f", "<< /ColorSpace << /A /B /B /A >> >>")).fill_color,
 		{77, 77, 77}, 0, "resources naming one another");
 
+	// Two pages of one document share one transform.
+	{
+		std::vector<std::string> objects;
+		objects.emplace_back("<< /Type /Catalog /Pages 2 0 R >>");
+		objects.emplace_back("<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 /Resources << /ColorSpace << /RGBP [/ICCBased 6 0 R] >> >> >>");
+		objects.emplace_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>");
+		objects.push_back(stream_object("", "/RGBP cs 0.1 0.2 0.3 scn 0 0 10 10 re f"));
+		objects.emplace_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>");
+		objects.push_back(stream_object("/N 3", corpus_text("color/rgb-matrix.icc")));
+		auto doc = Document::open_memory(pdf_from_objects(objects));
+		ASSERT_TRUE(doc.has_value());
+		const size_t decodes = detail::icc_profile_decodes_for_testing();
+		ASSERT_TRUE(interpret_page(**doc, 0u).has_value());
+		ASSERT_TRUE(interpret_page(**doc, 1u).has_value());
+		EXPECT_EQ((*doc)->color_profiles().transform_count(), 1u);
+		EXPECT_EQ(detail::icc_profile_decodes_for_testing() - decodes, 1u); // the profile read once for both pages
+	}
+	// Failed builds count toward the budget too: 64 profiles Windows refuses spend it, and a good 65th falls back.
+	{
+		// A header Recto accepts over an empty tag table, which Windows cannot build a transform from.
+		std::string refused = corpus_text("color/rgb-matrix.icc");
+		refused[128] = refused[129] = refused[130] = refused[131] = '\0';
+		std::string content;
+		std::string spaces_text = "<< /ColorSpace << ";
+		std::vector<std::string> objects;
+		for (int i = 0; i < 65; ++i) {
+			spaces_text += "/P" + std::to_string(i) + " [/ICCBased " + std::to_string(5 + i) + " 0 R] ";
+			objects.push_back(stream_object("/N 3", i < 64 ? refused : corpus_text("color/rgb-matrix.icc")));
+			content += "/P" + std::to_string(i) + " cs " + component(30) + " " + component(180) + " " + component(90) +
+				" scn 0 0 10 10 re f ";
+		}
+		const auto r = interpret(content, spaces_text + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 65u);
+		expect_rgb8(draws[0].fill_color, raw, 0, "a refused profile");
+		expect_rgb8(draws[64].fill_color, raw, 0, "a good profile after 64 refused builds");
+	}
 	// The cache's budget: 64 transforms per document; the 65th profile takes its fallback.
 	{
 		std::string content;
@@ -1062,6 +1141,10 @@ TEST(PdfInterpreter, DefaultColorSpaces)
 	expect_rgb8(fill("0 " + component(128) + " 0 " + component(64) + " k", defaults), kCmykRelative, 2, "k through /DefaultCMYK");
 	const auto stroked = painted(interpret(rgb + " RG 0 0 m 10 0 l S", defaults, icc_objects()));
 	expect_rgb8(stroked.stroke_color, kRgbMatrix30_180_90, 2, "RG through /DefaultRGB");
+	expect_rgb8(painted(interpret(component(64) + " G 0 0 m 10 0 l S", defaults, icc_objects())).stroke_color, kGray64, 2,
+		"G through /DefaultGray");
+	expect_rgb8(painted(interpret("0 " + component(128) + " 0 " + component(64) + " K 0 0 m 10 0 l S", defaults, icc_objects())).stroke_color,
+		kCmykRelative, 2, "K through /DefaultCMYK");
 	// No default: the device space; a default naming its own device space: the device space.
 	expect_rgb8(fill(rgb + " rg", "<< >>"), {30, 180, 90}, 0, "no default");
 	expect_rgb8(fill(rgb + " rg", "<< /ColorSpace << /DefaultRGB /DeviceRGB >> >>"), {30, 180, 90}, 0, "a default naming itself");
@@ -1140,10 +1223,70 @@ TEST(PdfColor, ImageSamples)
 	const std::string gray_profile = corpus_text("color/gray-trc.icc");
 	const auto own = ColorSpace::from_icc_profile(
 		std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(gray_profile.data()), gray_profile.size()), 1u);
-	EXPECT_EQ(own->kind(), ColorSpaceKind::ICCBased);
-	EXPECT_LE(std::abs(row(*own, {64u}, 1u, 8u)[0] - kGray64.r), 2);
+	ASSERT_TRUE(own.has_value());
+	EXPECT_EQ((*own)->kind(), ColorSpaceKind::ICCBased);
+	EXPECT_LE(std::abs(row(**own, {64u}, 1u, 8u)[0] - kGray64.r), 2);
 	const std::vector<uint8_t> junk(200u, 0x41u);
-	EXPECT_EQ(ColorSpace::from_icc_profile(junk, 1u)->kind(), ColorSpaceKind::DeviceGray);
+	auto junk_space = ColorSpace::from_icc_profile(junk, 1u);
+	ASSERT_TRUE(junk_space.has_value());
+	EXPECT_EQ((*junk_space)->kind(), ColorSpaceKind::DeviceGray);
+
+	// Rows in the calibrated spaces and through an ICC CMYK profile match the single-colour path.
+	CieParams gray_params;
+	gray_params.white = {0.9505, 1.0, 1.089};
+	gray_params.gamma = {2.2, 2.2, 2.2};
+	const auto cal_gray = ColorSpace::cie(ColorSpaceKind::CalGray, gray_params);
+	const int cal_value = byte_of(srgb_encoded(std::pow(128.0 / 255.0, 2.2)));
+	EXPECT_LE(std::abs(row(*cal_gray, {128u}, 1u, 8u)[0] - cal_value), 1);
+	CieParams rgb_params;
+	rgb_params.white = {0.9505, 1.0, 1.089};
+	rgb_params.matrix = {0.4124, 0.2126, 0.0193, 0.3576, 0.7152, 0.1192, 0.1805, 0.0722, 0.9505};
+	const auto cal_rgb = ColorSpace::cie(ColorSpaceKind::CalRGB, rgb_params);
+	const auto cal_rgb_row = row(*cal_rgb, {51u, 128u, 204u}, 1u, 8u);
+	EXPECT_LE(std::abs(cal_rgb_row[0] - byte_of(srgb_encoded(0.2))), 1);
+	EXPECT_LE(std::abs(cal_rgb_row[2] - byte_of(srgb_encoded(0.8))), 1);
+	const std::string cmyk_profile = corpus_text("color/cmyk-lut.icc");
+	auto cmyk = IccProfile::make(std::vector<uint8_t>(cmyk_profile.begin(), cmyk_profile.end()), 4u, 0u);
+	ASSERT_TRUE(cmyk.has_value());
+	const auto cmyk_space = ColorSpace::icc(*cmyk, {}, ColorSpace::device(ColorSpaceKind::DeviceCMYK));
+	const auto cmyk_row = row(*cmyk_space, {0u, 128u, 0u, 64u}, 1u, 8u);
+	EXPECT_LE(std::abs(cmyk_row[0] - kCmykRelative.r), 2);
+	EXPECT_LE(std::abs(cmyk_row[1] - kCmykRelative.g), 2);
+	// A whole row whose translation fails takes the alternate for the whole row, never part of it.
+	detail::set_icc_failure_for_testing(detail::IccFailureForTesting::Translate);
+	const auto failed_row = row(*icc, {128u, 64u, 200u, 30u, 180u, 90u}, 2u, 8u);
+	detail::set_icc_failure_for_testing(detail::IccFailureForTesting::None);
+	EXPECT_EQ(failed_row, (std::vector<uint8_t>{128, 64, 200, 255, 30, 180, 90, 255}));
+
+	// Memory running out while reading an image's profile is OutOfMemory, never a device-space fallback.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		const recto::test::ScopedAllocationFailure fail(1u, gray_profile.size());
+		const auto failed = ColorSpace::from_icc_profile(
+			std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(gray_profile.data()), gray_profile.size()), 1u);
+		ASSERT_FALSE(failed.has_value());
+		EXPECT_EQ(failed.error().code, ErrorCode::OutOfMemory);
+	}
+
+	// The profile byte budget: four 16 MiB profiles fit in 64 MiB, a fifth does not.
+	auto budget_doc = Document::open_memory(one_page_pdf(std::nullopt));
+	ASSERT_TRUE(budget_doc.has_value());
+	const std::string big_base = corpus_text("color/gray-trc.icc");
+	const std::array<double, 1> mid = {0.5};
+	std::array<double, 3> out{};
+	for (uint32_t i = 0; i < 5u; ++i) {
+		std::vector<uint8_t> big(big_base.begin(), big_base.end());
+		big.resize(kMaxIccProfileBytes, 0u);
+		const uint32_t size = static_cast<uint32_t>(big.size());
+		big[0] = static_cast<uint8_t>(size >> 24u);
+		big[1] = static_cast<uint8_t>(size >> 16u);
+		big[2] = static_cast<uint8_t>(size >> 8u);
+		big[3] = static_cast<uint8_t>(size);
+		auto profile_i = IccProfile::make(std::move(big), 1u, 1000u + i);
+		ASSERT_TRUE(profile_i.has_value()) << i;
+		auto converted = (*budget_doc)->color_profiles().to_srgb(**profile_i, RenderingIntent::RelativeColorimetric, mid, 1u, out);
+		ASSERT_TRUE(converted.has_value());
+		EXPECT_EQ(*converted, i < 4u) << "profile " << i;
+	}
 }
 
 } // namespace

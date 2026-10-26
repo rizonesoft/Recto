@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 627
+Sections: 98 | Checklist items: 628
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -95,7 +95,7 @@ Sections: 98 | Checklist items: 627
 | [x]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 10    |
 | [x]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 9     |
 | [x]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
-| [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
+| [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 7     |
 | [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
@@ -157,7 +157,7 @@ Sections: 98 | Checklist items: 627
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1311
+Sections: 148 | Checklist items: 1312
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -237,7 +237,7 @@ Sections: 148 | Checklist items: 1311
 | [ ]    | D02 T01 §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog                                  | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §13 | `SessionStore`: persist open tabs and the active tab                                     | windows-host                  | 6     |
 | [ ]    | D02 T01 §21 | Window placement: remember bounds and recover from a missing display                     | windows-host, display-session | 8     |
-| [ ]    | D02 T02 §1  | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread  | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §1  | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread  | windows-host, display-session | 9     |
 | [ ]    | D02 T02 §2  | Lock-free viewport state channel, DPI scaling and page-outline loading placeholders      | windows-host, display-session | 7     |
 | [ ]    | D02 T02 §3  | Worker D3D11 texture upload and LRU budgeted tile texture cache                          | windows-host, display-session | 9     |
 | [ ]    | D02 T02 §4  | Viewport-to-scheduler tile driver and seam-free page compositing                         | windows-host, display-session | 8     |
@@ -917,4 +917,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 86/846 verified sections, 34 ready to run now.
 
-Checklist: 544/6233 items completed (includes Commit items).
+Checklist: 545/6235 items completed (includes Commit items).

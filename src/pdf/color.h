@@ -53,9 +53,11 @@ struct IccProfile {
 	std::vector<uint8_t> bytes;
 	uint32_t components = 0;
 	uint64_t key = 0;
+	bool lab = false; // three components whose data are Lab, not RGB
 
 	// The bytes as a profile with `components` components: at most `kMaxIccProfileBytes`, its declared size, `acsp`
-	// and its colour space matching; anything else is `DamagedFormat` (`ResourceLimit` past the size bound).
+	// and its colour space matching (`GRAY`, `RGB ` or `Lab ` for three, `CMYK`); anything else is `DamagedFormat`
+	// (`ResourceLimit` past the size bound).
 	[[nodiscard]] static PdfResult<std::shared_ptr<const IccProfile>> make(
 		std::vector<uint8_t> bytes, uint32_t components, uint64_t key) noexcept;
 };
@@ -82,6 +84,11 @@ public:
 
 	[[nodiscard]] size_t transform_count() const noexcept;
 
+	// A profile already read for this document under `key` (a stream's object number), so a space selected again is
+	// not decoded again, or null; `remember` keeps one, within the profile byte budget.
+	[[nodiscard]] std::shared_ptr<const IccProfile> profile(uint64_t key) const noexcept;
+	void remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
+
 	struct Impl;
 
 private:
@@ -106,8 +113,9 @@ public:
 	[[nodiscard]] static std::shared_ptr<const ColorSpace> icc(std::shared_ptr<const IccProfile> profile,
 		std::vector<double> range, std::shared_ptr<const ColorSpace> alternate);
 	// An image's own profile (a JPX `colr` box) for an image dictionary that names no colour space; a profile that
-	// cannot be read gives the device space of its component count.
-	[[nodiscard]] static std::shared_ptr<const ColorSpace> from_icc_profile(std::span<const uint8_t> bytes, uint32_t components);
+	// cannot be read gives the device space of its component count, allocation failure `OutOfMemory`.
+	[[nodiscard]] static PdfResult<std::shared_ptr<const ColorSpace>> from_icc_profile(
+		std::span<const uint8_t> bytes, uint32_t components) noexcept;
 
 	[[nodiscard]] ColorSpaceKind kind() const noexcept
 	{
@@ -170,6 +178,8 @@ private:
 	const Document& document_;
 	const PdfDict* resources_;
 	std::vector<uint64_t> visiting_; // the indirect objects and resource names on the current resolution path
+	// What `named` and `device` gave, so selecting a space again returns the same space (and its decoded profile).
+	std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> resolved_;
 };
 
 namespace detail {
@@ -184,6 +194,7 @@ enum class IccFailureForTesting : uint8_t {
 void set_icc_failure_for_testing(IccFailureForTesting failure) noexcept;
 [[nodiscard]] size_t translate_calls_for_testing() noexcept;
 void set_default_cmyk_profile_enabled_for_testing(bool enabled) noexcept;
+[[nodiscard]] size_t icc_profile_decodes_for_testing() noexcept;
 
 } // namespace detail
 
