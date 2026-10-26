@@ -1049,6 +1049,14 @@ TEST(PdfInterpreter, IccBasedColors)
 		EXPECT_EQ((*profile)->bytes.size(), declared);
 		EXPECT_LE((*profile)->bytes.capacity(), declared + 64u);
 	}
+	// /Range elements through references read as the same numbers given directly: 0.5 in [0 0.5] is the top of the
+	// range, white.
+	for (const std::string_view range : {std::string_view("[0 0.5]"), std::string_view("[0 6 0 R]")}) {
+		expect_rgb8(painted(interpret("/P cs 0.5 scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+						{stream_object("/N 1 /Range " + std::string(range), corpus_text("color/gray-trc.icc")), "0.5"}))
+						.fill_color,
+			{255, 255, 255}, 2, range);
+	}
 	// /N through a reference.
 	expect_rgb8(painted(interpret("/P cs " + component(64) + " scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
 					{stream_object("/N 6 0 R", corpus_text("color/gray-trc.icc")), "1"}))

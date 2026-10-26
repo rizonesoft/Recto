@@ -1035,7 +1035,8 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				const std::optional<PdfValue> rv = value_of(*r);
 				if (rv.has_value() && rv->is_array() && rv->as_array()->size() == 2u * n) {
 					for (const PdfValue& e : *rv->as_array()) {
-						const std::optional<double> x = e.as_number();
+						const std::optional<PdfValue> element = value_of(e); // each element may be indirect too
+						const std::optional<double> x = element.has_value() ? element->as_number() : std::nullopt;
 						if (!x.has_value() || !std::isfinite(*x)) {
 							range.clear();
 							break;
