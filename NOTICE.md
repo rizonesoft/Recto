@@ -10,6 +10,9 @@ This file records the third-party components and assets that exist in the reposi
 | --------- | ---- | ------- | ----- |
 | Newsreader font outlines | `resources/svg/wordmark-*.svg`, `resources/svg/lockup-*.svg`, `design/brand/*.png` | SIL Open Font License 1.1 | Used only for the "Recto" wordmark and tagline. `design/tools/build_resources.py` converts the glyphs to outlines: SVG paths in the wordmark and lockup files, and the same outlines drawn into the generated brand PNGs. The font file itself is not shipped in the app package. Copyright the Newsreader Project Authors. |
 
+| Adobe Core14 AFM files | `third_party/adobe-core14-afm/` (generated into `src/pdf/standard14_metrics.inc`) | Adobe's Core14 notice (`MustRead.html`, kept with the files) | The metrics of the fourteen standard PDF fonts (D01 T02 section 27), unmodified; use, copying and distribution permitted with the notice retained. Copyright Adobe Systems Incorporated. |
+| Adobe Glyph List and ZapfDingbats list (excerpts) | `tests/recto-tests/pdf_font_tests.cpp` (test tables, with the notice) | BSD-3-Clause | Glyph name to Unicode mappings for the Core14 glyphs, used only by tests (D01 T02 section 27; the full lists enter with D01 T02 section 28). Copyright 2002-2019 Adobe. |
+
 ## Entering the build in M0 to M6 (none vendored in shipping code; tracked here so the roster is never implicit)
 
 | Component | Enters at | Expected license | Shipped in app? |

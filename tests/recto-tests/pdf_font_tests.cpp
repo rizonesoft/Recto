@@ -736,6 +736,42 @@ TEST(PdfFont, Standard14Aliases)
 	}
 }
 
+// The two tables below are taken from Adobe's zapfdingbats.txt and glyphlist.txt (the Adobe Glyph List,
+// adobe-type-tools/agl-aglfn at 4036a9c), whose notice they carry:
+//
+// Copyright 2002-2019 Adobe (http://www.adobe.com/).
+//
+// Redistribution and use in source and binary forms, with or
+// without modification, are permitted provided that the
+// following conditions are met:
+//
+// Redistributions of source code must retain the above
+// copyright notice, this list of conditions and the following
+// disclaimer.
+//
+// Redistributions in binary form must reproduce the above
+// copyright notice, this list of conditions and the following
+// disclaimer in the documentation and/or other materials
+// provided with the distribution.
+//
+// Neither the name of Adobe nor the names of its contributors
+// may be used to endorse or promote products derived from this
+// software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+// CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+// INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+// DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+// NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+// LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+// CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+// OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+//
 // Adobe's zapfdingbats.txt (adobe-type-tools/agl-aglfn at 4036a9c): the Unicode scalar each ZapfDingbats glyph
 // stands for, by code, every glyph but space. The test table only; the encoding itself is D01 T02 section 28's.
 struct CodeUnicode {
@@ -1013,7 +1049,13 @@ TEST(PdfFont, Standard14Repertoire)
 		if (font == Standard14Font::Symbol) {
 			for (const Standard14Glyph& g : m.glyphs) {
 				if (g.code < 0) {
-					++unencoded; // Adobe's apple: no code reaches it, and no Unicode scalar names it
+					// Adobe's apple: no code reaches it, and the Glyph List names it only by private-use U+F8FF, which no
+					// Windows face draws, so it is the one glyph with nothing to draw: recorded, not counted as drawn.
+					ASSERT_EQ(g.name, "apple");
+					auto none = standard14_face_glyph(font, U'\xF8FF');
+					ASSERT_TRUE(none.has_value());
+					EXPECT_FALSE(none->has_value());
+					++unencoded;
 					continue;
 				}
 				check(g, static_cast<char32_t>(g.code), g.name != "Euro");
