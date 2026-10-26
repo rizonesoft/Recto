@@ -320,10 +320,15 @@ void add_single(std::vector<TrueTypeTables::Group>& groups, uint32_t code, uint3
 			const size_t g = at + 16u + size_t{i} * 12u;
 			const uint32_t start = cmap.u32(g);
 			const uint32_t end = cmap.u32(g + 4u);
+			const uint32_t glyph = cmap.u32(g + 8u);
 			if (start > end || end > 0x10FFFFu || (!sub.groups.empty() && start <= sub.groups.back().end)) {
 				return table_error("TrueType cmap format 12 group is reversed, out of range or overlapping");
 			}
-			sub.groups.push_back({start, end, cmap.u32(g + 8u)});
+			// Glyph IDs run on from startGlyphID without wrapping, and are 16-bit.
+			if (uint64_t{glyph} + (end - start) > 0xFFFFu) {
+				return table_error("TrueType cmap format 12 group runs past the last glyph ID");
+			}
+			sub.groups.push_back({start, end, glyph});
 		}
 		return std::optional<TrueTypeTables::Subtable>(std::move(sub));
 	}
@@ -427,8 +432,17 @@ void add_single(std::vector<TrueTypeTables::Group>& groups, uint32_t code, uint3
 		if (!post->fits(34u, size_t{glyphs} * 2u)) {
 			return table_error("TrueType post format 2 glyph name indices do not fit the table");
 		}
+		// Only as many strings as the highest name index refers to: bytes past them name nothing.
+		size_t wanted = 0;
+		for (uint16_t glyph = 0; glyph < glyphs; ++glyph) {
+			const uint16_t index = post->u16(34u + size_t{glyph} * 2u);
+			if (index >= kMacGlyphNames.size()) {
+				wanted = std::max<size_t>(wanted, size_t{index} - kMacGlyphNames.size() + 1u);
+			}
+		}
 		std::vector<std::string_view> strings;
-		for (size_t at = strings_at; at < post->bytes.size();) {
+		strings.reserve(wanted);
+		for (size_t at = strings_at; at < post->bytes.size() && strings.size() < wanted;) {
 			const size_t length = post->bytes[at];
 			if (!post->fits(at + 1u, length)) {
 				return table_error("TrueType post format 2 glyph name runs past the table");

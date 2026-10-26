@@ -1737,6 +1737,9 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 	still_selects(damaged(beside(format12({{{0x40, 0x50, 5}}, {{0x45, 0x60, 9}}}), 10u), "overlapping format 12 groups"),
 		"overlapping");
 	still_selects(damaged(beside(format12({{{0x40, 0x110000, 5}}}), 10u), "a format 12 group past U+10FFFF"), "past");
+	// Review round 2: glyph IDs that wrap or pass 0xFFFF are damage, not small glyph IDs.
+	still_selects(damaged(beside(format12({{{0x40, 0x42, 0xFFFFFFFFu}}}), 10u), "format 12 glyph IDs wrapping"), "wrap");
+	still_selects(damaged(beside(format12({{{0x40, 0x42, 0xFFFEu}}}), 10u), "format 12 glyph IDs past 0xFFFF"), "past glyphs");
 	// A damaged post table: its names are gone, the cmap stays (G4), and every truncation is typed (G5).
 	{
 		const std::vector<uint8_t> cmap = cmap_table({{3, 1, format4({{0x41, 1}})}});
@@ -1768,6 +1771,23 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 		odd[offsets + 1u] = 5u;
 		still_selects(damaged(beside(odd), "an unaligned idRangeOffset"), "unaligned");
 	}
+	// Review round 2: bytes past the strings a post table's names refer to are not read as names, so a large padded
+	// table costs nothing beyond its one name.
+	{
+		std::vector<uint8_t> post = post2({".notdef", "A"});
+		post.resize(post.size() + (size_t{8} << 20u), 0u);
+		const std::vector<uint8_t> program = sfnt(cmap_table({{3, 1, format4({{0x41, 1}})}}), post);
+		const auto started = std::chrono::steady_clock::now();
+		const recto::test::ScopedHeapMeter meter;
+		auto parsed = TrueTypeTables::parse(program);
+		const size_t peak = meter.peak_bytes();
+		const auto elapsed = std::chrono::steady_clock::now() - started;
+		ASSERT_TRUE(parsed.has_value()) << parsed.error().message.view();
+		EXPECT_TRUE(parsed->damage().empty());
+		EXPECT_EQ(parsed->glyph_for_name("A"), std::optional<uint16_t>(uint16_t{1u}));
+		EXPECT_LT(peak, size_t{1} << 20u); // not a string record per padding byte (0 under ASan, which has no meter)
+		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
+	}
 	// Review round 1: records repeating one damaged subtable read it once, not once each.
 	{
 		std::vector<std::array<uint32_t, 3>> groups;
@@ -1793,10 +1813,16 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 		EXPECT_EQ(parsed->damage().size(), 1u);
 		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
 	}
-	// The work stays linear: one format 12 group over every Unicode scalar reads back quickly.
+	// The work stays linear: format 12 groups over every Unicode scalar (each within the 16-bit glyph IDs) read back
+	// quickly.
 	{
+		std::vector<std::array<uint32_t, 3>> groups;
+		for (uint32_t start = 0x20; start <= 0x10FFFFu; start += 0xFFFFu) {
+			groups.push_back({start, std::min<uint32_t>(start + 0xFFFEu, 0x10FFFFu), 1u});
+		}
+		const std::vector<uint8_t> program = sfnt(cmap_table({{3, 10, format12(groups)}}));
 		const auto started = std::chrono::steady_clock::now();
-		auto big = TrueTypeTables::parse(sfnt(cmap_table({{3, 10, format12({{{0x20, 0x10FFFF, 1}}})}})));
+		auto big = TrueTypeTables::parse(program);
 		const auto elapsed = std::chrono::steady_clock::now() - started;
 		ASSERT_TRUE(big.has_value()) << big.error().message.view();
 		EXPECT_TRUE(big->damage().empty());
