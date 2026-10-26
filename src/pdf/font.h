@@ -173,6 +173,8 @@ public:
 	[[nodiscard]] std::optional<uint16_t> glyph_for_name(std::string_view name) const noexcept;
 	// The glyph a CID-keyed CFF charset gives a CID, or none.
 	[[nodiscard]] std::optional<uint16_t> glyph_for_cid(uint32_t cid) const noexcept;
+	// Whether the program is a CID-keyed CFF, whose charset maps CIDs to glyphs (D01 T02 section 30).
+	[[nodiscard]] bool cid_keyed() const noexcept;
 	// The program's built-in encoding (a Type 1 `/Encoding`, a CFF encoding) as 256 glyph names, for `SimpleEncoding`
 	// (D01 T02 section 28), or null for a font without one.
 	[[nodiscard]] const GlyphNames* built_in_encoding() const noexcept;

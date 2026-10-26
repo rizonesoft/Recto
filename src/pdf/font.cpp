@@ -1508,6 +1508,11 @@ std::optional<uint16_t> LoadedFont::glyph_for_cid(uint32_t cid) const noexcept
 	return it->second;
 }
 
+bool LoadedFont::cid_keyed() const noexcept
+{
+	return charstrings_ != nullptr && charstrings_->kind == CharstringProgram::Kind::CffCid;
+}
+
 const GlyphNames* LoadedFont::built_in_encoding() const noexcept
 {
 	if (charstrings_ == nullptr || !charstrings_->built_in.has_value()) {
