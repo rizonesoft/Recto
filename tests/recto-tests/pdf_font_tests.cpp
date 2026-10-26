@@ -1656,10 +1656,24 @@ TEST(PdfFont, TrueTypeCmapSelection)
 
 TEST(PdfFont, TrueTypeCmapMalformed)
 {
+	// The font program cannot be read at all: refused.
 	const auto refused = [](const std::vector<uint8_t>& program, std::string_view what) {
 		auto parsed = TrueTypeTables::parse(program);
 		ASSERT_FALSE(parsed.has_value()) << what;
 		EXPECT_EQ(parsed.error().code, ErrorCode::DamagedFormat) << what;
+	};
+	// One component is damaged: it is left out with its typed error, and the rest stays usable (completion review G4).
+	const auto damaged = [](const std::vector<uint8_t>& program, std::string_view what) {
+		auto parsed = TrueTypeTables::parse(program);
+		EXPECT_TRUE(parsed.has_value()) << what;
+		if (!parsed.has_value()) {
+			return TrueTypeTables{};
+		}
+		EXPECT_EQ(parsed->damage().size(), 1u) << what;
+		if (!parsed->damage().empty()) {
+			EXPECT_EQ(parsed->damage()[0].code, ErrorCode::DamagedFormat) << what;
+		}
+		return std::move(*parsed);
 	};
 	refused({0x00, 0x01, 0x00, 0x00, 0x00, 0x05}, "a truncated table directory");
 	{
@@ -1668,44 +1682,65 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 		refused(program, "a table outside the program");
 	}
 	refused(sfnt({0x00, 0x00}), "a truncated cmap header");
+	// Each damaged subtable beside a good (3,0) one: the (3,1) is gone, the (3,0) still selects.
+	const std::vector<uint8_t> good = format4({{0xF041, 8}});
+	const auto beside = [&](std::vector<uint8_t> bad, uint16_t encoding = 1u) {
+		return sfnt(cmap_table({{3, encoding, std::move(bad)}, {3, 0, good}}));
+	};
+	const SimpleEncoding symbolic = *SimpleEncoding::build(nullptr, true, nullptr);
+	const auto still_selects = [&](const TrueTypeTables& tables, std::string_view what) {
+		EXPECT_FALSE(tables.has(3u, 1u) || tables.has(3u, 10u)) << what;
+		EXPECT_EQ(simple_truetype_glyph(tables, symbolic, true, false, 0x41), 8u) << what;
+	};
 	{
-		std::vector<uint8_t> cmap = cmap_table({{3, 1, format4({{0x41, 5}})}});
-		cmap[4u + 4u + 3u] = 0xF0; // the subtable offset, past the cmap table
-		refused(sfnt(cmap), "a subtable offset past the table");
+		std::vector<uint8_t> cmap = cmap_table({{3, 1, format4({{0x41, 5}})}, {3, 0, good}});
+		cmap[4u + 4u + 3u] = 0xF0; // the (3,1) subtable offset, past the cmap table
+		still_selects(damaged(sfnt(cmap), "a subtable offset past the table"), "offset");
 	}
 	{
 		std::vector<uint8_t> sub = format4({{0x41, 5}});
 		sub[6] = 0x7F; // segCountX2 far larger than the subtable
-		refused(sfnt(cmap_table({{3, 1, sub}})), "format 4 segment counts larger than the subtable");
+		still_selects(damaged(beside(sub), "format 4 segment counts"), "segments");
 	}
 	{
 		std::vector<uint8_t> sub = format4({{0x41, 5}});
 		const size_t offsets = 14u + 4u + 2u + 4u + 4u; // two segments: ends, pad, starts, deltas
 		sub[offsets] = 0x40; // the first segment's idRangeOffset, outside the glyph array
-		refused(sfnt(cmap_table({{3, 1, sub}})), "a format 4 idRangeOffset outside the glyph array");
+		still_selects(damaged(beside(sub), "a format 4 idRangeOffset outside the glyph array"), "range offset");
 	}
 	{
 		std::vector<uint8_t> sub = format4({{0x41, 5}});
 		sub[14u + 4u + 2u] = 0x00;
 		sub[14u + 4u + 2u + 1u] = 0x42; // the first segment starts after it ends
-		refused(sfnt(cmap_table({{3, 1, sub}})), "a reversed format 4 segment");
+		still_selects(damaged(beside(sub), "a reversed format 4 segment"), "reversed");
 	}
 	{
 		std::vector<uint8_t> sub = format12({{{0x41, 0x42, 5}}});
 		sub[12] = 0x00;
 		sub[13] = 0x10; // numGroups far larger than the table
-		refused(sfnt(cmap_table({{3, 10, sub}})), "format 12 group counts larger than the table");
+		still_selects(damaged(beside(sub, 10u), "format 12 group counts"), "groups");
 	}
-	refused(sfnt(cmap_table({{3, 10, format12({{{0x50, 0x40, 5}}})}})), "a reversed format 12 group");
-	refused(sfnt(cmap_table({{3, 10, format12({{{0x40, 0x50, 5}}, {{0x45, 0x60, 9}}})}})), "overlapping format 12 groups");
-	refused(sfnt(cmap_table({{3, 10, format12({{{0x40, 0x110000, 5}}})}})), "a format 12 group past U+10FFFF");
+	still_selects(damaged(beside(format12({{{0x50, 0x40, 5}}}), 10u), "a reversed format 12 group"), "reversed 12");
+	still_selects(damaged(beside(format12({{{0x40, 0x50, 5}}, {{0x45, 0x60, 9}}}), 10u), "overlapping format 12 groups"),
+		"overlapping");
+	still_selects(damaged(beside(format12({{{0x40, 0x110000, 5}}}), 10u), "a format 12 group past U+10FFFF"), "past");
+	// A damaged post table: its names are gone, the cmap stays (G4), and every truncation is typed (G5).
 	{
-		std::vector<uint8_t> post = post2({".notdef", "A"});
-		post[32] = 0x7F; // numGlyphs far larger than the table
-		refused(sfnt(cmap_table({{3, 1, format4({{0x41, 1}})}}), post), "post glyph indices larger than the table");
+		const std::vector<uint8_t> cmap = cmap_table({{3, 1, format4({{0x41, 1}})}});
+		std::vector<uint8_t> counts = post2({".notdef", "A"});
+		counts[32] = 0x7F; // numGlyphs far larger than the table
 		std::vector<uint8_t> runs = post2({".notdef", "A"});
 		runs[runs.size() - 2u] = 0x40; // the name's length, past the table
-		refused(sfnt(cmap_table({{3, 1, format4({{0x41, 1}})}}), runs), "a post name past the table");
+		std::vector<uint8_t> missing = post2({".notdef", "A"});
+		missing.resize(missing.size() - 2u); // the string glyph 1 names is gone
+		const std::vector<uint8_t> short_header(20u, 0u);
+		for (const auto& [post, what] : {std::pair{counts, "post glyph indices larger than the table"},
+				 std::pair{runs, "a post name past the table"}, std::pair{missing, "a post index naming no string"},
+				 std::pair{short_header, "a post table shorter than its header"}}) {
+			const TrueTypeTables tables = damaged(sfnt(cmap, post), what);
+			EXPECT_EQ(tables.glyph_for_name("A"), std::nullopt) << what;
+			EXPECT_EQ(tables.lookup(3u, 1u, 0x41), std::optional<uint16_t>(uint16_t{1u})) << what;
+		}
 	}
 	// The work stays linear: one format 12 group over every Unicode scalar reads back quickly.
 	{
@@ -1713,6 +1748,7 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 		auto big = TrueTypeTables::parse(sfnt(cmap_table({{3, 10, format12({{{0x20, 0x10FFFF, 1}}})}})));
 		const auto elapsed = std::chrono::steady_clock::now() - started;
 		ASSERT_TRUE(big.has_value()) << big.error().message.view();
+		EXPECT_TRUE(big->damage().empty());
 		EXPECT_EQ(big->unicode_for_glyph(1u), std::optional<char32_t>(U' '));
 		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
 	}
@@ -1739,7 +1775,10 @@ TEST(PdfFont, ToUnicodeCMap)
 endcmap CMapName currentdict /CMap defineresource pop end end)");
 	auto cmap = ToUnicodeCMap::parse(cmap_text);
 	ASSERT_TRUE(cmap.has_value()) << cmap.error().message.view();
-	const auto at = [&](uint32_t code) { return cmap->lookup(code, 1u).value_or(U"<none>"); };
+	const auto at = [&](uint32_t code) {
+		auto found = cmap->lookup(code, 1u);
+		return found.has_value() && found->has_value() ? **found : std::u32string(U"<none>");
+	};
 	EXPECT_EQ(at(0x41), U"A");
 	EXPECT_EQ(at(0x02), U"fi"); // a multi-character target
 	EXPECT_EQ(at(0x03), U"\U0001F600"); // a surrogate pair
@@ -1755,13 +1794,13 @@ endcmap CMapName currentdict /CMap defineresource pop end end)");
 	EXPECT_EQ(at(0x36), U"6");
 	EXPECT_EQ(at(0x3A), U"@"); // an odd digit count is padded: <004> is <0040>
 	EXPECT_EQ(at(0x60), U"<none>");
-	EXPECT_EQ(cmap->lookup(0x41, 2u), std::nullopt); // another code length is another code
+	EXPECT_EQ(*cmap->lookup(0x41, 2u), std::nullopt); // another code length is another code
 	// Two-byte and mixed codespaces.
 	{
 		auto two = ToUnicodeCMap::parse(bytes_of(
 			"1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <0100> <01FF> <0100> endbfrange"));
 		ASSERT_TRUE(two.has_value());
-		EXPECT_EQ(two->lookup(0x0150, 2u), std::optional<std::u32string>(U"Ő"));
+		EXPECT_EQ(*two->lookup(0x0150, 2u), std::optional<std::u32string>(U"Ő"));
 		const std::array<uint8_t, 2> code = {0x01, 0x50};
 		EXPECT_EQ(two->code_length(code), 2u);
 		auto mixed = ToUnicodeCMap::parse(bytes_of("2 begincodespacerange <00> <80> <8140> <9FFC> endcodespacerange"));
@@ -1772,7 +1811,16 @@ endcmap CMapName currentdict /CMap defineresource pop end end)");
 		EXPECT_EQ(mixed->code_length(ascii), 1u);
 		auto edge = ToUnicodeCMap::parse(bytes_of("1 beginbfrange <FFFFFFFE> <FFFFFFFF> <0041> endbfrange"));
 		ASSERT_TRUE(edge.has_value());
-		EXPECT_EQ(edge->lookup(0xFFFFFFFFu, 4u), std::optional<std::u32string>(U"B"));
+		EXPECT_EQ(*edge->lookup(0xFFFFFFFFu, 4u), std::optional<std::u32string>(U"B"));
+	}
+	// Completion review G1: a range's increment never makes a surrogate, also after a later mapping splits it.
+	{
+		auto ranged = ToUnicodeCMap::parse(bytes_of(
+			"1 beginbfrange <00> <02> <D7FE> endbfrange 1 beginbfchar <00> <0041> endbfchar"));
+		ASSERT_TRUE(ranged.has_value()) << ranged.error().message.view();
+		EXPECT_EQ(*ranged->lookup(0x00, 1u), std::optional<std::u32string>(U"A"));
+		EXPECT_EQ(*ranged->lookup(0x01, 1u), std::optional<std::u32string>(U"\uD7FF"));
+		EXPECT_EQ(*ranged->lookup(0x02, 1u), std::nullopt); // U+D800 is not a character
 	}
 	// Refusals, each typed.
 	const auto refuses = [](std::string_view text, ErrorCode code) {
@@ -1795,6 +1843,24 @@ endcmap CMapName currentdict /CMap defineresource pop end end)");
 	}
 	refuses("2 beginbfrange <0000> <FFFF> <0041> <0000> <FFFF> <0041> endbfrange", ErrorCode::ResourceLimit);
 	refuses("1 beginbfchar <41> <" + std::string(1026u, '0') + "> endbfchar", ErrorCode::DamagedFormat);
+	// Completion review G2 and G3: an array range gives one string per code, without wrapping past 0xFFFFFFFF, and a
+	// glyph name target is held to the same budget as a string.
+	refuses("1 beginbfrange <FFFFFFFF> <FFFFFFFF> [<0041> <0042>] endbfrange", ErrorCode::DamagedFormat);
+	refuses("1 beginbfrange <10> <12> [<0041>] endbfrange", ErrorCode::DamagedFormat);
+	{
+		std::string many = "1 beginbfrange <00> <00> [";
+		for (int i = 0; i < 70000; ++i) {
+			many += "<0041>";
+		}
+		refuses(many + "] endbfrange", ErrorCode::DamagedFormat); // refused for its count, before any limit
+	}
+	{
+		std::string name = "/uni";
+		for (int i = 0; i < 257; ++i) {
+			name += "0041";
+		}
+		refuses("1 beginbfchar <41> " + name + " endbfchar", ErrorCode::DamagedFormat);
+	}
 	{
 		std::vector<uint8_t> huge(kMaxToUnicodeStreamBytes + 1u, ' ');
 		auto parsed = ToUnicodeCMap::parse(huge);
@@ -1827,6 +1893,33 @@ TEST(PdfFont, UnicodeFallbackOrder)
 	EXPECT_EQ(*simple_font_unicode(font, 0x43), U"✁"); // a ZapfDingbats font reads zapfdingbats.txt
 }
 
+// Completion review G6: when the mapped characters cannot be held, the lookup says so; the encoding's name is never
+// used instead, which would turn the CMap's Z into the encoding's A.
+TEST(PdfFont, ToUnicodeOutOfMemory)
+{
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	std::string target = "<";
+	for (int i = 0; i < 40; ++i) {
+		target += "005A";
+	}
+	auto cmap = ToUnicodeCMap::parse(bytes_of("1 beginbfchar <41> " + target + "> endbfchar"));
+	ASSERT_TRUE(cmap.has_value()) << cmap.error().message.view();
+	auto encoding = SimpleEncoding::build(nullptr, false, nullptr);
+	ASSERT_TRUE(encoding.has_value());
+	const SimpleFontText font{&*cmap, &*encoding, false, nullptr, false, true};
+	{
+		const recto::test::ScopedAllocationFailure fail(1u, 100u);
+		auto text = simple_font_unicode(font, 0x41);
+		ASSERT_FALSE(text.has_value());
+		EXPECT_EQ(text.error().code, ErrorCode::OutOfMemory);
+	}
+	auto text = simple_font_unicode(font, 0x41);
+	ASSERT_TRUE(text.has_value());
+	EXPECT_EQ(*text, std::u32string(40u, U'Z'));
+}
+
 TEST(PdfFont, DrawableUnicode)
 {
 	// Expected scalars of the test's own, not read through the AGL.
@@ -1847,6 +1940,7 @@ TEST(PdfFont, DrawableUnicode)
 		SCOPED_TRACE(std::string(m.base_font));
 		const bool zapf = font == Standard14Font::ZapfDingbats;
 		std::vector<std::string> missing;
+		std::vector<std::string> wrong_width;
 		for (const Standard14Glyph& g : m.glyphs) {
 			const std::optional<char32_t> scalar = drawable_unicode(g.name, zapf);
 			if (!scalar.has_value()) {
@@ -1857,9 +1951,21 @@ TEST(PdfFont, DrawableUnicode)
 			ASSERT_TRUE(glyph.has_value());
 			if (!glyph->has_value()) {
 				missing.emplace_back(g.name);
+				continue;
+			}
+			// Completion review G7: the glyph a name's scalar draws is that name's glyph, shown by the metric-compatible
+			// faces' advances matching Adobe's AFM widths (the reviewed design differences apart; ZapfDingbats is drawn
+			// from Segoe UI Symbol, another design).
+			if (!zapf && std::find(kKnownWidthDifferences.begin(), kKnownWidthDifferences.end(), g.name) ==
+					kKnownWidthDifferences.end()) {
+				const double advance = *(*glyph)->face->advance((*glyph)->glyph) * 1000.0;
+				if (std::abs(advance - g.width) > 2.0) {
+					wrong_width.push_back(std::string(g.name) + " " + std::to_string(advance));
+				}
 			}
 		}
 		EXPECT_TRUE(missing.empty()) << ::testing::PrintToString(missing);
+		EXPECT_TRUE(wrong_width.empty()) << ::testing::PrintToString(wrong_width);
 	}
 	// commaaccent draws as a comma below the baseline in each Latin face.
 	for (const Standard14Font font : kAllStandard14) {
@@ -1873,6 +1979,15 @@ TEST(PdfFont, DrawableUnicode)
 		auto box = (*glyph)->face->ink_box((*glyph)->glyph);
 		ASSERT_TRUE(box.has_value() && box->has_value()) << standard14_metrics(font).base_font;
 		EXPECT_LT((*box)->y_max, 0.0) << standard14_metrics(font).base_font;
+		// And it is a comma: the size of the face's own comma (U+002C), give or take a half, moved below the baseline.
+		auto plain_comma = standard14_face_glyph(font, U',');
+		ASSERT_TRUE(plain_comma.has_value() && plain_comma->has_value());
+		auto comma_box = (*plain_comma)->face->ink_box((*plain_comma)->glyph);
+		ASSERT_TRUE(comma_box.has_value() && comma_box->has_value());
+		const double height = (*box)->y_max - (*box)->y_min;
+		const double comma_height = (*comma_box)->y_max - (*comma_box)->y_min;
+		EXPECT_GT(height, comma_height * 0.5) << standard14_metrics(font).base_font;
+		EXPECT_LT(height, comma_height * 1.5) << standard14_metrics(font).base_font;
 	}
 }
 

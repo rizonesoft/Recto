@@ -108,8 +108,10 @@ private:
 // ---------------------------------------------------------------------------------------------------------------------
 
 // A font program's `cmap` subtables Recto reads (`(3,1)`, `(3,10)`, `(3,0)` and `(1,0)`, formats 0, 4, 6 and 12) and
-// its `post` glyph names (formats 1 and 2), immutable once parsed. A table that is absent is empty; one that is
-// malformed is `DamagedFormat` from `parse`, every read bounds-checked and the work linear in the table.
+// its `post` glyph names (formats 1 and 2), immutable once parsed, every read bounds-checked and the work linear in the
+// table. A table that is absent is empty. A damaged subtable or `post` table is left out, its `DamagedFormat` kept in
+// `damage()`, so the font draws through the paths that remain (9.6.6.4); a font program whose table directory or
+// `cmap` header cannot be read is `DamagedFormat` from `parse`.
 class TrueTypeTables {
 public:
 	[[nodiscard]] static PdfResult<TrueTypeTables> parse(std::span<const uint8_t> program) noexcept;
@@ -121,6 +123,11 @@ public:
 	[[nodiscard]] std::optional<uint16_t> glyph_for_name(std::string_view name) const noexcept;
 	// The lowest Unicode scalar the font's Unicode subtable (`(3,10)`, else `(3,1)`) maps to `glyph`, or none.
 	[[nodiscard]] std::optional<char32_t> unicode_for_glyph(uint16_t glyph) const noexcept;
+	// The damaged components left out, each with its typed error.
+	[[nodiscard]] const std::vector<PdfError>& damage() const noexcept
+	{
+		return damage_;
+	}
 
 	// Every format read as codes `start` to `end` mapping to `glyph` onward (format 4's arithmetic wraps at 65,536),
 	// sorted by `start` and not overlapping.
@@ -140,6 +147,7 @@ private:
 	std::vector<Subtable> subtables_;
 	std::vector<std::pair<std::string, uint16_t>> post_names_; // sorted by name, the lowest glyph of a repeated name
 	std::vector<std::pair<uint16_t, char32_t>> unicode_of_glyph_; // sorted by glyph
+	std::vector<PdfError> damage_;
 };
 
 // The glyph a code of a simple TrueType font draws (ISO 32000-1 9.6.6.4): when the font names `MacRomanEncoding` or
@@ -162,15 +170,17 @@ inline constexpr size_t kMaxToUnicodeTargetBytes = 512u;
 
 // A parsed `/ToUnicode` CMap, immutable once parsed: its codespace ranges, and each mapped code's characters. A
 // `bfrange` with a string target is kept as a range (its last character incremented across it), one with an array is
-// expanded; both count every code they map toward `kMaxToUnicodeCodes`.
+// expanded and must give one string per code; both count every code they map toward `kMaxToUnicodeCodes`. Every target,
+// a string or a glyph name, is held to `kMaxToUnicodeTargetBytes` of UTF-16.
 class ToUnicodeCMap {
 public:
 	// `usecmap` is `UnsupportedFeature`; a malformed operator or operand is `DamagedFormat`; a bound passed is
 	// `ResourceLimit`. A target that is not valid UTF-16 is skipped, as readers do.
 	[[nodiscard]] static PdfResult<ToUnicodeCMap> parse(std::span<const uint8_t> stream) noexcept;
 
-	// The characters `code` (of `length` bytes, 1 to 4) maps to, or none.
-	[[nodiscard]] std::optional<std::u32string> lookup(uint32_t code, uint8_t length) const noexcept;
+	// The characters `code` (of `length` bytes, 1 to 4) maps to, or none (also where a range's increment would make a
+	// surrogate, which is not a character). `OutOfMemory` when the characters cannot be held, never a silent none.
+	[[nodiscard]] PdfResult<std::optional<std::u32string>> lookup(uint32_t code, uint8_t length) const noexcept;
 
 	// How many bytes the codespace gives a code starting with these bytes (1 for a CMap without codespace ranges).
 	[[nodiscard]] uint8_t code_length(std::span<const uint8_t> bytes) const noexcept;

@@ -107,7 +107,7 @@ void append_component(std::string_view component, bool zapf_dingbats, std::u32st
 
 // The characters a Windows face draws for names the AGL maps to Adobe's private-use area (D01 T02 section 27): their
 // Unicode characters.
-constexpr std::array<std::pair<std::string_view, char32_t>, 1> kDrawableOverrides = {{{"commaaccent", U'̦'}}};
+constexpr std::array<std::pair<std::string_view, char32_t>, 1> kDrawableOverrides = {{{"commaaccent", U'\u0326'}}};
 
 } // namespace
 
@@ -397,6 +397,60 @@ void add_single(std::vector<TrueTypeTables::Group>& groups, uint32_t code, uint3
 	return std::optional<TrueTypeTables::Subtable>(std::move(sub));
 }
 
+// A `post` table's glyph names (formats 1 and 2) into `names`, sorted with the lowest glyph of a repeated name kept; a
+// table too short for its header, or naming a string it does not hold, is `DamagedFormat`.
+[[nodiscard]] PdfResult<void> read_post_names(const std::optional<Reader>& post,
+	std::vector<std::pair<std::string, uint16_t>>& names)
+{
+	if (!post.has_value()) {
+		return {};
+	}
+	if (!post->fits(0u, 32u)) {
+		return table_error("TrueType post header is truncated");
+	}
+	const uint32_t version = post->u32(0u);
+	if (version == 0x00010000u) {
+		for (uint16_t glyph = 0; glyph < kMacGlyphNames.size(); ++glyph) {
+			names.emplace_back(std::string(kMacGlyphNames[glyph]), glyph);
+		}
+	} else if (version == 0x00020000u) {
+		if (!post->fits(32u, 2u)) {
+			return table_error("TrueType post format 2 header is truncated");
+		}
+		const uint16_t glyphs = post->u16(32u);
+		const size_t strings_at = 34u + size_t{glyphs} * 2u;
+		if (!post->fits(34u, size_t{glyphs} * 2u)) {
+			return table_error("TrueType post format 2 glyph name indices do not fit the table");
+		}
+		std::vector<std::string_view> strings;
+		for (size_t at = strings_at; at < post->bytes.size();) {
+			const size_t length = post->bytes[at];
+			if (!post->fits(at + 1u, length)) {
+				return table_error("TrueType post format 2 glyph name runs past the table");
+			}
+			strings.emplace_back(reinterpret_cast<const char*>(post->bytes.data() + at + 1u), length);
+			at += 1u + length;
+		}
+		for (uint16_t glyph = 0; glyph < glyphs; ++glyph) {
+			const uint16_t index = post->u16(34u + size_t{glyph} * 2u);
+			if (index < kMacGlyphNames.size()) {
+				names.emplace_back(std::string(kMacGlyphNames[index]), glyph);
+			} else if (size_t{index} - kMacGlyphNames.size() < strings.size()) {
+				const std::string_view name = strings[index - kMacGlyphNames.size()];
+				if (!name.empty()) {
+					names.emplace_back(std::string(name), glyph);
+				}
+			} else {
+				return table_error("TrueType post format 2 names a glyph string the table does not hold");
+			}
+		}
+	}
+	std::stable_sort(names.begin(), names.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+	names.erase(std::unique(names.begin(), names.end(), [](const auto& a, const auto& b) { return a.first == b.first; }),
+		names.end());
+	return {};
+}
+
 } // namespace
 
 PdfResult<TrueTypeTables> TrueTypeTables::parse(std::span<const uint8_t> program) noexcept
@@ -449,55 +503,23 @@ PdfResult<TrueTypeTables> TrueTypeTables::parse(std::span<const uint8_t> program
 				if (!wanted || tables.has(platform, encoding)) {
 					continue;
 				}
-				RECTO_PDF_TRY(std::optional<Subtable> sub,
-					parse_subtable(*cmap, cmap->u32(4u + i * 8u + 4u), platform, encoding));
-				if (sub.has_value()) {
-					tables.subtables_.push_back(std::move(*sub));
+				PdfResult<std::optional<Subtable>> sub = parse_subtable(*cmap, cmap->u32(4u + i * 8u + 4u), platform, encoding);
+				if (!sub.has_value()) {
+					if (sub.error().code == ErrorCode::OutOfMemory) {
+						return std::move(sub.error());
+					}
+					tables.damage_.push_back(std::move(sub.error())); // this subtable only: the others stay usable
+				} else if (sub->has_value()) {
+					tables.subtables_.push_back(std::move(**sub));
 				}
 			}
 		}
-		if (post.has_value() && post->fits(0u, 32u)) {
-			const uint32_t version = post->u32(0u);
-			if (version == 0x00010000u) {
-				for (uint16_t glyph = 0; glyph < kMacGlyphNames.size(); ++glyph) {
-					tables.post_names_.emplace_back(std::string(kMacGlyphNames[glyph]), glyph);
-				}
-			} else if (version == 0x00020000u) {
-				if (!post->fits(32u, 2u)) {
-					return table_error("TrueType post format 2 header is truncated");
-				}
-				const uint16_t glyphs = post->u16(32u);
-				const size_t strings_at = 34u + size_t{glyphs} * 2u;
-				if (!post->fits(34u, size_t{glyphs} * 2u)) {
-					return table_error("TrueType post format 2 glyph name indices do not fit the table");
-				}
-				std::vector<std::string_view> strings;
-				for (size_t at = strings_at; at < post->bytes.size();) {
-					const size_t length = post->bytes[at];
-					if (!post->fits(at + 1u, length)) {
-						return table_error("TrueType post format 2 glyph name runs past the table");
-					}
-					strings.emplace_back(reinterpret_cast<const char*>(post->bytes.data() + at + 1u), length);
-					at += 1u + length;
-				}
-				for (uint16_t glyph = 0; glyph < glyphs; ++glyph) {
-					const uint16_t index = post->u16(34u + size_t{glyph} * 2u);
-					std::string_view name;
-					if (index < kMacGlyphNames.size()) {
-						name = kMacGlyphNames[index];
-					} else if (size_t{index} - kMacGlyphNames.size() < strings.size()) {
-						name = strings[index - kMacGlyphNames.size()];
-					}
-					if (!name.empty()) {
-						tables.post_names_.emplace_back(std::string(name), glyph);
-					}
-				}
+		if (PdfResult<void> names = read_post_names(post, tables.post_names_); !names.has_value()) {
+			if (names.error().code == ErrorCode::OutOfMemory) {
+				return std::move(names.error());
 			}
-			std::stable_sort(tables.post_names_.begin(), tables.post_names_.end(),
-				[](const auto& a, const auto& b) { return a.first < b.first; });
-			tables.post_names_.erase(std::unique(tables.post_names_.begin(), tables.post_names_.end(),
-										 [](const auto& a, const auto& b) { return a.first == b.first; }),
-				tables.post_names_.end()); // the lowest glyph of a repeated name stays
+			tables.post_names_.clear();
+			tables.damage_.push_back(std::move(names.error())); // the post names only: the cmap stays usable
 		}
 		// The Unicode subtable read backwards, the lowest code of each glyph winning: each code visited once.
 		const Subtable* unicode = nullptr;
@@ -764,6 +786,16 @@ struct ToUnicodeParser {
 	}
 };
 
+// The UTF-16 bytes characters take.
+[[nodiscard]] size_t utf16_bytes(const std::u32string& characters) noexcept
+{
+	size_t bytes = 0;
+	for (const char32_t c : characters) {
+		bytes += c >= 0x10000u ? 4u : 2u;
+	}
+	return bytes;
+}
+
 [[nodiscard]] uint32_t code_of(std::string_view bytes) noexcept
 {
 	uint32_t code = 0;
@@ -875,9 +907,14 @@ PdfResult<ToUnicodeCMap> ToUnicodeCMap::parse(std::span<const uint8_t> stream) n
 					std::optional<std::u32string> target;
 					if (dst.kind == ToUnicodeParser::Kind::Hex) {
 						target = utf16_target(dst.hex);
-					} else if (PdfResult<std::u32string> named = glyph_name_unicode(dst.text);
-							   named.has_value() && !named->empty()) {
-						target = std::move(*named);
+					} else {
+						RECTO_PDF_TRY(std::u32string named, glyph_name_unicode(dst.text));
+						if (utf16_bytes(named) > kMaxToUnicodeTargetBytes) {
+							return malformed("ToUnicode CMap bfchar glyph name target is too long");
+						}
+						if (!named.empty()) {
+							target = std::move(named);
+						}
 					}
 					if (target.has_value()) {
 						RECTO_PDF_RETURN_IF_ERROR(add(code->first, code->first, code->second, std::move(*target)));
@@ -906,7 +943,8 @@ PdfResult<ToUnicodeCMap> ToUnicodeCMap::parse(std::span<const uint8_t> stream) n
 							}
 						}
 					} else if (dst.kind == ToUnicodeParser::Kind::ArrayOpen) {
-						uint32_t code = lo->first;
+						// One string per code of the range, no more and no fewer (Technical Note 5014).
+						uint64_t code = lo->first;
 						for (;;) {
 							RECTO_PDF_TRY(ToUnicodeParser::Token element, parser.next());
 							if (element.kind == ToUnicodeParser::Kind::ArrayClose) {
@@ -915,12 +953,17 @@ PdfResult<ToUnicodeCMap> ToUnicodeCMap::parse(std::span<const uint8_t> stream) n
 							if (element.kind != ToUnicodeParser::Kind::Hex) {
 								return malformed("ToUnicode CMap bfrange array holds a non-string");
 							}
-							if (code <= hi->first) {
-								if (std::optional<std::u32string> target = utf16_target(element.hex)) {
-									RECTO_PDF_RETURN_IF_ERROR(add(code, code, lo->second, std::move(*target)));
-								}
+							if (code > hi->first) {
+								return malformed("ToUnicode CMap bfrange array holds more strings than its range has codes");
+							}
+							if (std::optional<std::u32string> target = utf16_target(element.hex)) {
+								const auto at = static_cast<uint32_t>(code);
+								RECTO_PDF_RETURN_IF_ERROR(add(at, at, lo->second, std::move(*target)));
 							}
 							++code;
+						}
+						if (code != uint64_t{hi->first} + 1u) {
+							return malformed("ToUnicode CMap bfrange array holds fewer strings than its range has codes");
 						}
 					} else {
 						return malformed("ToUnicode CMap bfrange target is neither a string nor an array");
@@ -969,25 +1012,29 @@ PdfResult<ToUnicodeCMap> ToUnicodeCMap::parse(std::span<const uint8_t> stream) n
 	}
 }
 
-std::optional<std::u32string> ToUnicodeCMap::lookup(uint32_t code, uint8_t length) const noexcept
+PdfResult<std::optional<std::u32string>> ToUnicodeCMap::lookup(uint32_t code, uint8_t length) const noexcept
 {
 	const auto it = std::upper_bound(mappings_.begin(), mappings_.end(), std::pair{length, code},
 		[](const std::pair<uint8_t, uint32_t>& key, const Mapping& m) {
 			return key.first < m.length || (key.first == m.length && key.second < m.low);
 		});
 	if (it == mappings_.begin()) {
-		return std::nullopt;
+		return std::optional<std::u32string>{};
 	}
 	const Mapping& m = *(it - 1);
 	if (m.length != length || code > m.high) {
-		return std::nullopt;
+		return std::optional<std::u32string>{};
+	}
+	const uint32_t last = static_cast<uint32_t>(m.target.back()) + (code - m.low);
+	if (!is_scalar(last)) {
+		return std::optional<std::u32string>{}; // a range's increment reached a surrogate: no character
 	}
 	try {
 		std::u32string target = m.target;
-		target.back() = static_cast<char32_t>(target.back() + (code - m.low));
-		return target;
+		target.back() = static_cast<char32_t>(last);
+		return std::optional<std::u32string>(std::move(target));
 	} catch (const std::bad_alloc&) {
-		return std::nullopt;
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory looking up a ToUnicode mapping");
 	}
 }
 
@@ -1024,7 +1071,8 @@ uint8_t ToUnicodeCMap::code_length(std::span<const uint8_t> bytes) const noexcep
 PdfResult<std::u32string> simple_font_unicode(const SimpleFontText& font, uint8_t code) noexcept
 {
 	if (font.to_unicode != nullptr) {
-		if (std::optional<std::u32string> mapped = font.to_unicode->lookup(code, 1u); mapped.has_value() && !mapped->empty()) {
+		RECTO_PDF_TRY(std::optional<std::u32string> mapped, font.to_unicode->lookup(code, 1u));
+		if (mapped.has_value() && !mapped->empty()) {
 			return std::move(*mapped);
 		}
 	}
