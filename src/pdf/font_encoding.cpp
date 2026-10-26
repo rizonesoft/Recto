@@ -713,7 +713,7 @@ struct ToUnicodeParser {
 			c == '}' || c == '/' || c == '%';
 	}
 
-	// The next token; a hex string's bytes are decoded, past `kMaxToUnicodeTargetBytes` it is `DamagedFormat`.
+	// The next token; a hex string's bytes are decoded, past `kMaxToUnicodeTargetBytes` it is `ResourceLimit`.
 	[[nodiscard]] PdfResult<Token> next()
 	{
 		for (;;) {
