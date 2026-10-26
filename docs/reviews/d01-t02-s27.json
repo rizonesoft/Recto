@@ -1,0 +1,106 @@
+{
+  "ref": "D01 T02 \u00a727",
+  "title": "Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback",
+  "implementation_sha": "8cfc652c856be6a30a5eddbf0aaf64a55ee484c4",
+  "date": "2026-10-26",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s27.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s27.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s27.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFont.* -> 0 Warning(s), [  PASSED  ] 14 tests",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 317 tests and [  PASSED  ] 318 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 460 tests, OK",
+    "python scripts/build-font-metrics.py --check -> standard14_metrics.inc is current (14 fonts)",
+    "mutants: 19 of 20 killed (table entries, aliases, sharing, single load, exact face, missing family, Euro, failure step, styles); the explicit Symbol cmap offset is equivalent on DirectWrite"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s27.md",
+    "verdict": "filed",
+    "candidate": "cc6906933f8a130ea71f0dfca5599fa44d8bc503",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a74",
+      "D01 T02 \u00a728",
+      "D01 T02 \u00a717",
+      "D06 T01 \u00a71"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s27.md",
+    "candidate": "f6fd902177ecd87ba42314e3229708f2a6e0b2c7",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

@@ -84,7 +84,7 @@ track: M1
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [x] |
 | 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [x] |
 | 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [x] |
-| 27 | §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback | §2 | [ ] |
+| 27 | §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback | §2 | [x] |
 | 28 | §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps | §2 | [ ] |
 | 29 | §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines) | §2 | [ ] |
 | 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [ ] |
@@ -911,6 +911,9 @@ The fourteen standard fonts (ISO 32000-1 section 9.6.2.2) need their exact width
 > **Corrected 2026-10-26:** (validation before the build, and the plan review in `docs/reviews/01-engine/D01-T02-s27.md`) Adobe's own downloads are gone: every Adobe URL for `Core14_AFMs.zip` and `Core14_AFMs.tar` answers 404 today. The files come from two independent mirrors of Adobe's set that agree line for line on all 14: `tecnickcom/tc-font-core14-afms`, vendored byte for byte with its CRLF line ends, and Apache PDFBox's bundled copy (its newlines doubled), both named with the date and sums in the README, with Adobe's `MustRead.html` notice; `.gitattributes` keeps the directory byte-exact (`-text`). `Symbol` maps to the Windows `Symbol` face (`symbol.ttf`, which carries Adobe Symbol's own encoding in its symbol `cmap`) rather than `Segoe UI Symbol`, which keeps only `ZapfDingbats`. The plan review found the plan silent on how AFM metrics and the face combine, on the face's failures, and on proving every metrics field; the last three items above add them. The API, in `src/pdf/font.h`: `enum class Standard14Font`; `standard14_from_base_font(std::string_view)` returning the font or none; `standard14_metrics(Standard14Font)` returning the `constexpr` table (font box, and ascender, descender, cap height, italic angle and fixed pitch where the AFM gives them, and per glyph its name, built-in code, width and box, in AFM units of 1/1000 em); `standard14_glyph_by_name` and `standard14_glyph_by_code`; `load_standard14_face(Standard14Font)` returning the shared `LoadedFont` of its Windows face (the face file's bytes read through DirectWrite once and loaded with `load_embedded_font`); and `standard14_face_glyph`.
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Standard14*` passes under ASan with 0 warnings (`Standard14Metrics`, `Standard14Aliases`, `Standard14Faces`, `Standard14Repertoire`, `Standard14FaceFailures`), and `python scripts/build-font-metrics.py --check` exits 0.
+
+> **Verified:** 2026-10-26 | §27 | 8cfc652c856be6a30a5eddbf0aaf64a55ee484c4
+> **Review:** `docs/reviews/d01-t02-s27.json`
 
 ## 28. Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps
 
