@@ -763,7 +763,7 @@ struct ToUnicodeParser {
 					token.hex.push_back(static_cast<char>((high << 4) | value));
 					high = -1;
 					if (token.hex.size() > kMaxToUnicodeTargetBytes) {
-						return make_pdf_error(ErrorCode::DamagedFormat, "ToUnicode CMap hex string is too long");
+						return make_pdf_error(ErrorCode::ResourceLimit, "ToUnicode CMap hex string exceeds its length limit");
 					}
 				}
 			}
@@ -942,7 +942,7 @@ PdfResult<ToUnicodeCMap> ToUnicodeCMap::parse(std::span<const uint8_t> stream) n
 					} else {
 						RECTO_PDF_TRY(std::u32string named, glyph_name_unicode(dst.text));
 						if (utf16_bytes(named) > kMaxToUnicodeTargetBytes) {
-							return malformed("ToUnicode CMap bfchar glyph name target is too long");
+							return make_pdf_error(ErrorCode::ResourceLimit, "ToUnicode CMap glyph name target exceeds its length limit");
 						}
 						if (!named.empty()) {
 							target = std::move(named);

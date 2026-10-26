@@ -1927,7 +1927,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end)");
 		refuses(many + " endcodespacerange", ErrorCode::ResourceLimit);
 	}
 	refuses("2 beginbfrange <0000> <FFFF> <0041> <0000> <FFFF> <0041> endbfrange", ErrorCode::ResourceLimit);
-	refuses("1 beginbfchar <41> <" + std::string(1026u, '0') + "> endbfchar", ErrorCode::DamagedFormat);
+	refuses("1 beginbfchar <41> <" + std::string(1026u, '0') + "> endbfchar", ErrorCode::ResourceLimit);
 	// Completion review G2 and G3: an array range gives one string per code, without wrapping past 0xFFFFFFFF, and a
 	// glyph name target is held to the same budget as a string.
 	refuses("1 beginbfrange <FFFFFFFF> <FFFFFFFF> [<0041> <0042>] endbfrange", ErrorCode::DamagedFormat);
@@ -1944,7 +1944,7 @@ endcmap CMapName currentdict /CMap defineresource pop end end)");
 		for (int i = 0; i < 257; ++i) {
 			name += "0041";
 		}
-		refuses("1 beginbfchar <41> " + name + " endbfchar", ErrorCode::DamagedFormat);
+		refuses("1 beginbfchar <41> " + name + " endbfchar", ErrorCode::ResourceLimit);
 	}
 	{
 		std::vector<uint8_t> huge(kMaxToUnicodeStreamBytes + 1u, ' ');

@@ -176,8 +176,8 @@ inline constexpr size_t kMaxToUnicodeTargetBytes = 512u;
 // a string or a glyph name, is held to `kMaxToUnicodeTargetBytes` of UTF-16.
 class ToUnicodeCMap {
 public:
-	// `usecmap` is `UnsupportedFeature`; a malformed operator or operand is `DamagedFormat`; a bound passed is
-	// `ResourceLimit`. A target that is not valid UTF-16 is skipped, as readers do.
+	// `usecmap` is `UnsupportedFeature`; a malformed operator or operand is `DamagedFormat`; a bound passed, a target's
+	// length included, is `ResourceLimit`. A target that is not valid UTF-16 is skipped, as readers do.
 	[[nodiscard]] static PdfResult<ToUnicodeCMap> parse(std::span<const uint8_t> stream) noexcept;
 
 	// The characters `code` (of `length` bytes, 1 to 4) maps to, or none (also where a range's increment would make a
