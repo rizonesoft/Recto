@@ -1057,6 +1057,22 @@ TEST(PdfInterpreter, IccBasedColors)
 						.fill_color,
 			{255, 255, 255}, 2, range);
 	}
+	// A rejected profile named through a hundred resources is decoded once.
+	{
+		std::string damaged_rgb = corpus_text("color/rgb-matrix.icc");
+		damaged_rgb[36] = 'X';
+		std::string resources_text = "<< /ColorSpace << ";
+		std::string content;
+		for (int i = 0; i < 100; ++i) {
+			resources_text += "/A" + std::to_string(i) + " [/ICCBased 5 0 R] ";
+			content += "/A" + std::to_string(i) + " cs 0.1 0.2 0.3 scn 0 0 10 10 re f ";
+		}
+		const size_t decodes = detail::icc_profile_decodes_for_testing();
+		const auto r = interpret(content, resources_text + ">> >>", {stream_object("/N 3", damaged_rgb)});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 100u);
+		EXPECT_EQ(detail::icc_profile_decodes_for_testing() - decodes, 1u);
+	}
 	// /N through a reference.
 	expect_rgb8(painted(interpret("/P cs " + component(64) + " scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
 					{stream_object("/N 6 0 R", corpus_text("color/gray-trc.icc")), "1"}))

@@ -243,6 +243,8 @@ struct ColorProfileCache::Impl {
 	std::map<std::pair<uint64_t, uint8_t>, HTRANSFORM> transforms; // a null transform: it could not be built
 	std::map<uint64_t, std::shared_ptr<const IccProfile>> read;    // profiles decoded, by stream object number
 	size_t read_bytes = 0;
+	std::set<uint64_t> rejected; // profile streams whose profile cannot be used: not decoded again
+	size_t decoded_bytes = 0;    // all profile decoding, against `kMaxDecodedProfileBytes`
 	std::set<uint64_t> profiles;
 	size_t profile_bytes = 0;
 	bool default_read = false;
@@ -375,6 +377,40 @@ PdfResult<bool> ColorProfileCache::to_srgb(const IccProfile& profile, RenderingI
 		return true;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory converting colours");
+	}
+}
+
+bool ColorProfileCache::may_decode(uint64_t key) const noexcept
+{
+	if (impl_ == nullptr) {
+		return true;
+	}
+	return !impl_->rejected.contains(key) && impl_->decoded_bytes < kMaxDecodedProfileBytes;
+}
+
+void ColorProfileCache::note_decoded(size_t bytes) noexcept
+{
+	try {
+		if (impl_ == nullptr) {
+			impl_ = std::make_unique<Impl>();
+		}
+		impl_->decoded_bytes += bytes;
+	} catch (const std::bad_alloc&) {
+		// nothing to charge against: the next decode creates the state again
+	}
+}
+
+void ColorProfileCache::reject(uint64_t key) noexcept
+{
+	try {
+		if (impl_ == nullptr) {
+			impl_ = std::make_unique<Impl>();
+		}
+		if (impl_->rejected.size() < 65'536u) {
+			impl_->rejected.insert(key);
+		}
+	} catch (const std::bad_alloc&) {
+		// not remembered: it is tried again, within the decoding budget
 	}
 }
 
@@ -1075,18 +1111,29 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			ColorProfileCache& cache = document_.color_profiles();
 			std::shared_ptr<const IccProfile> profile = ref.has_value() ? cache.profile(ref->obj_num) : nullptr;
 			if (profile == nullptr || profile->components != n) {
+				// A stream rejected before is not decoded again, and all decoding is bounded per document.
+				if (ref.has_value() && !cache.may_decode(ref->obj_num)) {
+					return alternate;
+				}
 				g_profile_decodes.fetch_add(1u);
 				auto bytes = document_.decode_stream(*stream, kMaxIccProfileBytes);
 				if (!bytes.has_value()) {
 					if (bytes.error().code == ErrorCode::OutOfMemory) {
 						return bytes.error();
 					}
+					if (ref.has_value()) {
+						cache.reject(ref->obj_num);
+					}
 					return alternate; // the decode recorded its own diagnostic
 				}
+				cache.note_decoded(bytes->size());
 				auto made = IccProfile::make(std::move(*bytes), n, ref.has_value() ? ref->obj_num : 0u);
 				if (!made.has_value()) {
 					if (made.error().code == ErrorCode::OutOfMemory) {
 						return made.error();
+					}
+					if (ref.has_value()) {
+						cache.reject(ref->obj_num);
 					}
 					return alternate; // recorded by make_pdf_error
 				}

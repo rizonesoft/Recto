@@ -27,6 +27,7 @@ inline constexpr size_t kMaxColorSpaceDepth = 8u;           // nested spaces: `/
 inline constexpr size_t kMaxCachedColorTransforms = 64u;    // per document
 inline constexpr size_t kMaxCachedProfileBytes = size_t{64} << 20u; // per document
 inline constexpr size_t kMaxOutputIntentProfiles = 16u; // distinct output intent profiles tried for DeviceCMYK
+inline constexpr size_t kMaxDecodedProfileBytes = size_t{256} << 20u; // all profile decoding per document
 
 // ISO 32000-1 8.6.5.8: an intent this reader does not know is RelativeColorimetric.
 enum class RenderingIntent : uint8_t {
@@ -88,6 +89,12 @@ public:
 	// A profile already read for this document under `key` (a stream's object number), so a space selected again is
 	// not decoded again, or null; `remember` keeps one, within the profile byte budget.
 	[[nodiscard]] std::shared_ptr<const IccProfile> profile(uint64_t key) const noexcept;
+	// A profile stream to decode: false when it was rejected before (never decoded again) or the document's decoding
+	// budget is spent; `note_decoded` charges a decode and `reject` marks a stream whose profile cannot be used.
+	[[nodiscard]] bool may_decode(uint64_t key) const noexcept;
+	void note_decoded(size_t bytes) noexcept;
+	void reject(uint64_t key) noexcept;
+
 	// False when the profile does not fit the document's profile budget: it is then not used; `OutOfMemory` when memory
 	// runs out keeping it.
 	[[nodiscard]] PdfResult<bool> remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
