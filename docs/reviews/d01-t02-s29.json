@@ -1,0 +1,110 @@
+{
+  "ref": "D01 T02 \u00a729",
+  "title": "Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)",
+  "implementation_sha": "3c2f13cd8919461d6fdfee557bb8ec675440acc3",
+  "date": "2026-10-26",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s29.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s29.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s29.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s29.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfFont.Type1*:PdfFont.Cff*:PdfFont.CharstringShapes:PdfFont.HostileCharstrings* (ASan, x64 Debug): [  PASSED  ] 6 tests.",
+    "python scripts/build-cff-data.py --check: build-cff-data: cff_data.inc is current",
+    "build.ps1 (x64 and ARM64): [  PASSED  ] 333 tests.",
+    "python -m unittest discover -s tests/scripts: Ran 469 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s29.md",
+    "verdict": "filed",
+    "candidate": "fbf60dc2aec63a41e7c53cce72cbe2d3616e7f32",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a74",
+      "D06 T01 \u00a77",
+      "D01 T02 \u00a76",
+      "D01 T02 \u00a77"
+    ]
+  },
+  "rounds_spent": 4,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s29.md",
+    "candidate": "b78f4f340b953441a8a794801482bf20b41a191a",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
