@@ -2,12 +2,27 @@
 // (D01 T02 section 3). Each test writes a one-page PDF (media box 0 0 200 200) whose content stream it states, so every
 // expected command, point, colour and box below follows by hand from that stream and ISO 32000-1 section 8.
 #include "interpreter.h"
+
+#include "color.h"
+#include "test_support.h"
 #include "lexer.h"
 
 #include <gtest/gtest.h>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -696,6 +711,15 @@ TEST(PdfInterpreter, PaintingOperators)
 
 TEST(PdfInterpreter, DeviceColors)
 {
+	// The device conversions themselves: DeviceCMYK through the formula, as when no CMYK profile loads (section 32
+	// draws it through a profile when one does, tested in PdfInterpreter.CalibratedCmyk).
+	detail::set_default_cmyk_profile_enabled_for_testing(false);
+	struct Restore {
+		~Restore()
+		{
+			detail::set_default_cmyk_profile_enabled_for_testing(true);
+		}
+	} restore;
 	struct Case {
 		std::string_view ops;
 		bool stroking;
@@ -716,12 +740,12 @@ TEST(PdfInterpreter, DeviceColors)
 		{"/DeviceRGB cs 0.1 0.2 sc", false, {0.0f, 0.0f, 0.0f}}, // the wrong number of components is skipped
 		{"/C1 cs 0.4 0.5 0.6 sc", false, {0.4f, 0.5f, 0.6f}},   // a named space naming DeviceRGB
 		{"/C2 CS 0 0 0 0.5 SC", true, {0.5f, 0.5f, 0.5f}},      // an indirect one naming DeviceCMYK
-		{"0.5 g /L cs 50 0 0 sc", false, {0.0f, 0.0f, 0.0f}},    // a space section 32 reads paints black until then
+		{"0.5 g /I cs 0 sc", false, {0.0f, 0.0f, 0.0f}},          // a space section 33 reads paints black until then
 	};
 	for (const Case& c : cases) {
 		SCOPED_TRACE(std::string(c.ops));
 		const auto r = interpret(std::string(c.ops) + " 0 0 m 10 0 l 10 10 l B",
-			"<< /ColorSpace << /C1 /DeviceRGB /C2 5 0 R /L [/Lab << /WhitePoint [0.95 1 1.09] >>] >> >>", {"/DeviceCMYK"});
+			"<< /ColorSpace << /C1 /DeviceRGB /C2 5 0 R /I [/Indexed /DeviceRGB 0 <FF0000>] >> >>", {"/DeviceCMYK"});
 		ASSERT_NE(r.list, nullptr);
 		const auto draws = all_of<DrawPathCommand>(*r.list);
 		ASSERT_EQ(draws.size(), 1u);
@@ -737,6 +761,389 @@ TEST(PdfInterpreter, DeviceColors)
 	const auto draws = all_of<DrawPathCommand>(*inherited.list);
 	ASSERT_EQ(draws.size(), 1u);
 	expect_color(draws[0].fill_color, 0.4f, 0.5f, 0.6f);
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Colour spaces (D01 T02 section 32). Reference values: LittleCMS 2.19 (Pillow's ImageCms, its transforms built with
+// `Flags.NOOPTIMIZE`, so no precalculated table rounds them) for Lab and for the
+// generated profiles in `tests/corpus/color/`, to within 1/255 where Recto computes the colour itself and 2/255 where
+// Windows' colour engine does; closed forms of ISO 32000-1 8.6.5 elsewhere, stated beside each case.
+// ---------------------------------------------------------------------------------------------------------------------
+
+std::string corpus_text(std::string_view relative)
+{
+	std::ifstream in(recto::test::corpus_path(relative), std::ios::binary);
+	EXPECT_TRUE(in.good()) << relative;
+	return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// A stream object holding `data`, with `dict_entries` in its dictionary.
+std::string stream_object(std::string_view dict_entries, std::string_view data)
+{
+	return "<< " + std::string(dict_entries) + " /Length " + std::to_string(data.size()) + " >>\nstream\n" +
+		std::string(data) + "\nendstream";
+}
+
+struct Rgb8 {
+	int r;
+	int g;
+	int b;
+};
+
+void expect_rgb8(const ColorRgba& c, Rgb8 want, int tolerance, std::string_view label)
+{
+	EXPECT_LE(std::abs(static_cast<int>(std::lround(c.r * 255.0f)) - want.r), tolerance) << label << " red " << c.r * 255.0f;
+	EXPECT_LE(std::abs(static_cast<int>(std::lround(c.g * 255.0f)) - want.g), tolerance) << label << " green " << c.g * 255.0f;
+	EXPECT_LE(std::abs(static_cast<int>(std::lround(c.b * 255.0f)) - want.b), tolerance) << label << " blue " << c.b * 255.0f;
+}
+
+// The one painted path's colours.
+DrawPathCommand painted(const Interpreted& r)
+{
+	EXPECT_NE(r.list, nullptr);
+	if (r.list == nullptr) {
+		return {};
+	}
+	const auto draws = all_of<DrawPathCommand>(*r.list);
+	EXPECT_EQ(draws.size(), 1u);
+	return draws.empty() ? DrawPathCommand{} : draws[0];
+}
+
+double srgb_encoded(double linear)
+{
+	return linear <= 0.0031308 ? 12.92 * linear : 1.055 * std::pow(linear, 1.0 / 2.4) - 0.055;
+}
+
+int byte_of(double unit_value)
+{
+	return static_cast<int>(std::lround(std::clamp(unit_value, 0.0, 1.0) * 255.0));
+}
+
+std::string component(int byte)
+{
+	char text[32]{};
+	std::snprintf(text, sizeof(text), "%.10f", byte / 255.0);
+	return text;
+}
+
+TEST(PdfInterpreter, CalibratedColors)
+{
+	const std::string spaces = "<< /ColorSpace << "
+							   "/LabD50 [/Lab << /WhitePoint [0.9642 1 0.8249] /Range [-128 127 -128 127] >>] "
+							   "/GrayD65 [/CalGray << /WhitePoint [0.9505 1 1.089] /Gamma 2.2 >>] "
+							   "/GrayD50 [/CalGray << /WhitePoint [0.9642 1 0.8249] /Gamma 2.2 >>] "
+							   "/GrayBlack [/CalGray << /WhitePoint [0.9505 1 1.089] /BlackPoint [0.09505 0.1 0.1089] >>] "
+							   "/RgbD65 [/CalRGB << /WhitePoint [0.9505 1 1.089] /Matrix [0.4124 0.2126 0.0193 0.3576 0.7152 "
+							   "0.1192 0.1805 0.0722 0.9505] >>] "
+							   "/BadWhite [/CalRGB << /WhitePoint [1 0.9 1] >>] "
+							   "/LabNarrow [/Lab << /WhitePoint [0.9642 1 0.8249] /Range [-20 20 -20 20] >>] >> >>";
+	const auto fill = [&](const std::string& ops) { return painted(interpret(ops + " 0 0 10 10 re f", spaces)).fill_color; };
+
+	// Lab (D50 white) against LittleCMS's Lab D50 to sRGB transform; L* is the byte times 100/255, a* and b* the byte
+	// less 128.
+	struct LabCase {
+		int l, a, b;
+		Rgb8 want;
+	};
+	for (const LabCase& c : {LabCase{128, 128, 128, {119, 119, 119}}, LabCase{255, 128, 128, {255, 255, 255}},
+			 LabCase{128, 168, 100, {167, 92, 168}}, LabCase{77, 100, 170, {34, 82, 0}}, LabCase{200, 140, 60, {145, 191, 255}}}) {
+		char ops[128]{};
+		std::snprintf(ops, sizeof(ops), "/LabD50 cs %.10f %d %d scn", c.l * 100.0 / 255.0, c.a - 128, c.b - 128);
+		expect_rgb8(fill(ops), c.want, 1, ops);
+	}
+	// CalGray with a D65 white: Y = A^2.2, encoded by sRGB's curve; a D50 white adapts to the same grey.
+	const int gray = byte_of(srgb_encoded(std::pow(0.5, 2.2)));
+	expect_rgb8(fill("/GrayD65 cs 0.5 sc"), {gray, gray, gray}, 1, "CalGray D65");
+	expect_rgb8(fill("/GrayD50 cs 0.5 sc"), {gray, gray, gray}, 1, "CalGray D50, adapted");
+	// A black point at a tenth of the white: Y scaled from [0.1, 1] to [0, 1].
+	const int compensated = byte_of(srgb_encoded((0.55 - 0.1) / 0.9));
+	expect_rgb8(fill("/GrayBlack cs 0.55 sc"), {compensated, compensated, compensated}, 1, "CalGray black point");
+	// CalRGB with sRGB's own matrix and white and gamma 1: sRGB's encoding of each component.
+	expect_rgb8(fill("/RgbD65 cs 0.2 0.5 0.8 sc"),
+		{byte_of(srgb_encoded(0.2)), byte_of(srgb_encoded(0.5)), byte_of(srgb_encoded(0.8))}, 1, "CalRGB");
+	// A malformed /WhitePoint: the device space of its component count.
+	expect_rgb8(fill("/BadWhite cs 0.2 0.5 0.8 sc"), {51, 128, 204}, 0, "malformed white point");
+	// Lab's /Range clamps a* and b*: a* 40 in [-20 20] draws as a* 20.
+	const ColorRgba clamped = fill("/LabNarrow cs 60 20 0 scn");
+	const ColorRgba beyond = fill("/LabNarrow cs 60 40 0 scn");
+	EXPECT_EQ(beyond.r, clamped.r);
+	EXPECT_EQ(beyond.g, clamped.g);
+	EXPECT_EQ(beyond.b, clamped.b);
+	EXPECT_NE(fill("/LabD50 cs 60 40 0 scn").r, clamped.r);
+	// Painting right after `cs`: Lab's initial colour (L* 0) is black.
+	expect_rgb8(fill("/LabD50 cs"), {0, 0, 0}, 0, "initial Lab");
+
+	// Stroke and fill apart; a calibrated stroke beside a device fill, and `q`/`Q` restoring the spaces.
+	const auto both = painted(interpret("1 0 0 rg /RgbD65 CS 0.2 0.5 0.8 SCN 0 0 m 10 0 l 10 10 l B", spaces));
+	expect_rgb8(both.stroke_color, {byte_of(srgb_encoded(0.2)), byte_of(srgb_encoded(0.5)), byte_of(srgb_encoded(0.8))}, 1,
+		"calibrated stroke");
+	expect_rgb8(both.fill_color, {255, 0, 0}, 0, "device fill beside it");
+	const auto restored = painted(interpret("/GrayD65 cs 0.5 sc q /DeviceRGB cs 1 0 0 sc Q 0 0 10 10 re f", spaces));
+	expect_rgb8(restored.fill_color, {gray, gray, gray}, 1, "space restored by Q");
+	const auto switched = painted(interpret("/GrayD65 CS 0.5 SC /DeviceRGB CS 0 0 1 SC 0 0 m 10 0 l S", spaces));
+	expect_rgb8(switched.stroke_color, {0, 0, 255}, 0, "calibrated to device on one side");
+}
+
+// The generated profiles' references through LittleCMS (relative colorimetric unless named).
+constexpr Rgb8 kRgbMatrix128_64_200 = {129, 62, 201};
+constexpr Rgb8 kRgbMatrix30_180_90 = {24, 181, 90};
+constexpr Rgb8 kGray64 = {81, 81, 81};
+constexpr Rgb8 kCmykRelative = {190, 158, 182};  // C 0, M 128, Y 0, K 64 (bytes)
+constexpr Rgb8 kCmykPerceptual = {142, 175, 153};
+
+std::string icc_resources()
+{
+	return "<< /ColorSpace << /RGBP [/ICCBased 5 0 R] /GrayP [/ICCBased 6 0 R] /CMYKP [/ICCBased 7 0 R] >> "
+		   "/ExtGState << /Perc << /RI /Perceptual >> >> >>";
+}
+
+std::vector<std::string> icc_objects()
+{
+	return {stream_object("/N 3 /Alternate /DeviceRGB", corpus_text("color/rgb-matrix.icc")),
+		stream_object("/N 1", corpus_text("color/gray-trc.icc")), stream_object("/N 4", corpus_text("color/cmyk-lut.icc"))};
+}
+
+TEST(PdfInterpreter, IccBasedColors)
+{
+	// The content stream is object 4, so the profiles are objects 5 to 7 (extra objects numbered from 5).
+	const auto fill = [&](const std::string& ops) {
+		return painted(interpret(ops + " 0 0 10 10 re f", icc_resources(), icc_objects())).fill_color;
+	};
+	const std::string cmyk = "/CMYKP cs 0 " + component(128) + " 0 " + component(64) + " scn";
+	expect_rgb8(fill("/RGBP cs " + component(128) + " " + component(64) + " " + component(200) + " scn"), kRgbMatrix128_64_200, 2, "RGB");
+	expect_rgb8(fill("/GrayP cs " + component(64) + " scn"), kGray64, 2, "Gray");
+	expect_rgb8(fill(cmyk), kCmykRelative, 2, "CMYK relative colorimetric");
+	expect_rgb8(fill("/Perceptual ri " + cmyk), kCmykPerceptual, 2, "CMYK perceptual by ri");
+	expect_rgb8(fill("/Perc gs " + cmyk), kCmykPerceptual, 2, "CMYK perceptual by /ExtGState /RI");
+	expect_rgb8(fill(cmyk + " /Perceptual ri"), kCmykPerceptual, 2, "intent changed between scn and the paint");
+	expect_rgb8(fill("q /Perceptual ri Q " + cmyk), kCmykRelative, 2, "intent restored by Q");
+	const auto stroked = painted(interpret("/RGBP CS " + component(30) + " " + component(180) + " " + component(90) +
+			" SCN 0 0 m 10 0 l S", icc_resources(), icc_objects()));
+	expect_rgb8(stroked.stroke_color, kRgbMatrix30_180_90, 2, "RGB stroke");
+
+	// Twenty fills in one ICC colour convert it once.
+	{
+		std::string many = cmyk;
+		for (int i = 0; i < 20; ++i) {
+			many += " 0 0 10 10 re f";
+		}
+		const size_t before = detail::translate_calls_for_testing();
+		const auto r = interpret(many, icc_resources(), icc_objects());
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 20u);
+		EXPECT_EQ(detail::translate_calls_for_testing() - before, 1u);
+	}
+	// One transform per profile and intent, across interpretations of one document.
+	{
+		auto doc = Document::open_memory(one_page_pdf(cmyk + " 0 0 10 10 re f /Perceptual ri 0 0 5 5 re f", icc_resources(), icc_objects()));
+		ASSERT_TRUE(doc.has_value());
+		ASSERT_TRUE(interpret_page(**doc, 0u).has_value());
+		ASSERT_TRUE(interpret_page(**doc, 0u).has_value());
+		EXPECT_EQ((*doc)->color_profiles().transform_count(), 2u);
+	}
+
+	// Fallbacks, each to the device space of /N (or the /Alternate): raw components.
+	const std::string raw_ops = "/P cs " + component(30) + " " + component(180) + " " + component(90) + " scn 0 0 10 10 re f";
+	const Rgb8 raw = {30, 180, 90};
+	const auto with_profile = [&](const std::string& stream) {
+		return painted(interpret(raw_ops, "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>", {stream})).fill_color;
+	};
+	std::string damaged = corpus_text("color/rgb-matrix.icc");
+	damaged[36] = 'X'; // not `acsp`
+	expect_rgb8(with_profile(stream_object("/N 3", damaged)), raw, 0, "damaged profile");
+	// A damaged profile with a calibrated /Alternate draws through the alternate.
+	const auto cal_alternate = painted(interpret("/P cs 0.5 scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+		{stream_object("/N 1 /Alternate [/CalGray << /WhitePoint [0.9505 1 1.089] /Gamma 2.2 >>]", damaged)}));
+	const int cal_gray = byte_of(srgb_encoded(std::pow(0.5, 2.2)));
+	expect_rgb8(cal_alternate.fill_color, {cal_gray, cal_gray, cal_gray}, 1, "a calibrated alternate");
+	expect_rgb8(painted(interpret("/P cs " + component(77) + " scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+					{stream_object("/N 1 /Alternate /DeviceGray", corpus_text("color/rgb-matrix.icc"))}))
+					.fill_color,
+		{77, 77, 77}, 0, "/N mismatched with the profile");
+	std::string oversized = corpus_text("color/rgb-matrix.icc");
+	oversized.resize(kMaxIccProfileBytes + 1u, '\0');
+	expect_rgb8(with_profile(stream_object("/N 3", oversized)), raw, 0, "profile past 16 MiB");
+	for (const auto failure : {detail::IccFailureForTesting::SrgbProfile, detail::IccFailureForTesting::Transform,
+			 detail::IccFailureForTesting::Translate}) {
+		detail::set_icc_failure_for_testing(failure);
+		expect_rgb8(with_profile(stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))), raw, 0, "injected failure");
+		detail::set_icc_failure_for_testing(detail::IccFailureForTesting::None);
+	}
+	expect_rgb8(with_profile(stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))), kRgbMatrix30_180_90, 2, "after the failures");
+	// A good profile whose transform fails draws through its calibrated /Alternate (gamma 1: sRGB's encoding of 0.5).
+	detail::set_icc_failure_for_testing(detail::IccFailureForTesting::Transform);
+	const auto through_alternate = painted(interpret("/P cs 0.5 scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+		{stream_object("/N 1 /Alternate [/CalGray << /WhitePoint [0.9505 1 1.089] >>]", corpus_text("color/gray-trc.icc"))}));
+	detail::set_icc_failure_for_testing(detail::IccFailureForTesting::None);
+	const int linear_half = byte_of(srgb_encoded(0.5));
+	expect_rgb8(through_alternate.fill_color, {linear_half, linear_half, linear_half}, 1, "the alternate after a failed transform");
+
+	// Cycles: an /Alternate chain back to itself (both profiles damaged), and resources naming one another.
+	expect_rgb8(painted(interpret(raw_ops, "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+					{stream_object("/N 3 /Alternate [/ICCBased 6 0 R]", damaged),
+						stream_object("/N 3 /Alternate [/ICCBased 5 0 R]", damaged)}))
+					.fill_color,
+		raw, 0, "an /Alternate cycle");
+	expect_rgb8(painted(interpret("/A cs 0.3 sc 0 0 10 10 re f", "<< /ColorSpace << /A /B /B /A >> >>")).fill_color,
+		{77, 77, 77}, 0, "resources naming one another");
+
+	// The cache's budget: 64 transforms per document; the 65th profile takes its fallback.
+	{
+		std::string content;
+		std::string spaces_text = "<< /ColorSpace << ";
+		std::vector<std::string> objects;
+		for (int i = 0; i < 65; ++i) {
+			spaces_text += "/P" + std::to_string(i) + " [/ICCBased " + std::to_string(5 + i) + " 0 R] ";
+			objects.push_back(stream_object("/N 3", corpus_text("color/rgb-matrix.icc")));
+			content += "/P" + std::to_string(i) + " cs " + component(30) + " " + component(180) + " " + component(90) +
+				" scn 0 0 10 10 re f ";
+		}
+		const auto r = interpret(content, spaces_text + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 65u);
+		expect_rgb8(draws[63].fill_color, kRgbMatrix30_180_90, 2, "the 64th profile");
+		expect_rgb8(draws[64].fill_color, raw, 0, "the 65th profile, past the budget");
+	}
+}
+
+TEST(PdfInterpreter, CalibratedCmyk)
+{
+	const std::string ops = "0 " + component(128) + " 0 " + component(64) + " k 0 0 10 10 re f";
+	// The document's output intent.
+	{
+		std::vector<std::string> objects;
+		objects.emplace_back("<< /Type /Catalog /Pages 2 0 R /OutputIntents [<< /Type /OutputIntent /S /GTS_PDFX "
+							 "/DestOutputProfile 5 0 R >>] >>");
+		objects.emplace_back("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+		objects.emplace_back("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>");
+		objects.push_back(stream_object("", ops));
+		objects.push_back(stream_object("/N 4", corpus_text("color/cmyk-lut.icc")));
+		expect_rgb8(painted(interpret(pdf_from_objects(objects))).fill_color, kCmykRelative, 2, "output intent");
+	}
+	// No output intent: Windows' RSWOP.icm when present, its own Windows transform, not the formula.
+	const Rgb8 formula = {191, 63, 191}; // 1 - min(1, colourant + k) per channel: C 0, M 0.502, Y 0, K 0.251
+	const auto plain = painted(interpret(ops)).fill_color;
+	std::array<wchar_t, MAX_PATH + 1> dir{};
+	GetSystemDirectoryW(dir.data(), static_cast<UINT>(dir.size()));
+	const std::filesystem::path rswop = std::filesystem::path(dir.data()) / "spool" / "drivers" / "color" / "RSWOP.icm";
+	if (std::filesystem::exists(rswop)) {
+		std::ifstream in(rswop, std::ios::binary);
+		std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		auto profile = IccProfile::make(std::move(bytes), 4u, 0u);
+		ASSERT_TRUE(profile.has_value());
+		auto doc = Document::open_memory(one_page_pdf(std::nullopt));
+		ASSERT_TRUE(doc.has_value());
+		const std::array<double, 4> c = {0.0, 128.0 / 255.0, 0.0, 64.0 / 255.0};
+		std::array<double, 3> rgb{};
+		auto converted = (*doc)->color_profiles().to_srgb(**profile, RenderingIntent::RelativeColorimetric, c, 1u, rgb);
+		ASSERT_TRUE(converted.has_value() && *converted);
+		expect_rgb8(plain, {byte_of(rgb[0]), byte_of(rgb[1]), byte_of(rgb[2])}, 1, "RSWOP.icm");
+		EXPECT_GT(std::abs(static_cast<int>(std::lround(plain.g * 255.0f)) - formula.g), 2) << "differs from the formula";
+	}
+	// No profile loads: the section 3 formula.
+	detail::set_default_cmyk_profile_enabled_for_testing(false);
+	expect_rgb8(painted(interpret(ops)).fill_color, formula, 1, "the formula without a profile");
+	detail::set_default_cmyk_profile_enabled_for_testing(true);
+}
+
+TEST(PdfInterpreter, DefaultColorSpaces)
+{
+	const std::string defaults = "<< /ColorSpace << /DefaultRGB [/ICCBased 5 0 R] /DefaultGray [/ICCBased 6 0 R] "
+								 "/DefaultCMYK [/ICCBased 7 0 R] >> >>";
+	const auto fill = [&](const std::string& ops, const std::string& resources) {
+		return painted(interpret(ops + " 0 0 10 10 re f", resources, icc_objects())).fill_color;
+	};
+	const std::string rgb = component(30) + " " + component(180) + " " + component(90);
+	expect_rgb8(fill(rgb + " rg", defaults), kRgbMatrix30_180_90, 2, "rg through /DefaultRGB");
+	expect_rgb8(fill("/DeviceRGB cs " + rgb + " sc", defaults), kRgbMatrix30_180_90, 2, "cs /DeviceRGB through /DefaultRGB");
+	expect_rgb8(fill(component(64) + " g", defaults), kGray64, 2, "g through /DefaultGray");
+	expect_rgb8(fill("0 " + component(128) + " 0 " + component(64) + " k", defaults), kCmykRelative, 2, "k through /DefaultCMYK");
+	const auto stroked = painted(interpret(rgb + " RG 0 0 m 10 0 l S", defaults, icc_objects()));
+	expect_rgb8(stroked.stroke_color, kRgbMatrix30_180_90, 2, "RG through /DefaultRGB");
+	// No default: the device space; a default naming its own device space: the device space.
+	expect_rgb8(fill(rgb + " rg", "<< >>"), {30, 180, 90}, 0, "no default");
+	expect_rgb8(fill(rgb + " rg", "<< /ColorSpace << /DefaultRGB /DeviceRGB >> >>"), {30, 180, 90}, 0, "a default naming itself");
+	// The same resolution for an image's device space.
+	auto doc = Document::open_memory(one_page_pdf(std::nullopt, defaults, icc_objects()));
+	ASSERT_TRUE(doc.has_value());
+	auto page_resources = (*doc)->resolve_value(PdfValue(IndirectRef(3u)));
+	ASSERT_TRUE(page_resources.has_value());
+	const PdfDict* page = page_resources->as_dict();
+	ASSERT_NE(page, nullptr);
+	auto resources = (*doc)->resolve_value(*page->get("Resources"));
+	ASSERT_TRUE(resources.has_value());
+	auto color_spaces = (*doc)->resolve_value(*resources->as_dict()->get("ColorSpace"));
+	ASSERT_TRUE(color_spaces.has_value());
+	ColorSpaces resolver(**doc, color_spaces->as_dict());
+	auto image_space = resolver.resolve(PdfValue(PdfName("DeviceRGB")));
+	ASSERT_TRUE(image_space.has_value() && *image_space != nullptr);
+	EXPECT_EQ((*image_space)->kind(), ColorSpaceKind::ICCBased);
+}
+
+TEST(PdfColor, ImageSamples)
+{
+	auto doc = Document::open_memory(one_page_pdf(std::nullopt));
+	ASSERT_TRUE(doc.has_value());
+	const Document& d = **doc;
+	const auto row = [&](const ColorSpace& space, std::vector<uint8_t> bytes, size_t width, uint32_t bits,
+						 std::vector<double> decode = {}) {
+		auto out = space.convert_samples(bytes, width, bits, decode, RenderingIntent::RelativeColorimetric, d);
+		EXPECT_TRUE(out.has_value()) << (out.has_value() ? "" : out.error().message.view());
+		return out.has_value() ? *out : std::vector<uint8_t>{};
+	};
+	const auto& gray = *ColorSpace::device(ColorSpaceKind::DeviceGray);
+	const auto& rgb = *ColorSpace::device(ColorSpaceKind::DeviceRGB);
+	// Packed samples, most significant bits first.
+	EXPECT_EQ(row(gray, {0b10110000u}, 4u, 1u), (std::vector<uint8_t>{255, 255, 255, 255, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255}));
+	EXPECT_EQ(row(gray, {0b00011011u}, 4u, 2u), (std::vector<uint8_t>{0, 0, 0, 255, 85, 85, 85, 255, 170, 170, 170, 255, 255, 255, 255, 255}));
+	EXPECT_EQ(row(rgb, {0xF0u, 0x08u, 0xFFu}, 2u, 4u), (std::vector<uint8_t>{255, 0, 0, 255, 136, 255, 255, 255}));
+	// 16-bit samples, big-endian.
+	EXPECT_EQ(row(gray, {0x80u, 0x00u, 0xFFu, 0xFFu}, 2u, 16u), (std::vector<uint8_t>{128, 128, 128, 255, 255, 255, 255, 255}));
+	// A reversed /Decode, an omitted one, and a malformed one (ignored).
+	EXPECT_EQ(row(gray, {0u, 255u}, 2u, 8u, {1.0, 0.0}), (std::vector<uint8_t>{255, 255, 255, 255, 0, 0, 0, 255}));
+	EXPECT_EQ(row(gray, {0u, 255u}, 2u, 8u), (std::vector<uint8_t>{0, 0, 0, 255, 255, 255, 255, 255}));
+	EXPECT_EQ(row(gray, {0u, 255u}, 2u, 8u, {1.0, 0.0, 0.5}), (std::vector<uint8_t>{0, 0, 0, 255, 255, 255, 255, 255}));
+	// A row shorter than its samples.
+	const auto truncated = rgb.convert_samples(std::vector<uint8_t>{1u, 2u}, 1u, 8u, {}, RenderingIntent::RelativeColorimetric, d);
+	ASSERT_FALSE(truncated.has_value());
+	EXPECT_EQ(truncated.error().code, ErrorCode::DamagedFormat);
+
+	// An ICC row: the single-colour path's values, LittleCMS's within 2/255, in one Windows call.
+	const std::string rgb_profile = corpus_text("color/rgb-matrix.icc");
+	auto profile = IccProfile::make(std::vector<uint8_t>(rgb_profile.begin(), rgb_profile.end()), 3u, 0u);
+	ASSERT_TRUE(profile.has_value());
+	const auto icc = ColorSpace::icc(*profile, {}, ColorSpace::device(ColorSpaceKind::DeviceRGB));
+	const size_t calls = detail::translate_calls_for_testing();
+	const auto icc_row = row(*icc, {128u, 64u, 200u, 30u, 180u, 90u}, 2u, 8u);
+	EXPECT_EQ(detail::translate_calls_for_testing() - calls, 1u);
+	ASSERT_EQ(icc_row.size(), 8u);
+	const std::array<double, 3> first = {128.0 / 255.0, 64.0 / 255.0, 200.0 / 255.0};
+	auto single = icc->rgba(first, RenderingIntent::RelativeColorimetric, d);
+	ASSERT_TRUE(single.has_value());
+	EXPECT_LE(std::abs(icc_row[0] - byte_of(single->r)), 1);
+	EXPECT_LE(std::abs(icc_row[0] - kRgbMatrix128_64_200.r), 2);
+	EXPECT_LE(std::abs(icc_row[5] - kRgbMatrix30_180_90.g), 2);
+
+	// A calibrated row matches the single-colour path.
+	CieParams lab;
+	lab.white = {0.9642, 1.0, 0.8249};
+	lab.range = {-128.0, 127.0, -128.0, 127.0};
+	const auto lab_space = ColorSpace::cie(ColorSpaceKind::Lab, lab);
+	const auto lab_row = row(*lab_space, {128u, 168u, 100u}, 1u, 8u, {0.0, 100.0, -128.0, 127.0, -128.0, 127.0});
+	ASSERT_EQ(lab_row.size(), 4u);
+	EXPECT_LE(std::abs(lab_row[0] - 167), 1);
+	EXPECT_LE(std::abs(lab_row[1] - 92), 1);
+
+	// An image's own profile, and one that cannot be read.
+	const std::string gray_profile = corpus_text("color/gray-trc.icc");
+	const auto own = ColorSpace::from_icc_profile(
+		std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(gray_profile.data()), gray_profile.size()), 1u);
+	EXPECT_EQ(own->kind(), ColorSpaceKind::ICCBased);
+	EXPECT_LE(std::abs(row(*own, {64u}, 1u, 8u)[0] - kGray64.r), 2);
+	const std::vector<uint8_t> junk(200u, 0x41u);
+	EXPECT_EQ(ColorSpace::from_icc_profile(junk, 1u)->kind(), ColorSpaceKind::DeviceGray);
 }
 
 } // namespace

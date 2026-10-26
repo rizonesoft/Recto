@@ -15,6 +15,9 @@ Every file under `tests/corpus/` (excluding `README.md` and `PROVENANCE.md`) is 
 | broken/non-pdf-header.pdf | 163e73c144c8d17f75d877668cc845ab7d3f541e85c111fbabefde0c08070f3f | CC0-1.0 | scripts/build-corpus.py | Non-PDF plain-text header testing magic-header rejection |
 | broken/truncated-header.pdf | a1044a1b6491e3b7fe0fae7965d2a895a5780a5b1704b6979e59c89be32ffc49 | CC0-1.0 | scripts/build-corpus.py | Truncated 6-byte %PDF-1 header testing short-read rejection |
 | broken/truncated-stream.pdf | c216a4ef5ba39f888d6bec646134b2e83657dcac591dd234793da2f0d90868df | CC0-1.0 | scripts/build-corpus.py | Stream truncated mid-payload before endstream testing stream bounds enforcement |
+| color/cmyk-lut.icc | ed780e20d0ab475e66ea4403103d6f5c1fc1702e5cc31bdfbb183273078b1a66 | CC0-1.0 | scripts/build-corpus.py | ICC v2 CMYK output profile: Lab lookup tables, the perceptual ones of opposite hue |
+| color/gray-trc.icc | 1d1b1a34192e332229599499d185e4fd1117899164656182306f9f294488c868 | CC0-1.0 | scripts/build-corpus.py | ICC v2 Gray profile: a gamma 1.8 curve |
+| color/rgb-matrix.icc | dce2e3fa2f2e36243b4b83f4753bbd48fbcd2d9ec842a62438079a03e252918f | CC0-1.0 | scripts/build-corpus.py | ICC v2 RGB matrix and curve profile: sRGB primaries adapted to D50, gamma 2.2 |
 | convert/sample.docx | 525a2e2eb074c0adbe3e9a5ec00da63979246efd4408e0fe1a183e968da6dfa7 | CC0-1.0 | scripts/build-corpus.py | Minimal ECMA-376 WordprocessingML document with two plain paragraphs |
 | convert/sample.xlsx | 7bf22cb06a2a705e0c3445dcc2d97a645ece184287c8353350a56942f78d15aa | CC0-1.0 | scripts/build-corpus.py | Minimal ECMA-376 SpreadsheetML workbook with inline-string and numeric cells |
 | convert/tables-and-forms.pdf | fff50e93ae13f1e96726a63ad85585f278f59bcea1afa1064d699beff3dbaabe | CC0-1.0 | scripts/build-corpus.py | Ruled 4-row, 3-column table with a merged header row, a borderless 3x3 table, and AcroForm /Tx, /Btn, and /Ch fields |

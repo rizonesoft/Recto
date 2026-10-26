@@ -184,6 +184,8 @@ struct DocumentDescription {
 	bool operator==(const DocumentDescription&) const noexcept = default;
 };
 
+class ColorProfileCache;
+
 class Document {
 public:
 	Document() = default;
@@ -362,6 +364,10 @@ public:
 		return security_handler_;
 	}
 
+	// The colour transforms built for this document, made on first use (D01 T02 section 32, `color.h`). Only the
+	// DocumentActor thread that owns the document uses them.
+	[[nodiscard]] ColorProfileCache& color_profiles() const;
+
 	[[nodiscard]] const PdfDict& catalog() const noexcept
 	{
 		return catalog_;
@@ -431,6 +437,8 @@ private:
 	// Decrypted, decoded object streams of an encrypted document, keyed by container number, so sibling objects
 	// share one decode (bounded by count and decoded bytes). Owned, like every member, by the DocumentActor thread.
 	mutable ObjStmCache decrypted_obj_stm_cache_{};
+	// The colour transforms built for this document (D01 T02 section 32), made on first use; actor thread only.
+	mutable std::shared_ptr<ColorProfileCache> color_profiles_{};
 	PdfDict catalog_{};
 	DocumentDescription description_{};
 	std::vector<ResolvedPageRecord> page_records_{};

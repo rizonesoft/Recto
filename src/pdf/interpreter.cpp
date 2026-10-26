@@ -2,6 +2,7 @@
 // and device colour (ISO 32000-1 sections 7.8 and 8; D01 T02 section 3).
 #include "interpreter.h"
 
+#include "color.h"
 #include "lexer.h"
 #include "filters.h"
 #include "parser.h"
@@ -9,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <memory>
 #include <new>
 #include <optional>
 #include <string>
@@ -18,29 +20,6 @@
 namespace recto::pdf {
 
 namespace {
-
-// The colour spaces this section reads; `Other` is any space sections 32 and 33 read, which paints black until then.
-enum class ColorFamily : uint8_t {
-	Gray,
-	Rgb,
-	Cmyk,
-	Other,
-};
-
-[[nodiscard]] constexpr size_t component_count(ColorFamily family) noexcept
-{
-	switch (family) {
-	case ColorFamily::Gray:
-		return 1u;
-	case ColorFamily::Rgb:
-		return 3u;
-	case ColorFamily::Cmyk:
-		return 4u;
-	case ColorFamily::Other:
-		return 0u;
-	}
-	return 0u;
-}
 
 [[nodiscard]] float unit(double v) noexcept
 {
@@ -57,69 +36,17 @@ enum class ColorFamily : uint8_t {
 	return f;
 }
 
-// Device components to the recorded sRGB colour. DeviceCMYK uses the conversion ISO 32000-1 gives for DeviceCMYK to
-// DeviceRGB when no profile applies (each channel 1 - min(1, colourant + black)); section 32 calibrates it.
-[[nodiscard]] ColorRgba to_rgba(ColorFamily family, std::span<const double> c, float alpha) noexcept
-{
-	switch (family) {
-	case ColorFamily::Gray:
-		return ColorRgba{unit(c[0]), unit(c[0]), unit(c[0]), alpha};
-	case ColorFamily::Rgb:
-		return ColorRgba{unit(c[0]), unit(c[1]), unit(c[2]), alpha};
-	case ColorFamily::Cmyk: {
-		const double k = std::clamp(c[3], 0.0, 1.0);
-		return ColorRgba{unit(1.0 - std::min(1.0, std::clamp(c[0], 0.0, 1.0) + k)),
-			unit(1.0 - std::min(1.0, std::clamp(c[1], 0.0, 1.0) + k)),
-			unit(1.0 - std::min(1.0, std::clamp(c[2], 0.0, 1.0) + k)), alpha};
-	}
-	case ColorFamily::Other:
-		break;
-	}
-	return ColorRgba{0.0f, 0.0f, 0.0f, alpha};
-}
-
-// One colour: its space and components, black in the space's initial colour.
+// A colour: its space (null for a space section 33 reads, which paints black until then) and its components.
 struct Color {
-	ColorFamily family{ColorFamily::Gray};
+	std::shared_ptr<const ColorSpace> space{ColorSpace::device(ColorSpaceKind::DeviceGray)};
 	std::array<double, 4> components{0.0, 0.0, 0.0, 0.0};
 
-	[[nodiscard]] static Color initial(ColorFamily family) noexcept
+	void reset(std::shared_ptr<const ColorSpace> to) noexcept
 	{
-		Color c{};
-		c.family = family;
-		if (family == ColorFamily::Cmyk) {
-			c.components = {0.0, 0.0, 0.0, 1.0}; // ISO 32000-1 Table 74: CMYK starts at black
-		}
-		return c;
-	}
-
-	[[nodiscard]] ColorRgba rgba() const noexcept
-	{
-		return to_rgba(family, components, 1.0f);
+		space = std::move(to);
+		components = space != nullptr ? space->initial() : std::array<double, 4>{0.0, 0.0, 0.0, 0.0};
 	}
 };
-
-// ISO 32000-1 8.6.5.8: an intent this reader does not know is RelativeColorimetric.
-enum class RenderingIntent : uint8_t {
-	AbsoluteColorimetric,
-	RelativeColorimetric,
-	Saturation,
-	Perceptual,
-};
-
-[[nodiscard]] RenderingIntent rendering_intent_named(std::string_view name) noexcept
-{
-	if (name == "AbsoluteColorimetric") {
-		return RenderingIntent::AbsoluteColorimetric;
-	}
-	if (name == "Saturation") {
-		return RenderingIntent::Saturation;
-	}
-	if (name == "Perceptual") {
-		return RenderingIntent::Perceptual;
-	}
-	return RenderingIntent::RelativeColorimetric;
-}
 
 // The graphics state the interpreter keeps beside the builder's (ISO 32000-1 8.4). `style_recorded` and
 // `alpha_recorded` say whether the builder already holds this state's stroke style and alphas, so they are recorded
@@ -868,29 +795,24 @@ private:
 		}
 		// Colour.
 		case Op::FillGray:
-			set_color(false, ColorFamily::Gray, operands);
-			return {};
+			return set_device_color(false, ColorSpaceKind::DeviceGray, operands);
 		case Op::StrokeGray:
-			set_color(true, ColorFamily::Gray, operands);
-			return {};
+			return set_device_color(true, ColorSpaceKind::DeviceGray, operands);
 		case Op::FillRgb:
-			set_color(false, ColorFamily::Rgb, operands);
-			return {};
+			return set_device_color(false, ColorSpaceKind::DeviceRGB, operands);
 		case Op::StrokeRgb:
-			set_color(true, ColorFamily::Rgb, operands);
-			return {};
+			return set_device_color(true, ColorSpaceKind::DeviceRGB, operands);
 		case Op::FillCmyk:
-			set_color(false, ColorFamily::Cmyk, operands);
-			return {};
+			return set_device_color(false, ColorSpaceKind::DeviceCMYK, operands);
 		case Op::StrokeCmyk:
-			set_color(true, ColorFamily::Cmyk, operands);
-			return {};
+			return set_device_color(true, ColorSpaceKind::DeviceCMYK, operands);
 		case Op::FillSpace:
 		case Op::StrokeSpace: {
 			if (operands.size() == 1u) {
 				if (const auto name = operands[0].as_name()) {
 					Color& target = op == Op::StrokeSpace ? state_.stroke : state_.fill;
-					target = Color::initial(color_space_named(*name));
+					RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, spaces().named(*name));
+					target.reset(std::move(space));
 				}
 			}
 			return {};
@@ -899,8 +821,8 @@ private:
 		case Op::StrokeColor: {
 			const bool stroking = op == Op::StrokeColor;
 			Color& target = stroking ? state_.stroke : state_.fill;
-			if (target.family != ColorFamily::Other) {
-				set_color(stroking, target.family, operands);
+			if (target.space != nullptr) {
+				set_components(target, operands);
 			}
 			return {};
 		}
@@ -1062,6 +984,11 @@ private:
 			return;
 		}
 		const PdfDict& gs = *value->as_dict();
+		if (const auto ri = entry(gs, "RI"); ri.has_value()) {
+			if (const auto n = ri->as_name()) {
+				state_.rendering_intent = rendering_intent_named(*n);
+			}
+		}
 		if (const auto lw = entry(gs, "LW"); lw.has_value()) {
 			if (const auto n = number(*lw)) {
 				set_line_width(*n);
@@ -1128,53 +1055,65 @@ private:
 		}
 	}
 
-	// A colour space name: a device space, or a `/ColorSpace` resource naming one (through inherited resources and
-	// indirect references); anything else is a space sections 32 and 33 read.
-	[[nodiscard]] ColorFamily color_space_named(std::string_view name)
+	// The colour space resolution of this interpretation: the `/ColorSpace` resources, `/Default*` spaces among them.
+	[[nodiscard]] ColorSpaces& spaces()
 	{
-		const auto device = [](std::string_view n) -> std::optional<ColorFamily> {
-			if (n == "DeviceGray") {
-				return ColorFamily::Gray;
-			}
-			if (n == "DeviceRGB") {
-				return ColorFamily::Rgb;
-			}
-			if (n == "DeviceCMYK") {
-				return ColorFamily::Cmyk;
-			}
-			return std::nullopt;
-		};
-		if (const auto family = device(name)) {
-			return *family;
+		if (!spaces_.has_value()) {
+			spaces_.emplace(document_, category("ColorSpace", color_spaces_));
 		}
-		const auto value = resource("ColorSpace", color_spaces_, name);
-		if (!value.has_value()) {
-			return ColorFamily::Other;
-		}
-		if (const auto n = value->as_name()) {
-			return device(*n).value_or(ColorFamily::Other);
-		}
-		if (const PdfArray* array = value->as_array(); array != nullptr && array->size() == 1u) {
-			const auto element = resolved((*array)[0]);
-			if (const auto n = element.has_value() ? element->as_name() : std::nullopt) {
-				return device(*n).value_or(ColorFamily::Other);
-			}
-		}
-		return ColorFamily::Other;
+		return *spaces_;
 	}
 
-	void set_color(bool stroking, ColorFamily family, const std::vector<PdfValue>& operands) noexcept
+	// `g`, `rg`, `k` and their stroking forms: the device space, or the `/Default*` space replacing it (8.6.5.6).
+	[[nodiscard]] PdfResult<void> set_device_color(
+		bool stroking, ColorSpaceKind kind, const std::vector<PdfValue>& operands)
 	{
-		const size_t count = component_count(family);
+		const size_t count = kind == ColorSpaceKind::DeviceGray ? 1u : kind == ColorSpaceKind::DeviceRGB ? 3u : 4u;
+		if (!numbers(operands, count).has_value()) {
+			return {};
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, spaces().device(kind));
+		Color& target = stroking ? state_.stroke : state_.fill;
+		target.reset(std::move(space));
+		set_components(target, operands);
+		return {};
+	}
+
+	// `sc`/`scn` and `SC`/`SCN`: as many numbers as the space has components, else the operator is skipped.
+	void set_components(Color& target, const std::vector<PdfValue>& operands) noexcept
+	{
+		const size_t count = target.space->components();
 		const auto n = numbers(operands, count);
 		if (!n.has_value()) {
 			return;
 		}
-		Color& target = stroking ? state_.stroke : state_.fill;
-		target.family = family;
-		for (size_t i = 0; i < count; ++i) {
+		for (size_t i = 0; i < count && i < target.components.size(); ++i) {
 			target.components[i] = (*n)[i];
 		}
+	}
+
+	// A colour in sRGB with the rendering intent in force; black for a space section 33 reads. Each side remembers its
+	// last conversion, so a page of paints in one colour converts it once.
+	struct Converted {
+		std::shared_ptr<const ColorSpace> space;
+		std::array<double, 4> components{};
+		RenderingIntent intent{RenderingIntent::RelativeColorimetric};
+		ColorRgba value{};
+	};
+
+	[[nodiscard]] PdfResult<ColorRgba> rgba(const Color& color, bool stroking) noexcept
+	{
+		if (color.space == nullptr) {
+			return ColorRgba{0.0f, 0.0f, 0.0f, 1.0f};
+		}
+		std::optional<Converted>& last = stroking ? last_stroke_ : last_fill_;
+		if (last.has_value() && last->space == color.space && last->components == color.components &&
+			last->intent == state_.rendering_intent) {
+			return last->value;
+		}
+		RECTO_PDF_TRY(const ColorRgba value, color.space->rgba(color.components, state_.rendering_intent, document_));
+		last = Converted{color.space, color.components, state_.rendering_intent, value};
+		return value;
 	}
 
 	// Records the stroke style and the alphas when they changed since the builder last had them.
@@ -1234,7 +1173,10 @@ private:
 		RECTO_PDF_TRY(const uint32_t id, builder_.add_path(path_));
 		if (fill || stroke) {
 			RECTO_PDF_RETURN_IF_ERROR(sync_state(stroke));
-			RECTO_PDF_RETURN_IF_ERROR(builder_.draw_path(id, state_.stroke.rgba(), state_.fill.rgba(), stroke, fill, rule));
+			// Converted now, with the rendering intent in force at the paint (ISO 32000-1 8.6.5.8).
+			RECTO_PDF_TRY(const ColorRgba stroke_color, rgba(state_.stroke, true));
+			RECTO_PDF_TRY(const ColorRgba fill_color, rgba(state_.fill, false));
+			RECTO_PDF_RETURN_IF_ERROR(builder_.draw_path(id, stroke_color, fill_color, stroke, fill, rule));
 		}
 		if (clip.has_value()) {
 			RECTO_PDF_RETURN_IF_ERROR(builder_.push_clip_path(id, *clip));
@@ -1255,6 +1197,9 @@ private:
 	DisplayListBuilder builder_;
 	Category ext_gstates_{};
 	Category color_spaces_{};
+	std::optional<ColorSpaces> spaces_{};
+	std::optional<Converted> last_stroke_{};
+	std::optional<Converted> last_fill_{};
 	GraphicsState state_{};
 	size_t max_depth_;
 	std::vector<GraphicsState> state_stack_{};
