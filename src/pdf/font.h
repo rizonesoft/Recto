@@ -95,6 +95,9 @@ inline constexpr size_t kMaxGlyphCharstringWork = 1'000'000u;
 inline constexpr size_t kMaxCharstringSubrDepth = 10u;
 inline constexpr size_t kMaxType1Stack = 24u;
 inline constexpr size_t kMaxType2Stack = 48u;
+// Entries in a CFF program's global and local subroutine INDEXes together, so FDs sharing one large table cannot
+// multiply it.
+inline constexpr size_t kMaxCffSubrEntries = size_t{1} << 20u;
 
 // Parses the program once into immutable data; each glyph is computed per call from it, so the font draws as an
 // `OutlineOnly` one through its outlines, in text space through the program's font matrix. A malformed program is

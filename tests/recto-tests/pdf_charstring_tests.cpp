@@ -233,12 +233,13 @@ constexpr std::array<NamedOperator, 25> kType1Operators = {{
 	{"setcurrentpoint", {12, 33}, 2},
 }};
 
-constexpr std::array<NamedOperator, 20> kType2Operators = {{
+constexpr std::array<NamedOperator, 25> kType2Operators = {{
 	{"hstem", {1, 0}, 1}, {"vmoveto", {4, 0}, 1}, {"rlineto", {5, 0}, 1}, {"callsubr", {10, 0}, 1},
 	{"return", {11, 0}, 1}, {"endchar", {14, 0}, 1}, {"hintmask", {19, 0}, 1}, {"rmoveto", {21, 0}, 1},
 	{"hmoveto", {22, 0}, 1}, {"callgsubr", {29, 0}, 1}, {"add", {12, 10}, 2}, {"drop", {12, 18}, 2},
 	{"rrcurveto", {8, 0}, 1}, {"div", {12, 12}, 2}, {"sqrt", {12, 26}, 2}, {"put", {12, 20}, 2}, {"roll", {12, 30}, 2},
-	{"sub", {12, 11}, 2}, {"mul", {12, 24}, 2}, {"dup", {12, 27}, 2},
+	{"sub", {12, 11}, 2}, {"mul", {12, 24}, 2}, {"dup", {12, 27}, 2}, {"dotsection", {12, 0}, 2}, {"flex", {12, 35}, 2},
+	{"hvcurveto", {31, 0}, 1}, {"rcurveline", {24, 0}, 1}, {"eq", {12, 15}, 2},
 }};
 
 void append_number(std::vector<uint8_t>& out, int32_t value, bool type2)
@@ -510,11 +511,12 @@ std::vector<uint8_t> type1_encrypt(std::vector<uint8_t> plain, uint16_t key)
 }
 
 // A Type 1 program with a binary `eexec` part, its charstrings encrypted with lenIV 4.
-std::vector<uint8_t> build_type1(
-	const std::vector<std::vector<uint8_t>>& subrs, const std::vector<std::pair<std::string, std::vector<uint8_t>>>& glyphs)
+std::vector<uint8_t> build_type1(const std::vector<std::vector<uint8_t>>& subrs,
+	const std::vector<std::pair<std::string, std::vector<uint8_t>>>& glyphs,
+	std::string_view matrix = "0.001 0 0 0.001 0 0")
 {
-	const std::string clear = "%!PS-AdobeFont-1.0: Test 001.000\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n"
-							  "/Encoding StandardEncoding def\ncurrentfile eexec\n";
+	const std::string clear = "%!PS-AdobeFont-1.0: Test 001.000\n/FontMatrix [" + std::string(matrix) +
+							  "] readonly def\n/Encoding StandardEncoding def\ncurrentfile eexec\n";
 	std::vector<uint8_t> priv;
 	const auto text = [&](std::string_view s) { priv.insert(priv.end(), s.begin(), s.end()); };
 	const auto entry = [&](std::string head, const std::vector<uint8_t>& cs, std::string_view tail) {
@@ -1037,9 +1039,80 @@ TEST(PdfFont, HostileCharstringsRefused)
 		}
 		expect_refused(cff_glyph(name_keyed({end, charstring(infinite + " 0 rlineto endchar", true)}).bytes, 1u),
 			ErrorCode::DamagedFormat, "Type 2 infinite coordinate");
+		// Infinity compared with itself is a finite 1: only the arithmetic's own check refuses it.
+		expect_refused(cff_glyph(name_keyed({end, charstring(infinite + " dup eq 0 rlineto endchar", true)}).bytes, 1u),
+			ErrorCode::DamagedFormat, "Type 2 infinity compared");
 		expect_refused(cff_glyph(name_keyed({end, charstring(infinite + " dup sub callsubr endchar", true)},
 								  {charstring("return", true)}).bytes, 1u),
 			ErrorCode::DamagedFormat, "Type 2 NaN subroutine index");
+	}
+	// Programs must end by their terminators and give each path operator exactly its arguments (Technical Note 5177,
+	// 4.1 and 4.7); `dotsection`, kept as a no-op (Appendix B), changes nothing.
+	{
+		const auto t2 = [&](std::string_view program, std::vector<std::vector<uint8_t>> subrs = {}) {
+			return cff_glyph(name_keyed({end, charstring(program, true)}, std::move(subrs)).bytes, 1u);
+		};
+		expect_refused(t2("0 0 rmoveto 10 0 rlineto"), ErrorCode::DamagedFormat, "Type 2 glyph without endchar");
+		expect_refused(t2("0 0 rmoveto return"), ErrorCode::DamagedFormat, "Type 2 return from no subroutine");
+		expect_refused(t2("0 0 rmoveto -107 callsubr endchar", {charstring("10 0 rlineto", true)}),
+			ErrorCode::DamagedFormat, "Type 2 subroutine without return");
+		for (const std::string_view bad : {"0 0 rmoveto 1 2 3 rlineto endchar", "0 0 rmoveto 1 2 3 4 5 6 7 rrcurveto endchar",
+				 "0 0 rmoveto 1 2 3 4 5 6 hvcurveto endchar", "0 0 rmoveto 1 2 3 4 5 6 7 8 9 rcurveline endchar",
+				 "0 0 rmoveto 1 2 3 4 5 6 7 8 9 10 11 12 13 14 flex endchar", "1 2 3 4 rmoveto 1 0 rlineto endchar",
+				 "0 0 rmoveto 1 2 endchar"}) {
+			expect_refused(t2(bad), ErrorCode::DamagedFormat, bad);
+		}
+		const auto plain = t2("0 0 rmoveto 10 0 rlineto endchar");
+		const auto dotted = t2("0 0 rmoveto dotsection 10 0 rlineto dotsection endchar");
+		ASSERT_TRUE(plain.has_value() && dotted.has_value());
+		EXPECT_EQ(outline_text(dotted->outline), outline_text(plain->outline));
+		EXPECT_EQ(dotted->advance, plain->advance);
+		const std::pair<std::string, std::vector<uint8_t>> nd{".notdef", charstring("0 500 hsbw endchar", false)};
+		const auto t1 = [&](std::string_view program, std::string_view matrix = "0.001 0 0 0.001 0 0") {
+			auto font = load_charstring_font(shared(build_type1({}, {nd, {"g", charstring(program, false)}}, matrix)),
+				CharstringFormat::Type1);
+			EXPECT_TRUE(font.has_value());
+			return font.has_value() ? (*font)->shape((*font)->glyph_for_name("g").value_or(0u))
+									: PdfResult<GlyphShape>(font.error());
+		};
+		expect_refused(t1("0 500 hsbw 0 0 rmoveto 10 0 rlineto"), ErrorCode::DamagedFormat, "Type 1 glyph without endchar");
+		expect_refused(t1("0 500 hsbw return"), ErrorCode::DamagedFormat, "Type 1 return from no subroutine");
+		expect_refused(t1("0 500 hsbw pop endchar"), ErrorCode::DamagedFormat, "Type 1 pop with nothing to take");
+		// A finite but enormous /FontMatrix overflows the points (here with a zero, finite advance) and the advance to
+		// infinity.
+		expect_refused(t1("0 0 hsbw 0 0 rmoveto 1000 0 rlineto endchar", "1e308 0 0 1e308 0 0"), ErrorCode::DamagedFormat,
+			"points past the double range");
+		auto huge = load_charstring_font(shared(build_type1({}, {nd}, "1e308 0 0 1e308 0 0")), CharstringFormat::Type1);
+		ASSERT_TRUE(huge.has_value());
+		const auto advance = (*huge)->advance(0u);
+		ASSERT_FALSE(advance.has_value());
+		EXPECT_EQ(advance.error().code, ErrorCode::DamagedFormat);
+	}
+	// A glyph name past 255 bytes names nothing, however many glyphs share it; subroutine tables are bounded across
+	// FDs: 256 FDs of 4,095 subroutines (4,096 offsets each, 1,048,576 in all) load, of 4,096 are refused.
+	{
+		CffBuild b;
+		b.glyphs = {end, end, end};
+		b.strings = {std::string(300u, 'x'), "short"};
+		b.charset_bytes = {0u};
+		put_u16(b.charset_bytes, 391u);
+		put_u16(b.charset_bytes, 392u);
+		const auto f = load_charstrings_ok(shared(build_cff(b).bytes), CharstringFormat::Type1C);
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->glyph_for_name(std::string(300u, 'x')), std::nullopt);
+		EXPECT_EQ(f->glyph_for_name(""), std::nullopt);
+		EXPECT_EQ(f->glyph_for_name("short"), std::optional<uint16_t>(uint16_t{2u}));
+		const auto fds = [&](size_t subrs_each) {
+			CffBuild cid;
+			cid.glyphs = {end, end};
+			cid.charset_bytes = {0u, 0u, 1u};
+			cid.fd_select = {0u, 0u, 255u};
+			cid.fds.assign(256u, CffFd{std::vector<std::vector<uint8_t>>(subrs_each, charstring("return", true)), 0, 0});
+			return build_cff(cid).bytes;
+		};
+		EXPECT_TRUE(load_charstring_font(shared(fds(4'095u)), CharstringFormat::CIDFontType0C).has_value());
+		load_error(fds(4'096u), CharstringFormat::CIDFontType0C, "subroutine tables past 1,048,576 entries",
+			ErrorCode::ResourceLimit, RefusalReason::FontTableEntries);
 	}
 	// A charstring of 65,535 bytes passes and one of 65,536 is refused.
 	{

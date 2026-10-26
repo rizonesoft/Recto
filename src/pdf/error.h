@@ -739,6 +739,7 @@ enum class RefusalReason : uint16_t {
 	CharstringWork,  // a glyph executing more charstring bytes than the limit
 	SubroutineDepth, // charstring subroutines nested past the depth limit
 	CharstringStack, // a charstring's operand stack past its limit
+	FontTableEntries, // a CFF program's subroutine tables past their entry limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -814,6 +815,8 @@ enum class RefusalReason : uint16_t {
 		return "SubroutineDepth";
 	case RefusalReason::CharstringStack:
 		return "CharstringStack";
+	case RefusalReason::FontTableEntries:
+		return "FontTableEntries";
 	}
 	return "UnknownReason";
 }
@@ -924,6 +927,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::CharstringStack:
 		return "A glyph's program holds more numbers at once than its limit (observed and bound count numbers); that "
 			   "glyph is not drawn, and the file may be damaged";
+	case RefusalReason::FontTableEntries:
+		return "An embedded font's subroutine tables hold more entries than their limit (observed and bound count "
+			   "entries); the font is not used, and its text may not appear as designed";
 	}
 	return "";
 }

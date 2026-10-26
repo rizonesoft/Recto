@@ -45,6 +45,14 @@ namespace {
 	return error;
 }
 
+[[nodiscard]] PdfResult<double> finite_advance(double advance) noexcept
+{
+	if (!std::isfinite(advance)) {
+		return damaged("Glyph advance is not a finite number in text space");
+	}
+	return advance;
+}
+
 // True for a value in [0, limit): false for NaN, which arithmetic on hostile operands can make.
 [[nodiscard]] bool in_range(double value, double limit) noexcept
 {
@@ -105,6 +113,14 @@ struct Builder {
 		}
 		return {};
 	}
+	[[nodiscard]] PdfResult<PdfPoint> placed(double x, double y) const noexcept
+	{
+		const PdfPoint p = place(x, y);
+		if (!std::isfinite(p.x) || !std::isfinite(p.y)) {
+			return damaged("Glyph point is not a finite number in text space");
+		}
+		return p;
+	}
 	[[nodiscard]] PdfResult<void> spend(size_t bytes) noexcept
 	{
 		work += bytes;
@@ -124,8 +140,8 @@ struct Builder {
 	[[nodiscard]] PdfResult<void> move_to(double x, double y)
 	{
 		RECTO_PDF_RETURN_IF_ERROR(count_op({x, y}));
+		RECTO_PDF_TRY(const PdfPoint p, placed(x, y));
 		close();
-		const PdfPoint p = place(x, y);
 		outline.verbs.push_back(PathVerb::MoveTo);
 		outline.points.push_back(p);
 		open = true;
@@ -137,7 +153,7 @@ struct Builder {
 		if (!open) {
 			RECTO_PDF_RETURN_IF_ERROR(move_to(from_x, from_y));
 		}
-		const PdfPoint p = place(x, y);
+		RECTO_PDF_TRY(const PdfPoint p, placed(x, y));
 		outline.verbs.push_back(PathVerb::LineTo);
 		outline.points.push_back(p);
 		note(outline.points[outline.points.size() - 2u]);
@@ -151,9 +167,9 @@ struct Builder {
 		if (!open) {
 			RECTO_PDF_RETURN_IF_ERROR(move_to(from_x, from_y));
 		}
-		const PdfPoint p1 = place(x1, y1);
-		const PdfPoint p2 = place(x2, y2);
-		const PdfPoint p3 = place(x3, y3);
+		RECTO_PDF_TRY(const PdfPoint p1, placed(x1, y1));
+		RECTO_PDF_TRY(const PdfPoint p2, placed(x2, y2));
+		RECTO_PDF_TRY(const PdfPoint p3, placed(x3, y3));
 		note(outline.points.back());
 		outline.verbs.push_back(PathVerb::CubicBezierTo);
 		outline.points.push_back(p1);
@@ -536,7 +552,9 @@ struct Type1Tokens {
 	}
 	program->glyph_count = static_cast<uint16_t>(glyphs.size());
 	for (size_t gid = 0; gid < glyphs.size(); ++gid) {
-		program->names.emplace_back(glyphs[gid].first, static_cast<uint16_t>(gid));
+		if (glyphs[gid].first.size() <= kMaxGlyphNameBytes) {
+			program->names.emplace_back(glyphs[gid].first, static_cast<uint16_t>(gid));
+		}
 		program->type1_glyphs.push_back(std::move(glyphs[gid].second));
 	}
 	std::stable_sort(program->names.begin(), program->names.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -586,6 +604,9 @@ struct Type1Run {
 		if (stack.size() >= kMaxType1Stack) {
 			return limited("Type 1 charstring overflows its operand stack", RefusalReason::CharstringStack,
 				stack.size() + 1u, kMaxType1Stack);
+		}
+		if (!std::isfinite(v)) {
+			return damaged("Type 1 charstring arithmetic gave a number that is not finite");
 		}
 		stack.push_back(v);
 		return {};
@@ -713,6 +734,9 @@ struct Type1Run {
 				break;
 			}
 			case 11u: // return
+				if (depth == 0u) {
+					return damaged("Type 1 charstring returns from no subroutine");
+				}
 				return {};
 			case 13u: // hsbw
 				RECTO_PDF_RETURN_IF_ERROR(need(2u));
@@ -838,10 +862,11 @@ struct Type1Run {
 					break;
 				}
 				case 17u: // pop
-					RECTO_PDF_RETURN_IF_ERROR(push(ps.empty() ? 0.0 : ps.back()));
-					if (!ps.empty()) {
-						ps.pop_back();
+					if (ps.empty()) {
+						return damaged("Type 1 pop has no value from callothersubr to take");
 					}
+					RECTO_PDF_RETURN_IF_ERROR(push(ps.back()));
+					ps.pop_back();
 					break;
 				case 33u: // setcurrentpoint
 					RECTO_PDF_RETURN_IF_ERROR(need(2u));
@@ -860,6 +885,9 @@ struct Type1Run {
 			default:
 				return damaged("Type 1 charstring has an unknown operator");
 			}
+		}
+		if (!ended) {
+			return damaged(depth == 0u ? "Type 1 charstring ends without endchar" : "Type 1 subroutine ends without return");
 		}
 		return {};
 	}
@@ -902,7 +930,7 @@ struct Type1Run {
 		out.close();
 	}
 	GlyphShape shape;
-	shape.advance = run.width * program.type1_matrix[0];
+	RECTO_PDF_TRY(shape.advance, finite_advance(run.width * program.type1_matrix[0]));
 	if (out.have_box) {
 		shape.ink_box = out.box;
 	}
@@ -1087,7 +1115,8 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 }
 
 // A private DICT and its local subroutines.
-[[nodiscard]] PdfResult<LoadedFont::CharstringProgram::Fd> read_private(const CffReader& cff, const CffDict& font_dict)
+[[nodiscard]] PdfResult<LoadedFont::CharstringProgram::Fd> read_private(
+	const CffReader& cff, const CffDict& font_dict, size_t& subr_entries)
 {
 	LoadedFont::CharstringProgram::Fd fd;
 	const auto it = font_dict.find(18u);
@@ -1111,6 +1140,11 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 			return damaged("CFF local subroutines lie outside the program");
 		}
 		RECTO_PDF_TRY(auto index, read_index(cff, at + static_cast<size_t>(*subrs)));
+		subr_entries += index.first.offsets.size();
+		if (subr_entries > kMaxCffSubrEntries) {
+			return limited("CFF subroutine tables hold more entries than their limit", RefusalReason::FontTableEntries,
+				subr_entries, kMaxCffSubrEntries);
+		}
 		fd.local_subrs = std::move(index.first);
 	}
 	return fd;
@@ -1122,7 +1156,10 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 		return std::string(kCffStandardStrings[sid]);
 	}
 	const size_t custom = sid - kCffStandardStrings.size();
-	return custom < strings.size() ? std::string(strings[custom]) : std::string();
+	if (custom >= strings.size() || strings[custom].size() > kMaxGlyphNameBytes) {
+		return std::string();
+	}
+	return std::string(strings[custom]);
 }
 
 [[nodiscard]] PdfResult<std::unique_ptr<LoadedFont::CharstringProgram>> parse_cff(std::span<const uint8_t> bytes)
@@ -1153,6 +1190,7 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 	const bool cid = top.contains(1230u);
 	program->kind = cid ? LoadedFont::CharstringProgram::Kind::CffCid : LoadedFont::CharstringProgram::Kind::Cff;
 	program->global_subrs = std::move(global_subrs.first);
+	size_t subr_entries = program->global_subrs.offsets.size();
 	RECTO_PDF_TRY(const size_t charstrings_at, dict_offset(top, 17u, cff));
 	if (charstrings_at == 0u) {
 		return damaged("CFF top DICT has no CharStrings");
@@ -1178,7 +1216,7 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 		for (size_t i = 0; i < fd_array.first.count(); ++i) {
 			const auto& fo = fd_array.first.offsets;
 			RECTO_PDF_TRY_REF(fd_dict, read_dict(bytes.subspan(fo[i], fo[i + 1u] - fo[i])));
-			RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, fd_dict));
+			RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, fd_dict, subr_entries));
 			// An FD's matrix is applied before the top one; either absent is the identity unless both are, which is
 			// the CFF default (Technical Note 5176, 18).
 			const std::optional<FontMatrix> fd_matrix = dict_matrix(fd_dict);
@@ -1233,7 +1271,7 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 			}
 		}
 	} else {
-		RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, top));
+		RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, top, subr_entries));
 		fd.matrix = top_matrix.value_or(kDefaultFontMatrix);
 		program->fds.push_back(std::move(fd));
 	}
@@ -1398,6 +1436,9 @@ struct Type2Run {
 			return limited("Type 2 charstring overflows its argument stack", RefusalReason::CharstringStack,
 				stack.size() + 1u, kMaxType2Stack);
 		}
+		if (!std::isfinite(v)) {
+			return damaged("Type 2 charstring arithmetic gave a number that is not finite");
+		}
 		stack.push_back(v);
 		return {};
 	}
@@ -1530,7 +1571,9 @@ struct Type2Run {
 			}
 			case 21u: // rmoveto
 				take_width(s.size() > 2u);
-				RECTO_PDF_RETURN_IF_ERROR(need(2u));
+				if (s.size() != 2u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				x += s[s.size() - 2u];
 				y += s[s.size() - 1u];
 				RECTO_PDF_RETURN_IF_ERROR(out.move_to(x, y));
@@ -1538,20 +1581,26 @@ struct Type2Run {
 				break;
 			case 22u: // hmoveto
 				take_width(s.size() > 1u);
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				if (s.size() != 1u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				x += s.back();
 				RECTO_PDF_RETURN_IF_ERROR(out.move_to(x, y));
 				stack.clear();
 				break;
 			case 4u: // vmoveto
 				take_width(s.size() > 1u);
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				if (s.size() != 1u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				y += s.back();
 				RECTO_PDF_RETURN_IF_ERROR(out.move_to(x, y));
 				stack.clear();
 				break;
 			case 5u: // rlineto
-				RECTO_PDF_RETURN_IF_ERROR(need(2u));
+				if (s.empty() || s.size() % 2u != 0u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				for (size_t k = 0; k + 1u < s.size(); k += 2u) {
 					RECTO_PDF_RETURN_IF_ERROR(line(s[k], s[k + 1u]));
 				}
@@ -1569,14 +1618,18 @@ struct Type2Run {
 				break;
 			}
 			case 8u: // rrcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(6u));
+				if (s.empty() || s.size() % 6u != 0u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				for (size_t k = 0; k + 5u < s.size(); k += 6u) {
 					RECTO_PDF_RETURN_IF_ERROR(curve(s[k], s[k + 1u], s[k + 2u], s[k + 3u], s[k + 4u], s[k + 5u]));
 				}
 				stack.clear();
 				break;
 			case 24u: { // rcurveline
-				RECTO_PDF_RETURN_IF_ERROR(need(8u));
+				if (s.size() < 8u || (s.size() - 2u) % 6u != 0u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				size_t k = 0;
 				for (; k + 6u + 2u <= s.size(); k += 6u) {
 					RECTO_PDF_RETURN_IF_ERROR(curve(s[k], s[k + 1u], s[k + 2u], s[k + 3u], s[k + 4u], s[k + 5u]));
@@ -1586,7 +1639,9 @@ struct Type2Run {
 				break;
 			}
 			case 25u: { // rlinecurve
-				RECTO_PDF_RETURN_IF_ERROR(need(8u));
+				if (s.size() < 8u || (s.size() - 6u) % 2u != 0u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				size_t k = 0;
 				for (; k + 2u + 6u <= s.size(); k += 2u) {
 					RECTO_PDF_RETURN_IF_ERROR(line(s[k], s[k + 1u]));
@@ -1596,7 +1651,9 @@ struct Type2Run {
 				break;
 			}
 			case 26u: { // vvcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(4u));
+				if (s.size() < 4u || s.size() % 4u > 1u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				size_t k = 0;
 				double dx1 = 0.0;
 				if (s.size() % 4u == 1u) {
@@ -1611,7 +1668,9 @@ struct Type2Run {
 				break;
 			}
 			case 27u: { // hhcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(4u));
+				if (s.size() < 4u || s.size() % 4u > 1u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				size_t k = 0;
 				double dy1 = 0.0;
 				if (s.size() % 4u == 1u) {
@@ -1627,7 +1686,9 @@ struct Type2Run {
 			}
 			case 30u: // vhcurveto
 			case 31u: { // hvcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(4u));
+				if (s.size() < 4u || s.size() % 4u > 1u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				bool horizontal = v == 31u;
 				size_t k = 0;
 				while (k + 3u < s.size()) {
@@ -1651,9 +1712,15 @@ struct Type2Run {
 				RECTO_PDF_RETURN_IF_ERROR(call(program.global_subrs, depth));
 				break;
 			case 11u: // return
+				if (depth == 0u) {
+					return damaged("Type 2 charstring returns from no subroutine");
+				}
 				return {};
 			case 14u: // endchar
 				take_width(s.size() == 1u || s.size() == 5u);
+				if (!s.empty() && s.size() != 4u) {
+					return damaged("Type 2 path operator has the wrong number of arguments");
+				}
 				if (stack.size() == 4u) {
 					if (component) {
 						return damaged("Type 2 seac component is itself an seac");
@@ -1677,6 +1744,9 @@ struct Type2Run {
 				return damaged("Type 2 charstring has a reserved operator");
 			}
 		}
+		if (!ended) {
+			return damaged(depth == 0u ? "Type 2 charstring ends without endchar" : "Type 2 subroutine ends without return");
+		}
 		return {};
 	}
 
@@ -1689,6 +1759,9 @@ struct Type2Run {
 			return v;
 		};
 		switch (e) {
+		case 0u: // dotsection: a no-op
+			s.clear();
+			return {};
 		case 3u: // and
 		case 4u: { // or
 			RECTO_PDF_RETURN_IF_ERROR(need(2u));
@@ -1808,7 +1881,9 @@ struct Type2Run {
 			return {};
 		}
 		case 34u: { // hflex
-			RECTO_PDF_RETURN_IF_ERROR(need(7u));
+			if (s.size() != 7u) {
+				return damaged("Type 2 path operator has the wrong number of arguments");
+			}
 			const double y0 = y;
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[0], 0.0, s[1], s[2], s[3], 0.0));
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[4], 0.0, s[5], y0 - y, s[6], 0.0));
@@ -1816,13 +1891,17 @@ struct Type2Run {
 			return {};
 		}
 		case 35u: // flex
-			RECTO_PDF_RETURN_IF_ERROR(need(13u));
+			if (s.size() != 13u) {
+				return damaged("Type 2 path operator has the wrong number of arguments");
+			}
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[0], s[1], s[2], s[3], s[4], s[5]));
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[6], s[7], s[8], s[9], s[10], s[11]));
 			s.clear();
 			return {};
 		case 36u: { // hflex1
-			RECTO_PDF_RETURN_IF_ERROR(need(9u));
+			if (s.size() != 9u) {
+				return damaged("Type 2 path operator has the wrong number of arguments");
+			}
 			const double y0 = y;
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[0], s[1], s[2], s[3], s[4], 0.0));
 			RECTO_PDF_RETURN_IF_ERROR(curve(s[5], 0.0, s[6], s[7], s[8], y0 - y - s[7]));
@@ -1830,7 +1909,9 @@ struct Type2Run {
 			return {};
 		}
 		case 37u: { // flex1
-			RECTO_PDF_RETURN_IF_ERROR(need(11u));
+			if (s.size() != 11u) {
+				return damaged("Type 2 path operator has the wrong number of arguments");
+			}
 			const double x0 = x;
 			const double y0 = y;
 			double dx = 0.0;
@@ -1862,7 +1943,7 @@ struct Type2Run {
 	Type1Run run{program, out};
 	run.width_only = true;
 	RECTO_PDF_RETURN_IF_ERROR(run.run(program.type1_glyphs[glyph], 0u));
-	return run.width * program.type1_matrix[0];
+	return finite_advance(run.width * program.type1_matrix[0]);
 }
 
 [[nodiscard]] PdfResult<double> cff_advance(
@@ -1875,7 +1956,7 @@ struct Type2Run {
 	Type2Run run{program, bytes, fd, out};
 	run.width_only = true;
 	RECTO_PDF_RETURN_IF_ERROR(run.run(bytes.subspan(co[glyph], co[glyph + 1u] - co[glyph]), 0u));
-	return (run.width_read ? run.width : fd.default_width) * fd.matrix[0];
+	return finite_advance((run.width_read ? run.width : fd.default_width) * fd.matrix[0]);
 }
 
 [[nodiscard]] PdfResult<GlyphShape> cff_shape(
@@ -1895,8 +1976,8 @@ struct Type2Run {
 	if (run.seac.has_value()) {
 		// `endchar`'s accent form (Technical Note 5177, Appendix C): base and accent by their StandardEncoding codes.
 		const auto& a = *run.seac;
-		if (program.kind != LoadedFont::CharstringProgram::Kind::Cff || a[2] < 0.0 || a[2] > 255.0 || a[3] < 0.0 ||
-			a[3] > 255.0) {
+		if (program.kind != LoadedFont::CharstringProgram::Kind::Cff || !in_range(a[2], 256.0) ||
+			!in_range(a[3], 256.0)) {
 			return damaged("Type 2 seac names a code outside StandardEncoding or a CID-keyed font");
 		}
 		const auto base = glyph_named(program, base_encoding_name(BaseEncoding::Standard, static_cast<uint8_t>(a[2])));
@@ -1915,7 +1996,7 @@ struct Type2Run {
 		}
 	}
 	GlyphShape shape;
-	shape.advance = run.width * fd.matrix[0];
+	RECTO_PDF_TRY(shape.advance, finite_advance(run.width * fd.matrix[0]));
 	if (out.have_box) {
 		shape.ink_box = out.box;
 	}
