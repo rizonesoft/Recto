@@ -154,15 +154,32 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 		CidCMap cmap;
 		CMapSpans cids;
 		CMapSpans notdefs;
-		const auto seed_identity = [&]() {
+		// A CMap has one base: the `/UseCMap` CMap passed in, or Identity through `usecmap` (Technical Note 5014); an
+		// Identity `usecmap` over an Identity base is the same base, any other second base is damage.
+		bool based = false;
+		bool identity_based = false;
+		const auto seed_identity = [&]() -> PdfResult<void> {
+			if (based) {
+				if (identity_based) {
+					return {};
+				}
+				return cid_error(ErrorCode::DamagedFormat, "CID CMap names a second base CMap");
+			}
+			if (cmap.codespace_.size() >= kMaxCidCodespaceRanges) {
+				return cid_error(ErrorCode::ResourceLimit, "CID CMap has more codespace ranges than its limit");
+			}
+			based = true;
+			identity_based = true;
 			cmap.codespace_.push_back(Range{0u, 0xFFFFu, 2u});
 			lay_over(cids, Span<uint32_t>{code_key(2u, 0u), code_key(2u, 0xFFFFu), 0u}, shift_cid);
+			return {};
 		};
 		if (base != nullptr) {
 			cmap.vertical_ = base->vertical_;
 			if (base->identity_) {
-				seed_identity();
+				RECTO_PDF_RETURN_IF_ERROR(seed_identity());
 			} else {
+				based = true;
 				cmap.codespace_ = base->codespace_;
 				load_spans(cids, base->cids_);
 				load_spans(notdefs, base->notdefs_);
@@ -229,7 +246,7 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 			}
 			if (token.text == "usecmap") {
 				if (previous.kind == CMapLexer::Kind::Name && (previous.text == "Identity-H" || previous.text == "Identity-V")) {
-					seed_identity();
+					RECTO_PDF_RETURN_IF_ERROR(seed_identity());
 					continue;
 				}
 				return cid_error(ErrorCode::UnsupportedFeature, "CID CMap uses a CMap other than Identity");
@@ -423,8 +440,8 @@ namespace {
 	}
 	auto resolved = (*resolver)(*value->as_ref());
 	if (!resolved.has_value()) {
-		if (resolved.error().code == ErrorCode::OutOfMemory) {
-			return resolved.error();
+		if (resolved.error().code != ErrorCode::DamagedFormat) {
+			return resolved.error(); // a limit, allocation failure, cancellation or I/O error is not a malformed entry
 		}
 		return static_cast<const PdfValue*>(nullptr);
 	}
@@ -568,8 +585,12 @@ PdfResult<CidWidths> CidWidths::build(const PdfValue* dw, const PdfValue* w, con
 		RECTO_PDF_TRY(const PdfValue* dw2_value, deref(dw2, dw2_holder, resolver));
 		if (dw2_value != nullptr && dw2_value->is_array() && dw2_value->as_array()->size() == 2u) {
 			const PdfArray& pair = *dw2_value->as_array();
-			const std::optional<double> vy = pair[0].as_number();
-			const std::optional<double> w1y = pair[1].as_number();
+			PdfValue vy_holder;
+			PdfValue w1y_holder;
+			RECTO_PDF_TRY(const PdfValue* vy_value, deref(&pair[0], vy_holder, resolver));
+			RECTO_PDF_TRY(const PdfValue* w1y_value, deref(&pair[1], w1y_holder, resolver));
+			const std::optional<double> vy = vy_value != nullptr ? vy_value->as_number() : std::nullopt;
+			const std::optional<double> w1y = w1y_value != nullptr ? w1y_value->as_number() : std::nullopt;
 			if (vy.has_value() && w1y.has_value()) {
 				widths.default_vy_ = *vy / 1000.0;
 				widths.default_w1y_ = *w1y / 1000.0;
@@ -674,20 +695,19 @@ struct Type0Loader {
 		}
 		std::optional<CidCMap> base;
 		if (const PdfValue* use = stream.dict.get("UseCMap")) {
-			if (const std::optional<std::string_view> name = use->as_name()) {
+			if (const std::optional<IndirectRef> ref = use->as_ref()) {
+				if (!cmap_objects.insert(ref->obj_num).second) {
+					return cid_error(ErrorCode::DamagedFormat, "CID CMap /UseCMap chain is a cycle");
+				}
+			}
+			PdfValue holder;
+			RECTO_PDF_TRY(const PdfValue* inherited, value(use, holder));
+			if (const std::optional<std::string_view> name = inherited->as_name()) {
 				if (*name != "Identity-H" && *name != "Identity-V") {
 					return cid_error(ErrorCode::UnsupportedFeature, "CID CMap inherits a CMap other than Identity");
 				}
 				base = CidCMap::identity(*name == "Identity-V");
-			} else if (const std::optional<IndirectRef> ref = use->as_ref()) {
-				if (!cmap_objects.insert(ref->obj_num).second) {
-					return cid_error(ErrorCode::DamagedFormat, "CID CMap /UseCMap chain is a cycle");
-				}
-				PdfValue holder;
-				RECTO_PDF_TRY(const PdfValue* inherited, value(use, holder));
-				if (inherited == nullptr || !inherited->is_stream()) {
-					return cid_error(ErrorCode::DamagedFormat, "CID CMap /UseCMap is not a CMap stream");
-				}
+			} else if (inherited->is_stream()) {
 				RECTO_PDF_TRY_REF(parsed, cmap(*inherited->as_stream(), level + 1u));
 				base = std::move(parsed);
 			} else {
@@ -696,8 +716,10 @@ struct Type0Loader {
 		}
 		RECTO_PDF_TRY(const std::vector<uint8_t> data, bytes(stream, kMaxCidCMapStreamBytes));
 		RECTO_PDF_TRY_REF(parsed, CidCMap::parse(data, base.has_value() ? &*base : nullptr));
-		if (const std::optional<int64_t> mode = stream.dict.get_int("WMode")) {
-			parsed.set_vertical(*mode == 1);
+		PdfValue mode_holder;
+		RECTO_PDF_TRY(const PdfValue* mode, value(stream.dict.get("WMode"), mode_holder));
+		if (mode != nullptr && mode->as_int().has_value()) {
+			parsed.set_vertical(*mode->as_int() == 1);
 		}
 		return std::move(parsed);
 	}
@@ -719,7 +741,10 @@ struct Type0Loader {
 			if (key == "FontFile2") {
 				return load_embedded_font(std::move(shared), FontProgramFormat::TrueType);
 			}
-			const std::optional<std::string_view> subtype = stream.dict.get_name("Subtype");
+			PdfValue subtype_holder;
+			RECTO_PDF_TRY(const PdfValue* subtype_value, value(stream.dict.get("Subtype"), subtype_holder));
+			const std::optional<std::string_view> subtype =
+				subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
 			if (subtype == "CIDFontType0C") {
 				return load_charstring_font(std::move(shared), CharstringFormat::CIDFontType0C);
 			}
@@ -773,7 +798,10 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is not a font dictionary");
 		}
 		const PdfDict& descendant = *descendant_value->as_dict();
-		const std::optional<std::string_view> subtype = descendant.get_name("Subtype");
+		PdfValue subtype_holder;
+		RECTO_PDF_TRY(const PdfValue* subtype_value, loader.value(descendant.get("Subtype"), subtype_holder));
+		const std::optional<std::string_view> subtype =
+			subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
 		CidFontKind kind = CidFontKind::CIDFontType0;
 		if (subtype == "CIDFontType2") {
 			kind = CidFontKind::CIDFontType2;

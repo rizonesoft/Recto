@@ -115,9 +115,11 @@ struct CidVertical {
 // A CIDFont's widths (9.7.4.3): `/DW` (default 1000) and `/W`, `/DW2` (default [880 -1000]) and `/W2`, in text space.
 class CidWidths {
 public:
-	// The descendant font's values, any of them null when absent; indirect references inside the arrays go through
-	// `resolver` (none without one). A malformed entry is skipped, as readers do, a later entry winning over an earlier
-	// one; more than `kMaxCidWidthElements` elements, or a range reaching past CID 65,535, is `ResourceLimit`.
+	// The descendant font's values, any of them null when absent; indirect references, the values' own and those
+	// inside them, go through `resolver` (none without one). A malformed entry, an object reference included that the
+	// resolver finds missing or damaged, is skipped, as readers do, a later entry winning over an earlier one; any
+	// other resolver error is passed on; more than `kMaxCidWidthElements` elements, or a range reaching past CID
+	// 65,535, is `ResourceLimit`.
 	[[nodiscard]] static PdfResult<CidWidths> build(const PdfValue* dw, const PdfValue* w, const PdfValue* dw2,
 		const PdfValue* w2, const IndirectObjectResolver* resolver) noexcept;
 

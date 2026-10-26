@@ -233,6 +233,35 @@ TEST(PdfFont, Type0CodeToCid)
 		refused(ranges + "endcodespacerange", ErrorCode::ResourceLimit, "101 codespace ranges");
 	}
 	refused(std::string(kMaxCidCMapStreamBytes + 1u, ' '), ErrorCode::ResourceLimit, "a stream past 4 MiB");
+
+	// beginnotdefchar: one code's notdef CID.
+	auto notdef_single = CidCMap::parse(
+		bytes_of("1 begincodespacerange <00> <FF> endcodespacerange 1 beginnotdefchar <41> 7 endnotdefchar"));
+	ASSERT_TRUE(notdef_single.has_value());
+	expect_codes(codes(*notdef_single, {0x41u, 0x42u}), {{0x41u, 1u, 7u}, {0x42u, 1u, 0u}}, "notdef single");
+	// A code of five bytes is past the four a CMap allows.
+	refused("1 begincodespacerange <0000000000> <FFFFFFFFFF> endcodespacerange", ErrorCode::ResourceLimit, "a 5-byte code");
+	// One base: Identity named again is the same base, however often; a second, different base is damage; the base's
+	// codespace counts toward the bound.
+	{
+		std::string repeated;
+		for (int i = 0; i < 200; ++i) {
+			repeated += "/Identity-H usecmap ";
+		}
+		auto same = CidCMap::parse(bytes_of(repeated + "1 begincidchar <0041> 77 endcidchar"));
+		ASSERT_TRUE(same.has_value()) << same.error().message.view();
+		expect_codes(codes(*same, {0x00u, 0x41u, 0x00u, 0x42u}), {{0x41u, 2u, 77u}, {0x42u, 2u, 0x42u}}, "repeated identity");
+		const auto second = CidCMap::parse(bytes_of("/Identity-H usecmap"), &*mixed);
+		ASSERT_FALSE(second.has_value());
+		EXPECT_EQ(second.error().code, ErrorCode::DamagedFormat);
+		std::string over = "/Identity-H usecmap 100 begincodespacerange\n";
+		for (int i = 0; i < 100; ++i) {
+			over += "<00> <FF>\n";
+		}
+		refused(over + "endcodespacerange", ErrorCode::ResourceLimit, "100 ranges over an Identity base");
+		std::string under = over.substr(std::string_view("/Identity-H usecmap ").size());
+		refused(under + "endcodespacerange /Identity-H usecmap", ErrorCode::ResourceLimit, "an Identity base after 100 ranges");
+	}
 }
 
 TEST(PdfFont, CidToGidMap)
@@ -346,6 +375,46 @@ TEST(PdfFont, CidFontWidths)
 	EXPECT_DOUBLE_EQ(at_last->advance(65'535u), 0.25);
 	PdfArray long_array(kMaxCidWidthElements + 1u, number(1));
 	refused(PdfValue(std::move(long_array)), "65,537 elements");
+
+	// /W2 and its list through references, a later entry over an earlier one, /DW2's members through references.
+	{
+		Objects v;
+		v.table.emplace(40u, array({number(-900), number(250), number(880)}));
+		v.table.emplace(41u, array({number(1), ref(40u), number(1), number(1), number(-600), number(200), number(700)}));
+		v.table.emplace(42u, number(910));
+		v.table.emplace(43u, number(-1200));
+		const PdfValue w2_ref = ref(41u);
+		const PdfValue dw2_members = array({ref(42u), ref(43u)});
+		auto vertical_widths = CidWidths::build(nullptr, nullptr, &dw2_members, &w2_ref, &v.resolver);
+		ASSERT_TRUE(vertical_widths.has_value()) << vertical_widths.error().message.view();
+		EXPECT_DOUBLE_EQ(vertical_widths->vertical(1u).w1y, -0.6); // the later range over the list
+		EXPECT_DOUBLE_EQ(vertical_widths->vertical(1u).vx, 0.2);
+		EXPECT_DOUBLE_EQ(vertical_widths->vertical(1u).vy, 0.7);
+		EXPECT_DOUBLE_EQ(vertical_widths->vertical(2u).w1y, -1.2); // /DW2 through references
+		EXPECT_DOUBLE_EQ(vertical_widths->vertical(2u).vy, 0.91);
+		const auto refused_w2 = [](const PdfValue& bad, std::string_view label) {
+			const auto result = CidWidths::build(nullptr, nullptr, nullptr, &bad, nullptr);
+			ASSERT_FALSE(result.has_value()) << label;
+			EXPECT_EQ(result.error().code, ErrorCode::ResourceLimit) << label;
+		};
+		refused_w2(array({number(65'000), number(65'536), number(-1000), number(500), number(880)}), "a /W2 range past CID 65,535");
+		refused_w2(PdfValue(PdfArray(kMaxCidWidthElements + 1u, number(1))), "a /W2 of 65,537 elements");
+	}
+	// A resolver error other than a missing or damaged object is passed on, never turned into default widths.
+	{
+		const IndirectObjectResolver limited = [](IndirectRef r) -> PdfResult<PdfValue> {
+			return make_pdf_error(r.obj_num == 50u ? ErrorCode::ResourceLimit : ErrorCode::DamagedFormat, "injected");
+		};
+		const PdfValue w_limited = array({number(1), ref(50u)});
+		const auto passed_on = CidWidths::build(nullptr, &w_limited, nullptr, nullptr, &limited);
+		ASSERT_FALSE(passed_on.has_value());
+		EXPECT_EQ(passed_on.error().code, ErrorCode::ResourceLimit);
+		const PdfValue w_damaged = array({number(1), ref(51u), number(2), array({number(450)})});
+		const auto skipped = CidWidths::build(nullptr, &w_damaged, nullptr, nullptr, &limited);
+		ASSERT_TRUE(skipped.has_value());
+		EXPECT_DOUBLE_EQ(skipped->advance(1u), 1.0); // the damaged entry skipped
+		EXPECT_DOUBLE_EQ(skipped->advance(2u), 0.45);
+	}
 }
 
 // A Type 0 font assembled from its object graph, indirect references throughout.
@@ -425,6 +494,68 @@ TEST(PdfFont, Type0Assembly)
 		EXPECT_TRUE((*f)->cmap().vertical());
 		const std::vector<uint8_t> one{0x01u, 0x00u};
 		EXPECT_EQ((*f)->next(one).glyph, 256u);
+	}
+
+	// /FontFile3 /OpenType (§2's CFF-flavoured OpenType fixture, 2 glyphs): the CID is the glyph.
+	{
+		Objects ot;
+		ot.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType0")}, {"FontDescriptor", ref(6u)}})));
+		ot.table.emplace(6u, PdfValue(dict({{"FontFile3", ref(7u)}})));
+		ot.table.emplace(7u, stream(dict({{"Subtype", name("OpenType")}}), *corpus_font("opentype-cff.otf")));
+		auto f = load_type0_font(dict({{"Encoding", name("Identity-H")}, {"DescendantFonts", array({ref(3u)})}}), ot.resolver);
+		ASSERT_TRUE(f.has_value()) << f.error().message.view();
+		ASSERT_NE((*f)->font(), nullptr);
+		EXPECT_EQ((*f)->font()->kind(), LoadedFontKind::OpenType);
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 1u}).glyph, 1u);
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 2u}).glyph, 0u); // past the font's 2 glyphs
+	}
+	// A refused program refuses the font with the loader's own error.
+	{
+		Objects bad;
+		bad.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType2")}, {"FontDescriptor", ref(6u)}})));
+		bad.table.emplace(6u, PdfValue(dict({{"FontFile2", ref(7u)}})));
+		bad.table.emplace(7u, stream(PdfDict{}, bytes_of("notafont")));
+		const auto f = load_type0_font(dict({{"Encoding", name("Identity-H")}, {"DescendantFonts", array({ref(3u)})}}), bad.resolver);
+		ASSERT_FALSE(f.has_value());
+		EXPECT_EQ(f.error().code, ErrorCode::DamagedFormat);
+	}
+	// The same font with its values direct and through references gives the same codes, CIDs, glyphs and metrics.
+	{
+		const std::vector<uint8_t> base_cmap = bytes_of("1 begincodespacerange <0000> <FFFF> endcodespacerange 1 begincidchar <0001> 100 endcidchar");
+		Objects direct;
+		direct.table.emplace(10u, stream(dict({{"UseCMap", name("Identity-H")}}), base_cmap));
+		direct.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType0")}, {"DW2", array({number(900), number(-1100)})},
+								 {"W", array({number(100), array({number(550)})})}})));
+		Objects indirect;
+		indirect.table.emplace(9u, name("Identity-H"));
+		indirect.table.emplace(10u, stream(dict({{"UseCMap", ref(9u)}}), base_cmap));
+		indirect.table.emplace(11u, number(900));
+		indirect.table.emplace(12u, number(-1100));
+		indirect.table.emplace(13u, array({number(550)}));
+		indirect.table.emplace(14u, name("CIDFontType0"));
+		indirect.table.emplace(3u, PdfValue(dict({{"Subtype", ref(14u)}, {"DW2", array({ref(11u), ref(12u)})},
+								   {"W", array({number(100), ref(13u)})}})));
+		const PdfDict t = dict({{"Encoding", ref(10u)}, {"DescendantFonts", array({ref(3u)})}});
+		auto a = load_type0_font(t, direct.resolver);
+		auto b = load_type0_font(t, indirect.resolver);
+		ASSERT_TRUE(a.has_value() && b.has_value()) << (b.has_value() ? "" : std::string(b.error().message.view()));
+		const std::vector<uint8_t> shown{0u, 1u, 0u, 7u};
+		std::span<const uint8_t> ra(shown);
+		std::span<const uint8_t> rb(shown);
+		while (!ra.empty()) {
+			const Type0Glyph ga = (*a)->next(ra);
+			const Type0Glyph gb = (*b)->next(rb);
+			EXPECT_EQ(ga.cid, gb.cid);
+			EXPECT_EQ(ga.glyph, gb.glyph);
+			EXPECT_DOUBLE_EQ(ga.advance, gb.advance);
+			EXPECT_DOUBLE_EQ(ga.vertical.w1y, gb.vertical.w1y);
+			EXPECT_DOUBLE_EQ(ga.vertical.vy, gb.vertical.vy);
+			ra = ra.subspan(ga.length);
+			rb = rb.subspan(gb.length);
+		}
+		EXPECT_EQ((*b)->next(std::vector<uint8_t>{0u, 1u}).cid, 100u);
+		EXPECT_DOUBLE_EQ((*b)->next(std::vector<uint8_t>{0u, 1u}).advance, 0.55);
+		EXPECT_DOUBLE_EQ((*b)->next(std::vector<uint8_t>{0u, 7u}).vertical.w1y, -1.1);
 	}
 
 	// /WMode in the CMap stream's dictionary.
