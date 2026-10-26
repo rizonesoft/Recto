@@ -321,8 +321,10 @@ PdfResult<bool> ColorProfileCache::to_srgb(const IccProfile& profile, RenderingI
 				impl_->profiles.insert(profile.key);
 				impl_->profile_bytes += profile.bytes.size();
 			}
+			// The entry first, so nothing allocates (or can throw) while Windows holds a transform no entry owns.
+			it = impl_->transforms.emplace(key, nullptr).first;
 			HTRANSFORM transform = impl_->build(profile, intent);
-			it = impl_->transforms.emplace(key, transform).first;
+			it->second = transform;
 			if (transform == nullptr) {
 				return unusable("ICC profile or its transform to sRGB could not be built");
 			}
