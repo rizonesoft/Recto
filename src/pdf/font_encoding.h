@@ -111,8 +111,8 @@ private:
 // A font program's `cmap` subtables Recto reads (`(3,1)`, `(3,10)`, `(3,0)` and `(1,0)`, formats 0, 4, 6 and 12) and
 // its `post` glyph names (formats 1 and 2), immutable once parsed, every read bounds-checked and the work linear in the
 // table. A table that is absent is empty. A damaged subtable or `post` table is left out, its `DamagedFormat` kept in
-// `damage()`, so the font draws through the paths that remain (9.6.6.4); a font program whose table directory or
-// `cmap` header cannot be read is `DamagedFormat` from `parse`.
+// `damage()`, so the font draws through the paths that remain (9.6.6.4), as is a table lying outside the program; a
+// font program whose table directory or `cmap` header cannot be read is `DamagedFormat` from `parse`.
 class TrueTypeTables {
 public:
 	[[nodiscard]] static PdfResult<TrueTypeTables> parse(std::span<const uint8_t> program) noexcept;

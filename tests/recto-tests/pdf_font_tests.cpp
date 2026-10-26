@@ -1689,10 +1689,18 @@ TEST(PdfFont, TrueTypeCmapMalformed)
 		return std::move(*parsed);
 	};
 	refused({0x00, 0x01, 0x00, 0x00, 0x00, 0x05}, "a truncated table directory");
+	// A table lying outside the program is damage to that table only (review round 3): the other one stays usable.
 	{
-		std::vector<uint8_t> program = sfnt(cmap_table({{3, 1, format4({{0x41, 5}})}}));
+		std::vector<uint8_t> program = sfnt(cmap_table({{3, 1, format4({{0x41, 5}})}}), post2({".notdef", "A"}));
 		program[12u + 8u + 3u] = 0xF0; // the cmap record's offset, now past the program
-		refused(program, "a table outside the program");
+		const TrueTypeTables no_cmap = damaged(program, "a cmap outside the program");
+		EXPECT_FALSE(no_cmap.has(3u, 1u));
+		EXPECT_EQ(no_cmap.glyph_for_name("A"), std::optional<uint16_t>(uint16_t{1u}));
+		std::vector<uint8_t> post_out = sfnt(cmap_table({{3, 1, format4({{0x41, 5}})}}), post2({".notdef", "A"}));
+		post_out[12u + 16u + 8u + 3u] = 0xF0; // the post record's offset, now past the program
+		const TrueTypeTables no_post = damaged(post_out, "a post outside the program");
+		EXPECT_EQ(no_post.lookup(3u, 1u, 0x41), std::optional<uint16_t>(uint16_t{5u}));
+		EXPECT_EQ(no_post.glyph_for_name("A"), std::nullopt);
 	}
 	refused(sfnt({0x00, 0x00}), "a truncated cmap header");
 	// Each damaged subtable beside a good (3,0) one: the (3,1) is gone, the (3,0) still selects.

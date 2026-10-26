@@ -502,7 +502,10 @@ PdfResult<TrueTypeTables> TrueTypeTables::parse(std::span<const uint8_t> program
 				continue;
 			}
 			if (!font.fits(offset, length)) {
-				return table_error("TrueType cmap or post table lies outside the font program");
+				// That table only: the other one stays usable.
+				tables.damage_.push_back(table_error(tag == 0x636D6170u ? "TrueType cmap table lies outside the font program"
+																		: "TrueType post table lies outside the font program"));
+				continue;
 			}
 			(tag == 0x636D6170u ? cmap : post) = Reader{program.subspan(offset, length)};
 		}
