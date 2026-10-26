@@ -87,7 +87,7 @@ track: M1
 | 27 | §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback | §2 | [x] |
 | 28 | §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps | §2 | [x] |
 | 29 | §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines) | §2 | [x] |
-| 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [ ] |
+| 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [x] |
 | 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
 | 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [ ] |
 | 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
@@ -1016,6 +1016,9 @@ Composite fonts (ISO 32000-1 section 9.7) carry most CJK and many Western PDFs f
 > **Corrected 2026-10-26:** (validation before the build) The section named no API, treated every code as two bytes, and left out how a CMap splits a string (ISO 32000-1 9.7.6.2: codespace ranges of 1 to 4 bytes, the rule for unmatched bytes, notdef mappings, `/WMode`), how `/W` reaches indirect arrays, which glyph a CID selects in a name-keyed CFF, and the defaults and units of the widths. The items now name `CidCMap`, `CidToGidMap`, `cid_glyph` and `CidWidths` in `src/pdf/font_cid.h`, the CMap tokenizer of `§28` shared with them, and bounds for the CMap stream, ranges, mappings, CIDs and width arrays, each tested with its typed error. Unchanged: the predefined CJK CMaps and `usecmap` of them stay with `§17`.
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.Type0*:PdfFont.CidTo*:PdfFont.CidFontWidths` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-26 | §30 | e1bb8c85839d03654e328d830df1a75f59040005
+> **Review:** `docs/reviews/d01-t02-s30.json`
 
 ## 31. Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists
 

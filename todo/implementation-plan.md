@@ -94,7 +94,7 @@ Sections: 98 | Checklist items: 627
 | [x]    | D01 T02 §27 | Standard 14 font metrics from the Adobe Core14 AFM files, with system-face fallback      | windows-host              | 9     |
 | [x]    | D01 T02 §28 | Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps       | windows-host              | 10    |
 | [x]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 9     |
-| [ ]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
+| [x]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
 | [ ]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 6     |
 | [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 4     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
@@ -915,6 +915,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 85/846 verified sections, 35 ready to run now.
+Progress: 86/846 verified sections, 34 ready to run now.
 
 Checklist: 538/6233 items completed (includes Commit items).
