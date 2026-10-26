@@ -584,6 +584,7 @@ struct Type1Run {
 	double y = 0.0;
 	double sbx = 0.0;
 	double width = 0.0;
+	double width_y = 0.0; // sbw's vertical width; hsbw's is 0
 	bool width_set = false;
 	bool flexing = false;
 	std::vector<std::pair<double, double>> flex;
@@ -802,6 +803,7 @@ struct Type1Run {
 					y = stack[1];
 					if (!width_set) {
 						width = stack[2];
+						width_y = stack[3];
 						width_set = true;
 					}
 					ended = ended || width_only;
@@ -897,6 +899,12 @@ struct Type1Run {
 	bool width_only = false; // stop once `hsbw` or `sbw` gives the width
 };
 
+// The horizontal advance in text space: the width vector (wx, wy) through the font matrix (Type 1 Font Format 6.4).
+[[nodiscard]] double type1_advance_x(const LoadedFont::CharstringProgram& program, const Type1Run& run) noexcept
+{
+	return program.type1_matrix[0] * run.width + program.type1_matrix[2] * run.width_y;
+}
+
 [[nodiscard]] PdfResult<GlyphShape> type1_shape(const LoadedFont::CharstringProgram& program, uint16_t glyph)
 {
 	Builder out;
@@ -930,7 +938,7 @@ struct Type1Run {
 		out.close();
 	}
 	GlyphShape shape;
-	RECTO_PDF_TRY(shape.advance, finite_advance(run.width * program.type1_matrix[0]));
+	RECTO_PDF_TRY(shape.advance, finite_advance(type1_advance_x(program, run)));
 	if (out.have_box) {
 		shape.ink_box = out.box;
 	}
@@ -1115,8 +1123,27 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 }
 
 // A private DICT and its local subroutines.
+// What reading the private DICTs has cost: each distinct one is read once, the DICT bytes read across them may not
+// pass the program's size (only overlapping DICTs can), and the subroutine offsets kept are bounded, so FDs sharing or
+// overlapping one large private DICT cannot multiply the work.
+struct PrivateReads {
+	std::map<std::pair<size_t, size_t>, LoadedFont::CharstringProgram::Fd> seen;
+	size_t dict_bytes = 0;
+	size_t subr_entries = 0;
+
+	[[nodiscard]] PdfResult<void> keep_subrs(size_t entries) noexcept
+	{
+		subr_entries += entries;
+		if (subr_entries > kMaxCffSubrEntries) {
+			return limited("CFF subroutine tables hold more entries than their limit", RefusalReason::FontTableEntries,
+				subr_entries, kMaxCffSubrEntries);
+		}
+		return {};
+	}
+};
+
 [[nodiscard]] PdfResult<LoadedFont::CharstringProgram::Fd> read_private(
-	const CffReader& cff, const CffDict& font_dict, size_t& subr_entries)
+	const CffReader& cff, const CffDict& font_dict, PrivateReads& reads)
 {
 	LoadedFont::CharstringProgram::Fd fd;
 	const auto it = font_dict.find(18u);
@@ -1131,7 +1158,16 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 		return damaged("CFF private DICT lies outside the program");
 	}
 	const size_t at = static_cast<size_t>(offset);
-	RECTO_PDF_TRY_REF(priv, read_dict(cff.bytes.subspan(at, static_cast<size_t>(size))));
+	const std::pair<size_t, size_t> key{at, static_cast<size_t>(size)};
+	if (const auto seen = reads.seen.find(key); seen != reads.seen.end()) {
+		RECTO_PDF_RETURN_IF_ERROR(reads.keep_subrs(seen->second.local_subrs.offsets.size()));
+		return seen->second;
+	}
+	reads.dict_bytes += key.second;
+	if (reads.dict_bytes > cff.bytes.size()) {
+		return damaged("CFF private DICTs overlap one another");
+	}
+	RECTO_PDF_TRY_REF(priv, read_dict(cff.bytes.subspan(at, key.second)));
 	fd.default_width = dict_number(priv, 20u).value_or(0.0);
 	fd.nominal_width = dict_number(priv, 21u).value_or(0.0);
 	if (const std::optional<double> subrs = dict_number(priv, 19u)) {
@@ -1140,13 +1176,10 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 			return damaged("CFF local subroutines lie outside the program");
 		}
 		RECTO_PDF_TRY(auto index, read_index(cff, at + static_cast<size_t>(*subrs)));
-		subr_entries += index.first.offsets.size();
-		if (subr_entries > kMaxCffSubrEntries) {
-			return limited("CFF subroutine tables hold more entries than their limit", RefusalReason::FontTableEntries,
-				subr_entries, kMaxCffSubrEntries);
-		}
+		RECTO_PDF_RETURN_IF_ERROR(reads.keep_subrs(index.first.offsets.size()));
 		fd.local_subrs = std::move(index.first);
 	}
+	reads.seen.emplace(key, fd);
 	return fd;
 }
 
@@ -1190,7 +1223,8 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 	const bool cid = top.contains(1230u);
 	program->kind = cid ? LoadedFont::CharstringProgram::Kind::CffCid : LoadedFont::CharstringProgram::Kind::Cff;
 	program->global_subrs = std::move(global_subrs.first);
-	size_t subr_entries = program->global_subrs.offsets.size();
+	PrivateReads reads;
+	RECTO_PDF_RETURN_IF_ERROR(reads.keep_subrs(program->global_subrs.offsets.size()));
 	RECTO_PDF_TRY(const size_t charstrings_at, dict_offset(top, 17u, cff));
 	if (charstrings_at == 0u) {
 		return damaged("CFF top DICT has no CharStrings");
@@ -1216,7 +1250,7 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 		for (size_t i = 0; i < fd_array.first.count(); ++i) {
 			const auto& fo = fd_array.first.offsets;
 			RECTO_PDF_TRY_REF(fd_dict, read_dict(bytes.subspan(fo[i], fo[i + 1u] - fo[i])));
-			RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, fd_dict, subr_entries));
+			RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, fd_dict, reads));
 			// An FD's matrix is applied before the top one; either absent is the identity unless both are, which is
 			// the CFF default (Technical Note 5176, 18).
 			const std::optional<FontMatrix> fd_matrix = dict_matrix(fd_dict);
@@ -1271,7 +1305,7 @@ using CffDict = std::map<uint16_t, std::vector<double>>;
 			}
 		}
 	} else {
-		RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, top, subr_entries));
+		RECTO_PDF_TRY(LoadedFont::CharstringProgram::Fd fd, read_private(cff, top, reads));
 		fd.matrix = top_matrix.value_or(kDefaultFontMatrix);
 		program->fds.push_back(std::move(fd));
 	}
@@ -1943,7 +1977,7 @@ struct Type2Run {
 	Type1Run run{program, out};
 	run.width_only = true;
 	RECTO_PDF_RETURN_IF_ERROR(run.run(program.type1_glyphs[glyph], 0u));
-	return finite_advance(run.width * program.type1_matrix[0]);
+	return finite_advance(type1_advance_x(program, run));
 }
 
 [[nodiscard]] PdfResult<double> cff_advance(
@@ -1990,7 +2024,8 @@ struct Type2Run {
 			out.offset_y = dy;
 			Type2Run part{program, bytes, fd, out};
 			part.component = true;
-			part.width_read = true;
+			// The component reads its own optional width (its first operator's extra argument); the composite keeps its
+			// advance.
 			RECTO_PDF_RETURN_IF_ERROR(part.run(bytes.subspan(co[component], co[component + 1u] - co[component]), 0u));
 			out.close();
 		}

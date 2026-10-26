@@ -383,6 +383,9 @@ struct CffBuild {
 	std::vector<uint8_t> encoding_bytes;
 	std::vector<CffFd> fds{CffFd{}};    // the one font's private data, or each FD's with `fd_select`
 	std::vector<uint8_t> fd_select;     // non-empty for a CID-keyed font
+	// A CID-keyed font's FDs all reading one private DICT of these bytes, FD `i` from `i * private_step` bytes into it.
+	std::vector<uint8_t> shared_private;
+	size_t private_step = 0;
 };
 
 struct CffProgram {
@@ -460,8 +463,13 @@ CffProgram build_cff(const CffBuild& b)
 			std::vector<std::vector<uint8_t>> dicts;
 			for (size_t i = 0; i < b.fds.size(); ++i) {
 				std::vector<uint8_t> d;
-				dict_op(d, {private_size(i), static_cast<int32_t>(private_at)}, 18u);
-				private_at += privates[i].size();
+				if (!b.shared_private.empty()) {
+					const size_t skip = i * b.private_step;
+					dict_op(d, {static_cast<int32_t>(b.shared_private.size() - skip), static_cast<int32_t>(private_at + skip)}, 18u);
+				} else {
+					dict_op(d, {private_size(i), static_cast<int32_t>(private_at)}, 18u);
+					private_at += privates[i].size();
+				}
 				dicts.push_back(std::move(d));
 			}
 			return cff_index(dicts);
@@ -473,8 +481,12 @@ CffProgram build_cff(const CffBuild& b)
 	} else {
 		o.private0 = static_cast<int32_t>(base + body.size());
 	}
-	for (const auto& priv : privates) {
-		body.insert(body.end(), priv.begin(), priv.end());
+	if (!b.shared_private.empty()) {
+		body.insert(body.end(), b.shared_private.begin(), b.shared_private.end());
+	} else {
+		for (const auto& priv : privates) {
+			body.insert(body.end(), priv.begin(), priv.end());
+		}
 	}
 	const std::vector<uint8_t> top = cff_index({top_dict(o)});
 	EXPECT_EQ(top.size(), top_size);
@@ -607,6 +619,18 @@ TEST(PdfFont, Type1Outlines)
 		EXPECT_EQ(outline_text(shape->outline), "M 0 0 L 100 0 Z");
 		EXPECT_EQ(num(shape->advance * 1000.0), "300");
 	}
+	// `sbw`'s width is a vector: (500, 100) through [0.001 0 0.001 0.001 0 0] advances 0.6 (Type 1 Font Format 6.4).
+	{
+		const auto font = load_charstrings_ok(
+			shared(build_type1({}, {{".notdef", charstring("0 0 500 100 sbw endchar", false)}}, "0.001 0 0.001 0.001 0 0")),
+			CharstringFormat::Type1);
+		ASSERT_NE(font, nullptr);
+		const auto advance = font->advance(0u);
+		const auto shape = font->shape(0u);
+		ASSERT_TRUE(advance.has_value() && shape.has_value());
+		EXPECT_EQ(num(*advance * 1000.0), "600");
+		EXPECT_EQ(num(shape->advance * 1000.0), "600");
+	}
 	// A flex right after `closepath` starts its subpath at the current point, which `closepath` leaves at the last
 	// point drawn (Type 1 Font Format 6.4), as the reference readers do; derived by hand.
 	{
@@ -696,6 +720,21 @@ TEST(PdfFont, CffOutlines)
 	EXPECT_EQ((*encoding)[66], "");
 	EXPECT_EQ(font->glyph_for_cid(0u), std::nullopt);
 
+	// An seac whose components carry their own explicit widths: each component reads its width, and the composite
+	// keeps its own advance (Technical Note 5177, Appendix C).
+	{
+		CffBuild b;
+		b.glyphs = {charstring("endchar", true), charstring("100 40 hmoveto 520 0 rlineto endchar", true),
+			charstring("30 200 750 rmoveto 80 0 rlineto endchar", true), charstring("100 50 65 194 endchar", true)};
+		b.charset_bytes = charset_format0({34u, 125u, 171u});
+		b.fds[0].default_width = 450;
+		const auto f = load_charstrings_ok(shared(build_cff(b).bytes), CharstringFormat::Type1C);
+		ASSERT_NE(f, nullptr);
+		const auto composite = f->shape(3u);
+		ASSERT_TRUE(composite.has_value()) << composite.error().message.view();
+		EXPECT_EQ(outline_text(composite->outline), "M 40 0 L 560 0 Z M 300 800 L 380 800 Z");
+		EXPECT_EQ(num(composite->advance * 1000.0), "450");
+	}
 	// The predefined charsets and the other custom formats, and the predefined encodings and format 0.
 	const auto glyphs = [](size_t count) { return std::vector<std::vector<uint8_t>>(count, charstring("endchar", true)); };
 	const auto name_of = [](const LoadedFont& f, std::string_view name) { return f.glyph_for_name(name); };
@@ -1111,6 +1150,23 @@ TEST(PdfFont, HostileCharstringsRefused)
 			return build_cff(cid).bytes;
 		};
 		EXPECT_TRUE(load_charstring_font(shared(fds(4'095u)), CharstringFormat::CIDFontType0C).has_value());
+		// 256 FDs reading one 40,000-byte private DICT read it once; shifted 2 bytes apart they would read 256 times
+		// the program's size, which only overlapping DICTs can, and are refused.
+		const auto shared_dict = [&](size_t step) {
+			CffBuild cid;
+			cid.glyphs = {end, end};
+			cid.charset_bytes = {0u, 0u, 1u};
+			cid.fd_select = {0u, 0u, 255u};
+			cid.fds.assign(256u, CffFd{});
+			for (size_t i = 0; i < 20'000u; ++i) {
+				cid.shared_private.push_back(0x8Bu); // 0
+				cid.shared_private.push_back(0x14u); // defaultWidthX
+			}
+			cid.private_step = step;
+			return build_cff(cid).bytes;
+		};
+		EXPECT_TRUE(load_charstring_font(shared(shared_dict(0u)), CharstringFormat::CIDFontType0C).has_value());
+		load_error(shared_dict(2u), CharstringFormat::CIDFontType0C, "overlapping private DICTs", ErrorCode::DamagedFormat);
 		load_error(fds(4'096u), CharstringFormat::CIDFontType0C, "subroutine tables past 1,048,576 entries",
 			ErrorCode::ResourceLimit, RefusalReason::FontTableEntries);
 	}
