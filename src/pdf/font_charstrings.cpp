@@ -621,6 +621,13 @@ struct Type1Run {
 		stack.pop_back();
 		return v;
 	}
+	[[nodiscard]] PdfResult<void> exact(size_t n) const
+	{
+		if (stack.size() != n) {
+			return damaged("Type 1 charstring operator has the wrong number of operands");
+		}
+		return {};
+	}
 	[[nodiscard]] PdfResult<void> need(size_t n) const
 	{
 		if (stack.size() < n) {
@@ -695,34 +702,36 @@ struct Type1Run {
 			switch (v) {
 			case 1u: // hstem
 			case 3u: // vstem
+				RECTO_PDF_RETURN_IF_ERROR(exact(2u));
 				stack.clear();
 				break;
 			case 4u: // vmoveto
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(1u));
 				RECTO_PDF_RETURN_IF_ERROR(move(0.0, stack[0]));
 				stack.clear();
 				break;
 			case 5u: // rlineto
-				RECTO_PDF_RETURN_IF_ERROR(need(2u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(2u));
 				RECTO_PDF_RETURN_IF_ERROR(line(stack[0], stack[1]));
 				stack.clear();
 				break;
 			case 6u: // hlineto
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(1u));
 				RECTO_PDF_RETURN_IF_ERROR(line(stack[0], 0.0));
 				stack.clear();
 				break;
 			case 7u: // vlineto
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(1u));
 				RECTO_PDF_RETURN_IF_ERROR(line(0.0, stack[0]));
 				stack.clear();
 				break;
 			case 8u: // rrcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(6u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(6u));
 				RECTO_PDF_RETURN_IF_ERROR(curve(stack[0], stack[1], stack[2], stack[3], stack[4], stack[5]));
 				stack.clear();
 				break;
 			case 9u: // closepath
+				RECTO_PDF_RETURN_IF_ERROR(exact(0u));
 				out.close();
 				stack.clear();
 				break;
@@ -740,7 +749,7 @@ struct Type1Run {
 				}
 				return {};
 			case 13u: // hsbw
-				RECTO_PDF_RETURN_IF_ERROR(need(2u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(2u));
 				sbx = stack[0];
 				x = stack[0];
 				y = 0.0;
@@ -752,26 +761,27 @@ struct Type1Run {
 				stack.clear();
 				break;
 			case 14u: // endchar
+				RECTO_PDF_RETURN_IF_ERROR(exact(0u));
 				out.close();
 				ended = true;
 				break;
 			case 21u: // rmoveto
-				RECTO_PDF_RETURN_IF_ERROR(need(2u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(2u));
 				RECTO_PDF_RETURN_IF_ERROR(move(stack[0], stack[1]));
 				stack.clear();
 				break;
 			case 22u: // hmoveto
-				RECTO_PDF_RETURN_IF_ERROR(need(1u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(1u));
 				RECTO_PDF_RETURN_IF_ERROR(move(stack[0], 0.0));
 				stack.clear();
 				break;
 			case 30u: // vhcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(4u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(4u));
 				RECTO_PDF_RETURN_IF_ERROR(curve(0.0, stack[0], stack[1], stack[2], stack[3], 0.0));
 				stack.clear();
 				break;
 			case 31u: // hvcurveto
-				RECTO_PDF_RETURN_IF_ERROR(need(4u));
+				RECTO_PDF_RETURN_IF_ERROR(exact(4u));
 				RECTO_PDF_RETURN_IF_ERROR(curve(stack[0], 0.0, stack[1], stack[2], 0.0, stack[3]));
 				stack.clear();
 				break;
@@ -783,12 +793,15 @@ struct Type1Run {
 				const uint8_t e = code[i++];
 				switch (e) {
 				case 0u: // dotsection
+					RECTO_PDF_RETURN_IF_ERROR(exact(0u));
+					break;
 				case 1u: // vstem3
 				case 2u: // hstem3
+					RECTO_PDF_RETURN_IF_ERROR(exact(6u));
 					stack.clear();
 					break;
 				case 6u: // seac
-					RECTO_PDF_RETURN_IF_ERROR(need(5u));
+					RECTO_PDF_RETURN_IF_ERROR(exact(5u));
 					if (component) {
 						return damaged("Type 1 seac component is itself an seac");
 					}
@@ -797,7 +810,7 @@ struct Type1Run {
 					ended = true;
 					break;
 				case 7u: // sbw
-					RECTO_PDF_RETURN_IF_ERROR(need(4u));
+					RECTO_PDF_RETURN_IF_ERROR(exact(4u));
 					sbx = stack[0];
 					x = stack[0];
 					y = stack[1];
@@ -871,7 +884,7 @@ struct Type1Run {
 					ps.pop_back();
 					break;
 				case 33u: // setcurrentpoint
-					RECTO_PDF_RETURN_IF_ERROR(need(2u));
+					RECTO_PDF_RETURN_IF_ERROR(exact(2u));
 					if (!after_flex) {
 						x = stack[0];
 						y = stack[1];
@@ -1521,7 +1534,13 @@ struct Type2Run {
 	[[nodiscard]] PdfResult<void> stem_hints()
 	{
 		take_width(stack.size() % 2u == 1u);
+		if (stack.size() % 2u != 0u) {
+			return damaged("Type 2 stem hint operator has an unmatched argument");
+		}
 		stems += stack.size() / 2u;
+		if (stems > kMaxType2Stems) {
+			return damaged("Type 2 charstring has more than 96 stem hints");
+		}
 		stack.clear();
 		return {};
 	}

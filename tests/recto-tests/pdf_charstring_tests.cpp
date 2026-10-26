@@ -233,13 +233,13 @@ constexpr std::array<NamedOperator, 25> kType1Operators = {{
 	{"setcurrentpoint", {12, 33}, 2},
 }};
 
-constexpr std::array<NamedOperator, 25> kType2Operators = {{
+constexpr std::array<NamedOperator, 26> kType2Operators = {{
 	{"hstem", {1, 0}, 1}, {"vmoveto", {4, 0}, 1}, {"rlineto", {5, 0}, 1}, {"callsubr", {10, 0}, 1},
 	{"return", {11, 0}, 1}, {"endchar", {14, 0}, 1}, {"hintmask", {19, 0}, 1}, {"rmoveto", {21, 0}, 1},
 	{"hmoveto", {22, 0}, 1}, {"callgsubr", {29, 0}, 1}, {"add", {12, 10}, 2}, {"drop", {12, 18}, 2},
 	{"rrcurveto", {8, 0}, 1}, {"div", {12, 12}, 2}, {"sqrt", {12, 26}, 2}, {"put", {12, 20}, 2}, {"roll", {12, 30}, 2},
 	{"sub", {12, 11}, 2}, {"mul", {12, 24}, 2}, {"dup", {12, 27}, 2}, {"dotsection", {12, 0}, 2}, {"flex", {12, 35}, 2},
-	{"hvcurveto", {31, 0}, 1}, {"rcurveline", {24, 0}, 1}, {"eq", {12, 15}, 2},
+	{"hvcurveto", {31, 0}, 1}, {"rcurveline", {24, 0}, 1}, {"eq", {12, 15}, 2}, {"vstem", {3, 0}, 1},
 }};
 
 void append_number(std::vector<uint8_t>& out, int32_t value, bool type2)
@@ -1101,6 +1101,18 @@ TEST(PdfFont, HostileCharstringsRefused)
 				 "0 0 rmoveto 1 2 endchar"}) {
 			expect_refused(t2(bad), ErrorCode::DamagedFormat, bad);
 		}
+		// Stem hints come in pairs once the width is taken, at most 96 of them.
+		expect_refused(t2("0 10 hstem 20 vstem 0 0 rmoveto 100 0 rlineto endchar"), ErrorCode::DamagedFormat,
+			"Type 2 unmatched stem argument");
+		const auto stems = [&](size_t count) {
+			std::string program;
+			for (size_t i = 0; i < count; ++i) {
+				program += "0 1 hstem ";
+			}
+			return t2(program + "endchar");
+		};
+		EXPECT_TRUE(stems(96u).has_value());
+		expect_refused(stems(97u), ErrorCode::DamagedFormat, "Type 2 97 stem hints");
 		const auto plain = t2("0 0 rmoveto 10 0 rlineto endchar");
 		const auto dotted = t2("0 0 rmoveto dotsection 10 0 rlineto dotsection endchar");
 		ASSERT_TRUE(plain.has_value() && dotted.has_value());
@@ -1117,6 +1129,12 @@ TEST(PdfFont, HostileCharstringsRefused)
 		expect_refused(t1("0 500 hsbw 0 0 rmoveto 10 0 rlineto"), ErrorCode::DamagedFormat, "Type 1 glyph without endchar");
 		expect_refused(t1("0 500 hsbw return"), ErrorCode::DamagedFormat, "Type 1 return from no subroutine");
 		expect_refused(t1("0 500 hsbw pop endchar"), ErrorCode::DamagedFormat, "Type 1 pop with nothing to take");
+		// Each Type 1 operator takes exactly its operands.
+		for (const std::string_view bad : {"0 500 hsbw 0 0 rmoveto 10 20 30 rlineto endchar", "0 500 1 hsbw endchar",
+				 "0 500 hsbw 0 0 rmoveto 5 closepath endchar", "0 500 hsbw 1 endchar", "0 500 hsbw 1 2 3 hstem endchar",
+				 "0 500 hsbw 1 2 3 4 5 hstem3 endchar", "0 500 hsbw 1 dotsection endchar"}) {
+			expect_refused(t1(bad), ErrorCode::DamagedFormat, bad);
+		}
 		// A finite but enormous /FontMatrix overflows the points (here with a zero, finite advance) and the advance to
 		// infinity.
 		expect_refused(t1("0 0 hsbw 0 0 rmoveto 1000 0 rlineto endchar", "1e308 0 0 1e308 0 0"), ErrorCode::DamagedFormat,
@@ -1267,7 +1285,10 @@ TEST(PdfFont, HostileCharstringsRefused)
 			for (size_t i = 0; i < count; ++i) {
 				program += " 1";
 			}
-			return build_type1({}, {notdef, {"g", t1(program + " rlineto endchar")}});
+			for (size_t i = 1; i < count; ++i) {
+				program += " div";
+			}
+			return build_type1({}, {notdef, {"g", t1(program + " 0 rlineto endchar")}});
 		};
 		EXPECT_TRUE(type1_glyph(stack(24u), "g").has_value());
 		expect_refused(type1_glyph(stack(25u), "g"), ErrorCode::ResourceLimit, "Type 1 stack 25",

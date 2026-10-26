@@ -95,6 +95,7 @@ inline constexpr size_t kMaxGlyphCharstringWork = 1'000'000u;
 inline constexpr size_t kMaxCharstringSubrDepth = 10u;
 inline constexpr size_t kMaxType1Stack = 24u;
 inline constexpr size_t kMaxType2Stack = 48u;
+inline constexpr size_t kMaxType2Stems = 96u; // Technical Note 5177, Appendix B
 // Entries in a CFF program's global and local subroutine INDEXes together, so FDs sharing one large table cannot
 // multiply it.
 inline constexpr size_t kMaxCffSubrEntries = size_t{1} << 20u;
