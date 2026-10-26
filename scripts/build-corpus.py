@@ -4359,6 +4359,8 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_openxml_structure(rel_path, data)
     elif rel_path.startswith("fonts/") and rel_path.endswith((".ttf", ".otf")):
         validate_font_structure(rel_path, data)
+    elif rel_path.startswith("fonts/") and rel_path.endswith((".pfa", ".pfb", ".cff")):
+        validate_charstring_font(rel_path, data)
     elif rel_path.startswith("flate/"):
         validate_flate_fixture(rel_path, data)
     elif rel_path.startswith("crypto/"):
@@ -4695,6 +4697,424 @@ def build_opentype_cff_font() -> bytes:
               b"post": _font_post_table()}
     return _sfnt(tables, cff=True)
 
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Type 1 and CFF programs (D01 T02 section 29): bare `/FontFile` and `/FontFile3` programs whose charstrings use every
+# operator the reader must run. The glyphs are written as charstring programs below; the reference outlines and
+# advances the tests compare against were drawn from these files by an independent reader (see pdf_font_tests.cpp).
+# ---------------------------------------------------------------------------------------------------------------------
+
+T1_OPERATORS = {
+    "hstem": [1], "vstem": [3], "vmoveto": [4], "rlineto": [5], "hlineto": [6], "vlineto": [7], "rrcurveto": [8],
+    "closepath": [9], "callsubr": [10], "return": [11], "hsbw": [13], "endchar": [14], "rmoveto": [21],
+    "hmoveto": [22], "vhcurveto": [30], "hvcurveto": [31], "dotsection": [12, 0], "vstem3": [12, 1],
+    "hstem3": [12, 2], "seac": [12, 6], "sbw": [12, 7], "div": [12, 12], "callothersubr": [12, 16], "pop": [12, 17],
+    "setcurrentpoint": [12, 33],
+}
+
+T2_OPERATORS = {
+    "hstem": [1], "vstem": [3], "vmoveto": [4], "rlineto": [5], "hlineto": [6], "vlineto": [7], "rrcurveto": [8],
+    "callsubr": [10], "return": [11], "endchar": [14], "hstemhm": [18], "hintmask": [19], "cntrmask": [20],
+    "rmoveto": [21], "hmoveto": [22], "vstemhm": [23], "rcurveline": [24], "rlinecurve": [25], "vvcurveto": [26],
+    "hhcurveto": [27], "callgsubr": [29], "vhcurveto": [30], "hvcurveto": [31],
+    "and": [12, 3], "or": [12, 4], "not": [12, 5], "abs": [12, 9], "add": [12, 10], "sub": [12, 11], "div": [12, 12],
+    "neg": [12, 14], "eq": [12, 15], "drop": [12, 18], "put": [12, 20], "get": [12, 21], "ifelse": [12, 22],
+    "random": [12, 23], "mul": [12, 24], "sqrt": [12, 26], "dup": [12, 27], "exch": [12, 28], "index": [12, 29],
+    "roll": [12, 30], "hflex": [12, 34], "flex": [12, 35], "hflex1": [12, 36], "flex1": [12, 37],
+}
+
+
+def _charstring_number(value: int, type2: bool) -> bytes:
+    """A charstring integer in its shortest form (Type 1 Font Format 6.2; Technical Note 5177, 3.2)."""
+    if -107 <= value <= 107:
+        return bytes([value + 139])
+    if 108 <= value <= 1131:
+        value -= 108
+        return bytes([(value >> 8) + 247, value & 0xFF])
+    if -1131 <= value <= -108:
+        value = -value - 108
+        return bytes([(value >> 8) + 251, value & 0xFF])
+    if type2:
+        return b"\x1c" + struct.pack(">h", value)
+    return b"\xff" + struct.pack(">i", value)
+
+
+def charstring(program: str, type2: bool) -> bytes:
+    """A charstring from its text: integers, operator names, and `<hex>` for a hint mask's bytes."""
+    operators = T2_OPERATORS if type2 else T1_OPERATORS
+    out = bytearray()
+    for token in program.split():
+        if token.startswith("<"):
+            out += bytes.fromhex(token[1:-1])
+        elif token in operators:
+            out += bytes(operators[token])
+        else:
+            out += _charstring_number(int(token), type2)
+    return bytes(out)
+
+
+def _t1_encrypt(plain: bytes, key: int) -> bytes:
+    r = key
+    out = bytearray()
+    for p in plain:
+        c = p ^ (r >> 8)
+        r = ((c + r) * 52845 + 22719) & 0xFFFF
+        out.append(c)
+    return bytes(out)
+
+
+# Subrs 0 to 3 are the flex and hint replacement subroutines the Type 1 Font Format (8.3, 8.4) prescribes.
+TYPE1_SUBRS = [
+    "3 0 callothersubr pop pop setcurrentpoint return",
+    "0 1 callothersubr return",
+    "0 2 callothersubr return",
+    "return",
+    "0 60 hstem 100 40 vstem return",
+    "200 0 rlineto return",
+    "5 callsubr 0 200 rlineto return",
+]
+
+# (name, code in the built-in encoding or None, charstring). `Aacute` places `acute` by `seac` over `A`.
+TYPE1_GLYPHS = [
+    (".notdef", None, "0 500 hsbw endchar"),
+    ("A", 65, "40 600 hsbw 0 50 hstem 10 30 vstem 20 hmoveto 520 0 rlineto -260 700 rlineto closepath endchar"),
+    ("acute", 194, "100 300 hsbw 750 vmoveto 80 0 rlineto -40 100 rlineto closepath endchar"),
+    ("Aacute", 201, "40 600 hsbw 100 160 50 65 194 seac"),
+    ("box", 66, "50 600 hsbw 0 50 300 50 600 50 hstem3 0 20 200 20 400 20 vstem3 dotsection 20 hmoveto 400 hlineto "
+                "700 vlineto -400 hlineto closepath dotsection endchar"),
+    ("curves", 67, "30 700 hsbw 0 100 rmoveto 100 0 100 100 0 100 rrcurveto 50 50 50 50 vhcurveto "
+                   "50 50 50 -50 hvcurveto 0 -200 rlineto closepath endchar"),
+    ("wide", 68, "40 10 800 0 sbw 0 0 rmoveto 1000 2 div 0 rlineto 0 300 rlineto closepath endchar"),
+    ("subrs", 69, "20 500 hsbw 0 0 rmoveto 6 callsubr -200 0 rlineto closepath endchar"),
+    ("flex", 70, "20 700 hsbw 4 1 3 callothersubr pop callsubr 0 100 rmoveto 1 callsubr "
+                 "300 10 rmoveto 2 callsubr -200 0 rmoveto 2 callsubr 100 10 rmoveto 2 callsubr "
+                 "100 0 rmoveto 2 callsubr 100 0 rmoveto 2 callsubr 100 -10 rmoveto 2 callsubr "
+                 "100 -10 rmoveto 2 callsubr 50 620 100 0 callsubr 0 -100 rlineto -600 0 rlineto closepath endchar"),
+]
+
+
+def build_type1_font(matrix: str, pfb: bool) -> tuple[bytes, tuple[int, int, int]]:
+    """A Type 1 program (PFA with a hexadecimal eexec part, or PFB with a binary one) and its /Length1 to /Length3."""
+    encoding = "".join(f"dup {code} /{name} put\n" for name, code, _ in TYPE1_GLYPHS if code is not None)
+    clear = ("%!PS-AdobeFont-1.0: RectoTestType1 001.000\n"
+             "11 dict begin\n"
+             "/FontInfo 1 dict dup begin /version (001.000) readonly def end readonly def\n"
+             "/FontName /RectoTestType1 def\n"
+             "/PaintType 0 def\n"
+             "/FontType 1 def\n"
+             f"/FontMatrix [{matrix}] readonly def\n"
+             "/Encoding 256 array\n"
+             "0 1 255 {1 index exch /.notdef put} for\n"
+             f"{encoding}"
+             "readonly def\n"
+             "/FontBBox {0 -200 1000 1000} readonly def\n"
+             "currentdict end\n"
+             "currentfile eexec\n").encode("ascii")
+
+    def entry(head: bytes, program: str, tail: bytes) -> bytes:
+        cs = _t1_encrypt(b"\0\0\0\0" + charstring(program, type2=False), 4330)
+        return head + str(len(cs)).encode("ascii") + b" RD " + cs + b" " + tail + b"\n"
+
+    private = bytearray(b"dup /Private 8 dict dup begin\n"
+                        b"/RD{string currentfile exch readstring pop}executeonly def\n"
+                        b"/ND{noaccess def}executeonly def\n"
+                        b"/NP{noaccess put}executeonly def\n"
+                        b"/lenIV 4 def\n"
+                        b"/BlueValues [] def\n"
+                        b"/MinFeature {16 16} def\n"
+                        b"/password 5839 def\n")
+    private += f"/Subrs {len(TYPE1_SUBRS)} array\n".encode("ascii")
+    for index, program in enumerate(TYPE1_SUBRS):
+        private += entry(f"dup {index} ".encode("ascii"), program, b"NP")
+    private += b"ND\n"
+    private += f"2 index /CharStrings {len(TYPE1_GLYPHS)} dict dup begin\n".encode("ascii")
+    for name, _, program in TYPE1_GLYPHS:
+        private += entry(f"/{name} ".encode("ascii"), program, b"ND")
+    private += b"end\nend\nreadonly put\nnoaccess put\ndup /FontName get exch definefont pop\nmark currentfile closefile\n"
+    # Four leading bytes whose ciphertext is not four hex digits, as a binary eexec part must start (7.2).
+    cipher = _t1_encrypt(b"RCTO" + bytes(private), 55665)
+    if all(chr(b) in "0123456789abcdefABCDEF" for b in cipher[:4]):
+        raise ValueError("Type 1 fixture: the binary eexec part starts with four hex digits")
+    trailer = ("0" * 64 + "\n") * 8 + "cleartomark\n"
+    if not pfb:
+        hex_text = "".join(cipher[i:i + 32].hex() + "\n" for i in range(0, len(cipher), 32)).encode("ascii")
+        return clear + hex_text + trailer.encode("ascii"), (len(clear), len(hex_text), len(trailer))
+
+    def segment(kind: int, data: bytes) -> bytes:
+        return bytes([0x80, kind]) + struct.pack("<I", len(data)) + data
+
+    data = segment(1, clear) + segment(2, cipher) + segment(1, trailer.encode("ascii")) + b"\x80\x03"
+    return data, (len(clear), len(cipher), len(trailer))
+
+
+def _cff_dict(entries: list[tuple[list[float | int], list[int]]]) -> bytes:
+    """A DICT from (operands, operator bytes); integers in the 5-byte form so offsets can be fixed in place, reals in
+    the nibble form."""
+    out = bytearray()
+    for operands, operator in entries:
+        for value in operands:
+            if isinstance(value, float):
+                nibbles = []
+                text = repr(value).upper()
+                i = 0
+                while i < len(text):
+                    if text.startswith("E-", i):
+                        nibbles.append(0xC)
+                        i += 2
+                        continue
+                    ch = text[i]
+                    nibbles.append(int(ch) if ch.isdigit() else {".": 0xA, "E": 0xB, "-": 0xE}[ch])
+                    i += 1
+                nibbles.append(0xF)
+                if len(nibbles) % 2:
+                    nibbles.append(0xF)
+                out += b"\x1e" + bytes((nibbles[i] << 4) | nibbles[i + 1] for i in range(0, len(nibbles), 2))
+            else:
+                out += b"\x1d" + struct.pack(">i", value)
+        out += bytes(operator)
+    return bytes(out)
+
+
+def _cff_charset_format(sids: list[int], fmt: int) -> bytes:
+    """A custom charset (Technical Note 5176, 13) for the glyphs after .notdef."""
+    if fmt == 0:
+        return b"\x00" + b"".join(struct.pack(">H", s) for s in sids)
+    ranges = []
+    for sid in sids:
+        if ranges and sid == ranges[-1][0] + ranges[-1][1] + 1:
+            ranges[-1][1] += 1
+        else:
+            ranges.append([sid, 0])
+    size = ">B" if fmt == 1 else ">H"
+    return bytes([fmt]) + b"".join(struct.pack(">H", first) + struct.pack(size, left) for first, left in ranges)
+
+
+def build_cff_font(glyphs: list[tuple[str | int, str]], *, strings: list[str], gsubrs: list[str],
+                   fds: list[dict], charset_format: int, encoding: bytes | None = None, fd_select: bytes | None = None,
+                   top_matrix: list[float] | None = None) -> bytes:
+    """A bare CFF program. `glyphs` are (name, or CID for a CID-keyed font, Type 2 charstring); `fds` the private DICT
+    values (`default`, `nominal`, `subrs`, `matrix`) of the one font, or of each FD of a CID-keyed font with
+    `fd_select` given."""
+    cid = fd_select is not None
+    string_ids = {name: 391 + i for i, name in enumerate(strings)}
+
+    def sid(name: str) -> int:
+        from_standard = CFF_STANDARD_SIDS.get(name)
+        return from_standard if from_standard is not None else string_ids[name]
+
+    ids = [g if cid else sid(g) for g, _ in glyphs[1:]]
+    charset = _cff_charset_format(ids, charset_format)
+    charstrings = _cff_index([charstring(program, type2=True) for _, program in glyphs])
+    gsubr_index = _cff_index([charstring(p, type2=True) for p in gsubrs])
+
+    def private_block(fd: dict) -> tuple[bytes, bytes]:
+        subrs = _cff_index([charstring(p, type2=True) for p in fd.get("subrs", [])])
+        entries = [([fd.get("default", 0)], [20]), ([fd.get("nominal", 0)], [21])]
+        probe = _cff_dict(entries + [([0], [19])])
+        if fd.get("subrs"):
+            entries.append(([len(probe)], [19]))  # local subrs right after the private DICT
+        return _cff_dict(entries), subrs if fd.get("subrs") else b""
+
+    def top_dict(offsets: dict) -> bytes:
+        entries: list[tuple[list, list[int]]] = []
+        if cid:
+            entries.append(([string_ids["Adobe"], string_ids["Identity"], 0], [12, 30]))
+            entries.append(([max(ids) + 1], [12, 34]))
+        if top_matrix is not None:
+            entries.append((top_matrix, [12, 7]))
+        entries.append(([offsets["charset"]], [15]))
+        if encoding is not None:
+            entries.append(([offsets["encoding"]], [16]))
+        entries.append(([offsets["charstrings"]], [17]))
+        if cid:
+            entries.append(([offsets["fdarray"]], [12, 36]))
+            entries.append(([offsets["fdselect"]], [12, 37]))
+        else:
+            entries.append(([len(privates[0][0]), offsets["private0"]], [18]))
+        return _cff_dict(entries)
+
+    privates = [private_block(fd) for fd in fds]
+    header = bytes([1, 0, 4, 4])
+    name_index = _cff_index([b"RectoTestCFF"])
+    string_index = _cff_index([s.encode("ascii") for s in strings])
+    zero = {k: 0 for k in ("charset", "encoding", "charstrings", "fdarray", "fdselect", "private0")}
+
+    def fd_dicts(offsets: list[int]) -> bytes:
+        dicts = []
+        for fd, (priv, _), off in zip(fds, privates, offsets):
+            entries = []
+            if fd.get("matrix") is not None:
+                entries.append((fd["matrix"], [12, 7]))
+            entries.append(([len(priv), off], [18]))
+            dicts.append(_cff_dict(entries))
+        return _cff_index(dicts)
+
+    top_len = len(_cff_index([top_dict(zero)]))
+    at = len(header) + len(name_index) + top_len + len(string_index) + len(gsubr_index)
+    offsets = dict(zero)
+    body = bytearray()
+    offsets["charset"] = at + len(body)
+    body += charset
+    if encoding is not None:
+        offsets["encoding"] = at + len(body)
+        body += encoding
+    offsets["charstrings"] = at + len(body)
+    body += charstrings
+    if cid:
+        offsets["fdselect"] = at + len(body)
+        body += fd_select
+        fdarray_len = len(fd_dicts([0] * len(fds)))
+        offsets["fdarray"] = at + len(body)
+        private_at = at + len(body) + fdarray_len
+        private_offsets = []
+        for priv, subrs in privates:
+            private_offsets.append(private_at)
+            private_at += len(priv) + len(subrs)
+        body += fd_dicts(private_offsets)
+    else:
+        offsets["private0"] = at + len(body)
+    for priv, subrs in privates:
+        body += priv + subrs
+    top_index = _cff_index([top_dict(offsets)])
+    if len(top_index) != top_len:
+        raise ValueError("CFF fixture: the top DICT changed size when its offsets were filled in")
+    return header + name_index + top_index + string_index + gsubr_index + bytes(body)
+
+
+# The standard strings the fixtures name (Technical Note 5176, Appendix A).
+CFF_STANDARD_SIDS = {".notdef": 0, "space": 1, "A": 34, "B": 35, "C": 36, "D": 37, "E": 38, "acute": 125,
+                     "Aacute": 171}
+
+
+def _width_glyphs() -> list[tuple[str, str]]:
+    """A glyph for each kind of first stack-clearing operator, with an explicit width (`w<kind>`, width argument 37) and
+    without (`d<kind>`): `hstem`, `vstem` and their `hm` forms, `hintmask` and `cntrmask` with stems before them,
+    `rmoveto`, `hmoveto`, `vmoveto`, and `endchar` with 1 and with 5 arguments."""
+    draw = " 100 0 rlineto 0 100 rlineto endchar"
+    kinds = {
+        "hstem": ("0 50 hstem 10 20 rmoveto", draw),
+        "vstem": ("0 50 vstem 10 20 rmoveto", draw),
+        "hstemhm": ("0 50 hstemhm 10 20 rmoveto", draw),
+        "vstemhm": ("0 50 vstemhm 10 20 rmoveto", draw),
+        "hintmask": ("0 50 60 20 hintmask <C0> 10 20 rmoveto", draw),
+        "cntrmask": ("0 50 60 20 cntrmask <C0> 10 20 rmoveto", draw),
+        "rmoveto": ("10 20 rmoveto", draw),
+        "hmoveto": ("10 hmoveto", draw),
+        "vmoveto": ("20 vmoveto", draw),
+        "endchar": ("endchar", ""),
+        "seac": ("100 50 65 194 endchar", ""),
+    }
+    glyphs = []
+    for kind, (head, tail) in kinds.items():
+        glyphs.append((f"w{kind}", f"37 {head}{tail}"))
+        glyphs.append((f"d{kind}", f"{head}{tail}"))
+    return glyphs
+
+
+CFF_GLYPHS = [
+    (".notdef", "endchar"),
+    ("A", "40 hmoveto 520 0 rlineto -260 700 rlineto endchar"),
+    ("acute", "200 750 rmoveto 80 0 rlineto -40 100 rlineto endchar"),
+    # Lines: rlineto with two pairs, hlineto and vlineto with odd and even counts, and a two-byte hint mask over nine
+    # stems (five hstemhm pairs, four vstem pairs given before the mask); its second byte, 0, is a reserved operator if
+    # the mask is read one byte short.
+    ("lines", "0 10 20 10 40 10 60 10 80 10 hstemhm 0 10 20 10 40 10 60 10 hintmask <FF00> "
+              "10 10 rmoveto 100 0 0 100 rlineto 50 60 70 hlineto 30 40 vlineto endchar"),
+    # Curves: rrcurveto with two sets, hhcurveto with and without dy1, vvcurveto with and without dx1.
+    ("curves1", "0 0 rmoveto 10 0 20 10 0 20 30 0 40 10 0 20 rrcurveto 5 10 20 30 40 hhcurveto 10 20 30 40 hhcurveto "
+                "5 10 20 30 40 vvcurveto 10 20 30 40 vvcurveto endchar"),
+    # hvcurveto and vhcurveto with 4, 8 and a final odd argument; rcurveline and rlinecurve.
+    ("curves2", "0 0 rmoveto 10 20 30 40 hvcurveto 10 20 30 40 50 60 70 80 9 hvcurveto 10 20 30 40 vhcurveto "
+                "10 20 30 40 50 60 70 80 9 vhcurveto 10 20 30 40 50 60 70 80 rcurveline "
+                "10 20 30 40 50 60 70 80 rlinecurve endchar"),
+    # The four flex operators, flex1 both ways (its last point's free coordinate is the larger total's).
+    ("flexes", "0 100 rmoveto 10 20 30 40 50 60 70 80 90 100 110 120 50 flex 10 20 30 40 50 60 70 hflex "
+               "10 5 20 10 30 40 50 10 60 hflex1 10 0 20 5 30 0 40 -5 50 0 60 flex1 "
+               "0 10 5 20 0 30 -5 40 0 50 60 flex1 endchar"),
+    # Subroutines: a local one (bias 107: -107 is subroutine 0) that calls a global one (-107 is global 0).
+    ("subrs", "0 0 rmoveto -107 callsubr -100 0 rlineto endchar"),
+    # Arithmetic, stack and storage operators, each result a line's dx (see CffOutlines for the values).
+    ("arith", "0 0 rmoveto 3 4 add 1 rlineto 20 5 sub 2 rlineto 6 7 mul 3 rlineto 100 8 div 4 rlineto "
+              "9 neg 5 rlineto -11 abs 6 rlineto 64 sqrt 7 rlineto 2 3 and 0 1 and rlineto 0 0 or 0 5 or rlineto "
+              "0 not 4 not rlineto 5 5 eq 5 6 eq rlineto 13 14 2 1 ifelse 13 14 1 2 ifelse rlineto "
+              "16 dup add 17 18 exch sub rlineto 19 20 drop 12 rlineto 30 40 1 index 0 rlineto "
+              "1 2 3 4 4 1 roll rlineto 1 2 3 4 4 -1 roll rlineto 25 0 put 0 get 13 rlineto random 14 rlineto "
+              "endchar"),
+    ("Aacute", "100 50 65 194 endchar"),
+] + _width_glyphs()
+
+CFF_STRINGS = ["lines", "curves1", "curves2", "flexes", "subrs", "arith"] + [g for g, _ in _width_glyphs()]
+
+
+def build_cff_outlines() -> bytes:
+    """The name-keyed fixture: every Type 2 path, hint, subroutine, arithmetic and storage operator, the width rule
+    through each kind of first operator, a format 0 charset with standard and custom strings, and a format 1 encoding
+    with two ranges (`A` at 65, `acute` at 194) and a supplement (code 200 also names `A`)."""
+    encoding = b"\x81" + bytes([2, 65, 0, 194, 0]) + bytes([1, 200]) + struct.pack(">H", 34)
+    return build_cff_font(
+        CFF_GLYPHS, strings=CFF_STRINGS,
+        gsubrs=["0 100 rlineto return"],
+        fds=[{"default": 500, "nominal": 600, "subrs": ["100 0 rlineto -107 callgsubr return"]}],
+        charset_format=0, encoding=encoding)
+
+
+def build_cff_cid() -> bytes:
+    """The CID-keyed fixture: CIDs 0, 100 to 102 and 500 (a format 2 charset that is not the identity) over two FDs
+    by a format 3 FDSelect (glyphs 0 to 2 in FD 0, 3 and 4 in FD 1), each FD with its own local subroutine 0, widths and
+    font matrix, composed with a skewing top-level matrix."""
+    glyphs = [
+        (0, "endchar"),
+        (100, "50 0 0 rmoveto -107 callsubr 0 100 rlineto endchar"),
+        (101, "0 0 rmoveto -107 callsubr 0 100 rlineto endchar"),
+        (102, "50 0 0 rmoveto -107 callsubr 100 0 rlineto endchar"),
+        (500, "0 0 rmoveto -107 callsubr 100 0 rlineto endchar"),
+    ]
+    fds = [
+        {"default": 400, "nominal": 500, "subrs": ["100 0 rlineto return"], "matrix": [0.001, 0, 0, 0.001, 0, 0]},
+        {"default": 700, "nominal": 800, "subrs": ["0 100 rlineto return"], "matrix": [0.002, 0, 0, 0.001, 0, 0]},
+    ]
+    fd_select = b"\x03" + struct.pack(">H", 2) + struct.pack(">HB", 0, 0) + struct.pack(">HB", 3, 1) + struct.pack(">H", 5)
+    return build_cff_font(glyphs, strings=["Adobe", "Identity"], gsubrs=[], fds=fds, charset_format=2,
+                          fd_select=fd_select, top_matrix=[1, 0, 0.5, 1, 0, 0])
+
+
+def validate_charstring_font(rel_path: str, data: bytes) -> None:
+    """A Type 1 program has its cleartext, `eexec` and `cleartomark` (and PFB segments); a CFF program a version 1
+    header and INDEXes whose offsets stay inside the file."""
+    if rel_path.endswith(".pfb"):
+        at = 0
+        kinds = []
+        while at < len(data):
+            if data[at] != 0x80:
+                raise ValueError(f"{rel_path}: PFB segment header expected at {at}")
+            kinds.append(data[at + 1])
+            if data[at + 1] == 3:
+                break
+            (length,) = struct.unpack("<I", data[at + 2: at + 6])
+            at += 6 + length
+        if kinds != [1, 2, 1, 3] or at + 2 != len(data):
+            raise ValueError(f"{rel_path}: PFB segments are not text, binary, text, end")
+        return
+    if rel_path.endswith(".pfa"):
+        if not data.startswith(b"%!PS-AdobeFont-1.0") or b"currentfile eexec\n" not in data or \
+                not data.endswith(b"cleartomark\n"):
+            raise ValueError(f"{rel_path}: not a PFA program")
+        return
+    if data[:1] != b"\x01" or data[2] != 4:
+        raise ValueError(f"{rel_path}: not a CFF version 1 header")
+    at = data[2]
+    for _ in range(4):  # Name, Top DICT, String and Global Subr INDEXes
+        (count,) = struct.unpack(">H", data[at: at + 2])
+        if count == 0:
+            at += 2
+            continue
+        off_size = data[at + 2]
+        offsets = [int.from_bytes(data[at + 3 + i * off_size: at + 3 + (i + 1) * off_size], "big")
+                   for i in range(count + 1)]
+        end = at + 3 + (count + 1) * off_size - 1 + offsets[-1]
+        if offsets[0] != 1 or offsets != sorted(offsets) or end > len(data):
+            raise ValueError(f"{rel_path}: CFF INDEX at {at} runs past the file")
+        at = end
 
 
 def _glyf_composite_records(components: list[dict], bbox: tuple[int, int, int, int]) -> bytes:
@@ -5042,6 +5462,11 @@ CORPUS_PURPOSES: dict[str, str] = {
     "fonts/truetype-subset-short-loca.ttf": "TrueType subset DirectWrite refuses: broken cmap header, no OS/2, name or post",
     "fonts/truetype-hostile-budgets.ttf": "TrueType whose composites exceed the 65,535-point and 4,096-visit outline budgets",
     "fonts/opentype-cff.otf": "Minimal OpenType font with CFF outlines: .notdef and a 500 by 700 box with advance 600",
+    "fonts/type1-outlines.pfa": "Type 1 program, hexadecimal eexec: every Type 1 charstring operator, flex, seac, Subrs",
+    "fonts/type1-outlines.pfb": "The same Type 1 program as PFB segments with a binary eexec part",
+    "fonts/type1-skewed.pfa": "The same Type 1 glyphs under a scaled, skewed and translated /FontMatrix",
+    "fonts/cff-outlines.cff": "Bare name-keyed CFF: every Type 2 operator, widths by each first operator, custom charset",
+    "fonts/cff-cid.cff": "Bare CID-keyed CFF: non-identity charset, two FDs by FDSelect 3, per-FD subrs, widths, matrices",
         "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
     "flate/content-stream.txt": "1 MiB of generated page content operators, the Flate compressor's ratio and speed sample",
     "flate/random.bin": "64 KiB of incompressible bytes from a fixed seed, the Flate compressor's stored-block sample",
@@ -5111,6 +5536,11 @@ def expected_corpus_files() -> dict[str, bytes]:
         "fonts/truetype-subset-short-loca.ttf": build_truetype_font(long_loca=False, stripped=True, num_hmetrics=5),
         "fonts/truetype-hostile-budgets.ttf": build_truetype_hostile_budgets(),
         "fonts/opentype-cff.otf": build_opentype_cff_font(),
+        "fonts/type1-outlines.pfa": build_type1_font("0.001 0 0 0.001 0 0", pfb=False)[0],
+        "fonts/type1-outlines.pfb": build_type1_font("0.001 0 0 0.001 0 0", pfb=True)[0],
+        "fonts/type1-skewed.pfa": build_type1_font("0.002 0 0.0005 0.002 0.01 0", pfb=False)[0],
+        "fonts/cff-outlines.cff": build_cff_outlines(),
+        "fonts/cff-cid.cff": build_cff_cid(),
         "fonts/truetype-composites.ttf": build_truetype_composites(),
         "flate/content-stream.txt": build_flate_content_stream(),
         "flate/random.bin": build_flate_random(),

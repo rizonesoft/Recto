@@ -733,6 +733,12 @@ enum class RefusalReason : uint16_t {
 	ObjectNumber,  // an object number past the highest a reader must accept
 	// Appended (D01 T02 section 13): the staged revision chain behind undo.
 	HistoryStates, // more edits kept for undo than the history holds
+	// Appended (D01 T02 section 29): the ceilings on Type 1 and CFF glyphs.
+	CharstringBytes, // a charstring longer than its byte limit
+	PathOperators,   // a glyph drawing more path operators than the limit
+	CharstringWork,  // a glyph executing more charstring bytes than the limit
+	SubroutineDepth, // charstring subroutines nested past the depth limit
+	CharstringStack, // a charstring's operand stack past its limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -798,6 +804,16 @@ enum class RefusalReason : uint16_t {
 		return "ObjectNumber";
 	case RefusalReason::HistoryStates:
 		return "HistoryStates";
+	case RefusalReason::CharstringBytes:
+		return "CharstringBytes";
+	case RefusalReason::PathOperators:
+		return "PathOperators";
+	case RefusalReason::CharstringWork:
+		return "CharstringWork";
+	case RefusalReason::SubroutineDepth:
+		return "SubroutineDepth";
+	case RefusalReason::CharstringStack:
+		return "CharstringStack";
 	}
 	return "UnknownReason";
 }
@@ -893,6 +909,21 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::HistoryStates:
 		return "The document holds as many unsaved edits as undo keeps (observed and bound count edits); save to keep "
 			   "editing";
+	case RefusalReason::CharstringBytes:
+		return "A glyph program in an embedded Type 1 or CFF font is longer than its limit (observed and bound are "
+			   "bytes); that glyph is not drawn, and the file may be damaged";
+	case RefusalReason::PathOperators:
+		return "A glyph draws more path segments than its limit (observed and bound count segments); that glyph is "
+			   "not drawn, and the file may be damaged";
+	case RefusalReason::CharstringWork:
+		return "A glyph's program runs longer than its limit (observed and bound are bytes executed); that glyph is "
+			   "not drawn, and the file may be damaged";
+	case RefusalReason::SubroutineDepth:
+		return "A glyph's program nests its subroutines deeper than their limit (observed and bound are levels); "
+			   "that glyph is not drawn, and the file may be damaged";
+	case RefusalReason::CharstringStack:
+		return "A glyph's program holds more numbers at once than its limit (observed and bound count numbers); that "
+			   "glyph is not drawn, and the file may be damaged";
 	}
 	return "";
 }
@@ -916,6 +947,8 @@ enum class DecoderStep : uint16_t {
 	// Standard 14 faces (D01 T02 section 27).
 	DWriteSystemFont, // the system font collection, its family, font and face
 	DWriteFontFile,   // reading a system font file's bytes through its loader
+	// Type 1 and CFF programs (D01 T02 section 29).
+	NativeCharstring, // Recto's own Type 1 and CFF charstring reader
 };
 
 // True for the font-loading steps, whose failures concern a font, not an image.
@@ -923,7 +956,8 @@ enum class DecoderStep : uint16_t {
 {
 	return step == DecoderStep::DWriteFactory || step == DecoderStep::DWriteFontLoader ||
 		step == DecoderStep::DWriteFontReference || step == DecoderStep::DWriteFontFace ||
-		step == DecoderStep::NativeGlyf || step == DecoderStep::DWriteSystemFont || step == DecoderStep::DWriteFontFile;
+		step == DecoderStep::NativeGlyf || step == DecoderStep::DWriteSystemFont || step == DecoderStep::DWriteFontFile ||
+		step == DecoderStep::NativeCharstring;
 }
 
 // What a font-loading failure means to a person reading the log, by its code (D01 T02 section 2).
@@ -992,6 +1026,8 @@ enum class DecoderStep : uint16_t {
 		return "DWriteSystemFont";
 	case DecoderStep::DWriteFontFile:
 		return "DWriteFontFile";
+	case DecoderStep::NativeCharstring:
+		return "NativeCharstring";
 	}
 	return "UnknownStep";
 }

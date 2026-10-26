@@ -16,3 +16,7 @@ The generator also checks those notes on every run, so an edit that breaks one f
 ## Macintosh glyph names
 
 `mac-glyph-names.txt` holds the 258 standard Macintosh glyph names a TrueType `post` table of format 1 or 2 refers to by index, from Apple's TrueType Reference Manual (the `post` table chapter, which Microsoft's OpenType specification points to), checked equal, name for name, to Apache PDFBox's `WGL4Names` at `84492c427bbcd426f9eeceebb59087bc82f5e08c`. The generator checks there are 258, unique, starting `.notdef`.
+
+## CFF standard data
+
+`cff-standard-data.txt` holds CFF's predefined data from Adobe Technical Note 5176: the 391 standard strings by SID (Appendix A), the Expert encoding by code (Appendix B), and the Expert and Expert Subset charsets by glyph ID (Appendix C). It was taken on 2026-10-26 from pdf.js (`src/core/cff_parser.js`, `charsets.js` and `encodings.js` at `606bd6a4e138bbbc22fad10872d2ffa93365b6b1`), and checked equal, entry for entry, to Apache PDFBox (`fontbox/cff/` at `84492c427bbcd426f9eeceebb59087bc82f5e08c`: `CFFStandardString`, `CFFExpertCharset`, `CFFExpertSubsetCharset` and `CFFExpertEncoding`, the last by SID). `scripts/build-cff-data.py` generates `src/pdf/cff_data.inc` from it and checks there are 391 unique strings starting `.notdef`, 165 and 86 charset glyphs, and 165 encoding codes, every name a standard string.

@@ -12,6 +12,7 @@
 
 #include "display_list.h"
 #include "error.h"
+#include "font_encoding.h"
 #include "object.h"
 
 #include <array>
@@ -68,6 +69,41 @@ class LoadedFont;
 	std::shared_ptr<const std::vector<uint8_t>> program,
 	FontProgramFormat format) noexcept;
 
+// Bare Type 1 and CFF programs, which DirectWrite does not load (ISO 32000-1 9.6.2 and 9.9; D01 T02 section 29): a
+// `/FontFile` Type 1 program (cleartext, `eexec` part, trailing zeros, by its `/Length1` to `/Length3`), and a
+// `/FontFile3` CFF program of `/Subtype /Type1C` or `/CIDFontType0C`.
+enum class CharstringFormat : uint8_t {
+	Type1 = 0,
+	Type1C = 1,
+	CIDFontType0C = 2,
+};
+
+// A Type 1 program's `/Length1` (cleartext), `/Length2` (`eexec` part) and `/Length3` (zeros); a length of 0 is found
+// from the program.
+struct Type1Lengths {
+	size_t length1 = 0;
+	size_t length2 = 0;
+	size_t length3 = 0;
+};
+
+// Bounds on a charstring program and on the work one glyph may take, the work shared across every subroutine call and
+// both `seac` components.
+inline constexpr size_t kMaxCharstringProgramBytes = size_t{64} << 20u;
+inline constexpr size_t kMaxCharstringBytes = 65'535u;
+inline constexpr size_t kMaxGlyphPathOperators = 100'000u;
+inline constexpr size_t kMaxGlyphCharstringWork = 1'000'000u;
+inline constexpr size_t kMaxCharstringSubrDepth = 10u;
+inline constexpr size_t kMaxType1Stack = 24u;
+inline constexpr size_t kMaxType2Stack = 48u;
+
+// Parses the program once into immutable data; each glyph is computed per call from it, so the font draws as an
+// `OutlineOnly` one through its outlines, in text space through the program's font matrix. A malformed program is
+// `DamagedFormat`, a bound passed `ResourceLimit`.
+[[nodiscard]] PdfResult<std::shared_ptr<const LoadedFont>> load_charstring_font(
+	std::shared_ptr<const std::vector<uint8_t>> program,
+	CharstringFormat format,
+	Type1Lengths lengths = {}) noexcept;
+
 // An immutable embedded font. Metrics are in text space: glyph units divided
 // by `units_per_em()`, so the interpreter multiplies them by the font size,
 // and an ink box becomes `PositionedGlyph::ink_bounds_pt` (D01 T02 section 1).
@@ -123,18 +159,35 @@ public:
 	// Whether the glyph stays within the per-call ceilings, checked through the
 	// font's own `glyf` outlines before DirectWrite expands it: the rasterizer
 	// (`D01 T02 section 6`) calls it before drawing a TrueType glyph through
-	// DirectWrite. Always succeeds for a font without `glyf` outlines.
+	// DirectWrite. A Type 1 or CFF glyph is checked by running its charstring
+	// under its bounds (D01 T02 section 29). Always succeeds for a font with
+	// neither.
 	[[nodiscard]] PdfResult<void> check_glyph(uint16_t glyph) const noexcept;
 
-	// The DirectWrite face and the validated glyf tables, defined in font.cpp.
+	// The glyph a name names (a Type 1 program's `/CharStrings` key, a name-keyed CFF charset), or none, as for a
+	// font without glyph names.
+	[[nodiscard]] std::optional<uint16_t> glyph_for_name(std::string_view name) const noexcept;
+	// The glyph a CID-keyed CFF charset gives a CID, or none.
+	[[nodiscard]] std::optional<uint16_t> glyph_for_cid(uint32_t cid) const noexcept;
+	// The program's built-in encoding (a Type 1 `/Encoding`, a CFF encoding) as 256 glyph names, for `SimpleEncoding`
+	// (D01 T02 section 28), or null for a font without one.
+	[[nodiscard]] const GlyphNames* built_in_encoding() const noexcept;
+
+	// The DirectWrite face and the validated glyf tables, defined in font.cpp; the parsed Type 1 or CFF program, in
+	// font_charstrings.h.
 	struct DWriteState;
 	struct GlyfTables;
+	struct CharstringProgram;
 
 private:
 
 	friend PdfResult<std::shared_ptr<const LoadedFont>> load_embedded_font(
 		std::shared_ptr<const std::vector<uint8_t>> program,
 		FontProgramFormat format) noexcept;
+	friend PdfResult<std::shared_ptr<const LoadedFont>> load_charstring_font(
+		std::shared_ptr<const std::vector<uint8_t>> program,
+		CharstringFormat format,
+		Type1Lengths lengths) noexcept;
 
 	LoadedFont(
 		LoadedFontKind kind,
@@ -142,7 +195,8 @@ private:
 		uint16_t units_per_em,
 		uint16_t glyph_count,
 		std::unique_ptr<const DWriteState> dwrite,
-		std::unique_ptr<const GlyfTables> glyf) noexcept;
+		std::unique_ptr<const GlyfTables> glyf,
+		std::unique_ptr<const CharstringProgram> charstrings) noexcept;
 
 	// The glyph whose metrics a DirectWrite TrueType glyph takes (USE_MY_METRICS), from the glyf tables.
 	[[nodiscard]] PdfResult<uint16_t> dwrite_metrics_glyph(uint16_t glyph) const noexcept;
@@ -155,6 +209,7 @@ private:
 	const uint16_t glyph_count_;
 	const std::unique_ptr<const DWriteState> dwrite_;
 	const std::unique_ptr<const GlyfTables> glyf_;
+	const std::unique_ptr<const CharstringProgram> charstrings_;
 };
 
 // Loads an embedded font program in memory. DirectWrite loads it when it can;

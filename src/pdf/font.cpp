@@ -3,6 +3,8 @@
 // TrueType `glyf` reader for the ones it refuses.
 #include "font.h"
 
+#include "font_charstrings.h"
+
 #include "filters.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -1257,13 +1259,15 @@ LoadedFont::LoadedFont(
 	uint16_t units_per_em,
 	uint16_t glyph_count,
 	std::unique_ptr<const DWriteState> dwrite,
-	std::unique_ptr<const GlyfTables> glyf) noexcept
+	std::unique_ptr<const GlyfTables> glyf,
+	std::unique_ptr<const CharstringProgram> charstrings) noexcept
 	: kind_(kind)
 	, program_(std::move(program))
 	, units_per_em_(units_per_em)
 	, glyph_count_(glyph_count)
 	, dwrite_(std::move(dwrite))
 	, glyf_(std::move(glyf))
+	, charstrings_(std::move(charstrings))
 {
 }
 
@@ -1279,6 +1283,9 @@ PdfResult<double> LoadedFont::advance(uint16_t glyph) const noexcept
 	return recorded([&]() noexcept -> PdfResult<double> {
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
+		}
+		if (charstrings_ != nullptr) {
+			return charstrings::advance(*charstrings_, *program_, glyph);
 		}
 		const double scale = 1.0 / static_cast<double>(units_per_em_);
 		if (dwrite_ != nullptr) {
@@ -1371,6 +1378,10 @@ PdfResult<std::optional<PdfRect>> LoadedFont::ink_box(uint16_t glyph) const noex
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
 		}
+		if (charstrings_ != nullptr) {
+			RECTO_PDF_TRY(const GlyphShape shape, charstrings::shape(*charstrings_, *program_, glyph));
+			return shape.ink_box;
+		}
 		const double scale = 1.0 / static_cast<double>(units_per_em_);
 		if (dwrite_ != nullptr) {
 			return dwrite_ink_box(dwrite_->face.Get(), glyph, scale);
@@ -1401,6 +1412,12 @@ PdfResult<void> LoadedFont::check_glyph(uint16_t glyph) const noexcept
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
 		}
+		if (charstrings_ != nullptr) {
+			// The glyph's whole program runs under its budgets, so a renderer never meets an unbounded one.
+			RECTO_PDF_TRY(const GlyphShape shape, charstrings::shape(*charstrings_, *program_, glyph));
+			(void)shape;
+			return {};
+		}
 		RECTO_PDF_RETURN_IF_ERROR(glyf_check(glyph));
 		return {};
 	}());
@@ -1411,6 +1428,10 @@ PdfResult<GlyphOutline> LoadedFont::outline(uint16_t glyph) const noexcept
 	return recorded([&]() noexcept -> PdfResult<GlyphOutline> {
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
+		}
+		if (charstrings_ != nullptr) {
+			RECTO_PDF_TRY(GlyphShape shape, charstrings::shape(*charstrings_, *program_, glyph));
+			return std::move(shape.outline);
 		}
 		if (dwrite_ != nullptr) {
 			RECTO_PDF_RETURN_IF_ERROR(glyf_check(glyph));
@@ -1426,6 +1447,9 @@ PdfResult<GlyphShape> LoadedFont::shape(uint16_t glyph) const noexcept
 	return recorded([&]() noexcept -> PdfResult<GlyphShape> {
 		if (glyph >= glyph_count_) {
 			return font_error(ErrorCode::DamagedFormat, "Glyph index past the font's glyph count", DecoderStep::None);
+		}
+		if (charstrings_ != nullptr) {
+			return charstrings::shape(*charstrings_, *program_, glyph);
 		}
 		const double scale = 1.0 / static_cast<double>(units_per_em_);
 		GlyphShape shape{};
@@ -1454,6 +1478,42 @@ PdfResult<GlyphShape> LoadedFont::shape(uint16_t glyph) const noexcept
 		RECTO_PDF_TRY(shape.outline, outline_from_points(placed, scale));
 		return shape;
 	}());
+}
+
+std::optional<uint16_t> LoadedFont::glyph_for_name(std::string_view name) const noexcept
+{
+	if (charstrings_ == nullptr) {
+		return std::nullopt;
+	}
+	const auto& names = charstrings_->names;
+	const auto it = std::lower_bound(
+		names.begin(), names.end(), name, [](const auto& entry, std::string_view key) { return entry.first < key; });
+	if (it == names.end() || it->first != name) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
+std::optional<uint16_t> LoadedFont::glyph_for_cid(uint32_t cid) const noexcept
+{
+	if (charstrings_ == nullptr) {
+		return std::nullopt;
+	}
+	const auto& cids = charstrings_->cids;
+	const auto it =
+		std::lower_bound(cids.begin(), cids.end(), cid, [](const auto& entry, uint32_t key) { return entry.first < key; });
+	if (it == cids.end() || it->first != cid) {
+		return std::nullopt;
+	}
+	return it->second;
+}
+
+const GlyphNames* LoadedFont::built_in_encoding() const noexcept
+{
+	if (charstrings_ == nullptr || !charstrings_->built_in.has_value()) {
+		return nullptr;
+	}
+	return &*charstrings_->built_in;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1553,7 +1613,7 @@ PdfResult<std::shared_ptr<const LoadedFont>> load_embedded_font(
 			const uint16_t glyph_count = tables->glyph_count;
 			try {
 				return std::shared_ptr<const LoadedFont>(new LoadedFont(
-					LoadedFontKind::OutlineOnly, std::move(program), units_per_em, glyph_count, nullptr, std::move(tables)));
+					LoadedFontKind::OutlineOnly, std::move(program), units_per_em, glyph_count, nullptr, std::move(tables), nullptr));
 			} catch (const std::bad_alloc&) {
 				return glyf_error(ErrorCode::OutOfMemory, "Out of memory loading a font");
 			}
@@ -1575,9 +1635,31 @@ PdfResult<std::shared_ptr<const LoadedFont>> load_embedded_font(
 		try {
 			state->face = std::move(face);
 			return std::shared_ptr<const LoadedFont>(new LoadedFont(
-				kind, std::move(program), metrics.designUnitsPerEm, glyph_count, std::move(state), std::move(glyf_tables)));
+				kind, std::move(program), metrics.designUnitsPerEm, glyph_count, std::move(state), std::move(glyf_tables), nullptr));
 		} catch (const std::bad_alloc&) {
 			return font_error(ErrorCode::OutOfMemory, "Out of memory loading a font", DecoderStep::DWriteFontFace);
+		}
+	}());
+}
+
+PdfResult<std::shared_ptr<const LoadedFont>> load_charstring_font(
+	std::shared_ptr<const std::vector<uint8_t>> program,
+	CharstringFormat format,
+	Type1Lengths lengths) noexcept
+{
+	return recorded([&]() noexcept -> PdfResult<std::shared_ptr<const LoadedFont>> {
+		if (program == nullptr || program->empty()) {
+			return font_error(ErrorCode::DamagedFormat, "Embedded font program is empty", DecoderStep::NativeCharstring);
+		}
+		RECTO_PDF_TRY(std::unique_ptr<const LoadedFont::CharstringProgram> parsed,
+			charstrings::parse(*program, format, lengths));
+		const uint16_t glyph_count = parsed->glyph_count;
+		try {
+			// Units per em are the charstring units of the default matrix; every outline is already in text space.
+			return std::shared_ptr<const LoadedFont>(new LoadedFont(LoadedFontKind::OutlineOnly, std::move(program),
+				uint16_t{1000u}, glyph_count, nullptr, nullptr, std::move(parsed)));
+		} catch (const std::bad_alloc&) {
+			return font_error(ErrorCode::OutOfMemory, "Out of memory loading a font", DecoderStep::NativeCharstring);
 		}
 	}());
 }

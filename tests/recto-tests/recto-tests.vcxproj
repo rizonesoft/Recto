@@ -66,6 +66,7 @@
     <ClCompile Include="corpus_tests.cpp" />
     <ClCompile Include="pdf_crypto_tests.cpp" />
     <ClCompile Include="pdf_display_list_tests.cpp" />
+    <ClCompile Include="pdf_charstring_tests.cpp" />
     <ClCompile Include="pdf_font_tests.cpp" />
     <ClCompile Include="pdf_interpreter_tests.cpp" />
     <ClCompile Include="pdf_serialize_tests.cpp" />

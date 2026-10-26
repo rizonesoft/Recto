@@ -505,7 +505,7 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 // 23).
 TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 {
-	constexpr std::array<std::string_view, 30> kNamesByValue = {
+	constexpr std::array<std::string_view, 35> kNamesByValue = {
 		"None",
 		"CommandCount",
 		"ChangeSetSize",
@@ -536,6 +536,11 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 		"XrefRows",
 		"ObjectNumber",
 		"HistoryStates",
+		"CharstringBytes",
+		"PathOperators",
+		"CharstringWork",
+		"SubroutineDepth",
+		"CharstringStack",
 	};
 	static_assert(noexcept(refusal_reason_name(RefusalReason::None)));
 	static_assert(refusal_reason_name(RefusalReason::OutputUnwritable) == "OutputUnwritable");
@@ -789,9 +794,9 @@ TEST(PdfError, ConversionCheckContextReachesRingAndEtw)
 // Decoder steps are only ever appended: every value from None up names its fixed step, uniquely (D01 T02 section 25).
 TEST(PdfError, DecoderStepNamesCoverEveryStep)
 {
-	constexpr std::array<std::string_view, 14> kNamesByValue = {"None", "WicFactory", "WicCreateDecoder",
+	constexpr std::array<std::string_view, 15> kNamesByValue = {"None", "WicFactory", "WicCreateDecoder",
 		"WicGetFrame", "WicConvertFormat", "WicCopyPixels", "NativeJpx", "DWriteFactory", "DWriteFontLoader",
-		"DWriteFontReference", "DWriteFontFace", "NativeGlyf", "DWriteSystemFont", "DWriteFontFile"};
+		"DWriteFontReference", "DWriteFontFace", "NativeGlyf", "DWriteSystemFont", "DWriteFontFile", "NativeCharstring"};
 	static_assert(noexcept(decoder_step_name(DecoderStep::None)));
 	static_assert(decoder_step_name(DecoderStep::NativeJpx) == "NativeJpx");
 	std::set<std::string_view> seen;
