@@ -1,0 +1,121 @@
+{
+  "ref": "D01 T02 \u00a728",
+  "title": "Simple-font encodings, the Adobe Glyph List, `/Differences` and `/ToUnicode` CMaps",
+  "implementation_sha": "5eb86444c88fc93dbcc22ac6c05661dbbf2b7215",
+  "date": "2026-10-26",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/01-engine/D01-T02-s28.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFont.* -> 0 Warning(s), [  PASSED  ] 22 tests (ToUnicodeOutOfMemory skipped: no allocation injection under ASan)",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 326 tests and [  PASSED  ] 327 tests",
+    "python -m unittest discover -s tests/scripts -> Ran 465 tests, OK",
+    "python scripts/build-glyph-names.py --check -> glyph_names.inc is current",
+    "mutants: every fix of the build, the completion review and rounds 1 to 3 killed by its test (34 run); the format 4 idRangeOffset bound mutant not run (a Debug out-of-bounds read stops at a modal assertion), its typed error required by PdfFont.TrueTypeCmapMalformed"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s28.md",
+    "verdict": "filed",
+    "candidate": "7563de86a9343de9d664579f365cbfee752e5996",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a74",
+      "D01 T02 \u00a729",
+      "D03 T01 \u00a71",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 6,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s28.md",
+    "candidate": "4eb7c811ed28170266342e68e029db4ba2cabcc3",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
