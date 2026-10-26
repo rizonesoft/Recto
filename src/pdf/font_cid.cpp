@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstring>
 #include <iterator>
 #include <map>
 #include <new>
@@ -185,7 +186,7 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 				load_spans(notdefs, base->notdefs_);
 			}
 		}
-		CMapLexer lexer{stream, 0u, 4u};
+		CMapLexer lexer{stream}; // hex strings at `kMaxToUnicodeTargetBytes`; codes are held to 4 bytes below
 		size_t entries = 0;
 		const auto count_entry = [&]() -> PdfResult<void> {
 			if (++entries > kMaxCidMappings) {
@@ -233,6 +234,13 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 			if (token.kind == CMapLexer::Kind::End) {
 				break;
 			}
+			if (token.kind == CMapLexer::Kind::Name && token.text == "CMapName") {
+				RECTO_PDF_TRY(CMapLexer::Token cmap_name, lexer.next());
+				if (cmap_name.kind == CMapLexer::Kind::Name) {
+					cmap.name_ = std::string(cmap_name.text);
+				}
+				continue;
+			}
 			if (token.kind == CMapLexer::Kind::Name && token.text == "WMode") {
 				RECTO_PDF_TRY(CMapLexer::Token mode, lexer.next());
 				if (const auto value = cid_of(mode)) {
@@ -249,7 +257,12 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 					RECTO_PDF_RETURN_IF_ERROR(seed_identity());
 					continue;
 				}
-				return cid_error(ErrorCode::UnsupportedFeature, "CID CMap uses a CMap other than Identity");
+				// The base the stream's `/UseCMap` already gave, named by its `/CMapName` (or unnamed), is that base.
+				if (previous.kind == CMapLexer::Kind::Name && base != nullptr && !base->identity_ &&
+					(base->name_.empty() || base->name_ == previous.text)) {
+					continue;
+				}
+				return cid_error(ErrorCode::UnsupportedFeature, "CID CMap uses a CMap other than Identity or its base");
 			}
 			const bool codespace = token.text == "begincodespacerange";
 			const bool range = token.text == "begincidrange" || token.text == "beginnotdefrange";
@@ -361,13 +374,14 @@ CidCode CidCMap::next(std::span<const uint8_t> bytes) const noexcept
 		return out; // CID 0
 	}
 	const uint64_t key = code_key(length, code);
+	if (const Mapping* m = find_span(notdefs_, key, mapping_low); m != nullptr && key <= code_key(m->length, m->high)) {
+		out.notdef_cid = m->cid;
+	}
 	if (const Mapping* m = find_span(cids_, key, mapping_low); m != nullptr && key <= code_key(m->length, m->high)) {
 		out.cid = m->cid + (code - m->low);
 		return out;
 	}
-	if (const Mapping* m = find_span(notdefs_, key, mapping_low); m != nullptr && key <= code_key(m->length, m->high)) {
-		out.cid = m->cid;
-	}
+	out.cid = out.notdef_cid;
 	return out;
 }
 
@@ -378,6 +392,14 @@ CidCode CidCMap::next(std::span<const uint8_t> bytes) const noexcept
 CidToGidMap CidToGidMap::identity() noexcept
 {
 	return CidToGidMap{};
+}
+
+CidToGidMap CidToGidMap::from_glyphs(std::vector<uint16_t> glyphs) noexcept
+{
+	CidToGidMap map;
+	map.identity_ = false;
+	map.glyphs_ = std::move(glyphs);
+	return map;
 }
 
 PdfResult<CidToGidMap> CidToGidMap::parse(std::span<const uint8_t> stream) noexcept
@@ -414,6 +436,8 @@ uint16_t cid_glyph(uint32_t cid, CidFontKind kind, const CidToGidMap& map, const
 		glyph = map.glyph(cid);
 	} else if (font != nullptr && font->cid_keyed()) {
 		glyph = font->glyph_for_cid(cid).value_or(0u);
+	} else {
+		glyph = map.glyph(cid); // the charset of an OpenType-wrapped CID-keyed CFF, else the identity
 	}
 	if (glyph > 0xFFFFu || (font != nullptr && glyph >= font->glyph_count())) {
 		return 0u;
@@ -661,8 +685,13 @@ Type0Glyph Type0Font::next(std::span<const uint8_t> bytes) const noexcept
 		return out;
 	}
 	out.glyph = cid_glyph(code.cid, kind_, map_, font_.get());
-	out.advance = widths_.advance(code.cid);
-	out.vertical = widths_.vertical(code.cid);
+	// A CID the font has no glyph for takes the code's notdef mapping, else CID 0 (9.7.6.3), for its glyph and metrics.
+	if (out.glyph == 0u && code.cid != 0u && font_ != nullptr) {
+		out.cid = code.notdef_cid;
+		out.glyph = cid_glyph(out.cid, kind_, map_, font_.get());
+	}
+	out.advance = widths_.advance(out.cid);
+	out.vertical = widths_.vertical(out.cid);
 	return out;
 }
 
@@ -722,6 +751,67 @@ struct Type0Loader {
 			parsed.set_vertical(*mode->as_int() == 1);
 		}
 		return std::move(parsed);
+	}
+
+	// The program, and for an OpenType wrapper of a CID-keyed CFF the CID-to-glyph map its charset gives.
+	struct Program {
+		std::shared_ptr<const LoadedFont> font;
+		std::optional<CidToGidMap> charset;
+	};
+
+	// The `CFF ` table of an OpenType font, or none.
+	[[nodiscard]] static std::optional<std::span<const uint8_t>> cff_table(const std::vector<uint8_t>& sfnt) noexcept
+	{
+		if (sfnt.size() < 12u) {
+			return std::nullopt;
+		}
+		const size_t tables = (size_t{sfnt[4]} << 8u) | sfnt[5];
+		for (size_t i = 0; i < tables; ++i) {
+			const size_t at = 12u + 16u * i;
+			if (at + 16u > sfnt.size()) {
+				return std::nullopt;
+			}
+			if (std::memcmp(sfnt.data() + at, "CFF ", 4u) != 0) {
+				continue;
+			}
+			const auto u32 = [&](size_t o) {
+				return (uint32_t{sfnt[o]} << 24u) | (uint32_t{sfnt[o + 1u]} << 16u) | (uint32_t{sfnt[o + 2u]} << 8u) | sfnt[o + 3u];
+			};
+			const size_t offset = u32(at + 8u);
+			const size_t length = u32(at + 12u);
+			if (offset > sfnt.size() || length > sfnt.size() - offset) {
+				return std::nullopt;
+			}
+			return std::span<const uint8_t>(sfnt).subspan(offset, length);
+		}
+		return std::nullopt;
+	}
+
+	[[nodiscard]] PdfResult<Program> program_with_charset(const PdfDict& descriptor, CidFontKind kind) const
+	{
+		RECTO_PDF_TRY(std::shared_ptr<const LoadedFont> font, program(descriptor));
+		Program out{std::move(font), std::nullopt};
+		if (kind != CidFontKind::CIDFontType0 || out.font == nullptr || out.font->kind() != LoadedFontKind::OpenType) {
+			return out;
+		}
+		const std::optional<std::span<const uint8_t>> table = cff_table(*out.font->program());
+		if (!table.has_value()) {
+			return out;
+		}
+		auto cff = load_charstring_font(
+			std::make_shared<const std::vector<uint8_t>>(table->begin(), table->end()), CharstringFormat::CIDFontType0C);
+		if (!cff.has_value()) {
+			return cff.error();
+		}
+		if (!(*cff)->cid_keyed()) {
+			return out; // a name-keyed CFF: the CID is the glyph
+		}
+		std::vector<uint16_t> glyphs(size_t{kMaxCid} + 1u, 0u);
+		for (uint32_t cid = 0; cid <= kMaxCid; ++cid) {
+			glyphs[cid] = (*cff)->glyph_for_cid(cid).value_or(0u);
+		}
+		out.charset = CidToGidMap::from_glyphs(std::move(glyphs));
+		return out;
 	}
 
 	[[nodiscard]] PdfResult<std::shared_ptr<const LoadedFont>> program(const PdfDict& descriptor) const
@@ -827,7 +917,11 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 		PdfValue descriptor_holder;
 		RECTO_PDF_TRY(const PdfValue* descriptor, loader.value(descendant.get("FontDescriptor"), descriptor_holder));
 		if (descriptor != nullptr && descriptor->is_dict()) {
-			RECTO_PDF_TRY(font, loader.program(*descriptor->as_dict()));
+			RECTO_PDF_TRY_REF(program, loader.program_with_charset(*descriptor->as_dict(), kind));
+			font = program.font;
+			if (program.charset.has_value()) {
+				map = std::move(*program.charset);
+			}
 		}
 		return std::shared_ptr<const Type0Font>(
 			std::make_shared<const Type0Font>(std::move(*cmap), kind, std::move(map), std::move(widths), std::move(font)));

@@ -5078,6 +5078,21 @@ def build_cff_cid() -> bytes:
                           fd_select=fd_select, top_matrix=[1, 0, 0.5, 1, 0, 0])
 
 
+def build_opentype_cff_cid_font() -> bytes:
+    """`cff-cid.cff` (CIDs 0, 100 to 102 and 500 over glyphs 0 to 4) in an OpenType wrapper, as a PDF's `/FontFile3
+    /OpenType` holds a CID-keyed CFF (D01 T02 section 30)."""
+    glyphs = 5
+    head = struct.pack(">IIIIHHqqhhhhHHhhh", 0x00010000, 0x00010000, 0, 0x5F0F3CF5, 0x000B, FONT_UNITS_PER_EM,
+                       0, 0, 0, 0, 600, 700, 0, 8, 2, 0, 0)
+    hhea = struct.pack(">IhhhHhhhhhhhhhhhH", 0x00010000, 800, -200, 0, 600, 0, 0, 600, 1, 0, 0, 0, 0, 0, 0, 0, glyphs)
+    hmtx = b"".join(struct.pack(">Hh", 500, 0) for _ in range(glyphs))
+    maxp = struct.pack(">IH", 0x00005000, glyphs)
+    tables = {b"CFF ": build_cff_cid(), b"head": head, b"hhea": hhea, b"hmtx": hmtx, b"maxp": maxp,
+              b"cmap": _font_cmap_table({0x41: 1}), b"OS/2": _font_os2_table(), b"name": _font_name_table(),
+              b"post": _font_post_table()}
+    return _sfnt(tables, cff=True)
+
+
 def validate_charstring_font(rel_path: str, data: bytes) -> None:
     """A Type 1 program has its cleartext, `eexec` and `cleartomark` (and PFB segments); a CFF program a version 1
     header and INDEXes whose offsets stay inside the file."""
@@ -5467,6 +5482,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "fonts/type1-skewed.pfa": "The same Type 1 glyphs under a scaled, skewed and translated /FontMatrix",
     "fonts/cff-outlines.cff": "Bare name-keyed CFF: every Type 2 operator, widths by each first operator, custom charset",
     "fonts/cff-cid.cff": "Bare CID-keyed CFF: non-identity charset, two FDs by FDSelect 3, per-FD subrs, widths, matrices",
+    "fonts/opentype-cff-cid.otf": "OpenType wrapping cff-cid.cff: a CID-keyed CFF table whose charset maps CIDs to glyphs",
         "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
     "flate/content-stream.txt": "1 MiB of generated page content operators, the Flate compressor's ratio and speed sample",
     "flate/random.bin": "64 KiB of incompressible bytes from a fixed seed, the Flate compressor's stored-block sample",
@@ -5541,6 +5557,7 @@ def expected_corpus_files() -> dict[str, bytes]:
         "fonts/type1-skewed.pfa": build_type1_font("0.002 0 0.0005 0.002 0.01 0", pfb=False)[0],
         "fonts/cff-outlines.cff": build_cff_outlines(),
         "fonts/cff-cid.cff": build_cff_cid(),
+        "fonts/opentype-cff-cid.otf": build_opentype_cff_cid_font(),
         "fonts/truetype-composites.ttf": build_truetype_composites(),
         "flate/content-stream.txt": build_flate_content_stream(),
         "flate/random.bin": build_flate_random(),

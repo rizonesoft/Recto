@@ -240,7 +240,11 @@ TEST(PdfFont, Type0CodeToCid)
 	ASSERT_TRUE(notdef_single.has_value());
 	expect_codes(codes(*notdef_single, {0x41u, 0x42u}), {{0x41u, 1u, 7u}, {0x42u, 1u, 0u}}, "notdef single");
 	// A code of five bytes is past the four a CMap allows.
-	refused("1 begincodespacerange <0000000000> <FFFFFFFFFF> endcodespacerange", ErrorCode::ResourceLimit, "a 5-byte code");
+	refused("1 begincodespacerange <0000000000> <FFFFFFFFFF> endcodespacerange", ErrorCode::DamagedFormat, "a 5-byte code");
+	// Hex strings that are not codes keep the ordinary bound: a /Registry written in hex.
+	EXPECT_TRUE(CidCMap::parse(bytes_of("/CIDSystemInfo 3 dict dup begin /Registry <41646F6265> def end def "
+										"1 begincodespacerange <00> <FF> endcodespacerange"))
+					.has_value());
 	// One base: Identity named again is the same base, however often; a second, different base is damage; the base's
 	// codespace counts toward the bound.
 	{
@@ -438,7 +442,9 @@ TEST(PdfFont, Type0Assembly)
 		EXPECT_EQ((*font)->kind(), CidFontKind::CIDFontType2);
 		const std::vector<uint8_t> text{0u, 0u, 0u, 1u, 0u, 2u, 0u, 3u};
 		std::span<const uint8_t> rest(text);
-		const std::array<std::array<double, 3>, 4> want = {{{0, 2, 0.5}, {1, 1, 0.6}, {2, 0, 0.7}, {3, 0, 1.0}}};
+		// CID 2's glyph 9 and CID 3 (past the map) are not in the font: each is drawn as CID 0 (no notdef mapping in
+		// Identity-H), glyph 2 at CID 0's width (9.7.6.3).
+		const std::array<std::array<double, 3>, 4> want = {{{0, 2, 0.5}, {1, 1, 0.6}, {0, 2, 0.5}, {0, 2, 0.5}}};
 		for (const auto& [cid, glyph, advance] : want) {
 			const Type0Glyph g = (*font)->next(rest);
 			ASSERT_EQ(g.length, 2u);
@@ -471,7 +477,7 @@ TEST(PdfFont, Type0Assembly)
 		{0x11, 101, 2, 0.5},   // the inherited range, /DW
 		{0x12, 102, 3, 0.5},
 		{0x1F4, 500, 4, 0.7},  // Identity under both, the /W range
-		{5, 5, 0, 0.5},        // Identity: a CID the font's charset lacks is glyph 0
+		{5, 0, 0, 0.5},        // Identity: a CID the font's charset lacks is drawn as CID 0
 	}};
 	for (const auto& [code, cid, glyph, advance] : want) {
 		const Type0Glyph g = (*font)->next(rest);
@@ -556,6 +562,54 @@ TEST(PdfFont, Type0Assembly)
 		EXPECT_EQ((*b)->next(std::vector<uint8_t>{0u, 1u}).cid, 100u);
 		EXPECT_DOUBLE_EQ((*b)->next(std::vector<uint8_t>{0u, 1u}).advance, 0.55);
 		EXPECT_DOUBLE_EQ((*b)->next(std::vector<uint8_t>{0u, 7u}).vertical.w1y, -1.1);
+	}
+
+	// A CID the font lacks takes the code's notdef mapping: <41> maps to CID 7, which cff-cid.cff lacks, so its notdef
+	// CID 100 (glyph 1) is drawn.
+	{
+		Objects n;
+		n.table.emplace(8u, stream(PdfDict{}, bytes_of("1 begincodespacerange <00> <FF> endcodespacerange 1 begincidchar <41> 7 "
+													   "endcidchar 1 beginnotdefchar <41> 100 endnotdefchar")));
+		n.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType0")}, {"FontDescriptor", ref(6u)},
+								{"W", array({number(100), array({number(550)})})}})));
+		n.table.emplace(6u, PdfValue(dict({{"FontFile3", ref(7u)}})));
+		n.table.emplace(7u, stream(dict({{"Subtype", name("CIDFontType0C")}}), *corpus_font("cff-cid.cff")));
+		auto f = load_type0_font(dict({{"Encoding", ref(8u)}, {"DescendantFonts", array({ref(3u)})}}), n.resolver);
+		ASSERT_TRUE(f.has_value()) << f.error().message.view();
+		const Type0Glyph g = (*f)->next(std::vector<uint8_t>{0x41u});
+		EXPECT_EQ(g.cid, 100u);
+		EXPECT_EQ(g.glyph, 1u);
+		EXPECT_DOUBLE_EQ(g.advance, 0.55);
+	}
+	// /FontFile3 /OpenType holding a CID-keyed CFF: its charset maps CIDs to glyphs.
+	{
+		Objects ot;
+		ot.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType0")}, {"FontDescriptor", ref(6u)}})));
+		ot.table.emplace(6u, PdfValue(dict({{"FontFile3", ref(7u)}})));
+		ot.table.emplace(7u, stream(dict({{"Subtype", name("OpenType")}}), *corpus_font("opentype-cff-cid.otf")));
+		auto f = load_type0_font(dict({{"Encoding", name("Identity-H")}, {"DescendantFonts", array({ref(3u)})}}), ot.resolver);
+		ASSERT_TRUE(f.has_value()) << f.error().message.view();
+		ASSERT_NE((*f)->font(), nullptr);
+		EXPECT_EQ((*f)->font()->kind(), LoadedFontKind::OpenType);
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 100u}).glyph, 1u);
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0x01u, 0xF4u}).glyph, 4u); // CID 500
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 7u}).glyph, 0u);
+	}
+	// `usecmap` naming the base its /UseCMap gives is that base; another name is not.
+	{
+		Objects u;
+		u.table.emplace(20u, stream(PdfDict{}, bytes_of("/CMapName /BaseMap def 1 begincodespacerange <0000> <FFFF> "
+														"endcodespacerange 1 begincidchar <0002> 101 endcidchar")));
+		u.table.emplace(21u, stream(dict({{"UseCMap", ref(20u)}}), bytes_of("/BaseMap usecmap 1 begincidchar <0001> 100 endcidchar")));
+		u.table.emplace(22u, stream(dict({{"UseCMap", ref(20u)}}), bytes_of("/OtherMap usecmap")));
+		u.table.emplace(3u, PdfValue(dict({{"Subtype", name("CIDFontType0")}})));
+		auto f = load_type0_font(dict({{"Encoding", ref(21u)}, {"DescendantFonts", array({ref(3u)})}}), u.resolver);
+		ASSERT_TRUE(f.has_value()) << f.error().message.view();
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 1u}).cid, 100u);
+		EXPECT_EQ((*f)->next(std::vector<uint8_t>{0u, 2u}).cid, 101u);
+		const auto other = load_type0_font(dict({{"Encoding", ref(22u)}, {"DescendantFonts", array({ref(3u)})}}), u.resolver);
+		ASSERT_FALSE(other.has_value());
+		EXPECT_EQ(other.error().code, ErrorCode::UnsupportedFeature);
 	}
 
 	// /WMode in the CMap stream's dictionary.

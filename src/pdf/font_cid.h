@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace recto::pdf {
@@ -30,6 +31,7 @@ struct CidCode {
 	uint32_t code = 0;
 	uint8_t length = 0;
 	uint32_t cid = 0;
+	uint32_t notdef_cid = 0; // the code's notdef mapping, else 0: the CID used when the font has no glyph for `cid`
 };
 
 // A CMap from codes to CIDs (9.7.5): `/Identity-H`, `/Identity-V` or an embedded CMap stream.
@@ -75,6 +77,7 @@ public:
 private:
 	bool identity_ = false;
 	bool vertical_ = false;
+	std::string name_; // its `/CMapName`, by which a derived CMap's `usecmap` names it
 	std::vector<Range> codespace_;
 	std::vector<Mapping> cids_;    // sorted by (length, low), not overlapping
 	std::vector<Mapping> notdefs_; // likewise
@@ -84,6 +87,8 @@ private:
 class CidToGidMap {
 public:
 	[[nodiscard]] static CidToGidMap identity() noexcept;
+	// A map from glyph indices by CID (a CID-keyed CFF's charset read out).
+	[[nodiscard]] static CidToGidMap from_glyphs(std::vector<uint16_t> glyphs) noexcept;
 	// Big-endian glyph indices by CID; an odd length is `DamagedFormat`. Entries past CID 65,535 are not kept.
 	[[nodiscard]] static PdfResult<CidToGidMap> parse(std::span<const uint8_t> stream) noexcept;
 	// The CID's glyph, 0 past the map.
@@ -100,8 +105,9 @@ enum class CidFontKind : uint8_t {
 };
 
 // The glyph a CID selects (9.7.4.2): through the map for `/CIDFontType2`; for `/CIDFontType0`, by the CID-keyed
-// program's charset, or the CID itself for a name-keyed or OpenType program (as FreeType and pdf.js read it). A glyph at
-// or past the font's glyph count is glyph 0; without a font the glyph is unchecked.
+// program's charset, else through the map (an OpenType-wrapped CID-keyed CFF's charset, else the identity: the CID itself
+// for a name-keyed program, as FreeType and pdf.js read it). A glyph at or past the font's glyph count is glyph 0; without
+// a font the glyph is unchecked.
 [[nodiscard]] uint16_t cid_glyph(uint32_t cid, CidFontKind kind, const CidToGidMap& map, const LoadedFont* font) noexcept;
 
 // A CID's vertical metrics (9.7.4.3), in text space: the vertical advance `w1y` and the position vector (vx, vy) from

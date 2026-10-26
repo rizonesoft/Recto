@@ -25,6 +25,12 @@
       "zlib6": 65564
     },
     {
+      "bytes": 1008,
+      "path": "fonts/opentype-cff-cid.otf",
+      "sha256": "5fb16857e54a8a477b7b371458f3697da2890c0cd5af7811cf90c9683d9e97d6",
+      "zlib6": 537
+    },
+    {
       "bytes": 704,
       "path": "fonts/opentype-cff.otf",
       "sha256": "4ff96f294222f339506dc135a5394bb46c97ebe36cd28e11adf1fdefcbb4c97d",
