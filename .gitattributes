@@ -29,3 +29,5 @@ scripts/hooks/* text eol=lf
 # Vendored Adobe Core14 AFM files and their notice stay byte for byte as published (src/pdf/adobe-core14-afm/README.md).
 src/pdf/adobe-core14-afm/*.afm -text
 src/pdf/adobe-core14-afm/MustRead.html -text
+# The vendored Adobe Glyph List files too (src/pdf/adobe-glyph-list/README.md).
+src/pdf/adobe-glyph-list/*.txt -text

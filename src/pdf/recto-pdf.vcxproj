@@ -45,6 +45,7 @@
     <ClCompile Include="filters.cpp" />
     <ClCompile Include="flate_compress.cpp" />
     <ClCompile Include="font.cpp" />
+    <ClCompile Include="font_encoding.cpp" />
     <ClCompile Include="standard14.cpp" />
     <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="serialize.cpp" />
@@ -61,6 +62,8 @@
     <ClInclude Include="error.h" />
     <ClInclude Include="filters.h" />
     <ClInclude Include="font.h" />
+    <ClInclude Include="font_encoding.h" />
+    <ClInclude Include="glyph_names.inc" />
     <ClInclude Include="standard14_metrics.inc" />
     <ClInclude Include="interpreter.h" />
     <ClInclude Include="serialize.h" />

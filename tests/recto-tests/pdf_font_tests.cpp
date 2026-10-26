@@ -3,6 +3,7 @@
 // that script (units per em 1000), so every expected advance, box and outline below is computed by hand from them.
 #include "filters.h"
 #include "font.h"
+#include "font_encoding.h"
 
 #include "test_support.h"
 
@@ -1181,6 +1182,699 @@ TEST(PdfFont, Standard14FaceFailures)
 	EXPECT_FALSE(outline->points.empty());
 }
 
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Simple-font encodings, glyph names, TrueType selection and ToUnicode (D01 T02 section 28)
+// ---------------------------------------------------------------------------------------------------------------------
+
+[[nodiscard]] std::u32string u32(std::u32string_view text)
+{
+	return std::u32string(text);
+}
+
+// The character a Windows code page gives a byte, or none.
+[[nodiscard]] std::optional<char32_t> code_page_char(UINT code_page, uint8_t byte)
+{
+	wchar_t wide[2]{};
+	const char narrow = static_cast<char>(byte);
+	const int n = MultiByteToWideChar(code_page, MB_ERR_INVALID_CHARS, &narrow, 1, wide, 2);
+	if (n != 1) {
+		return std::nullopt;
+	}
+	return static_cast<char32_t>(wide[0]);
+}
+
+TEST(PdfFont, BaseEncodings)
+{
+	// StandardEncoding, Symbol and ZapfDingbats: every code against Adobe's Core14 AFM files, read here.
+	for (const auto& [encoding, font] : {std::pair{BaseEncoding::Standard, std::string_view("Times-Roman")},
+			 std::pair{BaseEncoding::Symbol, std::string_view("Symbol")},
+			 std::pair{BaseEncoding::ZapfDingbats, std::string_view("ZapfDingbats")}}) {
+		SCOPED_TRACE(std::string(font));
+		std::array<std::string, 256> want{};
+		for (const AfmFile::Glyph& g : read_afm(font).glyphs) {
+			if (g.code >= 0) {
+				want[static_cast<size_t>(g.code)] = g.name;
+			}
+		}
+		for (int code = 0; code < 256; ++code) {
+			EXPECT_EQ(base_encoding_name(encoding, static_cast<uint8_t>(code)), want[static_cast<size_t>(code)]) << code;
+		}
+	}
+	// WinAnsiEncoding and MacRomanEncoding: every code against Windows' own code pages 1252 and 10000, through the
+	// glyph name's Unicode, but for what Annex D's notes make different (space and hyphen also at 0240, 0255 and
+	// 0312, bullet at WinAnsi's unused codes, currency where code page 10000 now has the euro).
+	const auto check = [](BaseEncoding encoding, UINT code_page, std::initializer_list<std::pair<int, char32_t>> notes) {
+		size_t encoded = 0;
+		for (int code = 0x20; code < 256; ++code) {
+			const std::string_view name = base_encoding_name(encoding, static_cast<uint8_t>(code));
+			char32_t want = U'\0';
+			bool noted = false;
+			for (const auto& [note_code, note_char] : notes) {
+				if (note_code == code) {
+					want = note_char;
+					noted = true;
+				}
+			}
+			if (!noted) {
+				const std::optional<char32_t> page = code_page_char(code_page, static_cast<uint8_t>(code));
+				if (!page.has_value()) {
+					ADD_FAILURE() << code << " has no character in the code page";
+					continue;
+				}
+				want = *page;
+			}
+			if (name.empty()) {
+				EXPECT_TRUE(noted || want < 0x20u || (want >= 0x7Fu && want < 0xA0u)) << code << " has no name";
+				continue;
+			}
+			++encoded;
+			auto unicode = glyph_name_unicode(name);
+			if (!unicode.has_value()) {
+				ADD_FAILURE() << name;
+				continue;
+			}
+			EXPECT_EQ(*unicode, std::u32string(1u, want)) << code << " " << name;
+		}
+		return encoded;
+	};
+	EXPECT_EQ(check(BaseEncoding::WinAnsi, 1252u,
+				  {{0x7F, U'•'}, {0x81, U'•'}, {0x8D, U'•'}, {0x8F, U'•'}, {0x90, U'•'},
+					  {0x9D, U'•'}, {0xA0, U' '}, {0xAD, U'-'}}),
+		224u - 0u); // codes 0x20 to 0xFF: 224 names
+	const size_t mac_encoded = check(BaseEncoding::MacRoman, 10000u,
+		{{0xCA, U' '}, {0xDB, U'¤'}, {0x7F, U'\0'}, {0xAD, U'\0'}, {0xB0, U'\0'}, {0xB2, U'\0'}, {0xB3, U'\0'},
+			{0xB6, U'\0'}, {0xB7, U'\0'}, {0xB8, U'\0'}, {0xB9, U'\0'}, {0xBA, U'\0'}, {0xBD, U'\0'}, {0xC3, U'\0'},
+			{0xC5, U'\0'}, {0xC6, U'\0'}, {0xD7, U'\0'}, {0xF0, U'\0'}});
+	EXPECT_EQ(mac_encoded, 208u);
+	// The Mac OS standard Roman set has those fifteen too, at code page 10000's places.
+	for (const auto& [name, code] : {std::pair{std::string_view("notequal"), 0xADu}, std::pair{std::string_view("apple"), 0xF0u},
+			 std::pair{std::string_view("Omega"), 0xBDu}, std::pair{std::string_view("Adieresis"), 0x80u}}) {
+		EXPECT_EQ(mac_os_roman_code(name), std::optional<uint8_t>(static_cast<uint8_t>(code))) << name;
+	}
+	EXPECT_EQ(mac_os_roman_code("space"), std::optional<uint8_t>(uint8_t{0x20u})); // the first of its two codes
+	EXPECT_EQ(mac_os_roman_code("Euro"), std::nullopt);
+	// MacExpertEncoding: Annex D's 165 codes, every name one the Glyph List knows.
+	size_t expert = 0;
+	for (int code = 0; code < 256; ++code) {
+		if (const std::string_view name = base_encoding_name(BaseEncoding::MacExpert, static_cast<uint8_t>(code)); !name.empty()) {
+			++expert;
+			EXPECT_FALSE(glyph_name_unicode(name)->empty()) << name;
+		}
+	}
+	EXPECT_EQ(expert, 165u);
+	EXPECT_EQ(base_encoding_name(BaseEncoding::MacExpert, 041u), "exclamsmall");
+	EXPECT_EQ(base_encoding_from_name("WinAnsiEncoding"), std::optional<BaseEncoding>(BaseEncoding::WinAnsi));
+	EXPECT_EQ(base_encoding_from_name("StandardEncoding"), std::optional<BaseEncoding>(BaseEncoding::Standard));
+	EXPECT_EQ(base_encoding_from_name("Identity-H"), std::nullopt);
+}
+
+TEST(PdfFont, EncodingAndDifferences)
+{
+	// Glyph names by the AGL specification.
+	const std::array<std::pair<std::string_view, std::u32string_view>, 16> names = {{
+		{"A", U"A"}, {"a.sc", U"a"}, {"f_i", U"fi"}, {"uni00410042", U"AB"}, {"u1F600", U"\U0001F600"},
+		{"uni00E9", U"é"}, {"uni00e9", U""}, {"uniD800", U""}, {"u110000", U""}, {"uni004", U""},
+		{"g123", U""}, {"Euro", U"€"}, {"dalethatafpatah", U"דֲ"}, {"", U""}, {".notdef", U""},
+		{"T_h.alt", U"Th"},
+	}};
+	for (const auto& [name, want] : names) {
+		auto got = glyph_name_unicode(name);
+		ASSERT_TRUE(got.has_value());
+		EXPECT_EQ(*got, u32(want)) << name;
+	}
+	EXPECT_EQ(*glyph_name_unicode("a1", true), U"✁"); // zapfdingbats.txt for a ZapfDingbats font
+	EXPECT_EQ(*glyph_name_unicode("a1", false), U"");
+	EXPECT_EQ(*glyph_name_unicode("space", true), U" "); // not in zapfdingbats.txt: the AGL, as for any font
+
+	// /Differences over WinAnsiEncoding: runs of codes after each number, unknown names kept, bad entries skipped.
+	PdfArray differences;
+	for (const PdfValue& v : {PdfValue(int64_t{32}), PdfValue(PdfName("a")), PdfValue(PdfName("b")), PdfValue(int64_t{128}),
+			 PdfValue(PdfName("Euro")), PdfValue(PdfName("zz")), PdfValue(PdfName("uni00410042")), PdfValue(int64_t{300}),
+			 PdfValue(PdfName("lost")), PdfValue(int64_t{140}), PdfValue(true), PdfValue(PdfName("f_i"))}) {
+		differences.push_back(v);
+	}
+	PdfDict dict;
+	dict.set("BaseEncoding", PdfValue(PdfName("WinAnsiEncoding")));
+	dict.set("Differences", PdfValue(std::move(differences)));
+	const PdfValue encoding{std::move(dict)};
+	auto built = SimpleEncoding::build(&encoding, false, nullptr);
+	ASSERT_TRUE(built.has_value()) << built.error().message.view();
+	EXPECT_EQ(built->name(32), "a");
+	EXPECT_EQ(built->name(33), "b");
+	EXPECT_EQ(built->name(34), "quotedbl"); // past the run: WinAnsi again
+	EXPECT_EQ(built->name(128), "Euro");
+	EXPECT_EQ(built->name(129), "zz");
+	EXPECT_EQ(built->name(130), "uni00410042");
+	EXPECT_EQ(built->name(131), "florin"); // the name after 300 had no code to go to
+	EXPECT_EQ(built->name(140), "f_i");    // a boolean in the array is skipped, the run goes on
+	EXPECT_TRUE(built->has_differences());
+	EXPECT_EQ(built->named_base(), std::optional<BaseEncoding>(BaseEncoding::WinAnsi));
+	EXPECT_EQ(*glyph_name_unicode(built->name(130)), U"AB");
+	EXPECT_EQ(*glyph_name_unicode(built->name(129)), U"");
+}
+
+TEST(PdfFont, EffectiveEncoding)
+{
+	const auto named = [](std::string_view name) { return PdfValue(PdfName(name)); };
+	GlyphNames custom{};
+	custom[0x41] = "alpha";
+	custom[0x42] = "beta";
+	// A named encoding.
+	{
+		const PdfValue value = named("WinAnsiEncoding");
+		auto e = SimpleEncoding::build(&value, false, &custom);
+		ASSERT_TRUE(e.has_value());
+		EXPECT_EQ(e->name(0x80), "Euro");
+		EXPECT_EQ(e->named_base(), std::optional<BaseEncoding>(BaseEncoding::WinAnsi));
+		EXPECT_FALSE(e->has_differences());
+	}
+	// A dictionary with /BaseEncoding.
+	{
+		PdfDict dict;
+		dict.set("BaseEncoding", named("MacRomanEncoding"));
+		const PdfValue value{std::move(dict)};
+		auto e = SimpleEncoding::build(&value, true, &custom);
+		ASSERT_TRUE(e.has_value());
+		EXPECT_EQ(e->name(0x80), "Adieresis");
+		EXPECT_EQ(e->named_base(), std::optional<BaseEncoding>(BaseEncoding::MacRoman));
+	}
+	// A dictionary without /BaseEncoding: StandardEncoding for a non-symbolic font, the built-in for a symbolic one.
+	{
+		PdfArray differences;
+		differences.push_back(PdfValue(int64_t{0x42}));
+		differences.push_back(named("gamma"));
+		PdfDict dict;
+		dict.set("Differences", PdfValue(std::move(differences)));
+		const PdfValue value{std::move(dict)};
+		auto plain = SimpleEncoding::build(&value, false, &custom);
+		ASSERT_TRUE(plain.has_value());
+		EXPECT_EQ(plain->name(0x27), "quoteright");
+		EXPECT_EQ(plain->name(0x41), "A");
+		EXPECT_EQ(plain->name(0x42), "gamma");
+		EXPECT_EQ(plain->named_base(), std::nullopt);
+		auto symbolic = SimpleEncoding::build(&value, true, &custom);
+		ASSERT_TRUE(symbolic.has_value());
+		EXPECT_EQ(symbolic->name(0x41), "alpha"); // the custom built-in encoding
+		EXPECT_EQ(symbolic->name(0x42), "gamma"); // with /Differences over it
+		EXPECT_EQ(symbolic->name(0x27), "");
+	}
+	// No /Encoding: the built-in encoding; StandardEncoding for a non-symbolic font without one; none for a symbolic.
+	{
+		auto with = SimpleEncoding::build(nullptr, true, &custom);
+		EXPECT_EQ(with->name(0x41), "alpha");
+		auto standard = SimpleEncoding::build(nullptr, false, nullptr);
+		EXPECT_EQ(standard->name(0x41), "A");
+		auto none = SimpleEncoding::build(nullptr, true, nullptr);
+		EXPECT_EQ(none->name(0x41), "");
+		const PdfValue unknown = named("FooEncoding"); // an unknown name: as if absent
+		EXPECT_EQ(SimpleEncoding::build(&unknown, true, &custom)->name(0x42), "beta");
+	}
+	// A /Differences array past its bound.
+	{
+		PdfArray big;
+		for (size_t i = 0; i <= kMaxDifferencesEntries; ++i) {
+			big.push_back(PdfValue(int64_t{1}));
+		}
+		PdfDict dict;
+		dict.set("Differences", PdfValue(std::move(big)));
+		const PdfValue value{std::move(dict)};
+		RECTO_EXPECT_ERR(SimpleEncoding::build(&value, false, nullptr), ErrorCode::ResourceLimit);
+	}
+}
+
+// Minimal sfnt programs for the TrueType tests: a table directory holding only `cmap` and `post` tables.
+void be16(std::vector<uint8_t>& out, uint32_t v)
+{
+	out.push_back(static_cast<uint8_t>(v >> 8u));
+	out.push_back(static_cast<uint8_t>(v));
+}
+void be32(std::vector<uint8_t>& out, uint32_t v)
+{
+	be16(out, v >> 16u);
+	be16(out, v & 0xFFFFu);
+}
+
+struct CmapPart {
+	uint16_t platform;
+	uint16_t encoding;
+	std::vector<uint8_t> bytes;
+};
+
+[[nodiscard]] std::vector<uint8_t> cmap_table(const std::vector<CmapPart>& parts)
+{
+	std::vector<uint8_t> out;
+	be16(out, 0u);
+	be16(out, static_cast<uint32_t>(parts.size()));
+	uint32_t offset = 4u + 8u * static_cast<uint32_t>(parts.size());
+	for (const CmapPart& part : parts) {
+		be16(out, part.platform);
+		be16(out, part.encoding);
+		be32(out, offset);
+		offset += static_cast<uint32_t>(part.bytes.size());
+	}
+	for (const CmapPart& part : parts) {
+		out.insert(out.end(), part.bytes.begin(), part.bytes.end());
+	}
+	return out;
+}
+
+// Format 4, one segment per code (idDelta, no range offsets), then the closing segment.
+[[nodiscard]] std::vector<uint8_t> format4(const std::vector<std::pair<uint32_t, uint32_t>>& codes)
+{
+	const uint32_t segments = static_cast<uint32_t>(codes.size()) + 1u;
+	std::vector<uint8_t> out;
+	be16(out, 4u);
+	be16(out, 16u + segments * 8u);
+	be16(out, 0u);
+	be16(out, segments * 2u);
+	be16(out, 0u);
+	be16(out, 0u);
+	be16(out, 0u);
+	for (const auto& [code, glyph] : codes) {
+		be16(out, code);
+	}
+	be16(out, 0xFFFFu);
+	be16(out, 0u);
+	for (const auto& [code, glyph] : codes) {
+		be16(out, code);
+	}
+	be16(out, 0xFFFFu);
+	for (const auto& [code, glyph] : codes) {
+		be16(out, (glyph - code) & 0xFFFFu);
+	}
+	be16(out, 1u);
+	for (size_t i = 0; i < segments; ++i) {
+		be16(out, 0u);
+	}
+	return out;
+}
+
+[[nodiscard]] std::vector<uint8_t> format0(const std::vector<std::pair<uint32_t, uint32_t>>& codes)
+{
+	std::vector<uint8_t> out;
+	be16(out, 0u);
+	be16(out, 262u);
+	be16(out, 0u);
+	std::array<uint8_t, 256> glyphs{};
+	for (const auto& [code, glyph] : codes) {
+		glyphs[code & 0xFFu] = static_cast<uint8_t>(glyph);
+	}
+	out.insert(out.end(), glyphs.begin(), glyphs.end());
+	return out;
+}
+
+[[nodiscard]] std::vector<uint8_t> format6(uint16_t first, const std::vector<uint16_t>& glyphs)
+{
+	std::vector<uint8_t> out;
+	be16(out, 6u);
+	be16(out, 10u + 2u * static_cast<uint32_t>(glyphs.size()));
+	be16(out, 0u);
+	be16(out, first);
+	be16(out, static_cast<uint32_t>(glyphs.size()));
+	for (const uint16_t g : glyphs) {
+		be16(out, g);
+	}
+	return out;
+}
+
+[[nodiscard]] std::vector<uint8_t> format12(const std::vector<std::array<uint32_t, 3>>& groups)
+{
+	std::vector<uint8_t> out;
+	be16(out, 12u);
+	be16(out, 0u);
+	be32(out, 16u + 12u * static_cast<uint32_t>(groups.size()));
+	be32(out, 0u);
+	be32(out, static_cast<uint32_t>(groups.size()));
+	for (const auto& g : groups) {
+		be32(out, g[0]);
+		be32(out, g[1]);
+		be32(out, g[2]);
+	}
+	return out;
+}
+
+// A `post` format 2 table naming glyphs 0 and up, each name a Macintosh name or a string of its own.
+[[nodiscard]] std::vector<uint8_t> post2(const std::vector<std::string>& names)
+{
+	std::vector<uint8_t> out;
+	be32(out, 0x00020000u);
+	for (int i = 0; i < 7; ++i) {
+		be32(out, 0u);
+	}
+	be16(out, static_cast<uint32_t>(names.size()));
+	std::vector<std::string> own;
+	for (const std::string& name : names) {
+		if (name == ".notdef") {
+			be16(out, 0u);
+		} else {
+			be16(out, 258u + static_cast<uint32_t>(own.size()));
+			own.push_back(name);
+		}
+	}
+	for (const std::string& name : own) {
+		out.push_back(static_cast<uint8_t>(name.size()));
+		out.insert(out.end(), name.begin(), name.end());
+	}
+	return out;
+}
+
+[[nodiscard]] std::vector<uint8_t> sfnt(const std::vector<uint8_t>& cmap, const std::vector<uint8_t>& post = {})
+{
+	std::vector<std::pair<uint32_t, const std::vector<uint8_t>*>> tables;
+	if (!cmap.empty()) {
+		tables.emplace_back(0x636D6170u, &cmap);
+	}
+	if (!post.empty()) {
+		tables.emplace_back(0x706F7374u, &post);
+	}
+	std::vector<uint8_t> out;
+	be32(out, 0x00010000u);
+	be16(out, static_cast<uint32_t>(tables.size()));
+	be16(out, 0u);
+	be16(out, 0u);
+	be16(out, 0u);
+	uint32_t offset = 12u + 16u * static_cast<uint32_t>(tables.size());
+	for (const auto& [tag, bytes] : tables) {
+		be32(out, tag);
+		be32(out, 0u);
+		be32(out, offset);
+		be32(out, static_cast<uint32_t>(bytes->size()));
+		offset += static_cast<uint32_t>(bytes->size());
+	}
+	for (const auto& [tag, bytes] : tables) {
+		out.insert(out.end(), bytes->begin(), bytes->end());
+	}
+	return out;
+}
+
+[[nodiscard]] SimpleEncoding encoding_of(std::optional<std::string_view> name, bool symbolic, const PdfArray* differences = nullptr)
+{
+	if (differences != nullptr) {
+		PdfDict dict;
+		if (name.has_value()) {
+			dict.set("BaseEncoding", PdfValue(PdfName(*name)));
+		}
+		dict.set("Differences", PdfValue(*differences));
+		const PdfValue value{std::move(dict)};
+		return *SimpleEncoding::build(&value, symbolic, nullptr);
+	}
+	if (name.has_value()) {
+		const PdfValue value{PdfName(*name)};
+		return *SimpleEncoding::build(&value, symbolic, nullptr);
+	}
+	return *SimpleEncoding::build(nullptr, symbolic, nullptr);
+}
+
+TEST(PdfFont, TrueTypeCmapSelection)
+{
+	const auto tables = [](const std::vector<uint8_t>& program) {
+		auto parsed = TrueTypeTables::parse(program);
+		EXPECT_TRUE(parsed.has_value()) << parsed.error().message.view();
+		return parsed.has_value() ? std::move(*parsed) : TrueTypeTables{};
+	};
+	// The name path through (3,1): WinAnsi's 0x80 is Euro, U+20AC.
+	{
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x41, 5}, {0x20AC, 9}})}})));
+		const SimpleEncoding win = encoding_of("WinAnsiEncoding", true);
+		EXPECT_EQ(simple_truetype_glyph(t, win, true, false, 0x41), 5u);
+		EXPECT_EQ(simple_truetype_glyph(t, win, true, false, 0x80), 9u);
+		// Non-symbolic with no encoding: StandardEncoding names, the same path.
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, false), false, true, 0x41), 5u);
+	}
+	// The name path through (1,0): WinAnsi's 0xC4 is Adieresis, Mac OS Roman 0x80.
+	{
+		const auto t = tables(sfnt(cmap_table({{1, 0, format0({{0x80, 7}, {0x41, 3}})}})));
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0xC4), 7u);
+	}
+	// The name path through the post names, a (3,1) subtable lacking the name.
+	{
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 2}})}}), post2({".notdef", "x", "y", "A"})));
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 3u);
+		EXPECT_EQ(t.glyph_for_name("y"), std::optional<uint16_t>(uint16_t{2u}));
+		EXPECT_EQ(t.glyph_for_name(".notdef"), std::optional<uint16_t>(uint16_t{0u}));
+	}
+	// /Differences selects the name path in a symbolic font too.
+	{
+		PdfArray differences;
+		differences.push_back(PdfValue(int64_t{0x41}));
+		differences.push_back(PdfValue(PdfName("B")));
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 4}})}, {3, 0, format4({{0xF041, 8}})}})));
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, true, &differences), true, false, 0x41), 4u);
+		// Without /Differences the symbolic font takes the code path.
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, true), true, false, 0x41), 8u);
+	}
+	// The code path through (3,0) at each base, the first that maps it winning.
+	{
+		const SimpleEncoding none = encoding_of(std::nullopt, true);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0x41, 11}})}}))), none, true, false, 0x41), 11u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF041, 12}})}}))), none, true, false, 0x41), 12u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF141, 13}})}}))), none, true, false, 0x41), 13u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF241, 14}})}}))), none, true, false, 0x41), 14u);
+		// (1,0) at the code, through format 6.
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{1, 0, format6(0x40, {20, 21, 22})}}))), none, true, false, 0x41), 21u);
+		// No subtable at all: the code as a glyph index.
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt({})), none, true, false, 0x41), 0x41u);
+	}
+	// A name the name path cannot find falls to the code path.
+	{
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 4}})}, {3, 0, format4({{0xF041, 8}})}})));
+		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 8u);
+	}
+	// The Unicode subtable read backwards: the lowest scalar of a glyph, and (3,10) over (3,1).
+	{
+		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x41, 5}, {0x42, 6}, {0x391, 5}})}})));
+		EXPECT_EQ(t.unicode_for_glyph(5u), std::optional<char32_t>(U'A'));
+		EXPECT_EQ(t.unicode_for_glyph(6u), std::optional<char32_t>(U'B'));
+		EXPECT_EQ(t.unicode_for_glyph(7u), std::nullopt);
+		const auto full = tables(sfnt(cmap_table({{3, 1, format4({{0x41, 5}})}, {3, 10, format12({{{0x1F600, 0x1F601, 5}}})}})));
+		EXPECT_EQ(full.unicode_for_glyph(5u), std::optional<char32_t>(U'\U0001F600'));
+		EXPECT_EQ(full.unicode_for_glyph(6u), std::optional<char32_t>(U'\U0001F601'));
+	}
+}
+
+TEST(PdfFont, TrueTypeCmapMalformed)
+{
+	const auto refused = [](const std::vector<uint8_t>& program, std::string_view what) {
+		auto parsed = TrueTypeTables::parse(program);
+		ASSERT_FALSE(parsed.has_value()) << what;
+		EXPECT_EQ(parsed.error().code, ErrorCode::DamagedFormat) << what;
+	};
+	refused({0x00, 0x01, 0x00, 0x00, 0x00, 0x05}, "a truncated table directory");
+	{
+		std::vector<uint8_t> program = sfnt(cmap_table({{3, 1, format4({{0x41, 5}})}}));
+		program[12u + 8u + 3u] = 0xF0; // the cmap record's offset, now past the program
+		refused(program, "a table outside the program");
+	}
+	refused(sfnt({0x00, 0x00}), "a truncated cmap header");
+	{
+		std::vector<uint8_t> cmap = cmap_table({{3, 1, format4({{0x41, 5}})}});
+		cmap[4u + 4u + 3u] = 0xF0; // the subtable offset, past the cmap table
+		refused(sfnt(cmap), "a subtable offset past the table");
+	}
+	{
+		std::vector<uint8_t> sub = format4({{0x41, 5}});
+		sub[6] = 0x7F; // segCountX2 far larger than the subtable
+		refused(sfnt(cmap_table({{3, 1, sub}})), "format 4 segment counts larger than the subtable");
+	}
+	{
+		std::vector<uint8_t> sub = format4({{0x41, 5}});
+		const size_t offsets = 14u + 4u + 2u + 4u + 4u; // two segments: ends, pad, starts, deltas
+		sub[offsets] = 0x40; // the first segment's idRangeOffset, outside the glyph array
+		refused(sfnt(cmap_table({{3, 1, sub}})), "a format 4 idRangeOffset outside the glyph array");
+	}
+	{
+		std::vector<uint8_t> sub = format4({{0x41, 5}});
+		sub[14u + 4u + 2u] = 0x00;
+		sub[14u + 4u + 2u + 1u] = 0x42; // the first segment starts after it ends
+		refused(sfnt(cmap_table({{3, 1, sub}})), "a reversed format 4 segment");
+	}
+	{
+		std::vector<uint8_t> sub = format12({{{0x41, 0x42, 5}}});
+		sub[12] = 0x00;
+		sub[13] = 0x10; // numGroups far larger than the table
+		refused(sfnt(cmap_table({{3, 10, sub}})), "format 12 group counts larger than the table");
+	}
+	refused(sfnt(cmap_table({{3, 10, format12({{{0x50, 0x40, 5}}})}})), "a reversed format 12 group");
+	refused(sfnt(cmap_table({{3, 10, format12({{{0x40, 0x50, 5}}, {{0x45, 0x60, 9}}})}})), "overlapping format 12 groups");
+	refused(sfnt(cmap_table({{3, 10, format12({{{0x40, 0x110000, 5}}})}})), "a format 12 group past U+10FFFF");
+	{
+		std::vector<uint8_t> post = post2({".notdef", "A"});
+		post[32] = 0x7F; // numGlyphs far larger than the table
+		refused(sfnt(cmap_table({{3, 1, format4({{0x41, 1}})}}), post), "post glyph indices larger than the table");
+		std::vector<uint8_t> runs = post2({".notdef", "A"});
+		runs[runs.size() - 2u] = 0x40; // the name's length, past the table
+		refused(sfnt(cmap_table({{3, 1, format4({{0x41, 1}})}}), runs), "a post name past the table");
+	}
+	// The work stays linear: one format 12 group over every Unicode scalar reads back quickly.
+	{
+		const auto started = std::chrono::steady_clock::now();
+		auto big = TrueTypeTables::parse(sfnt(cmap_table({{3, 10, format12({{{0x20, 0x10FFFF, 1}}})}})));
+		const auto elapsed = std::chrono::steady_clock::now() - started;
+		ASSERT_TRUE(big.has_value()) << big.error().message.view();
+		EXPECT_EQ(big->unicode_for_glyph(1u), std::optional<char32_t>(U' '));
+		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
+	}
+}
+
+[[nodiscard]] std::vector<uint8_t> bytes_of(std::string_view text)
+{
+	return std::vector<uint8_t>(text.begin(), text.end());
+}
+
+TEST(PdfFont, ToUnicodeCMap)
+{
+	const auto cmap_text = bytes_of(R"(/CIDInit /ProcSet findresource begin 12 dict begin begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def /CMapName /Test def % a comment
+1 begincodespacerange <00> <FF> endcodespacerange
+2 beginbfchar <41> <0041> <02> <00660069> endbfchar
+1 beginbfchar <03> <D83DDE00> endbfchar
+2 beginbfrange <10> <12> <0061> <20> <21> [<0058> <0059>] endbfrange
+1 beginbfchar <04> /space endbfchar
+1 beginbfchar <05> <D800> endbfchar
+1 beginbfchar <06> <D83D0041> endbfchar
+2 beginbfrange <30> <39> <0030> <3A> <3B> <004>endbfrange
+1 beginbfchar <35> <0058> endbfchar
+endcmap CMapName currentdict /CMap defineresource pop end end)");
+	auto cmap = ToUnicodeCMap::parse(cmap_text);
+	ASSERT_TRUE(cmap.has_value()) << cmap.error().message.view();
+	const auto at = [&](uint32_t code) { return cmap->lookup(code, 1u).value_or(U"<none>"); };
+	EXPECT_EQ(at(0x41), U"A");
+	EXPECT_EQ(at(0x02), U"fi"); // a multi-character target
+	EXPECT_EQ(at(0x03), U"\U0001F600"); // a surrogate pair
+	EXPECT_EQ(at(0x10), U"a");
+	EXPECT_EQ(at(0x12), U"c"); // the range's last character incremented
+	EXPECT_EQ(at(0x20), U"X");
+	EXPECT_EQ(at(0x21), U"Y"); // the array form
+	EXPECT_EQ(at(0x04), U" "); // a glyph name target
+	EXPECT_EQ(at(0x05), U"<none>"); // an unpaired surrogate is skipped
+	EXPECT_EQ(at(0x06), U"<none>"); // and a high surrogate followed by anything but a low one
+	EXPECT_EQ(at(0x34), U"4");
+	EXPECT_EQ(at(0x35), U"X"); // the later bfchar wins inside the earlier range
+	EXPECT_EQ(at(0x36), U"6");
+	EXPECT_EQ(at(0x3A), U"@"); // an odd digit count is padded: <004> is <0040>
+	EXPECT_EQ(at(0x60), U"<none>");
+	EXPECT_EQ(cmap->lookup(0x41, 2u), std::nullopt); // another code length is another code
+	// Two-byte and mixed codespaces.
+	{
+		auto two = ToUnicodeCMap::parse(bytes_of(
+			"1 begincodespacerange <0000> <FFFF> endcodespacerange 1 beginbfrange <0100> <01FF> <0100> endbfrange"));
+		ASSERT_TRUE(two.has_value());
+		EXPECT_EQ(two->lookup(0x0150, 2u), std::optional<std::u32string>(U"Ő"));
+		const std::array<uint8_t, 2> code = {0x01, 0x50};
+		EXPECT_EQ(two->code_length(code), 2u);
+		auto mixed = ToUnicodeCMap::parse(bytes_of("2 begincodespacerange <00> <80> <8140> <9FFC> endcodespacerange"));
+		ASSERT_TRUE(mixed.has_value());
+		const std::array<uint8_t, 2> sjis = {0x81, 0x40};
+		const std::array<uint8_t, 1> ascii = {0x41};
+		EXPECT_EQ(mixed->code_length(sjis), 2u);
+		EXPECT_EQ(mixed->code_length(ascii), 1u);
+		auto edge = ToUnicodeCMap::parse(bytes_of("1 beginbfrange <FFFFFFFE> <FFFFFFFF> <0041> endbfrange"));
+		ASSERT_TRUE(edge.has_value());
+		EXPECT_EQ(edge->lookup(0xFFFFFFFFu, 4u), std::optional<std::u32string>(U"B"));
+	}
+	// Refusals, each typed.
+	const auto refuses = [](std::string_view text, ErrorCode code) {
+		auto parsed = ToUnicodeCMap::parse(bytes_of(text));
+		ASSERT_FALSE(parsed.has_value()) << text.substr(0, 60);
+		EXPECT_EQ(parsed.error().code, code) << text.substr(0, 60);
+	};
+	refuses("/Identity-H usecmap", ErrorCode::UnsupportedFeature);
+	refuses("1 beginbfrange <20> <10> <0041> endbfrange", ErrorCode::DamagedFormat);
+	refuses("1 beginbfchar <4G> <0041> endbfchar", ErrorCode::DamagedFormat);
+	refuses("1 beginbfchar <41> <0041", ErrorCode::DamagedFormat);
+	refuses("1 begincodespacerange <00> <FFFF> endcodespacerange", ErrorCode::DamagedFormat);
+	refuses("1 beginbfrange <00> <10> 42 endbfrange", ErrorCode::DamagedFormat);
+	{
+		std::string many = "101 begincodespacerange";
+		for (int i = 0; i < 101; ++i) {
+			many += " <00> <FF>";
+		}
+		refuses(many + " endcodespacerange", ErrorCode::ResourceLimit);
+	}
+	refuses("2 beginbfrange <0000> <FFFF> <0041> <0000> <FFFF> <0041> endbfrange", ErrorCode::ResourceLimit);
+	refuses("1 beginbfchar <41> <" + std::string(1026u, '0') + "> endbfchar", ErrorCode::DamagedFormat);
+	{
+		std::vector<uint8_t> huge(kMaxToUnicodeStreamBytes + 1u, ' ');
+		auto parsed = ToUnicodeCMap::parse(huge);
+		ASSERT_FALSE(parsed.has_value());
+		EXPECT_EQ(parsed.error().code, ErrorCode::ResourceLimit);
+	}
+}
+
+TEST(PdfFont, UnicodeFallbackOrder)
+{
+	auto cmap = ToUnicodeCMap::parse(bytes_of("1 beginbfchar <41> <005A> endbfchar"));
+	ASSERT_TRUE(cmap.has_value());
+	GlyphNames names{};
+	names[0x41] = "A";
+	names[0x42] = "g123";
+	names[0x43] = "a1";
+	auto encoding = SimpleEncoding::build(nullptr, true, &names);
+	ASSERT_TRUE(encoding.has_value());
+	auto tables = TrueTypeTables::parse(sfnt(cmap_table({{3, 0, format4({{0xF042, 7}})}, {3, 1, format4({{0x00C5, 7}})}})));
+	ASSERT_TRUE(tables.has_value());
+	SimpleFontText font{&*cmap, &*encoding, false, &*tables, true, false};
+	EXPECT_EQ(*simple_font_unicode(font, 0x41), U"Z"); // ToUnicode first
+	font.to_unicode = nullptr;
+	EXPECT_EQ(*simple_font_unicode(font, 0x41), U"A"); // then the glyph name through the AGL
+	EXPECT_EQ(*simple_font_unicode(font, 0x42), U"Å"); // then the cmap: glyph 7 back through (3,1)
+	EXPECT_EQ(*simple_font_unicode(font, 0x44), U""); // nothing: never a guessed character
+	font.truetype = nullptr;
+	EXPECT_EQ(*simple_font_unicode(font, 0x42), U""); // g123 names nothing without the cmap
+	font.zapf_dingbats = true;
+	EXPECT_EQ(*simple_font_unicode(font, 0x43), U"✁"); // a ZapfDingbats font reads zapfdingbats.txt
+}
+
+TEST(PdfFont, DrawableUnicode)
+{
+	// Expected scalars of the test's own, not read through the AGL.
+	const std::array<std::pair<std::string_view, char32_t>, 10> expected = {{{"A", U'A'}, {"Euro", U'€'},
+		{"fi", U'ﬁ'}, {"commaaccent", U'̦'}, {"Lslash", U'Ł'}, {"quoteright", U'’'},
+		{"space", U' '}, {"dotlessi", U'ı'}, {"partialdiff", U'∂'}, {"florin", U'ƒ'}}};
+	for (const auto& [name, scalar] : expected) {
+		EXPECT_EQ(drawable_unicode(name), std::optional<char32_t>(scalar)) << name;
+	}
+	EXPECT_EQ(drawable_unicode("apple"), std::nullopt); // Symbol's apple, private use in the AGL
+	EXPECT_EQ(drawable_unicode("f_i"), std::nullopt);   // two characters: no single glyph
+	// Every name of the twelve Latin fonts draws in its own face, and every ZapfDingbats name in its face.
+	for (const Standard14Font font : kAllStandard14) {
+		if (font == Standard14Font::Symbol) {
+			continue; // Symbol draws by its built-in code
+		}
+		const Standard14Metrics& m = standard14_metrics(font);
+		SCOPED_TRACE(std::string(m.base_font));
+		const bool zapf = font == Standard14Font::ZapfDingbats;
+		std::vector<std::string> missing;
+		for (const Standard14Glyph& g : m.glyphs) {
+			const std::optional<char32_t> scalar = drawable_unicode(g.name, zapf);
+			if (!scalar.has_value()) {
+				missing.push_back(std::string(g.name) + " (no scalar)");
+				continue;
+			}
+			auto glyph = standard14_face_glyph(font, *scalar);
+			ASSERT_TRUE(glyph.has_value());
+			if (!glyph->has_value()) {
+				missing.emplace_back(g.name);
+			}
+		}
+		EXPECT_TRUE(missing.empty()) << ::testing::PrintToString(missing);
+	}
+	// commaaccent draws as a comma below the baseline in each Latin face.
+	for (const Standard14Font font : kAllStandard14) {
+		if (font == Standard14Font::Symbol || font == Standard14Font::ZapfDingbats) {
+			continue;
+		}
+		const std::optional<char32_t> comma = drawable_unicode("commaaccent");
+		ASSERT_TRUE(comma.has_value());
+		auto glyph = standard14_face_glyph(font, *comma);
+		ASSERT_TRUE(glyph.has_value() && glyph->has_value());
+		auto box = (*glyph)->face->ink_box((*glyph)->glyph);
+		ASSERT_TRUE(box.has_value() && box->has_value()) << standard14_metrics(font).base_font;
+		EXPECT_LT((*box)->y_max, 0.0) << standard14_metrics(font).base_font;
+	}
+}
 
 } // namespace
 } // namespace recto::pdf
