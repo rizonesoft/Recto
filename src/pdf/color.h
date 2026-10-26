@@ -87,7 +87,8 @@ public:
 	// A profile already read for this document under `key` (a stream's object number), so a space selected again is
 	// not decoded again, or null; `remember` keeps one, within the profile byte budget.
 	[[nodiscard]] std::shared_ptr<const IccProfile> profile(uint64_t key) const noexcept;
-	void remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
+	// False when the profile does not fit the document's profile budget (or memory runs out): it is then not used.
+	[[nodiscard]] bool remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
 
 	struct Impl;
 
@@ -144,6 +145,10 @@ public:
 
 private:
 	ColorSpace() = default;
+	explicit ColorSpace(ColorSpaceKind kind) noexcept
+		: kind_(kind)
+	{
+	}
 	// The colours of a run of decoded components in sRGB, three per colour.
 	[[nodiscard]] PdfResult<void> to_srgb(std::span<const double> in, size_t count, RenderingIntent intent,
 		const Document& document, std::span<double> out) const noexcept;
@@ -155,7 +160,8 @@ private:
 	std::shared_ptr<const ColorSpace> alternate_{};
 };
 
-// Colour space values resolved for one interpretation (ISO 32000-1 8.6.3 to 8.6.5.6): device names (through the
+// Colour space values resolved for one interpretation (ISO 32000-1 8.6.3 to 8.6.5.6): device names (their full names;
+// an inline image's abbreviations are expanded by its reader, section 4, before they reach here) (through the
 // `/Default*` spaces of `resources`, except inside their own definitions), `/ColorSpace` resource names, and arrays;
 // at most `kMaxColorSpaceDepth` nested spaces, a cycle read as the device space of its component count (DeviceGray
 // when none is known). Spaces section 33 reads (`Indexed`, `Separation`, `DeviceN`, `Pattern`) are null.
@@ -180,6 +186,9 @@ private:
 	std::vector<uint64_t> visiting_; // the indirect objects and resource names on the current resolution path
 	// What `named` and `device` gave, so selecting a space again returns the same space (and its decoded profile).
 	std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> resolved_;
+	// Allocation failure met while resolving a value, which the public call returns rather than a fallback.
+	std::optional<PdfError> fatal_;
+	[[nodiscard]] std::optional<PdfValue> value_of(const PdfValue& value);
 };
 
 namespace detail {

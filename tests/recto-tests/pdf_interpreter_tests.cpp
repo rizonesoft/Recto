@@ -881,6 +881,16 @@ TEST(PdfInterpreter, CalibratedColors)
 	expect_rgb8(both.fill_color, {255, 0, 0}, 0, "device fill beside it");
 	const auto restored = painted(interpret("/GrayD65 cs 0.5 sc q /DeviceRGB cs 1 0 0 sc Q 0 0 10 10 re f", spaces));
 	expect_rgb8(restored.fill_color, {gray, gray, gray}, 1, "space restored by Q");
+	const auto lab_stroke = painted(interpret("/LabD50 CS 50.1960784314 40 -28 SCN 0 0 m 10 0 l S", spaces));
+	expect_rgb8(lab_stroke.stroke_color, {167, 92, 168}, 1, "Lab stroke");
+	const auto gray_stroke = painted(interpret("/GrayD65 CS 0.5 SC 0 0 m 10 0 l S", spaces));
+	expect_rgb8(gray_stroke.stroke_color, {gray, gray, gray}, 1, "CalGray stroke");
+	const auto restored_stroke = painted(interpret("/GrayD65 CS 0.5 SC q /DeviceRGB CS 1 0 0 SC Q 0 0 m 10 0 l S", spaces));
+	expect_rgb8(restored_stroke.stroke_color, {gray, gray, gray}, 1, "stroke space restored by Q");
+	// The device abbreviations belong to inline images: a resource named /RGB is that resource.
+	const auto named_rgb = painted(interpret("/RGB cs 50 0 0 scn 0 0 10 10 re f",
+		"<< /ColorSpace << /RGB [/Lab << /WhitePoint [0.9642 1 0.8249] >>] >> >>"));
+	expect_rgb8(named_rgb.fill_color, {119, 119, 119}, 1, "a resource named /RGB");
 	const auto switched = painted(interpret("/GrayD65 CS 0.5 SC /DeviceRGB CS 0 0 1 SC 0 0 m 10 0 l S", spaces));
 	expect_rgb8(switched.stroke_color, {0, 0, 255}, 0, "calibrated to device on one side");
 }
@@ -1029,6 +1039,39 @@ TEST(PdfInterpreter, IccBasedColors)
 	expect_rgb8(painted(interpret("/A cs 0.3 sc 0 0 10 10 re f", "<< /ColorSpace << /A /B /B /A >> >>")).fill_color,
 		{77, 77, 77}, 0, "resources naming one another");
 
+	// /N through a reference.
+	expect_rgb8(painted(interpret("/P cs " + component(64) + " scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+					{stream_object("/N 6 0 R", corpus_text("color/gray-trc.icc")), "1"}))
+					.fill_color,
+		kGray64, 2, "an indirect /N");
+	// A profile past the document's profile budget is not used, by the cache or by a space holding it.
+	{
+		auto doc = Document::open_memory(one_page_pdf("/P cs " + component(30) + " " + component(180) + " " + component(90) +
+				" scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
+			{stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))}));
+		ASSERT_TRUE(doc.has_value());
+		const std::string big_base = corpus_text("color/gray-trc.icc");
+		for (uint32_t i = 0; i < 4u; ++i) {
+			std::vector<uint8_t> big(big_base.begin(), big_base.end());
+			big.resize(kMaxIccProfileBytes, 0u);
+			const uint32_t size = static_cast<uint32_t>(big.size());
+			big[0] = static_cast<uint8_t>(size >> 24u);
+			big[1] = static_cast<uint8_t>(size >> 16u);
+			big[2] = static_cast<uint8_t>(size >> 8u);
+			big[3] = static_cast<uint8_t>(size);
+			auto profile_i = IccProfile::make(std::move(big), 1u, 1000u + i);
+			ASSERT_TRUE(profile_i.has_value());
+			ASSERT_TRUE((*doc)->color_profiles().remember(*profile_i));
+		}
+		const size_t decodes = detail::icc_profile_decodes_for_testing();
+		auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		const auto draws = all_of<DrawPathCommand>(**list);
+		ASSERT_EQ(draws.size(), 1u);
+		expect_rgb8(draws[0].fill_color, raw, 0, "a profile past the budget");
+		EXPECT_EQ((*doc)->color_profiles().profile(5u), nullptr);
+		EXPECT_EQ(detail::icc_profile_decodes_for_testing() - decodes, 1u);
+	}
 	// Two pages of one document share one transform.
 	{
 		std::vector<std::string> objects;

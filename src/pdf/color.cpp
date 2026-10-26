@@ -384,20 +384,23 @@ std::shared_ptr<const IccProfile> ColorProfileCache::profile(uint64_t key) const
 	return it != impl_->read.end() ? it->second : nullptr;
 }
 
-void ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profile) noexcept
+bool ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profile) noexcept
 {
 	try {
 		if (impl_ == nullptr) {
 			impl_ = std::make_unique<Impl>();
 		}
+		if (impl_->read.contains(profile->key)) {
+			return true;
+		}
 		if (impl_->read_bytes + profile->bytes.size() > kMaxCachedProfileBytes) {
-			return; // past the budget it is read again when needed, never kept
+			return false;
 		}
-		if (impl_->read.emplace(profile->key, profile).second) {
-			impl_->read_bytes += profile->bytes.size();
-		}
+		impl_->read.emplace(profile->key, profile);
+		impl_->read_bytes += profile->bytes.size();
+		return true;
 	} catch (const std::bad_alloc&) {
-		// not kept: it is read again when needed
+		return false;
 	}
 }
 
@@ -432,7 +435,12 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					const PdfValue* dest = intent->as_dict()->get("DestOutputProfile");
 					const std::optional<IndirectRef> ref = dest != nullptr ? dest->as_ref() : std::nullopt;
 					auto stream = dest != nullptr ? document.resolve_value(*dest) : PdfResult<PdfValue>(PdfValue{});
-					if (!stream.has_value() || !stream->is_stream() || stream->as_stream()->dict.get_int("N") != 4) {
+					if (!stream.has_value() || !stream->is_stream()) {
+						continue;
+					}
+					const PdfValue* n_entry = stream->as_stream()->dict.get("N");
+					auto n_value = n_entry != nullptr ? document.resolve_value(*n_entry) : PdfResult<PdfValue>(PdfValue{});
+					if (!n_value.has_value() || n_value->as_int() != 4) {
 						continue;
 					}
 					auto bytes = document.decode_stream(*stream->as_stream(), kMaxIccProfileBytes);
@@ -484,17 +492,12 @@ ColorProfileCache& Document::color_profiles() const
 
 std::shared_ptr<const ColorSpace> ColorSpace::device(ColorSpaceKind kind) noexcept
 {
-	static const std::array<std::shared_ptr<const ColorSpace>, 3> kDevices = [] {
-		std::array<std::shared_ptr<const ColorSpace>, 3> out{};
-		for (size_t i = 0; i < 3u; ++i) {
-			auto space = std::shared_ptr<ColorSpace>(new ColorSpace());
-			space->kind_ = static_cast<ColorSpaceKind>(i);
-			out[i] = std::move(space);
-		}
-		return out;
-	}();
-	const auto index = static_cast<size_t>(kind);
-	return index < kDevices.size() ? kDevices[index] : kDevices[0];
+	// Static spaces shared through the aliasing constructor, which owns and allocates nothing, so no use can throw.
+	static const ColorSpace kGray(ColorSpaceKind::DeviceGray);
+	static const ColorSpace kRgb(ColorSpaceKind::DeviceRGB);
+	static const ColorSpace kCmyk(ColorSpaceKind::DeviceCMYK);
+	const ColorSpace* space = kind == ColorSpaceKind::DeviceCMYK ? &kCmyk : kind == ColorSpaceKind::DeviceRGB ? &kRgb : &kGray;
+	return std::shared_ptr<const ColorSpace>(std::shared_ptr<const ColorSpace>{}, space);
 }
 
 std::shared_ptr<const ColorSpace> ColorSpace::cie(ColorSpaceKind kind, const CieParams& params)
@@ -717,13 +720,13 @@ namespace {
 
 [[nodiscard]] std::optional<ColorSpaceKind> device_named(std::string_view name) noexcept
 {
-	if (name == "DeviceGray" || name == "G") {
+	if (name == "DeviceGray") {
 		return ColorSpaceKind::DeviceGray;
 	}
-	if (name == "DeviceRGB" || name == "RGB") {
+	if (name == "DeviceRGB") {
 		return ColorSpaceKind::DeviceRGB;
 	}
-	if (name == "DeviceCMYK" || name == "CMYK") {
+	if (name == "DeviceCMYK") {
 		return ColorSpaceKind::DeviceCMYK;
 	}
 	return std::nullopt;
@@ -734,19 +737,20 @@ namespace {
 	return bytes_key(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(name.data()), name.size()));
 }
 
-[[nodiscard]] std::optional<std::array<double, 3>> triple(const Document& document, const PdfDict& dict, std::string_view key)
+template <typename Resolve>
+[[nodiscard]] std::optional<std::array<double, 3>> triple(Resolve&& resolve, const PdfDict& dict, std::string_view key)
 {
 	const PdfValue* v = dict.get(key);
 	if (v == nullptr) {
 		return std::nullopt;
 	}
-	auto r = document.resolve_value(*v);
+	const std::optional<PdfValue> r = resolve(*v);
 	if (!r.has_value() || !r->is_array() || r->as_array()->size() != 3u) {
 		return std::nullopt;
 	}
 	std::array<double, 3> out{};
 	for (size_t i = 0; i < 3u; ++i) {
-		auto e = document.resolve_value((*r->as_array())[i]);
+		const std::optional<PdfValue> e = resolve((*r->as_array())[i]);
 		const std::optional<double> n = e.has_value() ? e->as_number() : std::nullopt;
 		if (!n.has_value() || !std::isfinite(*n)) {
 			return std::nullopt;
@@ -756,20 +760,20 @@ namespace {
 	return out;
 }
 
-template <size_t N>
-[[nodiscard]] std::optional<std::array<double, N>> numbers(const Document& document, const PdfDict& dict, std::string_view key)
+template <size_t N, typename Resolve>
+[[nodiscard]] std::optional<std::array<double, N>> numbers(Resolve&& resolve, const PdfDict& dict, std::string_view key)
 {
 	const PdfValue* v = dict.get(key);
 	if (v == nullptr) {
 		return std::nullopt;
 	}
-	auto r = document.resolve_value(*v);
+	const std::optional<PdfValue> r = resolve(*v);
 	if (!r.has_value() || !r->is_array() || r->as_array()->size() != N) {
 		return std::nullopt;
 	}
 	std::array<double, N> out{};
 	for (size_t i = 0; i < N; ++i) {
-		auto e = document.resolve_value((*r->as_array())[i]);
+		const std::optional<PdfValue> e = resolve((*r->as_array())[i]);
 		const std::optional<double> n = e.has_value() ? e->as_number() : std::nullopt;
 		if (!n.has_value() || !std::isfinite(*n)) {
 			return std::nullopt;
@@ -780,6 +784,18 @@ template <size_t N>
 }
 
 } // namespace
+
+std::optional<PdfValue> ColorSpaces::value_of(const PdfValue& value)
+{
+	auto r = document_.resolve_value(value);
+	if (!r.has_value()) {
+		if (r.error().code == ErrorCode::OutOfMemory && !fatal_.has_value()) {
+			fatal_ = r.error();
+		}
+		return std::nullopt;
+	}
+	return std::move(*r);
+}
 
 ColorSpaces::ColorSpaces(const Document& document, const PdfDict* color_space_resources) noexcept
 	: document_(document)
@@ -797,6 +813,9 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::device(ColorSpaceKind 
 			}
 		}
 		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, device_at(kind, 0u, true));
+		if (fatal_.has_value()) {
+			return *std::exchange(fatal_, std::nullopt);
+		}
 		resolved_.emplace_back(key, space);
 		return space;
 	} catch (const std::bad_alloc&) {
@@ -814,6 +833,9 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view
 			}
 		}
 		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(PdfValue(PdfName(name)), 0u, true));
+		if (fatal_.has_value()) {
+			return *std::exchange(fatal_, std::nullopt);
+		}
 		if (resolved_.size() < 4'096u) {
 			resolved_.emplace_back(key, space);
 		}
@@ -825,7 +847,11 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view
 
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve(const PdfValue& value) noexcept
 {
-	return resolve_at(value, 0u, true);
+	RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(value, 0u, true));
+	if (fatal_.has_value()) {
+		return *std::exchange(fatal_, std::nullopt);
+	}
+	return space;
 }
 
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::device_at(ColorSpaceKind kind, size_t depth, bool defaults) noexcept
@@ -892,7 +918,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 		if (array == nullptr || array->empty()) {
 			return std::shared_ptr<const ColorSpace>{};
 		}
-		auto family_value = document_.resolve_value((*array)[0]);
+		const std::optional<PdfValue> family_value = value_of((*array)[0]);
 		const std::optional<std::string_view> family = family_value.has_value() ? family_value->as_name() : std::nullopt;
 		if (!family.has_value()) {
 			return std::shared_ptr<const ColorSpace>{};
@@ -904,9 +930,9 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			if (array->size() < 2u) {
 				return std::nullopt;
 			}
-			auto r = document_.resolve_value((*array)[1]);
-			return r.has_value() ? std::optional(std::move(*r)) : std::nullopt;
+			return value_of((*array)[1]);
 		};
+		const auto resolve = [this](const PdfValue& v) { return value_of(v); };
 		if (*family == "CalGray" || *family == "CalRGB" || *family == "Lab") {
 			const ColorSpaceKind kind = *family == "CalGray" ? ColorSpaceKind::CalGray
 				: *family == "CalRGB"                        ? ColorSpaceKind::CalRGB
@@ -918,31 +944,31 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				return ColorSpace::device(fallback);
 			}
 			CieParams p;
-			const auto white = triple(document_, *dict, "WhitePoint");
+			const auto white = triple(resolve, *dict, "WhitePoint");
 			if (!white.has_value() || (*white)[0] <= 0.0 || (*white)[2] <= 0.0 || (*white)[1] != 1.0) {
 				return ColorSpace::device(fallback); // a malformed white point: the device space, as readers do
 			}
 			p.white = *white;
-			if (const auto black = triple(document_, *dict, "BlackPoint");
+			if (const auto black = triple(resolve, *dict, "BlackPoint");
 				black.has_value() && (*black)[0] >= 0.0 && (*black)[1] >= 0.0 && (*black)[2] >= 0.0) {
 				p.black = *black;
 			}
 			if (kind == ColorSpaceKind::CalGray) {
 				if (const PdfValue* g = dict->get("Gamma")) {
-					auto r = document_.resolve_value(*g);
+					const std::optional<PdfValue> r = value_of(*g);
 					if (const std::optional<double> gamma = r.has_value() ? r->as_number() : std::nullopt; gamma.has_value() && *gamma > 0.0) {
 						p.gamma = {*gamma, *gamma, *gamma};
 					}
 				}
 			} else if (kind == ColorSpaceKind::CalRGB) {
-				if (const auto gamma = triple(document_, *dict, "Gamma");
+				if (const auto gamma = triple(resolve, *dict, "Gamma");
 					gamma.has_value() && (*gamma)[0] > 0.0 && (*gamma)[1] > 0.0 && (*gamma)[2] > 0.0) {
 					p.gamma = *gamma;
 				}
-				if (const auto matrix = numbers<9>(document_, *dict, "Matrix")) {
+				if (const auto matrix = numbers<9>(resolve, *dict, "Matrix")) {
 					p.matrix = *matrix;
 				}
-			} else if (const auto range = numbers<4>(document_, *dict, "Range");
+			} else if (const auto range = numbers<4>(resolve, *dict, "Range");
 					   range.has_value() && (*range)[0] <= (*range)[1] && (*range)[2] <= (*range)[3]) {
 				p.range = *range;
 			}
@@ -961,7 +987,12 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			if (stream == nullptr) {
 				return std::shared_ptr<const ColorSpace>{};
 			}
-			const std::optional<int64_t> n_value = stream->dict.get_int("N");
+			std::optional<int64_t> n_value;
+			if (const PdfValue* n_entry = stream->dict.get("N")) {
+				if (const std::optional<PdfValue> n_resolved = value_of(*n_entry)) {
+					n_value = n_resolved->as_int();
+				}
+			}
 			const uint32_t n = n_value == 1 ? 1u : n_value == 4 ? 4u : 3u;
 			const ColorSpaceKind device_kind = n == 1u ? ColorSpaceKind::DeviceGray
 				: n == 4u ? ColorSpaceKind::DeviceCMYK
@@ -989,7 +1020,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			}
 			std::vector<double> range;
 			if (const PdfValue* r = stream->dict.get("Range")) {
-				auto rv = document_.resolve_value(*r);
+				const std::optional<PdfValue> rv = value_of(*r);
 				if (rv.has_value() && rv->is_array() && rv->as_array()->size() == 2u * n) {
 					for (const PdfValue& e : *rv->as_array()) {
 						const std::optional<double> x = e.as_number();
@@ -1033,8 +1064,10 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 					return alternate; // recorded by make_pdf_error
 				}
 				profile = std::move(*made);
-				if (ref.has_value()) {
-					cache.remember(profile);
+				// Every profile a document keeps is within its budget, whoever holds it; past it, the alternate.
+				if (ref.has_value() && !cache.remember(profile)) {
+					(void)make_pdf_error(ErrorCode::ResourceLimit, "ICC profiles past the document's limit"); // recorded
+					return alternate;
 				}
 			}
 			if (range.empty() && profile->lab) {
