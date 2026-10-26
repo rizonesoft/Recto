@@ -383,9 +383,11 @@ struct CffBuild {
 	std::vector<uint8_t> encoding_bytes;
 	std::vector<CffFd> fds{CffFd{}};    // the one font's private data, or each FD's with `fd_select`
 	std::vector<uint8_t> fd_select;     // non-empty for a CID-keyed font
-	// A CID-keyed font's FDs all reading one private DICT of these bytes, FD `i` from `i * private_step` bytes into it.
+	// A CID-keyed font's FDs all reading one private DICT of these bytes, FD `i` from `i * private_step` bytes into it;
+	// with `shared_private_dict` set, only that many leading bytes are the DICT (its subroutines follow).
 	std::vector<uint8_t> shared_private;
 	size_t private_step = 0;
+	size_t shared_private_dict = 0;
 };
 
 struct CffProgram {
@@ -465,7 +467,8 @@ CffProgram build_cff(const CffBuild& b)
 				std::vector<uint8_t> d;
 				if (!b.shared_private.empty()) {
 					const size_t skip = i * b.private_step;
-					dict_op(d, {static_cast<int32_t>(b.shared_private.size() - skip), static_cast<int32_t>(private_at + skip)}, 18u);
+					const size_t dict = b.shared_private_dict != 0u ? b.shared_private_dict : b.shared_private.size();
+					dict_op(d, {static_cast<int32_t>(dict - skip), static_cast<int32_t>(private_at + skip)}, 18u);
 				} else {
 					dict_op(d, {private_size(i), static_cast<int32_t>(private_at)}, 18u);
 					private_at += privates[i].size();
@@ -1159,12 +1162,18 @@ TEST(PdfFont, HostileCharstringsRefused)
 		EXPECT_EQ(f->glyph_for_name(std::string(300u, 'x')), std::nullopt);
 		EXPECT_EQ(f->glyph_for_name(""), std::nullopt);
 		EXPECT_EQ(f->glyph_for_name("short"), std::optional<uint16_t>(uint16_t{2u}));
+		// The FDs share one private DICT and its subroutines: it is read once, but each FD keeps its own copy of the
+		// table, and every copy counts.
 		const auto fds = [&](size_t subrs_each) {
 			CffBuild cid;
 			cid.glyphs = {end, end};
 			cid.charset_bytes = {0u, 0u, 1u};
 			cid.fd_select = {0u, 0u, 255u};
-			cid.fds.assign(256u, CffFd{std::vector<std::vector<uint8_t>>(subrs_each, charstring("return", true)), 0, 0});
+			cid.fds.assign(256u, CffFd{});
+			dict_op(cid.shared_private, {6}, 19u); // Subrs right after this 6-byte DICT
+			cid.shared_private_dict = cid.shared_private.size();
+			const auto subrs = cff_index(std::vector<std::vector<uint8_t>>(subrs_each, charstring("return", true)));
+			cid.shared_private.insert(cid.shared_private.end(), subrs.begin(), subrs.end());
 			return build_cff(cid).bytes;
 		};
 		EXPECT_TRUE(load_charstring_font(shared(fds(4'095u)), CharstringFormat::CIDFontType0C).has_value());
