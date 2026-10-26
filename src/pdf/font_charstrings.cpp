@@ -130,18 +130,20 @@ struct Builder {
 		}
 		return {};
 	}
-	void close()
+	[[nodiscard]] PdfResult<void> close()
 	{
 		if (open) {
+			RECTO_PDF_RETURN_IF_ERROR(count_op({}));
 			outline.verbs.push_back(PathVerb::CloseSubpath);
 			open = false;
 		}
+		return {};
 	}
 	[[nodiscard]] PdfResult<void> move_to(double x, double y)
 	{
 		RECTO_PDF_RETURN_IF_ERROR(count_op({x, y}));
 		RECTO_PDF_TRY(const PdfPoint p, placed(x, y));
-		close();
+		RECTO_PDF_RETURN_IF_ERROR(close());
 		outline.verbs.push_back(PathVerb::MoveTo);
 		outline.points.push_back(p);
 		open = true;
@@ -732,7 +734,7 @@ struct Type1Run {
 				break;
 			case 9u: // closepath
 				RECTO_PDF_RETURN_IF_ERROR(exact(0u));
-				out.close();
+				RECTO_PDF_RETURN_IF_ERROR(out.close());
 				stack.clear();
 				break;
 			case 10u: { // callsubr
@@ -762,7 +764,7 @@ struct Type1Run {
 				break;
 			case 14u: // endchar
 				RECTO_PDF_RETURN_IF_ERROR(exact(0u));
-				out.close();
+				RECTO_PDF_RETURN_IF_ERROR(out.close());
 				ended = true;
 				break;
 			case 21u: // rmoveto
@@ -924,7 +926,7 @@ struct Type1Run {
 	out.matrix = program.type1_matrix;
 	Type1Run run{program, out};
 	RECTO_PDF_RETURN_IF_ERROR(run.run(program.type1_glyphs[glyph], 0u));
-	out.close();
+	RECTO_PDF_RETURN_IF_ERROR(out.close());
 	if (run.seac.has_value()) {
 		const Type1Run::Seac s = *run.seac;
 		if (!in_range(s.bchar, 256.0) || !in_range(s.achar, 256.0)) {
@@ -939,7 +941,7 @@ struct Type1Run {
 		base_run.component = true;
 		base_run.width_set = true;
 		RECTO_PDF_RETURN_IF_ERROR(base_run.run(program.type1_glyphs[*base], 0u));
-		out.close();
+		RECTO_PDF_RETURN_IF_ERROR(out.close());
 		// The accent at the composite's side bearing plus `adx - asb` (with its own `hsbw` giving `asb`), as rasterizers
 		// place it.
 		out.offset_x = run.sbx + s.adx - s.asb;
@@ -948,7 +950,7 @@ struct Type1Run {
 		accent_run.component = true;
 		accent_run.width_set = true;
 		RECTO_PDF_RETURN_IF_ERROR(accent_run.run(program.type1_glyphs[*accent], 0u));
-		out.close();
+		RECTO_PDF_RETURN_IF_ERROR(out.close());
 	}
 	GlyphShape shape;
 	RECTO_PDF_TRY(shape.advance, finite_advance(type1_advance_x(program, run)));
@@ -1781,7 +1783,7 @@ struct Type2Run {
 					seac = std::array<double, 4>{s[0], s[1], s[2], s[3]};
 				}
 				stack.clear();
-				out.close();
+				RECTO_PDF_RETURN_IF_ERROR(out.close());
 				ended = true;
 				break;
 			case 12u: {
@@ -2025,7 +2027,7 @@ struct Type2Run {
 	if (!run.width_read) {
 		run.width = fd.default_width;
 	}
-	out.close();
+	RECTO_PDF_RETURN_IF_ERROR(out.close());
 	if (run.seac.has_value()) {
 		// `endchar`'s accent form (Technical Note 5177, Appendix C): base and accent by their StandardEncoding codes.
 		const auto& a = *run.seac;
@@ -2046,7 +2048,7 @@ struct Type2Run {
 			// The component reads its own optional width (its first operator's extra argument); the composite keeps its
 			// advance.
 			RECTO_PDF_RETURN_IF_ERROR(part.run(bytes.subspan(co[component], co[component + 1u] - co[component]), 0u));
-			out.close();
+			RECTO_PDF_RETURN_IF_ERROR(out.close());
 		}
 	}
 	GlyphShape shape;

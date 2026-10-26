@@ -1200,19 +1200,19 @@ TEST(PdfFont, HostileCharstringsRefused)
 		expect_refused(cff_glyph(name_keyed({end, sized(3u)}).bytes, 1u), ErrorCode::ResourceLimit,
 			"Type 2 charstring of 65,536 bytes", RefusalReason::CharstringBytes);
 	}
-	// Path operators: 100,000 pass, 100,001 are refused.
+	// Path operators, closing segments among them: 100,000 pass, 100,001 are refused.
 	{
 		const auto ops = [&](size_t direct_lines) {
-			// 1 move, 99 calls of a subroutine drawing 1,000 lines, and the lines drawn directly.
+			// 1 move, 99 calls of a subroutine drawing 1,000 lines, the lines drawn directly, and endchar's close.
 			return name_keyed({end, join({charstring("0 0 rmoveto", true), repeat("-107 callsubr", 99u, true),
 									   repeat("0 0 rlineto", direct_lines, true), end})},
 				{join({repeat("0 0 rlineto", 1'000u, true), charstring("return", true)})})
 				.bytes;
 		};
-		const auto at_limit = cff_glyph(ops(999u), 1u);
+		const auto at_limit = cff_glyph(ops(998u), 1u);
 		ASSERT_TRUE(at_limit.has_value()) << at_limit.error().message.view();
-		EXPECT_EQ(at_limit->outline.verbs.size(), kMaxGlyphPathOperators + 1u); // and the closing CloseSubpath
-		const auto past = cff_glyph(ops(1'000u), 1u);
+		EXPECT_EQ(at_limit->outline.verbs.size(), kMaxGlyphPathOperators);
+		const auto past = cff_glyph(ops(999u), 1u);
 		expect_refused(past, ErrorCode::ResourceLimit, "100,001 path operators", RefusalReason::PathOperators);
 		if (!past.has_value()) {
 			EXPECT_EQ(past.error().observed, std::optional<uint64_t>(kMaxGlyphPathOperators + 1u));
@@ -1293,6 +1293,11 @@ TEST(PdfFont, HostileCharstringsRefused)
 		EXPECT_TRUE(type1_glyph(stack(24u), "g").has_value());
 		expect_refused(type1_glyph(stack(25u), "g"), ErrorCode::ResourceLimit, "Type 1 stack 25",
 			RefusalReason::CharstringStack);
+		// Explicit closepath segments count: 34 calls of 1,000 move, line and close triples are 102,000 operators.
+		const auto closes = build_type1({join({repeat("0 0 rmoveto 1 0 rlineto closepath", 1'000u, false), t1("return")})},
+			{notdef, {"g", join({t1("0 500 hsbw"), repeat("0 callsubr", 34u, false), t1("endchar")})}});
+		expect_refused(type1_glyph(closes, "g"), ErrorCode::ResourceLimit, "Type 1 closepath segments",
+			RefusalReason::PathOperators);
 		{
 			auto font = load_charstring_font(shared(stack(25u)), CharstringFormat::Type1);
 			ASSERT_TRUE(font.has_value());
