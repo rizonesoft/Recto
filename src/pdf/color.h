@@ -87,8 +87,9 @@ public:
 	// A profile already read for this document under `key` (a stream's object number), so a space selected again is
 	// not decoded again, or null; `remember` keeps one, within the profile byte budget.
 	[[nodiscard]] std::shared_ptr<const IccProfile> profile(uint64_t key) const noexcept;
-	// False when the profile does not fit the document's profile budget (or memory runs out): it is then not used.
-	[[nodiscard]] bool remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
+	// False when the profile does not fit the document's profile budget: it is then not used; `OutOfMemory` when memory
+	// runs out keeping it.
+	[[nodiscard]] PdfResult<bool> remember(const std::shared_ptr<const IccProfile>& profile) noexcept;
 
 	struct Impl;
 

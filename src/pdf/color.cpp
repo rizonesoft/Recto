@@ -226,9 +226,10 @@ PdfResult<std::shared_ptr<const IccProfile>> IccProfile::make(
 		if (!matches) {
 			return make_pdf_error(ErrorCode::DamagedFormat, "ICC profile colour space does not match /N");
 		}
-		bytes.resize(declared);
 		auto profile = std::make_shared<IccProfile>();
-		profile->bytes = std::move(bytes);
+		// A copy of exactly the declared bytes, so padding after them is never kept (a shrunk vector keeps its
+		// capacity, which the document's budget would not see).
+		profile->bytes.assign(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(declared));
 		profile->components = components;
 		profile->lab = lab;
 		profile->key = key != 0u ? key : bytes_key(profile->bytes);
@@ -384,7 +385,7 @@ std::shared_ptr<const IccProfile> ColorProfileCache::profile(uint64_t key) const
 	return it != impl_->read.end() ? it->second : nullptr;
 }
 
-bool ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profile) noexcept
+PdfResult<bool> ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profile) noexcept
 {
 	try {
 		if (impl_ == nullptr) {
@@ -400,7 +401,7 @@ bool ColorProfileCache::remember(const std::shared_ptr<const IccProfile>& profil
 		impl_->read_bytes += profile->bytes.size();
 		return true;
 	} catch (const std::bad_alloc&) {
-		return false;
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory keeping an ICC profile");
 	}
 }
 
@@ -416,8 +417,7 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 		if (impl_->default_read) {
 			return impl_->default_cmyk;
 		}
-		impl_->default_read = true;
-		// The first output intent with a four-component profile.
+		// The first output intent with a four-component profile; the lookup is marked complete only when it completes.
 		if (const PdfValue* intents = document.catalog().get("OutputIntents")) {
 			auto list = document.resolve_value(*intents);
 			if (!list.has_value() && list.error().code == ErrorCode::OutOfMemory) {
@@ -435,11 +435,17 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					const PdfValue* dest = intent->as_dict()->get("DestOutputProfile");
 					const std::optional<IndirectRef> ref = dest != nullptr ? dest->as_ref() : std::nullopt;
 					auto stream = dest != nullptr ? document.resolve_value(*dest) : PdfResult<PdfValue>(PdfValue{});
+					if (!stream.has_value() && stream.error().code == ErrorCode::OutOfMemory) {
+						return stream.error();
+					}
 					if (!stream.has_value() || !stream->is_stream()) {
 						continue;
 					}
 					const PdfValue* n_entry = stream->as_stream()->dict.get("N");
 					auto n_value = n_entry != nullptr ? document.resolve_value(*n_entry) : PdfResult<PdfValue>(PdfValue{});
+					if (!n_value.has_value() && n_value.error().code == ErrorCode::OutOfMemory) {
+						return n_value.error();
+					}
 					if (!n_value.has_value() || n_value->as_int() != 4) {
 						continue;
 					}
@@ -453,6 +459,7 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 					auto profile = IccProfile::make(std::move(*bytes), 4u, ref.has_value() ? ref->obj_num : 0u);
 					if (profile.has_value()) {
 						impl_->default_cmyk = std::move(*profile);
+						impl_->default_read = true;
 						return impl_->default_cmyk;
 					}
 					if (profile.error().code == ErrorCode::OutOfMemory) {
@@ -469,9 +476,12 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 				auto profile = IccProfile::make(std::move(*bytes), 4u, 0u);
 				if (profile.has_value()) {
 					impl_->default_cmyk = std::move(*profile);
+				} else if (profile.error().code == ErrorCode::OutOfMemory) {
+					return profile.error();
 				}
 			}
 		}
+		impl_->default_read = true;
 		return impl_->default_cmyk;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading the default CMYK profile");
@@ -1065,7 +1075,11 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				}
 				profile = std::move(*made);
 				// Every profile a document keeps is within its budget, whoever holds it; past it, the alternate.
-				if (ref.has_value() && !cache.remember(profile)) {
+				bool kept = true;
+				if (ref.has_value()) {
+					RECTO_PDF_TRY(kept, cache.remember(profile));
+				}
+				if (!kept) {
 					(void)make_pdf_error(ErrorCode::ResourceLimit, "ICC profiles past the document's limit"); // recorded
 					return alternate;
 				}

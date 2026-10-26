@@ -1039,6 +1039,16 @@ TEST(PdfInterpreter, IccBasedColors)
 	expect_rgb8(painted(interpret("/A cs 0.3 sc 0 0 10 10 re f", "<< /ColorSpace << /A /B /B /A >> >>")).fill_color,
 		{77, 77, 77}, 0, "resources naming one another");
 
+	// A profile padded past its declared size keeps only its declared bytes: what the budget charges is what is held.
+	{
+		std::string padded = corpus_text("color/rgb-matrix.icc");
+		const size_t declared = padded.size();
+		padded.resize(4u << 20u, '0');
+		auto profile = IccProfile::make(std::vector<uint8_t>(padded.begin(), padded.end()), 3u, 0u);
+		ASSERT_TRUE(profile.has_value());
+		EXPECT_EQ((*profile)->bytes.size(), declared);
+		EXPECT_LE((*profile)->bytes.capacity(), declared + 64u);
+	}
 	// /N through a reference.
 	expect_rgb8(painted(interpret("/P cs " + component(64) + " scn 0 0 10 10 re f", "<< /ColorSpace << /P [/ICCBased 5 0 R] >> >>",
 					{stream_object("/N 6 0 R", corpus_text("color/gray-trc.icc")), "1"}))
@@ -1061,7 +1071,8 @@ TEST(PdfInterpreter, IccBasedColors)
 			big[3] = static_cast<uint8_t>(size);
 			auto profile_i = IccProfile::make(std::move(big), 1u, 1000u + i);
 			ASSERT_TRUE(profile_i.has_value());
-			ASSERT_TRUE((*doc)->color_profiles().remember(*profile_i));
+			auto kept = (*doc)->color_profiles().remember(*profile_i);
+			ASSERT_TRUE(kept.has_value() && *kept);
 		}
 		const size_t decodes = detail::icc_profile_decodes_for_testing();
 		auto list = interpret_page(**doc, 0u);
