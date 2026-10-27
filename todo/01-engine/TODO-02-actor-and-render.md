@@ -1073,6 +1073,8 @@ Calibrated and ICC-based colour (ISO 32000-1 sections 8.6.5 and 8.6.5.5) so colo
 
 ## 33. Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4
 
+> **Started:** 2026-10-27T20:19Z
+
 Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Indexed`, `Separation` and `DeviceN` colour spaces with the four PDF function types their tint transforms use.
 
 **Phase:** 1
