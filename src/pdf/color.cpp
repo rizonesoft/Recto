@@ -1354,12 +1354,18 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 	} else {
 		hival = static_cast<uint32_t>(*hival_number);
 	}
-	const std::optional<PdfValue> lookup_value = value_of(array[3]);
+	// A direct lookup is read where it is; an indirect one is resolved. Only the bytes a palette can use are copied.
+	const size_t needed = base->components() * (size_t{hival} + 1u);
+	std::optional<PdfValue> resolved_lookup;
+	if (array[3].is_ref()) {
+		resolved_lookup = value_of(array[3]);
+	}
+	const PdfValue* lookup_value = array[3].is_ref() ? (resolved_lookup.has_value() ? &*resolved_lookup : nullptr) : &array[3];
 	std::vector<uint8_t> lookup;
-	if (lookup_value.has_value() && lookup_value->as_string() != nullptr) {
+	if (lookup_value != nullptr && lookup_value->as_string() != nullptr) {
 		const std::span<const uint8_t> bytes = lookup_value->as_string()->span();
-		lookup.assign(bytes.begin(), bytes.end());
-	} else if (lookup_value.has_value() && lookup_value->as_stream() != nullptr) {
+		lookup.assign(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(std::min(bytes.size(), needed)));
+	} else if (lookup_value != nullptr && lookup_value->as_stream() != nullptr) {
 		auto bytes = document_.decode_stream(*lookup_value->as_stream(), kMaxIndexedLookupBytes);
 		if (!bytes.has_value()) {
 			if (bytes.error().code == ErrorCode::OutOfMemory) {
@@ -1371,7 +1377,6 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 	} else {
 		return unusable("Indexed colour space lookup is neither a string nor a stream");
 	}
-	const size_t needed = base->components() * (size_t{hival} + 1u);
 	if (lookup.size() < needed) {
 		// The defined entries still draw; the missing ones are zero bytes, as MuPDF reads a short table.
 		(void)make_pdf_error(ErrorCode::DamagedFormat, "Indexed colour space lookup is short; padded with zeros");

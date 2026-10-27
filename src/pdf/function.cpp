@@ -90,9 +90,11 @@ constexpr NamedOp kCalcOps[] = {
 	{"pop", CalcOp::Pop}, {"roll", CalcOp::Roll},
 };
 
+// 7.10's interpolation, the fraction taken first: with x within [x0, x1] and both spans finite (checked when parsed),
+// no intermediate overflows, however large the endpoints.
 [[nodiscard]] double interpolate(double x, double x0, double x1, double y0, double y1) noexcept
 {
-	return x1 == x0 ? y0 : y0 + (x - x0) * (y1 - y0) / (x1 - x0);
+	return x1 == x0 ? y0 : y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
 }
 
 [[nodiscard]] PdfError damaged(std::string_view message) noexcept

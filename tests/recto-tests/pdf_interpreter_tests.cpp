@@ -1788,6 +1788,17 @@ TEST(PdfInterpreter, Functions)
 	EXPECT_EQ(refusal_of({"<< /FunctionType 1 /Domain [0 1] >>"}).code, ErrorCode::DamagedFormat);
 	EXPECT_EQ(refusal_of({sampled("/Range [0 1] /Size [2] /BitsPerSample 8", "\x00\x01")}).code, ErrorCode::DamagedFormat)
 		<< "no /Domain";
+	// Endpoints near the largest double with finite spans interpolate without overflowing: a stitching /Encode [0 H] over
+	// a child whose /Domain is [0 H] reaches the child's last sample (white), not a fallback to the first.
+	{
+		const std::string h = "1" + std::string(308u, '0') + ".0";
+		RECTO_PARSED(f, {"<< /FunctionType 3 /Domain [0 1] /Functions [6 0 R] /Bounds [] /Encode [0 " + h + "] >>",
+			sampled("/Domain [0 " + h + "] /Range [0 1] /Size [3] /BitsPerSample 8", std::string("\x00\x80\xFF", 3))});
+		bool ok = false;
+		EXPECT_NEAR(evaluate(f, {1.0}, &ok)[0], 1.0, kTight);
+		EXPECT_TRUE(ok);
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 128.0 / 255.0, kTight);
+	}
 	// A span too wide for floating point is refused, so interpolation never meets infinity or NaN.
 	{
 		const std::string huge = "1" + std::string(308u, '0') + ".0"; // a real; spans of two such are past double
@@ -2181,6 +2192,30 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 			{"<< /FunctionType 2 /Domain [0 1] /N 1 >>", "<< /Colorants << " + colorants + ">> >>"});
 		expect_color(painted(r).fill_color, 1.0f, 1.0f, 1.0f);
 		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::ColorSpaceSteps));
+	}
+	// A long direct lookup string is read in place, only the palette's bytes copied: an 8 MiB string for a one-entry
+	// gray palette costs a few bytes, not two copies of the string.
+	if (recto::test::ScopedHeapMeter::available()) {
+		auto big_doc = Document::open_memory(one_page_pdf(std::nullopt));
+		ASSERT_TRUE(big_doc.has_value());
+		PdfArray indexed;
+		indexed.emplace_back(PdfName("Indexed"));
+		indexed.emplace_back(PdfName("DeviceGray"));
+		indexed.emplace_back(int64_t{0});
+		indexed.emplace_back(PdfString(std::vector<uint8_t>(size_t{8} << 20u, 0xFFu)));
+		const PdfValue value(std::move(indexed));
+		size_t peak = 0;
+		std::shared_ptr<const ColorSpace> space;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			ColorSpaces spaces(**big_doc, nullptr);
+			auto resolved = spaces.resolve(value);
+			ASSERT_TRUE(resolved.has_value());
+			space = *resolved;
+			peak = meter.peak_bytes();
+		}
+		ASSERT_NE(space, nullptr);
+		EXPECT_LT(peak, size_t{1} << 20u) << "the lookup string was copied";
 	}
 	// An Indexed space keeps only its palette's bytes: 128 spaces sharing a lookup stream that decodes to 1 MiB peak
 	// near one decoded stream, where keeping each one's capacity would hold 128 MiB.
