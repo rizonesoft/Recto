@@ -43,11 +43,14 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | completion | `e4d9920` | A | xhigh | 131 | 10 gaps (untagged) | 10 | 0 | 0 |
 | D01 T02 §33 | completion | `e4d9920` | B | medium | 210 | 9 gaps (untagged) | 8 | 0 | 1 |
 | D01 T02 §33 | round 1 | `6be1930` | A | max | 502 | 12/0/0 | 10 | 1 | 1 |
-| D01 T02 §33 | round 1 | `6be1930` | B | high | 390 | 6/0/0 | 5 | 0 | 0 (1 unverified) |
-| D01 T02 §33 | round 2 | `40eafec` | A | xhigh | 104 | 3/0/0 | 2 | 0 | 0 (1 unverified) |
+| D01 T02 §33 | round 1 | `6be1930` | B | high | 390 | 6/0/0 | 5 | 1 | 0 |
+| D01 T02 §33 | round 2 | `40eafec` | A | xhigh | 104 | 3/0/0 | 2 | 1 | 0 |
 | D01 T02 §33 | round 2 | `40eafec` | B | medium | 104 | 1/0/0 | 1 | 0 | 0 |
 | D01 T02 §33 | round 3 | `25c5891` | A | high | 62 | 2/0/0 | 2 | 0 | 0 |
 | D01 T02 §33 | round 3 | `25c5891` | B | low | 89 | 1/0/0 | 1 | 0 | 0 |
+| D01 T02 §33 | round 4 (escalated) | `cdf0338` | A | max | 410 | 5/0/0 | 4 | 1 | 0 |
+| D01 T02 §33 | round 4 (escalated) | `cdf0338` | B | medium | 104 | outage: Codex exited 1, no review | - | - | - |
+| D01 T02 §33 | round 4 retry (recorded as Round 5) | `cdf0338` | B | medium | 147 | 1/1/0 | 2 | 0 | 0 |
 
 ## Finding verdicts
 
@@ -98,33 +101,44 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | round 1 | B | 1 | P1 | valid | A adv 2 | Retained capacity, with a 4 GiB worked example. |
 | D01 T02 §33 | round 1 | B | 2 | P1 | valid | A adv 5 | NaN index. |
 | D01 T02 §33 | round 1 | B | 3 | P1 | valid | A adv 3 | Calculator budget. |
-| D01 T02 §33 | round 1 | B | 4 | P1 | unverified | none | "Surplus calculator operands must be an error": the ISO text could not be checked here (the spec PDF is past the fetch limit); readers commonly take the top n. Not taken; excluded from precision. |
+| D01 T02 §33 | round 1 | B | 4 | P1 | invalid | none | "Surplus calculator operands must be an error": pdfium's `CPDF_PSFunc::v_Call` refuses only too few and pops the top n, Recto's behaviour. First recorded unverified; revised 2026-10-28 with that evidence. |
 | D01 T02 §33 | round 1 | B | 5 | P1 | valid | none | `/All` must ignore its alternate and tint transform (8.6.6.4); the section had specified the opposite. Fixed and the contract corrected. |
 | D01 T02 §33 | round 1 | B | 6 | P1 | valid | A pd 3 | Cached subtree depth. |
 | D01 T02 §33 | round 2 | A | 1 | P1 | valid | none | Indexed lookups kept a decoded stream's capacity (1,024 spaces over a 1 MiB stream hold 1 GiB). Same class as round 1's sample tables, missed by both arms then. Fixed in `d09e3e9`. |
 | D01 T02 §33 | round 2 | A | 2 | P1 | valid | A completion 6 | Tint evaluations across 100,000 paints have no page work budget: already filed to `§19`; a repeat of a filed gap. |
-| D01 T02 §33 | round 2 | A | 3 | P1 | unverified | B round 1 4 | Surplus calculator operands as an error: the same unverified claim Astra made in round 1; two models agreeing is not a source. Not taken. |
+| D01 T02 §33 | round 2 | A | 3 | P1 | invalid | B round 1 4 | Surplus calculator operands: pdfium reads the top n as Recto does (revised 2026-10-28). |
 | D01 T02 §33 | round 2 | B | 1 | P1 | valid | none | `/Colorants` Separation entries whose alternate is a DeviceN with more `/Colorants`: 64^4 resolutions from a small file. Round 1's fan-out fix had not closed it. Fixed with a per-call step bound (`ColorSpaceSteps`) in `d09e3e9`. |
 | D01 T02 §33 | round 3 | A | 1 | P1 | valid | A completion 6 | Tint work with no page budget: the third raising of the gap filed to `§19`. |
 | D01 T02 §33 | round 3 | A | 2 | P1 | valid | none | A huge direct lookup string copied whole before truncation. P3 by reach (transient). Fixed. |
 | D01 T02 §33 | round 3 | B | 1 | P1 | valid | none | Interpolation overflowed with finite spans (`(x - x0) * span` before dividing) and silently drew sample 0. Fixed. |
+| D01 T02 §33 | round 4 | A | 1 | P1 | valid | none | Colorant names copied per alias with no length bound (1 MiB names x 1,024 aliases). P2 by reach. Fixed with Annex C.2's 127-byte limit in `1168650`. |
+| D01 T02 §33 | round 4 | A | 2 | P1 | valid | B round 5 1 | `/Process /Components` resolved every entry past the 32 kept (100,000 references to a 1 MiB string). Fixed. |
+| D01 T02 §33 | round 4 | A | 3 | P1 | valid | A completion 6 | Tint work with no page budget: the fourth raising of the gap filed to `§19`. |
+| D01 T02 §33 | round 4 | A | 4 | P1 | valid | B round 5 2 | Spline derivatives overflow with a huge `/Decode`, NaN reported as success. Fixed. |
+| D01 T02 §33 | round 4 | A | 5 | P1 | invalid | B round 1 4 | Surplus calculator operands: pdfium's `CPDF_PSFunc::v_Call` refuses too few and pops the top n, as Recto does. |
+| D01 T02 §33 | round 5 | B | 1 | P1 | valid | A round 4 2 | `/Process /Components` work. |
+| D01 T02 §33 | round 5 | B | 2 | P2 | valid | A round 4 4 | Spline NaN; Astra tagged it P2, the only non-P1 round finding so far. |
 
 ## Results
 
-Final results are written when the third section stamps. Running tally after `D01 T02 §33` round 3 (plan, completion, rounds 1 to 3):
+Final results are written when the third section stamps. Tally for `D01 T02 §33` when the experiment stopped (plan, completion, rounds 1 to 4; owner decision 2026-10-28 below):
 
 | Measure | A: Terra | B: Astra |
 | ------- | -------- | -------- |
-| Findings raised | 33 | 21 |
-| Valid | 30 | 19 |
-| Invalid | 1 | 0 |
+| Findings raised | 38 | 23 |
+| Valid | 34 | 21 |
+| Invalid | 3 | 1 |
 | Duplicate (own) | 1 | 1 |
-| Unverified | 1 | 1 |
-| Precision (valid / valid + invalid) | 97% | 100% |
-| Valid findings the other arm never raised | 12 | 6 |
+| Unverified | 0 | 0 |
+| Precision (valid / valid + invalid) | 92% | 95% |
+| Valid findings the other arm never raised | 13 | 6 |
 | Most severe unique find | DeviceN stack overrun (memory corruption) | 4 GiB function-table request (no memory budget) |
-| Seconds: plan, completion, rounds 1 to 3 | 77, 131, 502, 104, 62 | 103, 210, 390, 104, 89 |
-| Severity calibration | tags every round finding P1 | tags every round finding P1 |
+| Seconds: plan, completion, rounds 1 to 4 | 77, 131, 502, 104, 62, 410 | 103, 210, 390, 104, 89, 147 (plus a 104-second outage) |
+| Severity calibration | tags every round finding P1 | tags all but one round finding P1 |
+| Relative cost (owner, 2026-10-28) | about one tenth of Astra | 1 |
+| Outages | 0 | 1 |
+
+**Owner decision 2026-10-28:** keep both reviewers on every pass (a panel), the loop ending only when neither finds a P1 or P2 on the same candidate, with two prompt changes: settled items (filed or not taken, with reasons) are given to every reviewer so they do not block the stop, and P1 must be justified with a real path. The panel is wired into `scripts/review-dispatch.py` and the stamp; `D01 T02 §33` resumes its loop under it. The experiment's remaining sections are replaced by a one-section trial of two further reviewers (below).
 
 ## Limits
 
