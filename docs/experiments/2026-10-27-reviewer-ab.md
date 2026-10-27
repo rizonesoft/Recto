@@ -46,6 +46,8 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | round 1 | `6be1930` | B | high | 390 | 6/0/0 | 5 | 0 | 0 (1 unverified) |
 | D01 T02 §33 | round 2 | `40eafec` | A | xhigh | 104 | 3/0/0 | 2 | 0 | 0 (1 unverified) |
 | D01 T02 §33 | round 2 | `40eafec` | B | medium | 104 | 1/0/0 | 1 | 0 | 0 |
+| D01 T02 §33 | round 3 | `25c5891` | A | high | 62 | 2/0/0 | 2 | 0 | 0 |
+| D01 T02 §33 | round 3 | `25c5891` | B | low | 89 | 1/0/0 | 1 | 0 | 0 |
 
 ## Finding verdicts
 
@@ -103,22 +105,25 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | round 2 | A | 2 | P1 | valid | A completion 6 | Tint evaluations across 100,000 paints have no page work budget: already filed to `§19`; a repeat of a filed gap. |
 | D01 T02 §33 | round 2 | A | 3 | P1 | unverified | B round 1 4 | Surplus calculator operands as an error: the same unverified claim Astra made in round 1; two models agreeing is not a source. Not taken. |
 | D01 T02 §33 | round 2 | B | 1 | P1 | valid | none | `/Colorants` Separation entries whose alternate is a DeviceN with more `/Colorants`: 64^4 resolutions from a small file. Round 1's fan-out fix had not closed it. Fixed with a per-call step bound (`ColorSpaceSteps`) in `d09e3e9`. |
+| D01 T02 §33 | round 3 | A | 1 | P1 | valid | A completion 6 | Tint work with no page budget: the third raising of the gap filed to `§19`. |
+| D01 T02 §33 | round 3 | A | 2 | P1 | valid | none | A huge direct lookup string copied whole before truncation. P3 by reach (transient). Fixed. |
+| D01 T02 §33 | round 3 | B | 1 | P1 | valid | none | Interpolation overflowed with finite spans (`(x - x0) * span` before dividing) and silently drew sample 0. Fixed. |
 
 ## Results
 
-Final results are written when the third section stamps. Running tally after `D01 T02 §33` round 2 (plan, completion, rounds 1 and 2):
+Final results are written when the third section stamps. Running tally after `D01 T02 §33` round 3 (plan, completion, rounds 1 to 3):
 
 | Measure | A: Terra | B: Astra |
 | ------- | -------- | -------- |
-| Findings raised | 31 | 20 |
-| Valid | 28 | 18 |
+| Findings raised | 33 | 21 |
+| Valid | 30 | 19 |
 | Invalid | 1 | 0 |
 | Duplicate (own) | 1 | 1 |
 | Unverified | 1 | 1 |
 | Precision (valid / valid + invalid) | 97% | 100% |
-| Valid findings the other arm never raised | 11 | 5 |
+| Valid findings the other arm never raised | 12 | 6 |
 | Most severe unique find | DeviceN stack overrun (memory corruption) | 4 GiB function-table request (no memory budget) |
-| Seconds: plan, completion, round 1, round 2 | 77, 131, 502, 104 | 103, 210, 390, 104 |
+| Seconds: plan, completion, rounds 1 to 3 | 77, 131, 502, 104, 62 | 103, 210, 390, 104, 89 |
 | Severity calibration | tags every round finding P1 | tags every round finding P1 |
 
 ## Limits
