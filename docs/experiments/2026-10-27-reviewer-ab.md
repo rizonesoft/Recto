@@ -32,16 +32,29 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 
 | Section | Arm A record | Arm B record |
 | ------- | ------------ | ------------ |
+| D01 T02 §33 | `docs/experiments/reviewer-ab/D01-T02-s33.md` | `docs/reviews/01-engine/D01-T02-s33.md` |
 
 ## Pass log
 
 | Section | Pass | Candidate | Arm | Effort | Seconds | Findings (P1/P2/P3) | Valid | Invalid | Duplicate |
 | ------- | ---- | --------- | --- | ------ | ------- | ------------------- | ----- | ------- | --------- |
+| D01 T02 §33 | plan | `b7f73ca` | A | xhigh | 77 | 3/3/0 | 6 | 0 | 0 |
+| D01 T02 §33 | plan | `b7f73ca` | B | medium | 103 | 2/2/0 | 4 | 0 | 0 |
 
 ## Finding verdicts
 
 | Section | Pass | Arm | # | Severity | Verdict | Matched | Note |
 | ------- | ---- | --- | - | -------- | ------- | ------- | ---- |
+| D01 T02 §33 | plan | A | 1 | P1 | valid | none | `/Order 3` drawn linearly; ISO 7.10.2 specifies cubic spline. Real, but P2 by reach (a rendering nuance). Planned: natural spline for one input. |
+| D01 T02 §33 | plan | A | 2 | P1 | valid | none | `/None` had no rule for images or Indexed over a `/None` base. Real, rare in practice (P2 by reach). |
+| D01 T02 §33 | plan | A | 3 | P1 | valid | B1 | Interpolation checked only at grid points; a nearest-sample build would pass. |
+| D01 T02 §33 | plan | A | 4 | P2 | valid | B4 | Checkpoint omitted `DeviceColors`; also the conversion memory compared only 4 components (sharper than B4). |
+| D01 T02 §33 | plan | A | 5 | P2 | valid | B2 (part) | Clipping, defaults, function arrays and calculator fallbacks unasserted. |
+| D01 T02 §33 | plan | A | 6 | P2 | valid | none | `§4` had no failing test for `/None` text and stencil masks. |
+| D01 T02 §33 | plan | B | 1 | P1 | valid | A3 | Same as A3, adds domain and range clipping. |
+| D01 T02 §33 | plan | B | 2 | P1 | valid | A5 (part) | Calculator division by zero, domain errors, non-finite results unspecified. Names failure classes A5 did not. |
+| D01 T02 §33 | plan | B | 3 | P2 | valid | none | `/Range` optional for types 2 and 3; the section implied it was always clipped. |
+| D01 T02 §33 | plan | B | 4 | P2 | valid | A4 | Checkpoint omitted `DeviceColors` and `DefaultColorSpaces`. |
 
 ## Results
 
