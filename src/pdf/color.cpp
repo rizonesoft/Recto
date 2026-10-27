@@ -1014,6 +1014,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::device(ColorSpaceKind 
 				return space;
 			}
 		}
+		steps_ = 0;
 		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, device_at(kind, 0u, true));
 		if (fatal_.has_value()) {
 			return *std::exchange(fatal_, std::nullopt);
@@ -1034,6 +1035,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view
 				return space;
 			}
 		}
+		steps_ = 0;
 		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(PdfValue(PdfName(name)), 0u, true));
 		if (fatal_.has_value()) {
 			return *std::exchange(fatal_, std::nullopt);
@@ -1049,6 +1051,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view
 
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve(const PdfValue& value) noexcept
 {
+	steps_ = 0;
 	RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(value, 0u, true));
 	if (fatal_.has_value()) {
 		return *std::exchange(fatal_, std::nullopt);
@@ -1078,6 +1081,13 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 	try {
 		if (depth > kMaxColorSpaceDepth) {
 			return ColorSpace::device(ColorSpaceKind::DeviceGray);
+		}
+		if (++steps_ > kMaxColorSpaceSteps) {
+			if (steps_ == kMaxColorSpaceSteps + 1u) {
+				record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::ColorSpaceSteps, steps_,
+					kMaxColorSpaceSteps, "Colour space resolution visited more spaces than its limit"));
+			}
+			return std::shared_ptr<const ColorSpace>{};
 		}
 		// An indirect value, followed once on this path.
 		if (const std::optional<IndirectRef> ref = value.as_ref()) {
@@ -1365,8 +1375,11 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 	if (lookup.size() < needed) {
 		// The defined entries still draw; the missing ones are zero bytes, as MuPDF reads a short table.
 		(void)make_pdf_error(ErrorCode::DamagedFormat, "Indexed colour space lookup is short; padded with zeros");
+		lookup.resize(needed, 0u);
+	} else if (lookup.size() > needed) {
+		// An exact copy, so a space never keeps a longer decoded stream's capacity.
+		lookup = std::vector<uint8_t>(lookup.begin(), lookup.begin() + static_cast<std::ptrdiff_t>(needed));
 	}
-	lookup.resize(needed, 0u);
 	return ColorSpace::indexed(std::move(base), hival, std::move(lookup));
 }
 

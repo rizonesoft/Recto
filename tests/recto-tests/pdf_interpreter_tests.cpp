@@ -2169,6 +2169,44 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 		}
 	}
 
+	// /Colorants whose Separation entries draw into the same DeviceN again: 64 entries four levels deep would be 64^4
+	// resolutions; resolving one value visits at most 4,096 spaces, and the outer space still draws.
+	{
+		std::string colorants;
+		for (int i = 0; i < 64; ++i) {
+			colorants += "/K" + std::to_string(i) + " [/Separation /S" + std::to_string(i) + " [/DeviceN [/X] /DeviceGray 5 0 R 6 0 R] 5 0 R] ";
+		}
+		clear_diagnostics();
+		const auto r = interpret_spaces("/CS cs 1 scn 0 0 10 10 re f", "/CS [/DeviceN [/X] /DeviceGray 5 0 R 6 0 R]",
+			{"<< /FunctionType 2 /Domain [0 1] /N 1 >>", "<< /Colorants << " + colorants + ">> >>"});
+		expect_color(painted(r).fill_color, 1.0f, 1.0f, 1.0f);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::ColorSpaceSteps));
+	}
+	// An Indexed space keeps only its palette's bytes: 128 spaces sharing a lookup stream that decodes to 1 MiB peak
+	// near one decoded stream, where keeping each one's capacity would hold 128 MiB.
+	if (recto::test::ScopedHeapMeter::available()) {
+		auto packed = flate_compress(std::vector<uint8_t>(size_t{1} << 20u, 0x80u));
+		ASSERT_TRUE(packed.has_value());
+		std::string spaces;
+		std::string content;
+		for (int i = 0; i < 128; ++i) {
+			spaces += "/P" + std::to_string(i) + " [/Indexed /DeviceRGB 0 5 0 R] ";
+			content += "/P" + std::to_string(i) + " cs 0 sc 0 0 10 10 re f ";
+		}
+		const auto bytes = one_page_pdf(content, "<< /ColorSpace << " + spaces + ">> >>",
+			{stream_object("/Filter /FlateDecode", std::string(packed->begin(), packed->end()))});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		size_t peak = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			auto list = interpret_page(**doc, 0u);
+			ASSERT_TRUE(list.has_value());
+			peak = meter.peak_bytes();
+		}
+		EXPECT_LT(peak, size_t{16} << 20u) << "each Indexed space kept its decoded lookup's capacity";
+	}
+
 	// /None paints nothing: the fill is dropped while the stroke still paints, and a fill alone records no command.
 	const std::string none = "/X [/Separation /None /DeviceGray 5 0 R]";
 	const std::string gray = "<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>";

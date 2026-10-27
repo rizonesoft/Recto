@@ -39,6 +39,9 @@ inline constexpr size_t kMaxDeviceNColorants = 64u; // entries read from a Devic
 // Tint transform tables one interpretation holds: each function object is parsed once per interpretation and shared by
 // every space naming it, and distinct ones add up to this; past it a space is unusable, with a diagnostic.
 inline constexpr size_t kMaxColorFunctionBytes = size_t{64} << 20u;
+// Spaces visited to resolve one value (each nested space, `/Alternate`, base and `/Colorants` entry): far past any real
+// space, so attributes that name spaces naming more attributes cannot multiply into millions of resolutions.
+inline constexpr size_t kMaxColorSpaceSteps = 4'096u;
 
 using ColorComponents = std::array<double, kMaxColorComponents>;
 
@@ -281,6 +284,7 @@ private:
 	// Tint transforms parsed in this interpretation, by object number, and the bytes their tables hold.
 	std::vector<std::pair<uint64_t, std::shared_ptr<const Function>>> functions_;
 	size_t function_bytes_ = 0;
+	size_t steps_ = 0; // spaces visited by the current public call, against `kMaxColorSpaceSteps`
 	// Allocation failure met while resolving a value, which the public call returns rather than a fallback.
 	std::optional<PdfError> fatal_;
 	[[nodiscard]] std::optional<PdfValue> value_of(const PdfValue& value);
