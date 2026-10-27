@@ -1799,6 +1799,18 @@ TEST(PdfInterpreter, Functions)
 		EXPECT_TRUE(ok);
 		EXPECT_NEAR(evaluate(f, {0.5})[0], 128.0 / 255.0, kTight);
 	}
+	// A /Decode near the largest double makes the spline's derivatives overflow: the table is drawn linearly, finite.
+	{
+		const std::string h = "1" + std::string(308u, '0') + ".0";
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Decode [0 " + h + "] /Size [4] /BitsPerSample 8 /Order 3",
+			std::string("\x00\xFF\x00\xFF", 4))});
+		bool ok = false;
+		const double at0 = evaluate(f, {0.0}, &ok)[0];
+		EXPECT_TRUE(std::isfinite(at0));
+		EXPECT_EQ(at0, 0.0);
+		EXPECT_TRUE(ok);
+		EXPECT_TRUE(std::isfinite(evaluate(f, {0.1})[0]));
+	}
 	// A span too wide for floating point is refused, so interpolation never meets infinity or NaN.
 	{
 		const std::string huge = "1" + std::string(308u, '0') + ".0"; // a real; spans of two such are past double
@@ -2240,6 +2252,38 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 			peak = meter.peak_bytes();
 		}
 		EXPECT_LT(peak, size_t{16} << 20u) << "each Indexed space kept its decoded lookup's capacity";
+	}
+
+	// Colorant names past 127 bytes (Annex C.2) make the space unusable, so aliases never keep long copies.
+	const std::string one_gray = "<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>";
+	const std::string two_gray = calculator("{ pop }", "/Domain [0 1 0 1] /Range [0 1]");
+	EXPECT_EQ(resolve_space({"[/Separation /" + std::string(128u, 'n') + " /DeviceGray 6 0 R]", one_gray})->space, nullptr);
+	EXPECT_NE(resolve_space({"[/Separation /" + std::string(127u, 'n') + " /DeviceGray 6 0 R]", one_gray})->space, nullptr);
+	EXPECT_EQ(resolve_space({"[/DeviceN [/A /" + std::string(128u, 'n') + "] /DeviceGray 6 0 R]", two_gray})->space, nullptr);
+	// /Process /Components: at most 32 entries examined, however long the array, each resolved once.
+	if (recto::test::ScopedHeapMeter::available()) {
+		std::string components;
+		for (int i = 0; i < 10'000; ++i) {
+			components += "8 0 R ";
+		}
+		auto space_doc = std::make_unique<ResolvedSpace>();
+		space_doc->bytes = one_page_pdf(std::nullopt, "<< >>",
+			{"[/DeviceN [/A /B] /DeviceGray 6 0 R 7 0 R]", two_gray,
+				"<< /Subtype /NChannel /Process << /ColorSpace /DeviceGray /Components [" + components + "] >> >>",
+				"(" + std::string(size_t{64} << 10u, 'x') + ")"});
+		auto doc = Document::open_memory(space_doc->bytes);
+		ASSERT_TRUE(doc.has_value());
+		size_t work = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			ColorSpaces spaces(**doc, nullptr);
+			auto space = spaces.resolve(PdfValue(IndirectRef{5u, 0u}));
+			ASSERT_TRUE(space.has_value());
+			ASSERT_NE(*space, nullptr);
+			EXPECT_TRUE((*space)->process_components().empty()) << "a string is not a component name";
+			work = meter.allocated_bytes();
+		}
+		EXPECT_LT(work, size_t{32} << 20u) << "every /Components entry was resolved";
 	}
 
 	// /None paints nothing: the fill is dropped while the stroke still paints, and a fill alone records no command.

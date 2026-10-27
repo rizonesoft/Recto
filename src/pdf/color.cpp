@@ -1403,8 +1403,8 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 	const std::optional<PdfValue> names_value = value_of(array[1]);
 	if (!device_n) {
 		const std::optional<std::string_view> name = names_value.has_value() ? names_value->as_name() : std::nullopt;
-		if (!name.has_value()) {
-			return unusable("Separation colour space has no colorant name");
+		if (!name.has_value() || name->size() > kMaxColorantNameBytes) {
+			return unusable("Separation colour space has no colorant name of at most 127 bytes");
 		}
 		names.emplace_back(*name);
 	} else {
@@ -1415,8 +1415,8 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 		for (const PdfValue& element : *list) {
 			const std::optional<PdfValue> name_value = value_of(element);
 			const std::optional<std::string_view> name = name_value.has_value() ? name_value->as_name() : std::nullopt;
-			if (!name.has_value()) {
-				return unusable("DeviceN colour space names a colorant with something other than a name");
+			if (!name.has_value() || name->size() > kMaxColorantNameBytes) {
+				return unusable("DeviceN colour space names a colorant with something other than a name of at most 127 bytes");
 			}
 			names.emplace_back(*name);
 		}
@@ -1460,7 +1460,8 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 						continue;
 					}
 					RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(entry, depth + 1u, defaults));
-					if (space != nullptr && space->kind() == ColorSpaceKind::Separation) {
+					if (space != nullptr && space->kind() == ColorSpaceKind::Separation &&
+						name.value.size() <= kMaxColorantNameBytes) {
 						attributes.colorants.emplace_back(name.value, std::move(space));
 					}
 				}
@@ -1475,11 +1476,14 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 				if (const PdfValue* components = process_dict->get("Components")) {
 					const std::optional<PdfValue> list = value_of(*components);
 					if (const PdfArray* names_list = list.has_value() ? list->as_array() : nullptr) {
-						for (const PdfValue& element : *names_list) {
+						// At most as many entries examined as a colour has components, each resolved once.
+						const size_t examined = std::min(names_list->size(), kMaxColorComponents);
+						for (size_t e = 0; e < examined; ++e) {
+							const PdfValue& element = (*names_list)[e];
 							const std::optional<PdfValue> name_value = value_of(element);
 							const std::optional<std::string_view> name =
 								name_value.has_value() ? name_value->as_name() : std::nullopt;
-							if (name.has_value() && attributes.process_components.size() < kMaxColorComponents) {
+							if (name.has_value() && name->size() <= kMaxColorantNameBytes) {
 								attributes.process_components.emplace_back(*name);
 							}
 						}

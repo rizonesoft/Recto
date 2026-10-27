@@ -387,6 +387,15 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 			for (size_t j = 0; j < node->n; ++j) {
 				natural_spline(node->spline_values, count, node->n, j, node->spline_second, scratch);
 			}
+			// A /Decode so wide that the spline's derivatives overflow is drawn linearly, never as NaN.
+			const auto finite = [](double v) { return std::isfinite(v); };
+			if (!std::all_of(node->spline_values.begin(), node->spline_values.end(), finite) ||
+				!std::all_of(node->spline_second.begin(), node->spline_second.end(), finite)) {
+				node->cubic = false;
+				node->spline_values = {};
+				node->spline_second = {};
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "Sampled function spline overflows; drawn linearly");
+			}
 		} else if (node->m != 1u) {
 			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature,
 				"Sampled function /Order 3 with more than one input is drawn linearly"));
@@ -826,7 +835,10 @@ void Function::Node::evaluate_sampled(std::span<const double> x, std::span<doubl
 			const double y1 = spline_values[(i + 1u) * n + j];
 			const double m0 = spline_second[i * n + j];
 			const double m1 = spline_second[(i + 1u) * n + j];
-			const double v = u * y0 + t * y1 + ((u * u * u - u) * m0 + (t * t * t - t) * m1) / 6.0;
+			double v = u * y0 + t * y1 + ((u * u * u - u) * m0 + (t * t * t - t) * m1) / 6.0;
+			if (!std::isfinite(v)) {
+				v = u * y0 + t * y1; // the curve term overflowed: the line through the two samples
+			}
 			out[j] = std::clamp(v, range[2u * j], range[2u * j + 1u]);
 		}
 		return;

@@ -42,6 +42,9 @@ inline constexpr size_t kMaxColorFunctionBytes = size_t{64} << 20u;
 // Spaces visited to resolve one value (each nested space, `/Alternate`, base and `/Colorants` entry): far past any real
 // space, so attributes that name spaces naming more attributes cannot multiply into millions of resolutions.
 inline constexpr size_t kMaxColorSpaceSteps = 4'096u;
+// ISO 32000-1 Annex C.2: a name is at most 127 bytes. A colorant or component name past it makes its space unusable (or,
+// in /Attributes, is skipped), so a space never keeps a megabyte-long name per alias that names it.
+inline constexpr size_t kMaxColorantNameBytes = 127u;
 
 using ColorComponents = std::array<double, kMaxColorComponents>;
 
