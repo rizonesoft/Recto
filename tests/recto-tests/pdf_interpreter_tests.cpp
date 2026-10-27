@@ -4,6 +4,7 @@
 #include "interpreter.h"
 
 #include "color.h"
+#include "function.h"
 #include "test_support.h"
 #include "lexer.h"
 
@@ -740,7 +741,7 @@ TEST(PdfInterpreter, DeviceColors)
 		{"/DeviceRGB cs 0.1 0.2 sc", false, {0.0f, 0.0f, 0.0f}}, // the wrong number of components is skipped
 		{"/C1 cs 0.4 0.5 0.6 sc", false, {0.4f, 0.5f, 0.6f}},   // a named space naming DeviceRGB
 		{"/C2 CS 0 0 0 0.5 SC", true, {0.5f, 0.5f, 0.5f}},      // an indirect one naming DeviceCMYK
-		{"0.5 g /I cs 0 sc", false, {0.0f, 0.0f, 0.0f}},          // a space section 33 reads paints black until then
+		{"0.5 g /I cs 0 sc", false, {1.0f, 0.0f, 0.0f}},          // an Indexed space paints its palette colour (section 33)
 	};
 	for (const Case& c : cases) {
 		SCOPED_TRACE(std::string(c.ops));
@@ -1387,6 +1388,654 @@ TEST(PdfColor, ImageSamples)
 		EXPECT_EQ(*converted, i < 4u) << "profile " << i;
 	}
 }
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// PDF functions and the Indexed, Separation and DeviceN spaces (D01 T02 section 33). Every expected value follows by
+// hand from ISO 32000-1 7.10 and 8.6.6 and the function stated beside it.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// A document whose object 5 is `objects[0]` (and 6, 7, ... the rest), with its function parsed from object 5.
+struct ParsedFunction {
+	std::vector<uint8_t> bytes;
+	std::unique_ptr<Document> document;
+	std::optional<PdfResult<std::shared_ptr<const Function>>> result;
+
+	[[nodiscard]] const Function& function() const
+	{
+		return *result->value();
+	}
+};
+
+std::unique_ptr<ParsedFunction> parse_function(const std::vector<std::string>& objects)
+{
+	auto out = std::make_unique<ParsedFunction>();
+	out->bytes = one_page_pdf(std::nullopt, "<< >>", objects);
+	auto doc = Document::open_memory(out->bytes);
+	EXPECT_TRUE(doc.has_value());
+	if (!doc.has_value()) {
+		return out;
+	}
+	out->document = std::move(*doc);
+	out->result = Function::parse(*out->document, PdfValue(IndirectRef{5u, 0u}));
+	return out;
+}
+
+// The function at `in`; `ok` reports whether the evaluation succeeded.
+std::vector<double> evaluate(const Function& f, std::vector<double> in, bool* ok = nullptr)
+{
+	std::vector<double> out(f.outputs(), -999.0);
+	const bool succeeded = f.evaluate(in, out);
+	if (ok != nullptr) {
+		*ok = succeeded;
+	}
+	return out;
+}
+
+// A parsed function that must have parsed.
+#define RECTO_PARSED(name, ...)                                                                                       \
+	const auto name##_holder = parse_function(__VA_ARGS__);                                                           \
+	ASSERT_TRUE(name##_holder->result.has_value() && name##_holder->result->has_value())                              \
+		<< (name##_holder->result.has_value() && !name##_holder->result->has_value()                                   \
+				   ? name##_holder->result->error().message.view()                                                     \
+				   : "");                                                                                              \
+	const Function& name = name##_holder->function()
+
+std::string sampled(std::string_view entries, std::string_view samples)
+{
+	return stream_object("/FunctionType 0 " + std::string(entries), samples);
+}
+
+std::string calculator(std::string_view program, std::string_view entries = "/Domain [-1000 1000] /Range [-1000 1000]")
+{
+	return stream_object("/FunctionType 4 " + std::string(entries), program);
+}
+
+PdfError refusal_of(const std::vector<std::string>& objects)
+{
+	const auto parsed = parse_function(objects);
+	EXPECT_TRUE(parsed->result.has_value());
+	if (!parsed->result.has_value() || parsed->result->has_value()) {
+		ADD_FAILURE() << "the function parsed";
+		return make_pdf_error(ErrorCode::Ok);
+	}
+	return parsed->result->error();
+}
+
+TEST(PdfInterpreter, Functions)
+{
+	constexpr double kTight = 1e-9;
+	// Type 0, 8 bits, defaults: /Encode [0 2], /Decode = /Range.
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Size [3] /BitsPerSample 8", std::string("\x00\x80\xFF", 3))});
+		EXPECT_NEAR(evaluate(f, {0.25})[0], 64.0 / 255.0, kTight);
+		EXPECT_NEAR(evaluate(f, {0.75})[0], 191.5 / 255.0, kTight);
+		EXPECT_NEAR(evaluate(f, {2.0})[0], 1.0, kTight) << "an input past /Domain is clipped";
+		EXPECT_NEAR(evaluate(f, {-1.0})[0], 0.0, kTight);
+	}
+	// Non-default /Encode (reversed) and /Decode (reversed).
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Size [3] /BitsPerSample 8 /Encode [2 0] /Decode [1 0]",
+			std::string("\x00\x80\xFF", 3))});
+		EXPECT_NEAR(evaluate(f, {0.25})[0], 1.0 - 191.5 / 255.0, kTight);
+	}
+	// /Decode past /Range: the output is clipped to /Range.
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 0.5] /Size [2] /BitsPerSample 8 /Decode [0 1]",
+			std::string("\x00\xFF", 2))});
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 0.5, kTight);
+		EXPECT_NEAR(evaluate(f, {0.25})[0], 0.25, kTight);
+	}
+	// 1, 12, 24 and 32 bits per sample.
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 7] /Range [0 1] /Size [8] /BitsPerSample 1", "\xB1")}); // 1 0 1 1 0 0 0 1
+		EXPECT_NEAR(evaluate(f, {2.0})[0], 1.0, kTight);
+		EXPECT_NEAR(evaluate(f, {3.5})[0], 0.5, kTight);
+		EXPECT_NEAR(evaluate(f, {4.25})[0], 0.0, kTight);
+		EXPECT_NEAR(evaluate(f, {6.5})[0], 0.5, kTight);
+	}
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 12", "\x12\x3A\xBC")}); // 0x123 0xABC
+		EXPECT_NEAR(evaluate(f, {0.0})[0], 291.0 / 4095.0, kTight);
+		EXPECT_NEAR(evaluate(f, {0.25})[0], (291.0 + 0.25 * (2748.0 - 291.0)) / 4095.0, kTight);
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 2748.0 / 4095.0, kTight);
+	}
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 24", std::string("\x40\x00\x00\xC0\x00\x00", 6))});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 8388608.0 / 16777215.0, kTight);
+	}
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 32", std::string("\x00\x00\x00\x00\x80\x00\x00\x00", 8))});
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 2147483648.0 / 4294967295.0, kTight);
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 1073741824.0 / 4294967295.0, kTight);
+	}
+	// Two inputs, multilinear: corners (0,0) 0, (1,0) 100, (0,1) 50, (1,1) 250.
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 1 0 1] /Range [0 255] /Size [2 2] /BitsPerSample 8", std::string("\x00\x64\x32\xFA", 4))});
+		EXPECT_NEAR(evaluate(f, {1.0, 0.0})[0], 100.0, kTight);
+		EXPECT_NEAR(evaluate(f, {0.5, 0.5})[0], 100.0, kTight); // the mean; no single sample is 100 at a corner nearby
+		EXPECT_NEAR(evaluate(f, {0.25, 0.75})[0], 0.1875 * 0.0 + 0.0625 * 100.0 + 0.5625 * 50.0 + 0.1875 * 250.0, kTight);
+	}
+	// Nine inputs: simplex interpolation. Every sample 0 but the all-ones corner (255): a simplex walk gives 255 times
+	// the smallest fraction, where multilinear would give 255 times their product.
+	{
+		std::string table(512u, '\0');
+		table[511] = '\xFF';
+		const std::string dims = "/Domain [0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1] /Range [0 255] /Size [2 2 2 2 2 2 2 2 2] /BitsPerSample 8";
+		RECTO_PARSED(f, {sampled(dims, table)});
+		EXPECT_NEAR(evaluate(f, std::vector<double>(9u, 0.5))[0], 127.5, kTight);
+		EXPECT_NEAR(evaluate(f, std::vector<double>(9u, 1.0))[0], 255.0, kTight);
+		EXPECT_NEAR(evaluate(f, {0.9, 0.3, 0.8, 0.7, 0.6, 0.5, 0.4, 0.9, 0.95})[0], 255.0 * 0.3, kTight);
+		// An affine table (each input i adds 5 (i + 1) at its far side) is reproduced exactly between the samples.
+		std::string affine(512u, '\0');
+		for (size_t c = 0; c < 512u; ++c) {
+			int v = 0;
+			for (int i = 0; i < 9; ++i) {
+				v += ((c >> i) & 1u) != 0u ? 5 * (i + 1) : 0;
+			}
+			affine[c] = static_cast<char>(v);
+		}
+		RECTO_PARSED(g, {sampled(dims, affine)});
+		EXPECT_NEAR(evaluate(g, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9})[0], 0.5 * 285.0, 1e-9);
+		EXPECT_NEAR(evaluate(g, {1, 0, 0, 0, 0, 0, 0, 0, 0})[0], 5.0, kTight);
+	}
+	// /Order 3, one input: the natural cubic spline through (0, 0), (1, 1), (2, 0) has M1 = -3, so at 0.5 it is
+	// 0.5 + 1.125 / 6 = 0.6875 where the line gives 0.5.
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 2] /Range [0 1] /Size [3] /BitsPerSample 8 /Order 3", std::string("\x00\xFF\x00", 3))});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.6875, kTight);
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 1.0, kTight);
+		EXPECT_NEAR(evaluate(f, {1.5})[0], 0.6875, kTight);
+	}
+
+	// Type 2: two outputs, a fractional and a negative /N, defaults, no /Range, clipping.
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 2 /Domain [0 1] /C0 [0 0.2] /C1 [1 0.8] /N 2 >>"});
+		const auto out = evaluate(f, {0.5});
+		ASSERT_EQ(out.size(), 2u);
+		EXPECT_NEAR(out[0], 0.25, kTight);
+		EXPECT_NEAR(out[1], 0.2 + 0.25 * 0.6, kTight);
+	}
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 2 /Domain [0 4] /N 0.5 >>"}); // /C0 [0] /C1 [1], no /Range
+		EXPECT_EQ(f.outputs(), 1u);
+		EXPECT_NEAR(evaluate(f, {4.0})[0], 2.0, kTight) << "no /Range: not clipped";
+		EXPECT_NEAR(evaluate(f, {0.25})[0], 0.5, kTight);
+	}
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 2 /Domain [0 2] /C0 [0] /C1 [1] /N -1 >>"});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 2.0, kTight);
+		bool ok = true;
+		EXPECT_NEAR(evaluate(f, {0.0}, &ok)[0], 0.0, kTight);
+		EXPECT_FALSE(ok) << "0 to a negative /N is outside 7.10.3's domain";
+	}
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 /Range [0 0.5] >>"});
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 0.5, kTight);
+		EXPECT_NEAR(evaluate(f, {3.0})[0], 0.5, kTight);
+	}
+
+	// Type 3: three pieces of y = x on [0 1], the middle one reversed by its /Encode, no /Range.
+	{
+		const std::string piece = "<< /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>";
+		RECTO_PARSED(f, {"<< /FunctionType 3 /Domain [0 3] /Functions [6 0 R 6 0 R 6 0 R] /Bounds [1 2] /Encode [0 1 1 0 0 1] >>", piece});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.5, kTight);
+		EXPECT_NEAR(evaluate(f, {1.25})[0], 0.75, kTight);
+		EXPECT_NEAR(evaluate(f, {1.0})[0], 1.0, kTight) << "a bound starts the next piece";
+		EXPECT_NEAR(evaluate(f, {2.5})[0], 0.5, kTight);
+		EXPECT_NEAR(evaluate(f, {3.0})[0], 1.0, kTight);
+	}
+
+	// A function array: three one-output functions read as one function of three outputs.
+	{
+		RECTO_PARSED(f, {"[6 0 R 7 0 R 8 0 R]", "<< /FunctionType 2 /Domain [0 1] /N 1 >>",
+			"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>", "<< /FunctionType 2 /Domain [0 1] /C0 [0.5] /C1 [0.5] /N 1 >>"});
+		const auto out = evaluate(f, {0.25});
+		ASSERT_EQ(out.size(), 3u);
+		EXPECT_NEAR(out[0], 0.25, kTight);
+		EXPECT_NEAR(out[1], 0.75, kTight);
+		EXPECT_NEAR(out[2], 0.5, kTight);
+	}
+
+	// Type 4: every operator of 7.10.5, each in a program whose result is computed by hand beside it.
+	struct Program {
+		std::string_view text;
+		double in;
+		double want;
+	};
+	const Program programs[] = {
+		{"{ 2 add }", 1.0, 3.0}, {"{ 3 sub }", 1.0, -2.0}, {"{ 4 mul }", 1.5, 6.0}, {"{ 4 div }", 1.0, 0.25},
+		{"{ cvi 7 exch idiv }", 2.0, 3.0}, {"{ cvi 7 exch mod }", 2.0, 1.0}, {"{ neg }", 2.5, -2.5},
+		{"{ abs }", -2.5, 2.5}, {"{ ceiling }", -2.5, -2.0}, {"{ floor }", -2.5, -3.0}, {"{ round }", 2.5, 3.0},
+		{"{ round }", -2.5, -2.0}, {"{ truncate }", -2.7, -2.0}, {"{ cvi }", 2.7, 2.0}, {"{ cvr }", 2.0, 2.0},
+		{"{ sqrt }", 16.0, 4.0}, {"{ sin }", 30.0, 0.5}, {"{ cos }", 60.0, 0.5}, {"{ 1 atan }", 1.0, 45.0},
+		{"{ -1 atan }", 1.0, 135.0}, {"{ 2 exp }", 3.0, 9.0}, {"{ ln }", 2.718281828459045, 1.0}, {"{ log }", 100.0, 2.0},
+		{"{ 2 gt { 1 } { 0 } ifelse }", 3.0, 1.0}, {"{ 2 gt { 1 } { 0 } ifelse }", 1.0, 0.0},
+		{"{ 2 ge { 1 } { 0 } ifelse }", 2.0, 1.0}, {"{ 2 le { 1 } { 0 } ifelse }", 3.0, 0.0},
+		{"{ 2 lt { 1 } { 0 } ifelse }", 1.0, 1.0}, {"{ 2 eq { 1 } { 0 } ifelse }", 2.0, 1.0},
+		{"{ 2 ne { 1 } { 0 } ifelse }", 2.0, 0.0}, {"{ dup 0.5 gt { pop 10 } if }", 1.0, 10.0},
+		{"{ dup 0.5 gt { pop 10 } if }", 0.25, 0.25}, {"{ 0.5 gt true and { 1 } { 0 } ifelse }", 1.0, 1.0},
+		{"{ 0.5 gt false or { 1 } { 0 } ifelse }", 0.0, 0.0}, {"{ 0.5 gt true xor { 1 } { 0 } ifelse }", 1.0, 0.0},
+		{"{ 0.5 gt not { 1 } { 0 } ifelse }", 0.0, 1.0}, {"{ cvi 6 and }", 3.0, 2.0}, {"{ cvi 6 or }", 3.0, 7.0},
+		{"{ cvi 6 xor }", 3.0, 5.0}, {"{ cvi not }", 3.0, -4.0}, {"{ cvi 2 bitshift }", 3.0, 12.0},
+		{"{ cvi -1 bitshift }", 3.0, 1.0}, {"{ dup add }", 2.0, 4.0}, {"{ 5 exch sub }", 2.0, 3.0},
+		{"{ 1 2 3 pop pop pop }", 2.0, 2.0}, {"{ 7 1 index add exch pop }", 2.0, 9.0},
+		{"{ 1 2 copy add add add }", 2.0, 6.0}, {"{ 10 20 3 1 roll pop pop }", 2.0, 20.0},
+		{"{ 10 20 3 -1 roll pop pop }", 2.0, 10.0}, {"{ true { 1 add } if }", 1.0, 2.0},
+		{"{ % a comment\n 2 mul }", 1.5, 3.0}, {"{ dup 2 gt { 0.5 gt { 1 } { 2 } ifelse } { pop 3 } ifelse }", 3.0, 1.0},
+	};
+	for (const Program& p : programs) {
+		SCOPED_TRACE(std::string(p.text) + " at " + std::to_string(p.in));
+		RECTO_PARSED(f, {calculator(p.text)});
+		bool ok = false;
+		EXPECT_NEAR(evaluate(f, {p.in}, &ok)[0], p.want, 1e-9);
+		EXPECT_TRUE(ok);
+	}
+	// Failures give the /Range low value (-1000) and report failure.
+	std::string overflow = "{";
+	for (int i = 0; i < 100; ++i) {
+		overflow += " 1";
+	}
+	overflow += " }";
+	const Program failures[] = {
+		{overflow, 1.0, 0.0}, {"{ pop pop }", 1.0, 0.0}, {"{ true add }", 1.0, 0.0}, {"{ 0 div }", 1.0, 0.0},
+		{"{ cvi 0 idiv }", 1.0, 0.0}, {"{ cvi 0 mod }", 1.0, 0.0}, {"{ sqrt }", -4.0, 0.0}, {"{ ln }", 0.0, 0.0},
+		{"{ 0.5 gt }", 1.0, 0.0}, {"{ 0 0 atan }", 1.0, 0.0},
+	};
+	for (const Program& p : failures) {
+		SCOPED_TRACE(std::string(p.text).substr(0, 40));
+		RECTO_PARSED(f, {calculator(p.text)});
+		bool ok = true;
+		EXPECT_EQ(evaluate(f, {p.in}, &ok)[0], -1000.0);
+		EXPECT_FALSE(ok);
+	}
+	// A calculator output past its /Range is clipped.
+	{
+		RECTO_PARSED(f, {calculator("{ 10 mul }", "/Domain [0 1] /Range [0 2]")});
+		EXPECT_EQ(evaluate(f, {0.5})[0], 2.0);
+	}
+
+	// Refusals, each with its typed error.
+	EXPECT_EQ(refusal_of({sampled("/Domain [0 1] /Range [0 1] /Size [4] /BitsPerSample 8", "\x01\x02")}).code, ErrorCode::DamagedFormat);
+	{
+		const PdfError big = refusal_of({sampled("/Domain [0 1 0 1] /Range [0 1] /Size [5000 5000] /BitsPerSample 8", "\x00")});
+		EXPECT_EQ(big.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(big.refusal_reason, RefusalReason::SampleTableBytes);
+	}
+	EXPECT_EQ(refusal_of({sampled("/Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 7", "\x01\x02")}).code, ErrorCode::DamagedFormat);
+	EXPECT_EQ(refusal_of({"<< /FunctionType 3 /Domain [0 3] /Functions [6 0 R 6 0 R 6 0 R] /Bounds [2 1] /Encode [0 1 0 1 0 1] >>",
+						  "<< /FunctionType 2 /Domain [0 1] /N 1 >>"})
+				  .code,
+		ErrorCode::DamagedFormat);
+	EXPECT_EQ(refusal_of({"<< /FunctionType 1 /Domain [0 1] >>"}).code, ErrorCode::DamagedFormat);
+	EXPECT_EQ(refusal_of({sampled("/Range [0 1] /Size [2] /BitsPerSample 8", "\x00\x01")}).code, ErrorCode::DamagedFormat)
+		<< "no /Domain";
+	// Stitching nested 8 deep parses; 9 deep is refused.
+	const auto chain = [](int levels) {
+		std::vector<std::string> objects;
+		for (int i = 0; i < levels; ++i) {
+			objects.push_back("<< /FunctionType 3 /Domain [0 1] /Functions [" + std::to_string(6 + i) +
+				" 0 R] /Bounds [] /Encode [0 1] >>");
+		}
+		objects.emplace_back("<< /FunctionType 2 /Domain [0 1] /N 1 >>");
+		return objects;
+	};
+	{
+		RECTO_PARSED(f, chain(8));
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.5, kTight);
+	}
+	{
+		const PdfError deep = refusal_of(chain(9));
+		EXPECT_EQ(deep.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(deep.refusal_reason, RefusalReason::FunctionDepth);
+	}
+	// A tree of 256 functions parses (one subfunction shared 255 times, counted each time); 257 is refused.
+	const auto wide = [](int k) {
+		std::string functions;
+		std::string bounds;
+		std::string encode;
+		for (int i = 0; i < k; ++i) {
+			functions += "6 0 R ";
+			encode += "0 1 ";
+			if (i + 1 < k) {
+				bounds += "0.5 ";
+			}
+		}
+		return std::vector<std::string>{"<< /FunctionType 3 /Domain [0 1] /Functions [" + functions + "] /Bounds [" + bounds +
+				"] /Encode [" + encode + "] >>",
+			"<< /FunctionType 2 /Domain [0 1] /N 1 >>"};
+	};
+	{
+		RECTO_PARSED(f, wide(255));
+		EXPECT_NEAR(evaluate(f, {0.75})[0], 0.5, kTight); // the last piece covers [0.5, 1], encoded to [0, 1]
+	}
+	{
+		const PdfError many = refusal_of(wide(256));
+		EXPECT_EQ(many.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(many.refusal_reason, RefusalReason::FunctionNodes);
+	}
+	EXPECT_EQ(refusal_of({calculator("{ 1 add")}).code, ErrorCode::DamagedFormat);
+	EXPECT_EQ(refusal_of({calculator("{ 1 foo }")}).code, ErrorCode::DamagedFormat);
+	EXPECT_EQ(refusal_of({calculator("{ { 1 } }")}).code, ErrorCode::DamagedFormat) << "a procedure without if";
+	EXPECT_EQ(refusal_of({calculator("{ 1 } 2")}).code, ErrorCode::DamagedFormat) << "text after the program";
+	{
+		std::string longest = "{";
+		for (size_t i = 0; i < kMaxCalculatorOperators / 2u + 1u; ++i) {
+			longest += " dup pop";
+		}
+		longest += " }";
+		const PdfError too_long = refusal_of({calculator(longest)});
+		EXPECT_EQ(too_long.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(too_long.refusal_reason, RefusalReason::CalculatorOperators);
+	}
+}
+
+// The resources and objects of a test page: `/ColorSpace << ... >>` naming spaces whose objects start at 5.
+Interpreted interpret_spaces(std::string_view content, std::string_view spaces, const std::vector<std::string>& objects = {})
+{
+	return interpret(content, "<< /ColorSpace << " + std::string(spaces) + " >> >>", objects);
+}
+
+// The colour space a value gives, read through `ColorSpaces` over a document holding `objects` from 5.
+struct ResolvedSpace {
+	std::vector<uint8_t> bytes;
+	std::unique_ptr<Document> document;
+	std::shared_ptr<const ColorSpace> space;
+};
+
+std::unique_ptr<ResolvedSpace> resolve_space(const std::vector<std::string>& objects)
+{
+	auto out = std::make_unique<ResolvedSpace>();
+	out->bytes = one_page_pdf(std::nullopt, "<< >>", objects);
+	auto doc = Document::open_memory(out->bytes);
+	EXPECT_TRUE(doc.has_value());
+	if (!doc.has_value()) {
+		return out;
+	}
+	out->document = std::move(*doc);
+	ColorSpaces spaces(*out->document, nullptr);
+	auto space = spaces.resolve(PdfValue(IndirectRef{5u, 0u}));
+	EXPECT_TRUE(space.has_value());
+	if (space.has_value()) {
+		out->space = std::move(*space);
+	}
+	return out;
+}
+
+bool damaged_recorded()
+{
+	const auto tail = diagnostics_tail(32u);
+	return std::any_of(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; });
+}
+
+TEST(PdfInterpreter, IndexedColors)
+{
+	const std::string rgb_palette = "/I [/Indexed /DeviceRGB 2 <FF0000 00FF00 0000FF>]";
+	struct Case {
+		std::string_view ops;
+		ColorRgba want;
+	};
+	const Case cases[] = {
+		{"/I cs", {1.0f, 0.0f, 0.0f}},          // the initial index, 0
+		{"/I cs 1 sc", {0.0f, 1.0f, 0.0f}},
+		{"/I cs 2 scn", {0.0f, 0.0f, 1.0f}},
+		{"/I cs 2.6 sc", {0.0f, 0.0f, 1.0f}},   // 3 after rounding, clamped to hival
+		{"/I cs -1 sc", {1.0f, 0.0f, 0.0f}},    // clamped to 0
+		{"/I cs 0.4 sc", {1.0f, 0.0f, 0.0f}},   // rounded to 0
+		{"/I cs 1.5 sc", {0.0f, 0.0f, 1.0f}},   // rounded to 2
+	};
+	for (const Case& c : cases) {
+		SCOPED_TRACE(std::string(c.ops));
+		const auto fill = painted(interpret_spaces(std::string(c.ops) + " 0 0 10 10 re f", rgb_palette)).fill_color;
+		expect_color(fill, c.want.r, c.want.g, c.want.b);
+	}
+	// An ICCBased base: palette bytes through the profile, matching the direct ICC colour.
+	expect_rgb8(painted(interpret_spaces("/I cs 0 sc 0 0 10 10 re f", "/I [/Indexed [/ICCBased 5 0 R] 0 <8040C8>]",
+						{stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))}))
+					.fill_color,
+		kRgbMatrix128_64_200, 2, "Indexed over ICCBased");
+	// A Lab base: bytes scaled to L* 0 to 100 and a*, b* over /Range, so bytes 80 A8 64 are L* 50.196, a* 40, b* -28:
+	// the colour the Lab space itself gives (PdfColor.ImageSamples' Lab row, 167 92 for red and green).
+	const std::string lab = "[/Lab << /WhitePoint [0.9642 1 0.8249] /Range [-128 127 -128 127] >>]";
+	const ColorRgba lab_direct = painted(interpret_spaces("/L cs 50.19607843 40 -28 sc 0 0 10 10 re f", "/L " + lab)).fill_color;
+	const ColorRgba lab_indexed = painted(interpret_spaces("/I cs 0 sc 0 0 10 10 re f", "/I [/Indexed " + lab + " 0 <80A864>]")).fill_color;
+	expect_rgb8(lab_indexed, {byte_of(lab_direct.r), byte_of(lab_direct.g), byte_of(lab_direct.b)}, 1, "Indexed over Lab");
+	EXPECT_LE(std::abs(byte_of(lab_indexed.r) - 167), 1);
+	EXPECT_LE(std::abs(byte_of(lab_indexed.g) - 92), 1);
+	// A Separation base: index 1 is tint 1 (red), index 0 tint 0 (white).
+	const std::string spot = "/I [/Indexed [/Separation /Spot /DeviceRGB 5 0 R] 1 <00FF>]";
+	const std::string to_red = "<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [1 0 0] /N 1 >>";
+	expect_color(painted(interpret_spaces("/I cs 1 sc 0 0 10 10 re f", spot, {to_red})).fill_color, 1.0f, 0.0f, 0.0f);
+	expect_color(painted(interpret_spaces("/I cs 0 sc 0 0 10 10 re f", spot, {to_red})).fill_color, 1.0f, 1.0f, 1.0f);
+	// A short lookup is padded with zeros, with a diagnostic; the defined entries still draw.
+	clear_diagnostics();
+	const std::string short_lookup = "/I [/Indexed /DeviceRGB 2 <FF0000>]";
+	expect_color(painted(interpret_spaces("/I cs 2 sc 0 0 10 10 re f", short_lookup)).fill_color, 0.0f, 0.0f, 0.0f);
+	EXPECT_TRUE(damaged_recorded());
+	expect_color(painted(interpret_spaces("/I cs 0 sc 0 0 10 10 re f", short_lookup)).fill_color, 1.0f, 0.0f, 0.0f);
+	// A stream lookup.
+	expect_color(painted(interpret_spaces("/I cs 1 sc 0 0 10 10 re f", "/I [/Indexed /DeviceGray 1 5 0 R]",
+						{stream_object("", std::string("\x00\xFF", 2))}))
+					 .fill_color,
+		1.0f, 1.0f, 1.0f);
+	// hival past 255 is read as 255.
+	{
+		std::string lookup(256u, '\0');
+		lookup[255] = '\xFF';
+		const auto space = resolve_space({"[/Indexed /DeviceGray 300 6 0 R]", stream_object("", lookup)});
+		ASSERT_NE(space->space, nullptr);
+		EXPECT_EQ(space->space->hival(), 255u);
+	}
+	// An Indexed base and a missing lookup make the space unusable: black, where green would show it was used.
+	expect_color(painted(interpret_spaces("0 1 0 rg /I cs 0 sc 0 0 10 10 re f",
+						 "/I [/Indexed [/Indexed /DeviceRGB 0 <00FF00>] 0 <00>]"))
+					 .fill_color,
+		0.0f, 0.0f, 0.0f);
+	expect_color(painted(interpret_spaces("0 1 0 rg /I cs 0 sc 0 0 10 10 re f", "/I [/Indexed /DeviceRGB 0]")).fill_color, 0.0f, 0.0f, 0.0f);
+	EXPECT_EQ(resolve_space({"[/Indexed [/Indexed /DeviceRGB 0 <00FF00>] 0 <00>]"})->space, nullptr);
+	EXPECT_EQ(resolve_space({"[/Indexed /DeviceRGB 0 /NotALookup]"})->space, nullptr);
+}
+
+TEST(PdfInterpreter, SeparationAndDeviceN)
+{
+	// DeviceCMYK through the formula here (the default CMYK profile is tested in PdfInterpreter.CalibratedCmyk).
+	detail::set_default_cmyk_profile_enabled_for_testing(false);
+	struct Restore {
+		~Restore()
+		{
+			detail::set_default_cmyk_profile_enabled_for_testing(true);
+		}
+	} restore;
+	// Separation through a type 2 transform into DeviceCMYK: tint t is magenta t, so RGB (1, 1 - t, 1).
+	const std::string magenta = "/S [/Separation /Spot /DeviceCMYK 5 0 R]";
+	const std::string to_magenta = "<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0 0] /C1 [0 1 0 0] /N 1 >>";
+	expect_color(painted(interpret_spaces("/S cs 0.5 scn 0 0 10 10 re f", magenta, {to_magenta})).fill_color, 1.0f, 0.5f, 1.0f);
+	expect_color(painted(interpret_spaces("/S cs 0 0 10 10 re f", magenta, {to_magenta})).fill_color, 1.0f, 0.0f, 1.0f); // the initial tint is 1.0
+	expect_color(painted(interpret_spaces("/S cs 3 scn 0 0 10 10 re f", magenta, {to_magenta})).fill_color, 1.0f, 0.0f, 1.0f); // a tint past 1 is clipped
+	expect_color(painted(interpret_spaces("/S CS 0.25 SCN 0 0 10 10 re S", magenta, {to_magenta})).stroke_color, 1.0f, 0.75f, 1.0f);
+	// Through a type 4 transform into DeviceRGB: t -> (t, 1 - t, 0).
+	expect_color(painted(interpret_spaces("/S cs 0.25 scn 0 0 10 10 re f", "/S [/Separation /Spot2 /DeviceRGB 5 0 R]",
+						 {calculator("{ dup 1 exch sub 0 }", "/Domain [0 1] /Range [0 1 0 1 0 1]")}))
+					 .fill_color,
+		0.25f, 0.75f, 0.0f);
+	// Into an ICCBased alternate.
+	expect_rgb8(painted(interpret_spaces("/S cs 1 scn 0 0 10 10 re f", "/S [/Separation /Spot3 [/ICCBased 6 0 R] 5 0 R]",
+						{"<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [" + component(128) + " " + component(64) + " " +
+								component(200) + "] /N 1 >>",
+							stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))}))
+					.fill_color,
+		kRgbMatrix128_64_200, 2, "Separation into ICCBased");
+	// /All draws through its transform like any colorant: tint 0.25 of black is gray 0.75.
+	expect_color(painted(interpret_spaces("/A cs 0.25 scn 0 0 10 10 re f", "/A [/Separation /All /DeviceGray 5 0 R]",
+						 {"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>"}))
+					 .fill_color,
+		0.75f, 0.75f, 0.75f);
+
+	// DeviceN of six colorants into DeviceRGB, red from the sixth tint: two colours that differ only in it paint apart.
+	const std::string six = "/N [/DeviceN [/C1 /C2 /C3 /C4 /C5 /C6] /DeviceRGB 5 0 R]";
+	const std::string sixth_to_red = calculator("{ exch pop exch pop exch pop exch pop exch pop 0 0 }",
+		"/Domain [0 1 0 1 0 1 0 1 0 1 0 1] /Range [0 1 0 1 0 1]");
+	{
+		const auto r = interpret_spaces("/N cs 0 0 0 0 0 0.2 scn 0 0 10 10 re f 0 0 0 0 0 0.8 scn 0 0 10 10 re f", six, {sixth_to_red});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		expect_color(draws[0].fill_color, 0.2f, 0.0f, 0.0f);
+		expect_color(draws[1].fill_color, 0.8f, 0.0f, 0.0f);
+	}
+	expect_color(painted(interpret_spaces("/N cs 0 0 0 0 0 0.2 scn q 0 0 0 0 0 0.9 scn Q 0 0 10 10 re f", six, {sixth_to_red})).fill_color,
+		0.2f, 0.0f, 0.0f);
+	expect_color(painted(interpret_spaces("/N cs 0 0 0 0 0 0.2 scn 0.5 0.5 0.5 scn 0 0 10 10 re f", six, {sixth_to_red})).fill_color,
+		0.2f, 0.0f, 0.0f); // the wrong number of tints is skipped
+	expect_color(painted(interpret_spaces("/N cs 0 0 10 10 re f", six, {sixth_to_red})).fill_color, 1.0f, 0.0f, 0.0f); // every initial tint is 1.0
+
+	// An NChannel /Attributes, read through the accessors.
+	{
+		const auto space = resolve_space({"[/DeviceN [/Cyan /Spot] /DeviceCMYK 6 0 R 7 0 R]",
+			calculator("{ 0 0 }", "/Domain [0 1 0 1] /Range [0 1 0 1 0 1 0 1]"),
+			"<< /Subtype /NChannel /Colorants << /Spot 8 0 R >> /Process << /ColorSpace /DeviceCMYK /Components [/Cyan /Magenta /Yellow /Black] >> >>",
+			"[/Separation /Spot /DeviceCMYK 9 0 R]", to_magenta});
+		ASSERT_NE(space->space, nullptr);
+		const ColorSpace& s = *space->space;
+		EXPECT_EQ(s.kind(), ColorSpaceKind::DeviceN);
+		EXPECT_TRUE(s.nchannel());
+		ASSERT_EQ(s.colorants().size(), 2u);
+		EXPECT_EQ(s.colorants()[1], "Spot");
+		ASSERT_EQ(s.colorant_spaces().size(), 1u);
+		EXPECT_EQ(s.colorant_spaces()[0].first, "Spot");
+		EXPECT_EQ(s.colorant_spaces()[0].second->kind(), ColorSpaceKind::Separation);
+		ASSERT_NE(s.process(), nullptr);
+		EXPECT_EQ(s.process()->kind(), ColorSpaceKind::DeviceCMYK);
+		ASSERT_EQ(s.process_components().size(), 4u);
+		EXPECT_EQ(s.process_components()[3], "Black");
+	}
+
+	// /None paints nothing: the fill is dropped while the stroke still paints, and a fill alone records no command.
+	const std::string none = "/X [/Separation /None /DeviceGray 5 0 R]";
+	const std::string gray = "<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>";
+	{
+		const auto draw = painted(interpret_spaces("/X cs 1 0 0 RG 0 0 10 10 re B", none, {gray}));
+		EXPECT_FALSE(draw.fill);
+		EXPECT_TRUE(draw.stroke);
+		expect_color(draw.stroke_color, 1.0f, 0.0f, 0.0f);
+	}
+	{
+		const auto r = interpret_spaces("/X cs 0 0 10 10 re f", none, {gray});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(all_of<DrawPathCommand>(*r.list).empty());
+	}
+	{
+		const auto draw = painted(interpret_spaces("/X CS 0 1 0 rg 0 0 10 10 re B", none, {gray}));
+		EXPECT_TRUE(draw.fill);
+		EXPECT_FALSE(draw.stroke);
+	}
+	// DeviceN paints nothing only when every colorant is /None; an Indexed space over a /None base paints nothing.
+	const std::string pair_gray = calculator("{ pop }", "/Domain [0 1 0 1] /Range [0 1]");
+	EXPECT_FALSE(resolve_space({"[/DeviceN [/None /None] /DeviceGray 6 0 R]", pair_gray})->space->paints());
+	EXPECT_TRUE(resolve_space({"[/DeviceN [/None /Spot] /DeviceGray 6 0 R]", pair_gray})->space->paints());
+	EXPECT_FALSE(resolve_space({"[/Indexed [/Separation /None /DeviceGray 6 0 R] 0 <00>]", gray})->space->paints());
+	EXPECT_TRUE(resolve_space({"[/Separation /All /DeviceGray 6 0 R]", gray})->space->paints());
+
+	// A tint transform with fewer outputs than the alternate's components makes the space unusable.
+	EXPECT_EQ(resolve_space({"[/Separation /S /DeviceRGB 6 0 R]", gray})->space, nullptr);
+	EXPECT_EQ(resolve_space({"[/DeviceN [/A /B /C] /DeviceGray 6 0 R]", pair_gray})->space, nullptr) << "inputs != colorants";
+	EXPECT_EQ(resolve_space({"[/Separation /S /Pattern 6 0 R]", gray})->space, nullptr) << "a Pattern alternate";
+	// A failing calculator gives its /Range low values (gray 0.25 here) and a diagnostic.
+	clear_diagnostics();
+	expect_color(painted(interpret_spaces("/B cs 0.5 scn 0 0 10 10 re f", "/B [/Separation /Bad /DeviceGray 5 0 R]",
+						 {calculator("{ pop pop }", "/Domain [0 1] /Range [0.25 1]")}))
+					 .fill_color,
+		0.25f, 0.25f, 0.25f);
+	EXPECT_TRUE(damaged_recorded());
+}
+
+TEST(PdfColor, SpecialSpaceSamples)
+{
+	auto doc = Document::open_memory(one_page_pdf(std::nullopt));
+	ASSERT_TRUE(doc.has_value());
+	const Document& d = **doc;
+	const auto row = [&](const ColorSpace& space, std::vector<uint8_t> bytes, size_t width, uint32_t bits,
+						 std::vector<double> decode = {}) {
+		auto out = space.convert_samples(bytes, width, bits, decode, RenderingIntent::RelativeColorimetric, d);
+		EXPECT_TRUE(out.has_value()) << (out.has_value() ? "" : out.error().message.view());
+		return out.has_value() ? *out : std::vector<uint8_t>{};
+	};
+	// A palette of red, green, blue and white.
+	const auto palette = ColorSpace::indexed(ColorSpace::device(ColorSpaceKind::DeviceRGB), 3u,
+		{255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255});
+	const std::vector<uint8_t> R{255, 0, 0, 255}, G{0, 255, 0, 255}, B{0, 0, 255, 255}, W{255, 255, 255, 255};
+	const auto pixels = [](std::initializer_list<std::vector<uint8_t>> list) {
+		std::vector<uint8_t> out;
+		for (const auto& p : list) {
+			out.insert(out.end(), p.begin(), p.end());
+		}
+		return out;
+	};
+	// 1-bit indices (8 pixels: wider than the 2 possible values, so the table path): 1 0 1 1 0 0 0 1.
+	EXPECT_EQ(row(*palette, {0b10110001u}, 8u, 1u), pixels({G, R, G, G, R, R, R, G}));
+	// 4-bit (2 pixels: the per-pixel path).
+	EXPECT_EQ(row(*palette, {0x31u}, 2u, 4u), pixels({W, G}));
+	// 8-bit, an index past hival clamped.
+	EXPECT_EQ(row(*palette, {0u, 2u, 5u}, 3u, 8u), pixels({R, B, W}));
+	// A reversed /Decode: sample 0 is index 3, sample 255 index 0.
+	EXPECT_EQ(row(*palette, {0u, 255u}, 2u, 8u, {3.0, 0.0}), pixels({W, R}));
+	// The table path agrees with the per-pixel path.
+	{
+		std::vector<uint8_t> wide(300u);
+		for (size_t i = 0; i < wide.size(); ++i) {
+			wide[i] = static_cast<uint8_t>(i % 4u);
+		}
+		const auto out = row(*palette, wide, 300u, 8u);
+		ASSERT_EQ(out.size(), 1200u);
+		EXPECT_EQ(std::vector<uint8_t>(out.begin() + 4 * 6, out.begin() + 4 * 7), B); // pixel 6 is index 2
+	}
+
+	// Separation into DeviceGray, t -> 1 - t; DeviceN of two colorants into DeviceRGB, (a, b) -> (a, b, 0).
+	const auto functions = parse_function({"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>"});
+	ASSERT_TRUE(functions->result.has_value() && functions->result->has_value());
+	const auto spot = ColorSpace::separation("Spot", ColorSpace::device(ColorSpaceKind::DeviceGray), functions->result->value());
+	EXPECT_EQ(row(*spot, {0u, 255u, 128u}, 3u, 8u), pixels({W, {0, 0, 0, 255}, {127, 127, 127, 255}}));
+	EXPECT_EQ(row(*spot, {0x80u, 0x00u}, 1u, 16u), pixels({{127, 127, 127, 255}}));
+	const auto pair = parse_function({calculator("{ 0 }", "/Domain [0 1 0 1] /Range [0 1 0 1 0 1]")});
+	ASSERT_TRUE(pair->result.has_value() && pair->result->has_value());
+	const auto device_n = ColorSpace::device_n({"A", "B"}, ColorSpace::device(ColorSpaceKind::DeviceRGB), pair->result->value(), {});
+	EXPECT_EQ(row(*device_n, {255u, 128u}, 1u, 8u), pixels({{255, 128, 0, 255}}));
+	EXPECT_EQ(row(*device_n, {0xFFu, 0xFFu, 0x00u, 0x00u}, 1u, 16u), pixels({{255, 0, 0, 255}}));
+
+	// A 4,096-pixel 8-bit Separation row evaluates its tint transform at most 256 times.
+	{
+		std::vector<uint8_t> wide(4096u);
+		for (size_t i = 0; i < wide.size(); ++i) {
+			wide[i] = static_cast<uint8_t>(i * 7u);
+		}
+		const size_t before = detail::function_evaluations_for_testing();
+		const auto out = row(*spot, wide, 4096u, 8u);
+		EXPECT_LE(detail::function_evaluations_for_testing() - before, 256u);
+		ASSERT_EQ(out.size(), 4096u * 4u);
+		EXPECT_EQ(out[4u * 1u], 255u - 7u); // pixel 1: tint 7/255, gray 248
+	}
+	// An Indexed row over an ICCBased base is one Windows call, per-pixel and table paths alike.
+	{
+		const std::string rgb_profile = corpus_text("color/rgb-matrix.icc");
+		auto profile = IccProfile::make(std::vector<uint8_t>(rgb_profile.begin(), rgb_profile.end()), 3u, 0u);
+		ASSERT_TRUE(profile.has_value());
+		const auto icc_palette = ColorSpace::indexed(
+			ColorSpace::icc(*profile, {}, ColorSpace::device(ColorSpaceKind::DeviceRGB)), 1u, {128, 64, 200, 30, 180, 90});
+		size_t calls = detail::translate_calls_for_testing();
+		const auto narrow = row(*icc_palette, {0u, 1u, 0u}, 3u, 8u);
+		EXPECT_EQ(detail::translate_calls_for_testing() - calls, 1u);
+		ASSERT_EQ(narrow.size(), 12u);
+		EXPECT_LE(std::abs(narrow[0] - kRgbMatrix128_64_200.r), 2);
+		EXPECT_LE(std::abs(narrow[5] - kRgbMatrix30_180_90.g), 2);
+		calls = detail::translate_calls_for_testing();
+		const auto wide = row(*icc_palette, std::vector<uint8_t>(300u, 1u), 300u, 8u);
+		EXPECT_EQ(detail::translate_calls_for_testing() - calls, 1u);
+		ASSERT_EQ(wide.size(), 1200u);
+		EXPECT_LE(std::abs(wide[1] - kRgbMatrix30_180_90.g), 2);
+	}
+}
+
+#undef RECTO_PARSED
 
 } // namespace
 } // namespace recto::pdf

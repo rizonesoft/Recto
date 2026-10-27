@@ -740,6 +740,11 @@ enum class RefusalReason : uint16_t {
 	SubroutineDepth, // charstring subroutines nested past the depth limit
 	CharstringStack, // a charstring's operand stack past its limit
 	FontTableEntries, // a CFF program's subroutine tables past their entry limit
+	// Appended (D01 T02 section 33): the ceilings on PDF functions (tint transforms and, later, shadings).
+	FunctionNodes,       // functions in one function tree past the limit
+	FunctionDepth,       // stitching functions nested past the depth limit
+	SampleTableBytes,    // a sampled function's table past its byte limit
+	CalculatorOperators, // a PostScript calculator program past its operator limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -817,6 +822,14 @@ enum class RefusalReason : uint16_t {
 		return "CharstringStack";
 	case RefusalReason::FontTableEntries:
 		return "FontTableEntries";
+	case RefusalReason::FunctionNodes:
+		return "FunctionNodes";
+	case RefusalReason::FunctionDepth:
+		return "FunctionDepth";
+	case RefusalReason::SampleTableBytes:
+		return "SampleTableBytes";
+	case RefusalReason::CalculatorOperators:
+		return "CalculatorOperators";
 	}
 	return "UnknownReason";
 }
@@ -930,6 +943,18 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::FontTableEntries:
 		return "An embedded font's subroutine tables hold more entries than their limit (observed and bound count "
 			   "entries); the font is not used, and its text may not appear as designed";
+	case RefusalReason::FunctionNodes:
+		return "A colour or shading function is built from more functions than its limit (observed and bound count "
+			   "functions); the colours it gives are not drawn as designed, and the file may be damaged";
+	case RefusalReason::FunctionDepth:
+		return "A colour or shading function nests its pieces deeper than their limit (observed and bound are levels); "
+			   "the colours it gives are not drawn as designed, and the file may be damaged";
+	case RefusalReason::SampleTableBytes:
+		return "A sampled colour or shading function holds a larger table than its limit (observed and bound are "
+			   "bytes); the colours it gives are not drawn as designed";
+	case RefusalReason::CalculatorOperators:
+		return "A calculator colour or shading function is longer than its limit (observed and bound count "
+			   "operators); the colours it gives are not drawn as designed, and the file may be damaged";
 	}
 	return "";
 }

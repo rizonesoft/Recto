@@ -1,11 +1,13 @@
 // Colour spaces (ISO 32000-1 section 8.6; D01 T02 section 32): the device spaces, the CIE-based `CalGray`, `CalRGB`
 // and `Lab` converted to sRGB by their formulas, and `ICCBased` spaces and calibrated `DeviceCMYK` through the Windows
 // Color System. A `ColorSpace` is immutable; the transforms Windows builds live in the document's `ColorProfileCache`,
-// built and used only on the `DocumentActor` thread. `Indexed`, `Separation` and `DeviceN` are section 33's.
+// built and used only on the `DocumentActor` thread. `Indexed`, `Separation` and `DeviceN` (section 33) draw through
+// their base or alternate space, Separation and DeviceN through a tint transform `Function`.
 #pragma once
 
 #include "display_list.h"
 #include "error.h"
+#include "function.h"
 #include "object.h"
 
 #include <array>
@@ -14,7 +16,9 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace recto::pdf {
@@ -28,6 +32,12 @@ inline constexpr size_t kMaxCachedColorTransforms = 64u;    // per document
 inline constexpr size_t kMaxCachedProfileBytes = size_t{64} << 20u; // per document
 inline constexpr size_t kMaxOutputIntentProfiles = 16u; // distinct output intent profiles tried for DeviceCMYK
 inline constexpr size_t kMaxDecodedProfileBytes = size_t{256} << 20u; // all profile decoding per document
+// ISO 32000-1 Annex C.2: a DeviceN space has at most 32 colorants, the most components any colour has.
+inline constexpr size_t kMaxColorComponents = 32u;
+inline constexpr size_t kMaxIndexedLookupBytes = size_t{1} << 20u; // an Indexed lookup stream, decoded
+inline constexpr size_t kMaxDeviceNColorants = 64u; // entries read from a DeviceN /Colorants dictionary
+
+using ColorComponents = std::array<double, kMaxColorComponents>;
 
 // ISO 32000-1 8.6.5.8: an intent this reader does not know is RelativeColorimetric.
 enum class RenderingIntent : uint8_t {
@@ -47,6 +57,9 @@ enum class ColorSpaceKind : uint8_t {
 	CalRGB,
 	Lab,
 	ICCBased,
+	Indexed,
+	Separation,
+	DeviceN,
 };
 
 // An ICC profile as a document holds it: its bytes (header checked) and its number of components. `key` names it in
@@ -126,6 +139,24 @@ public:
 	// cannot be read gives the device space of its component count, allocation failure `OutOfMemory`.
 	[[nodiscard]] static PdfResult<std::shared_ptr<const ColorSpace>> from_icc_profile(
 		std::span<const uint8_t> bytes, uint32_t components) noexcept;
+	// `Indexed` (8.6.6.3): `hival + 1` palette entries of `base->components()` bytes each in `lookup`, already padded
+	// to that length.
+	[[nodiscard]] static std::shared_ptr<const ColorSpace> indexed(
+		std::shared_ptr<const ColorSpace> base, uint32_t hival, std::vector<uint8_t> lookup);
+	// `Separation` (8.6.6.4): one colorant drawn through `tint` into `alternate`.
+	[[nodiscard]] static std::shared_ptr<const ColorSpace> separation(
+		std::string name, std::shared_ptr<const ColorSpace> alternate, std::shared_ptr<const Function> tint);
+	// What a DeviceN `/Attributes` dictionary says (8.6.6.5): an NChannel space, its spot colorants as Separation
+	// spaces, and its process space with the names of the process components.
+	struct DeviceNAttributes {
+		bool nchannel = false;
+		std::vector<std::pair<std::string, std::shared_ptr<const ColorSpace>>> colorants;
+		std::shared_ptr<const ColorSpace> process;
+		std::vector<std::string> process_components;
+	};
+	// `DeviceN` (8.6.6.5): `names.size()` colorants drawn through `tint` into `alternate`.
+	[[nodiscard]] static std::shared_ptr<const ColorSpace> device_n(std::vector<std::string> names,
+		std::shared_ptr<const ColorSpace> alternate, std::shared_ptr<const Function> tint, DeviceNAttributes attributes);
 
 	[[nodiscard]] ColorSpaceKind kind() const noexcept
 	{
@@ -133,7 +164,7 @@ public:
 	}
 	[[nodiscard]] size_t components() const noexcept;
 	// The initial colour (ISO 32000-1 Table 74).
-	[[nodiscard]] std::array<double, 4> initial() const noexcept;
+	[[nodiscard]] ColorComponents initial() const noexcept;
 	// The range each component's decoded value spans, for an image's default `/Decode`.
 	[[nodiscard]] std::pair<double, double> component_range(size_t component) const noexcept;
 
@@ -151,6 +182,39 @@ public:
 	{
 		return alternate_.get();
 	}
+	// An Indexed space's base, else null.
+	[[nodiscard]] const ColorSpace* base() const noexcept
+	{
+		return base_.get();
+	}
+	[[nodiscard]] uint32_t hival() const noexcept
+	{
+		return hival_;
+	}
+	// Separation's one colorant name, DeviceN's names; empty for every other space.
+	[[nodiscard]] std::span<const std::string> colorants() const noexcept
+	{
+		return names_;
+	}
+	[[nodiscard]] bool nchannel() const noexcept
+	{
+		return attributes_.nchannel;
+	}
+	[[nodiscard]] const ColorSpace* process() const noexcept
+	{
+		return attributes_.process.get();
+	}
+	[[nodiscard]] std::span<const std::string> process_components() const noexcept
+	{
+		return attributes_.process_components;
+	}
+	[[nodiscard]] std::span<const std::pair<std::string, std::shared_ptr<const ColorSpace>>> colorant_spaces() const noexcept
+	{
+		return attributes_.colorants;
+	}
+	// False for a space that marks nothing: a Separation named `/None`, a DeviceN whose every colorant is `/None`, and
+	// an Indexed space over either. Fills, strokes, text, stencil masks and images in such a space are not drawn.
+	[[nodiscard]] bool paints() const noexcept;
 
 private:
 	ColorSpace() = default;
@@ -167,13 +231,22 @@ private:
 	std::shared_ptr<const IccProfile> profile_{};
 	std::vector<double> range_{};
 	std::shared_ptr<const ColorSpace> alternate_{};
+	// Indexed.
+	std::shared_ptr<const ColorSpace> base_{};
+	uint32_t hival_ = 0;
+	std::vector<uint8_t> lookup_{};
+	// Separation and DeviceN.
+	std::vector<std::string> names_{};
+	std::shared_ptr<const Function> tint_{};
+	DeviceNAttributes attributes_{};
 };
 
 // Colour space values resolved for one interpretation (ISO 32000-1 8.6.3 to 8.6.5.6): device names (their full names;
 // an inline image's abbreviations are expanded by its reader, section 4, before they reach here) (through the
 // `/Default*` spaces of `resources`, except inside their own definitions), `/ColorSpace` resource names, and arrays;
 // at most `kMaxColorSpaceDepth` nested spaces, a cycle read as the device space of its component count (DeviceGray
-// when none is known). Spaces section 33 reads (`Indexed`, `Separation`, `DeviceN`, `Pattern`) are null.
+// when none is known). `Pattern` (section 16) and a space that cannot be used (an unknown family, a missing lookup, an
+// unusable tint transform) are null.
 class ColorSpaces {
 public:
 	ColorSpaces(const Document& document, const PdfDict* color_space_resources) noexcept;
@@ -189,6 +262,10 @@ private:
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> resolve_at(
 		const PdfValue& value, size_t depth, bool defaults) noexcept;
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> device_at(ColorSpaceKind kind, size_t depth, bool defaults) noexcept;
+	// Section 33's families, called inside `resolve_at`'s allocation guard.
+	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> indexed_at(const PdfArray& array, size_t depth, bool defaults);
+	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> spot_at(
+		const PdfArray& array, bool device_n, size_t depth, bool defaults);
 
 	const Document& document_;
 	const PdfDict* resources_;

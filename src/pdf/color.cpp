@@ -581,6 +581,40 @@ std::shared_ptr<const ColorSpace> ColorSpace::icc(
 	return space;
 }
 
+std::shared_ptr<const ColorSpace> ColorSpace::indexed(
+	std::shared_ptr<const ColorSpace> base, uint32_t hival, std::vector<uint8_t> lookup)
+{
+	auto space = std::shared_ptr<ColorSpace>(new ColorSpace());
+	space->kind_ = ColorSpaceKind::Indexed;
+	space->base_ = std::move(base);
+	space->hival_ = hival;
+	space->lookup_ = std::move(lookup);
+	return space;
+}
+
+std::shared_ptr<const ColorSpace> ColorSpace::separation(
+	std::string name, std::shared_ptr<const ColorSpace> alternate, std::shared_ptr<const Function> tint)
+{
+	auto space = std::shared_ptr<ColorSpace>(new ColorSpace());
+	space->kind_ = ColorSpaceKind::Separation;
+	space->names_.push_back(std::move(name));
+	space->alternate_ = std::move(alternate);
+	space->tint_ = std::move(tint);
+	return space;
+}
+
+std::shared_ptr<const ColorSpace> ColorSpace::device_n(std::vector<std::string> names,
+	std::shared_ptr<const ColorSpace> alternate, std::shared_ptr<const Function> tint, DeviceNAttributes attributes)
+{
+	auto space = std::shared_ptr<ColorSpace>(new ColorSpace());
+	space->kind_ = ColorSpaceKind::DeviceN;
+	space->names_ = std::move(names);
+	space->alternate_ = std::move(alternate);
+	space->tint_ = std::move(tint);
+	space->attributes_ = std::move(attributes);
+	return space;
+}
+
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpace::from_icc_profile(
 	std::span<const uint8_t> bytes, uint32_t components) noexcept
 {
@@ -610,33 +644,53 @@ size_t ColorSpace::components() const noexcept
 	switch (kind_) {
 	case ColorSpaceKind::DeviceGray:
 	case ColorSpaceKind::CalGray:
+	case ColorSpaceKind::Indexed:
+	case ColorSpaceKind::Separation:
 		return 1u;
 	case ColorSpaceKind::DeviceCMYK:
 		return 4u;
 	case ColorSpaceKind::ICCBased:
 		return profile_ != nullptr ? profile_->components : 3u;
+	case ColorSpaceKind::DeviceN:
+		return names_.size();
 	default:
 		return 3u;
 	}
 }
 
-std::array<double, 4> ColorSpace::initial() const noexcept
+ColorComponents ColorSpace::initial() const noexcept
 {
+	ColorComponents out{};
 	if (kind_ == ColorSpaceKind::DeviceCMYK) {
-		return {0.0, 0.0, 0.0, 1.0};
-	}
-	if (kind_ == ColorSpaceKind::Lab) {
+		out[3] = 1.0;
+	} else if (kind_ == ColorSpaceKind::Lab) {
 		// Table 74: L*, a* and b* of 0, each within its range.
-		return {0.0, std::clamp(0.0, cie_.range[0], cie_.range[1]), std::clamp(0.0, cie_.range[2], cie_.range[3]), 0.0};
-	}
-	if (kind_ == ColorSpaceKind::ICCBased) {
-		std::array<double, 4> out{};
-		for (size_t i = 0; i < components() && i < 4u; ++i) {
+		out[1] = std::clamp(0.0, cie_.range[0], cie_.range[1]);
+		out[2] = std::clamp(0.0, cie_.range[2], cie_.range[3]);
+	} else if (kind_ == ColorSpaceKind::ICCBased) {
+		for (size_t i = 0; i < components() && i < out.size(); ++i) {
 			out[i] = std::clamp(0.0, component_range(i).first, component_range(i).second);
 		}
-		return out;
+	} else if (kind_ == ColorSpaceKind::Separation || kind_ == ColorSpaceKind::DeviceN) {
+		// Table 74: every tint 1.0, the full colorant.
+		for (size_t i = 0; i < components() && i < out.size(); ++i) {
+			out[i] = 1.0;
+		}
 	}
-	return {0.0, 0.0, 0.0, 0.0};
+	return out; // Indexed: index 0
+}
+
+bool ColorSpace::paints() const noexcept
+{
+	switch (kind_) {
+	case ColorSpaceKind::Indexed:
+		return base_ == nullptr || base_->paints();
+	case ColorSpaceKind::Separation:
+	case ColorSpaceKind::DeviceN:
+		return std::any_of(names_.begin(), names_.end(), [](const std::string& name) { return name != "None"; });
+	default:
+		return true;
+	}
 }
 
 std::pair<double, double> ColorSpace::component_range(size_t component) const noexcept
@@ -650,6 +704,9 @@ std::pair<double, double> ColorSpace::component_range(size_t component) const no
 	if (kind_ == ColorSpaceKind::ICCBased && range_.size() >= 2u * (component + 1u)) {
 		return {range_[2u * component], range_[2u * component + 1u]};
 	}
+	if (kind_ == ColorSpaceKind::Indexed) {
+		return {0.0, static_cast<double>(hival_)};
+	}
 	return {0.0, 1.0};
 }
 
@@ -657,6 +714,52 @@ PdfResult<void> ColorSpace::to_srgb(
 	std::span<const double> in, size_t count, RenderingIntent intent, const Document& document, std::span<double> out) const noexcept
 {
 	const size_t n = components();
+	if (kind_ == ColorSpaceKind::Indexed) {
+		// Each index rounded and clamped to 0 to hival, its palette entry's bytes scaled to the base's ranges, and the
+		// whole run converted by the base in one call (one Windows call for an ICC base).
+		const size_t base_n = base_->components();
+		std::vector<double> entries;
+		try {
+			entries.resize(count * base_n);
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory converting colours");
+		}
+		for (size_t i = 0; i < count; ++i) {
+			const double index = std::isfinite(in[i]) ? std::round(in[i]) : 0.0;
+			const auto entry = static_cast<size_t>(std::clamp(index, 0.0, static_cast<double>(hival_)));
+			for (size_t j = 0; j < base_n; ++j) {
+				const auto [lo, hi] = base_->component_range(j);
+				entries[i * base_n + j] = lo + lookup_[entry * base_n + j] / 255.0 * (hi - lo);
+			}
+		}
+		return base_->to_srgb(entries, count, intent, document, out);
+	}
+	if (kind_ == ColorSpaceKind::Separation || kind_ == ColorSpaceKind::DeviceN) {
+		// Each colour's tints, clipped to 0 to 1, through the tint transform into the alternate space, converted there
+		// in one call. A failed transform gives its lowest values, recorded once for the run.
+		const size_t alt_n = alternate_->components();
+		std::vector<double> alternates;
+		try {
+			alternates.resize(count * alt_n);
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory converting colours");
+		}
+		ColorComponents tints{};
+		std::array<double, kMaxFunctionOutputs> result{};
+		bool failed = false;
+		for (size_t i = 0; i < count; ++i) {
+			for (size_t c = 0; c < n; ++c) {
+				const double t = in[i * n + c];
+				tints[c] = std::isfinite(t) ? std::clamp(t, 0.0, 1.0) : 0.0;
+			}
+			failed = !tint_->evaluate(std::span<const double>(tints).first(n), result) || failed;
+			std::copy_n(result.begin(), alt_n, alternates.begin() + static_cast<std::ptrdiff_t>(i * alt_n));
+		}
+		if (failed) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A tint transform failed; its colours take its lowest values");
+		}
+		return alternate_->to_srgb(alternates, count, intent, document, out);
+	}
 	ColorProfileCache* cache_slot = nullptr;
 	try {
 		cache_slot = &document.color_profiles();
@@ -743,6 +846,42 @@ PdfResult<std::vector<uint8_t>> ColorSpace::convert_samples(std::span<const uint
 		}
 		const bool use_decode = decode.size() == 2u * n;
 		const double max_value = static_cast<double>((uint32_t{1} << bits) - 1u);
+		// An Indexed image's samples are palette indices: its default /Decode is [0 2^bits-1] (8.9.5.2, Table 90).
+		const auto decoded_range = [&](size_t c) {
+			if (use_decode) {
+				return std::pair{decode[2u * c], decode[2u * c + 1u]};
+			}
+			return kind_ == ColorSpaceKind::Indexed ? std::pair{0.0, max_value} : component_range(c);
+		};
+		const auto finish = [&](const std::vector<double>& rgb, auto&& rgb_of) {
+			std::vector<uint8_t> out(width * 4u);
+			for (size_t i = 0; i < width; ++i) {
+				const size_t at = rgb_of(i);
+				for (size_t k = 0; k < 3u; ++k) {
+					out[4u * i + k] = static_cast<uint8_t>(std::lround(std::clamp(rgb[3u * at + k], 0.0, 1.0) * 255.0));
+				}
+				out[4u * i + 3u] = 255u;
+			}
+			return out;
+		};
+		if (n == 1u && bits <= 8u && width > (size_t{1} << bits)) {
+			// One component of at most 8 bits: every possible sample converted once (a palette, a tint table) and each
+			// pixel looked up, so a wide row costs 2^bits conversions, one Windows call for an ICC space.
+			const size_t entries = size_t{1} << bits;
+			const auto [lo, hi] = decoded_range(0u);
+			std::vector<double> table(entries);
+			for (size_t t = 0; t < entries; ++t) {
+				table[t] = lo + static_cast<double>(t) * (hi - lo) / max_value;
+			}
+			std::vector<double> table_rgb(entries * 3u);
+			RECTO_PDF_RETURN_IF_ERROR(to_srgb(table, entries, intent, document, table_rgb));
+			const uint32_t mask = (1u << bits) - 1u;
+			return finish(table_rgb, [&](size_t i) {
+				const uint64_t bit = uint64_t{i} * bits;
+				const uint32_t shift = 8u - bits - static_cast<uint32_t>(bit % 8u);
+				return static_cast<size_t>((row[bit / 8u] >> shift) & mask);
+			});
+		}
 		std::vector<double> values(width * n);
 		uint64_t bit = 0;
 		for (size_t i = 0; i < values.size(); ++i, bit += bits) {
@@ -755,20 +894,12 @@ PdfResult<std::vector<uint8_t>> ColorSpace::convert_samples(std::span<const uint
 				const uint32_t shift = 8u - bits - static_cast<uint32_t>(bit % 8u);
 				v = (row[bit / 8u] >> shift) & ((1u << bits) - 1u);
 			}
-			const size_t c = i % n;
-			const auto [lo, hi] = use_decode ? std::pair{decode[2u * c], decode[2u * c + 1u]} : component_range(c);
+			const auto [lo, hi] = decoded_range(i % n);
 			values[i] = lo + v * (hi - lo) / max_value;
 		}
 		std::vector<double> rgb(width * 3u);
 		RECTO_PDF_RETURN_IF_ERROR(to_srgb(values, width, intent, document, rgb));
-		std::vector<uint8_t> out(width * 4u);
-		for (size_t i = 0; i < width; ++i) {
-			for (size_t k = 0; k < 3u; ++k) {
-				out[4u * i + k] = static_cast<uint8_t>(std::lround(std::clamp(rgb[3u * i + k], 0.0, 1.0) * 255.0));
-			}
-			out[4u * i + 3u] = 255u;
-		}
-		return out;
+		return finish(rgb, [](size_t i) { return i; });
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory converting image samples");
 	}
@@ -1153,10 +1284,177 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			}
 			return ColorSpace::icc(std::move(profile), std::move(range), std::move(alternate));
 		}
-		return std::shared_ptr<const ColorSpace>{}; // Indexed, Separation, DeviceN, Pattern: section 33
+		if (*family == "Indexed") {
+			return indexed_at(*array, depth, defaults);
+		}
+		if (*family == "Separation" || *family == "DeviceN") {
+			return spot_at(*array, *family == "DeviceN", depth, defaults);
+		}
+		if (*family != "Pattern") { // section 16's
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "Colour space family is not one this reader knows");
+		}
+		return std::shared_ptr<const ColorSpace>{};
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory resolving a colour space");
 	}
+}
+
+namespace {
+
+// A space a Separation or DeviceN may draw into (8.6.6.4): a device, CIE-based or ICCBased space.
+[[nodiscard]] bool usable_alternate(const std::shared_ptr<const ColorSpace>& space) noexcept
+{
+	return space != nullptr && space->kind() <= ColorSpaceKind::ICCBased;
+}
+
+} // namespace
+
+PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfArray& array, size_t depth, bool defaults)
+{
+	// [/Indexed base hival lookup] (8.6.6.3).
+	const auto unusable = [](std::string_view why) {
+		(void)make_pdf_error(ErrorCode::DamagedFormat, why); // recorded
+		return std::shared_ptr<const ColorSpace>{};
+	};
+	if (array.size() < 4u) {
+		return unusable("Indexed colour space does not have a base, hival and lookup");
+	}
+	RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> base, resolve_at(array[1], depth + 1u, defaults));
+	if (base == nullptr || base->kind() == ColorSpaceKind::Indexed) {
+		return unusable("Indexed colour space has no usable base");
+	}
+	const std::optional<PdfValue> hival_value = value_of(array[2]);
+	std::optional<double> hival_number = hival_value.has_value() ? hival_value->as_number() : std::nullopt;
+	if (!hival_number.has_value() || !std::isfinite(*hival_number) || *hival_number < 0.0 ||
+		*hival_number != std::floor(*hival_number)) {
+		return unusable("Indexed colour space hival is not a non-negative integer");
+	}
+	uint32_t hival = 255u;
+	if (*hival_number > 255.0) {
+		(void)make_pdf_error(ErrorCode::DamagedFormat, "Indexed colour space hival is past 255; read as 255");
+	} else {
+		hival = static_cast<uint32_t>(*hival_number);
+	}
+	const std::optional<PdfValue> lookup_value = value_of(array[3]);
+	std::vector<uint8_t> lookup;
+	if (lookup_value.has_value() && lookup_value->as_string() != nullptr) {
+		const std::span<const uint8_t> bytes = lookup_value->as_string()->span();
+		lookup.assign(bytes.begin(), bytes.end());
+	} else if (lookup_value.has_value() && lookup_value->as_stream() != nullptr) {
+		auto bytes = document_.decode_stream(*lookup_value->as_stream(), kMaxIndexedLookupBytes);
+		if (!bytes.has_value()) {
+			if (bytes.error().code == ErrorCode::OutOfMemory) {
+				return bytes.error();
+			}
+			return unusable("Indexed colour space lookup stream cannot be decoded");
+		}
+		lookup = std::move(*bytes);
+	} else {
+		return unusable("Indexed colour space lookup is neither a string nor a stream");
+	}
+	const size_t needed = base->components() * (size_t{hival} + 1u);
+	if (lookup.size() < needed) {
+		// The defined entries still draw; the missing ones are zero bytes, as MuPDF reads a short table.
+		(void)make_pdf_error(ErrorCode::DamagedFormat, "Indexed colour space lookup is short; padded with zeros");
+	}
+	lookup.resize(needed, 0u);
+	return ColorSpace::indexed(std::move(base), hival, std::move(lookup));
+}
+
+PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
+	const PdfArray& array, bool device_n, size_t depth, bool defaults)
+{
+	// [/Separation name alternate tint] (8.6.6.4) and [/DeviceN names alternate tint attributes] (8.6.6.5).
+	const auto unusable = [](std::string_view why) {
+		(void)make_pdf_error(ErrorCode::DamagedFormat, why); // recorded
+		return std::shared_ptr<const ColorSpace>{};
+	};
+	if (array.size() < 4u) {
+		return unusable("Separation or DeviceN colour space does not have its names, alternate and tint transform");
+	}
+	std::vector<std::string> names;
+	const std::optional<PdfValue> names_value = value_of(array[1]);
+	if (!device_n) {
+		const std::optional<std::string_view> name = names_value.has_value() ? names_value->as_name() : std::nullopt;
+		if (!name.has_value()) {
+			return unusable("Separation colour space has no colorant name");
+		}
+		names.emplace_back(*name);
+	} else {
+		const PdfArray* list = names_value.has_value() ? names_value->as_array() : nullptr;
+		if (list == nullptr || list->empty() || list->size() > kMaxColorComponents) {
+			return unusable("DeviceN colour space does not name 1 to 32 colorants");
+		}
+		for (const PdfValue& element : *list) {
+			const std::optional<PdfValue> name_value = value_of(element);
+			const std::optional<std::string_view> name = name_value.has_value() ? name_value->as_name() : std::nullopt;
+			if (!name.has_value()) {
+				return unusable("DeviceN colour space names a colorant with something other than a name");
+			}
+			names.emplace_back(*name);
+		}
+	}
+	RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> alternate, resolve_at(array[2], depth + 1u, defaults));
+	if (!usable_alternate(alternate)) {
+		return unusable("Separation or DeviceN alternate space is not a device, CIE-based or ICCBased space");
+	}
+	auto tint = Function::parse(document_, array[3]);
+	if (!tint.has_value()) {
+		if (tint.error().code == ErrorCode::OutOfMemory) {
+			return tint.error();
+		}
+		return std::shared_ptr<const ColorSpace>{}; // the parse recorded why
+	}
+	if ((*tint)->inputs() != names.size() || (*tint)->outputs() < alternate->components()) {
+		return unusable("Tint transform does not take one input per colorant or give the alternate's components");
+	}
+	if (!device_n) {
+		return ColorSpace::separation(std::move(names.front()), std::move(alternate), std::move(*tint));
+	}
+	ColorSpace::DeviceNAttributes attributes;
+	const std::optional<PdfValue> attributes_value = array.size() >= 5u ? value_of(array[4]) : std::nullopt;
+	if (const PdfDict* dict = attributes_value.has_value() ? attributes_value->as_dict() : nullptr) {
+		if (const PdfValue* subtype = dict->get("Subtype")) {
+			const std::optional<PdfValue> v = value_of(*subtype);
+			attributes.nchannel = v.has_value() && v->as_name() == std::optional<std::string_view>("NChannel");
+		}
+		if (const PdfValue* colorants = dict->get("Colorants")) {
+			const std::optional<PdfValue> v = value_of(*colorants);
+			if (const PdfDict* map = v.has_value() ? v->as_dict() : nullptr) {
+				for (const auto& [name, entry] : *map) {
+					if (attributes.colorants.size() >= kMaxDeviceNColorants) {
+						break;
+					}
+					RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(entry, depth + 1u, defaults));
+					if (space != nullptr && space->kind() == ColorSpaceKind::Separation) {
+						attributes.colorants.emplace_back(name.value, std::move(space));
+					}
+				}
+			}
+		}
+		if (const PdfValue* process = dict->get("Process")) {
+			const std::optional<PdfValue> v = value_of(*process);
+			if (const PdfDict* process_dict = v.has_value() ? v->as_dict() : nullptr) {
+				if (const PdfValue* space = process_dict->get("ColorSpace")) {
+					RECTO_PDF_TRY(attributes.process, resolve_at(*space, depth + 1u, defaults));
+				}
+				if (const PdfValue* components = process_dict->get("Components")) {
+					const std::optional<PdfValue> list = value_of(*components);
+					if (const PdfArray* names_list = list.has_value() ? list->as_array() : nullptr) {
+						for (const PdfValue& element : *names_list) {
+							const std::optional<PdfValue> name_value = value_of(element);
+							const std::optional<std::string_view> name =
+								name_value.has_value() ? name_value->as_name() : std::nullopt;
+							if (name.has_value() && attributes.process_components.size() < kMaxColorComponents) {
+								attributes.process_components.emplace_back(*name);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return ColorSpace::device_n(std::move(names), std::move(alternate), std::move(*tint), std::move(attributes));
 }
 
 namespace detail {

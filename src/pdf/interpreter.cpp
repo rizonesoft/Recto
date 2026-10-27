@@ -36,15 +36,22 @@ namespace {
 	return f;
 }
 
-// A colour: its space (null for a space section 33 reads, which paints black until then) and its components.
+// A colour: its space (null for a space that cannot be used or is section 16's `Pattern`, which paints black) and its
+// components, as many as the space has (up to 32 for DeviceN, section 33).
 struct Color {
 	std::shared_ptr<const ColorSpace> space{ColorSpace::device(ColorSpaceKind::DeviceGray)};
-	std::array<double, 4> components{0.0, 0.0, 0.0, 0.0};
+	ColorComponents components{};
 
 	void reset(std::shared_ptr<const ColorSpace> to) noexcept
 	{
 		space = std::move(to);
-		components = space != nullptr ? space->initial() : std::array<double, 4>{0.0, 0.0, 0.0, 0.0};
+		components = space != nullptr ? space->initial() : ColorComponents{};
+	}
+
+	// False for a space that marks nothing (a `/None` colorant, section 33).
+	[[nodiscard]] bool paints() const noexcept
+	{
+		return space == nullptr || space->paints();
 	}
 };
 
@@ -1092,11 +1099,11 @@ private:
 		}
 	}
 
-	// A colour in sRGB with the rendering intent in force; black for a space section 33 reads. Each side remembers its
-	// last conversion, so a page of paints in one colour converts it once.
+	// A colour in sRGB with the rendering intent in force; black for a space that cannot be used. Each side remembers its
+	// last conversion, every component compared, so a page of paints in one colour converts it once.
 	struct Converted {
 		std::shared_ptr<const ColorSpace> space;
-		std::array<double, 4> components{};
+		ColorComponents components{};
 		RenderingIntent intent{RenderingIntent::RelativeColorimetric};
 		ColorRgba value{};
 	};
@@ -1161,6 +1168,9 @@ private:
 		}
 		const std::optional<FillRule> clip = pending_clip_;
 		pending_clip_.reset();
+		// A side whose colour marks nothing (a `/None` colorant, ISO 32000-1 8.6.6.4) is not painted.
+		fill = fill && state_.fill.paints();
+		stroke = stroke && state_.stroke.paints();
 		// A path that is neither painted nor clipped (`n` with no `W`) records nothing.
 		const bool records = !path_.empty() && (fill || stroke || clip.has_value());
 		auto done = records ? record_paint(fill, stroke, rule, clip) : PdfResult<void>{};

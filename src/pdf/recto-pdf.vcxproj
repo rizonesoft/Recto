@@ -49,6 +49,7 @@
     <ClCompile Include="font_charstrings.cpp" />
     <ClCompile Include="font_cid.cpp" />
     <ClCompile Include="font_encoding.cpp" />
+    <ClCompile Include="function.cpp" />
     <ClCompile Include="standard14.cpp" />
     <ClCompile Include="interpreter.cpp" />
     <ClCompile Include="serialize.cpp" />
@@ -68,6 +69,7 @@
     <ClInclude Include="font.h" />
     <ClInclude Include="cmap_lexer.h" />
     <ClInclude Include="font_charstrings.h" />
+    <ClInclude Include="function.h" />
     <ClInclude Include="font_cid.h" />
     <ClInclude Include="font_encoding.h" />
     <ClInclude Include="glyph_names.inc" />
