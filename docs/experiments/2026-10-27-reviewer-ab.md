@@ -40,6 +40,8 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | ------- | ---- | --------- | --- | ------ | ------- | ------------------- | ----- | ------- | --------- |
 | D01 T02 §33 | plan | `b7f73ca` | A | xhigh | 77 | 3/3/0 | 6 | 0 | 0 |
 | D01 T02 §33 | plan | `b7f73ca` | B | medium | 103 | 2/2/0 | 4 | 0 | 0 |
+| D01 T02 §33 | completion | `e4d9920` | A | xhigh | 131 | 10 gaps (untagged) | 10 | 0 | 0 |
+| D01 T02 §33 | completion | `e4d9920` | B | medium | 210 | 9 gaps (untagged) | 7 | 1 | 1 |
 
 ## Finding verdicts
 
@@ -55,6 +57,26 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | plan | B | 2 | P1 | valid | A5 (part) | Calculator division by zero, domain errors, non-finite results unspecified. Names failure classes A5 did not. |
 | D01 T02 §33 | plan | B | 3 | P2 | valid | none | `/Range` optional for types 2 and 3; the section implied it was always clipped. |
 | D01 T02 §33 | plan | B | 4 | P2 | valid | A4 | Checkpoint omitted `DeviceColors` and `DefaultColorSpaces`. |
+| D01 T02 §33 | completion | A | 1 | in-scope | valid | B2 | Multilinear or simplex chosen by fractional count: a colour jump at a sample boundary. Fixed. |
+| D01 T02 §33 | completion | A | 2 | in-scope | valid | B1b | One-input spline silently linear past 65,536 samples. Fixed with a recorded bound. |
+| D01 T02 §33 | completion | A | 3 | in-scope | valid | none | `/Order` other than 1 or 3 accepted silently. Fixed with a diagnostic. |
+| D01 T02 §33 | completion | A | 4 | in-scope | valid | B3 | -2147483648 read as a real. Fixed. |
+| D01 T02 §33 | completion | A | 5 | out-of-scope | valid | B6 | Text, image and Form consumers: already owned by `§4`. |
+| D01 T02 §33 | completion | A | 6 | out-of-scope | valid | none | No work budget inside colour conversion for a long calculator over a big image. Filed to `§19`. |
+| D01 T02 §33 | completion | A | 7 | out-of-scope | valid | B7 (part) | Spot colour goldens. Filed to D06 T01 §1. |
+| D01 T02 §33 | completion | A | 8 | in-scope | valid | B7 | Multi-input `/Order 3` drawn linearly. Filed as `§41` (the section had recorded it as a default). |
+| D01 T02 §33 | completion | A | 9 | out-of-scope | valid | B8 | Timings against Acrobat. Filed to D06 T01 §7; generic, low value. |
+| D01 T02 §33 | completion | A | 10 | out-of-scope | valid | none | Spot plate proofing: already planned in D04 T06 §11. |
+| D01 T02 §33 | completion | B | 1a | in-scope | invalid | none | "Order 3 must be ignored below 4 samples": no source found (ISO 32000-1 Table 39 names Order 1 and 3 only). |
+| D01 T02 §33 | completion | B | 1b | in-scope | valid | A2 | Spline silently linear past 65,536 samples. |
+| D01 T02 §33 | completion | B | 2 | in-scope | valid | A1 | Interpolation discontinuity, with a worked example. |
+| D01 T02 §33 | completion | B | 3 | in-scope | valid | A4 | Minimum signed integer. |
+| D01 T02 §33 | completion | B | 4 | in-scope | valid | none | No cumulative memory bound: one 16 MiB table named 255 times asks for about 4 GiB from a small file. The most severe finding of the pass (P1 by reach); Terra missed it. Fixed. |
+| D01 T02 §33 | completion | B | 5 | in-scope | valid | none | Shared atomic test counter against the Freeze check. Fixed (thread-local). |
+| D01 T02 §33 | completion | B | 6 | out-of-scope | valid | A5 | `§4` consumers. |
+| D01 T02 §33 | completion | B | 7 | in-scope | valid | A8, A7 | Multi-input cubic and goldens. |
+| D01 T02 §33 | completion | B | 8 | in-scope | valid | A9 | Timings against Acrobat; generic. |
+| D01 T02 §33 | completion | B | 9 | out-of-scope | duplicate | B6 | Repeats its own gap 6. |
 
 ## Results
 
