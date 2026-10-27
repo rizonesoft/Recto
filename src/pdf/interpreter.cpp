@@ -571,13 +571,13 @@ private:
 		return n;
 	}
 
-	// The operands as `count` finite numbers, or none when they are not exactly that.
-	[[nodiscard]] static std::optional<std::array<double, 6>> numbers(const std::vector<PdfValue>& operands, size_t count) noexcept
+	// The operands as `count` finite numbers (at most a colour's 32 components), or none when they are not exactly that.
+	[[nodiscard]] static std::optional<ColorComponents> numbers(const std::vector<PdfValue>& operands, size_t count) noexcept
 	{
-		if (operands.size() != count) {
+		ColorComponents out{};
+		if (operands.size() != count || count > out.size()) {
 			return std::nullopt;
 		}
-		std::array<double, 6> out{};
 		for (size_t i = 0; i < count; ++i) {
 			const auto n = number(operands[i]);
 			if (!n.has_value()) {

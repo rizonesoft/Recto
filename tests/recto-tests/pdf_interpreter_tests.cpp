@@ -1562,13 +1562,15 @@ TEST(PdfInterpreter, Functions)
 		EXPECT_NEAR(evaluate(g, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9})[0], 0.5 * 285.0, 1e-9);
 		EXPECT_NEAR(evaluate(g, {1, 0, 0, 0, 0, 0, 0, 0, 0})[0], 5.0, kTight);
 	}
-	// /Order 3, one input: the natural cubic spline through (0, 0), (1, 1), (2, 0) has M1 = -3, so at 0.5 it is
-	// 0.5 + 1.125 / 6 = 0.6875 where the line gives 0.5.
+	// /Order 3, one input: the natural cubic spline through (0, 0), (1, 1), (2, 0), (3, 1) has M1 = -4 and M2 = 4, so at
+	// 0.5 it is 0.5 + 1.5 / 6 = 0.75 where the line gives 0.5; with fewer than 4 samples Order 3 is Order 1 (Table 39).
 	{
-		RECTO_PARSED(f, {sampled("/Domain [0 2] /Range [0 1] /Size [3] /BitsPerSample 8 /Order 3", std::string("\x00\xFF\x00", 3))});
-		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.6875, kTight);
+		RECTO_PARSED(f, {sampled("/Domain [0 3] /Range [0 1] /Size [4] /BitsPerSample 8 /Order 3", std::string("\x00\xFF\x00\xFF", 4))});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.75, kTight);
 		EXPECT_NEAR(evaluate(f, {1.0})[0], 1.0, kTight);
-		EXPECT_NEAR(evaluate(f, {1.5})[0], 0.6875, kTight);
+		EXPECT_NEAR(evaluate(f, {1.5})[0], 0.5, kTight);
+		RECTO_PARSED(g, {sampled("/Domain [0 2] /Range [0 1] /Size [3] /BitsPerSample 8 /Order 3", std::string("\x00\xFF\x00", 3))});
+		EXPECT_NEAR(evaluate(g, {0.5})[0], 0.5, kTight);
 	}
 
 	// Nine inputs: the interpolation is chosen by the input count, so moving one input off a sample changes the result
@@ -1631,7 +1633,8 @@ TEST(PdfInterpreter, Functions)
 		const size_t nine = size_t{9} << 20u;
 		RECTO_PARSED(f, {"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 6 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
 			flat_table(nine, 0xFFu)});
-		EXPECT_EQ(f.table_bytes(), nine);
+		EXPECT_GE(f.table_bytes(), nine);
+		EXPECT_LT(f.table_bytes(), nine + (size_t{64} << 10u)) << "the shared table is charged once";
 		EXPECT_NEAR(evaluate(f, {1.5})[0], 1.0, kTight);
 		const PdfError two = refusal_of({"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 7 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
 			flat_table(nine, 0xFFu), flat_table(nine, 0x80u)});
@@ -1700,6 +1703,16 @@ TEST(PdfInterpreter, Functions)
 		EXPECT_NEAR(out[0], 0.25, kTight);
 		EXPECT_NEAR(out[1], 0.75, kTight);
 		EXPECT_NEAR(out[2], 0.5, kTight);
+	}
+
+	// Each function of an array clips the input to its own /Domain: [0 0.5], [0 1] and [0 1] at 0.75.
+	{
+		RECTO_PARSED(f, {"[6 0 R 7 0 R 7 0 R]", "<< /FunctionType 2 /Domain [0 0.5] /N 1 >>", "<< /FunctionType 2 /Domain [0 1] /N 1 >>"});
+		const auto out = evaluate(f, {0.75});
+		ASSERT_EQ(out.size(), 3u);
+		EXPECT_NEAR(out[0], 0.5, kTight);
+		EXPECT_NEAR(out[1], 0.75, kTight);
+		EXPECT_NEAR(out[2], 0.75, kTight);
 	}
 
 	// Type 4: every operator of 7.10.5, each in a program whose result is computed by hand beside it.
@@ -1775,6 +1788,108 @@ TEST(PdfInterpreter, Functions)
 	EXPECT_EQ(refusal_of({"<< /FunctionType 1 /Domain [0 1] >>"}).code, ErrorCode::DamagedFormat);
 	EXPECT_EQ(refusal_of({sampled("/Range [0 1] /Size [2] /BitsPerSample 8", "\x00\x01")}).code, ErrorCode::DamagedFormat)
 		<< "no /Domain";
+	// A span too wide for floating point is refused, so interpolation never meets infinity or NaN.
+	{
+		const std::string huge = "1" + std::string(308u, '0') + ".0"; // a real; spans of two such are past double
+		EXPECT_EQ(refusal_of({sampled("/Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 8 /Encode [-" + huge + " " + huge + "]",
+					  std::string("\x00\xFF", 2))})
+					  .code,
+			ErrorCode::DamagedFormat);
+		EXPECT_EQ(refusal_of({"<< /FunctionType 2 /Domain [-" + huge + " " + huge + "] /N 1 >>"}).code, ErrorCode::DamagedFormat);
+	}
+	// A shared subtree counts its depth wherever it is named again: seven stitching levels over a leaf fit at depth 1,
+	// and the same subtree wrapped once more reaches depth 9.
+	{
+		std::vector<std::string> objects{"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 7 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
+			"<< /FunctionType 3 /Domain [0 1] /Functions [8 0 R] /Bounds [] /Encode [0 1] >>",  // 6: C7
+			"<< /FunctionType 3 /Domain [0 1] /Functions [6 0 R] /Bounds [] /Encode [0 1] >>"}; // 7: W wraps C7
+		for (int level = 6; level >= 1; --level) {
+			objects.push_back("<< /FunctionType 3 /Domain [0 1] /Functions [" + std::to_string(9 + (6 - level)) +
+				" 0 R] /Bounds [] /Encode [0 1] >>"); // 8 to 13: C6 to C1
+		}
+		objects.emplace_back("<< /FunctionType 2 /Domain [0 1] /N 1 >>"); // 14: the leaf
+		const PdfError deep = refusal_of(objects);
+		EXPECT_EQ(deep.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(deep.refusal_reason, RefusalReason::FunctionDepth);
+	}
+	// A shared subtree counts every function in it each time it is named: 200 functions named twice pass 256.
+	{
+		std::string pieces;
+		std::string bounds;
+		std::string encode;
+		for (int i = 0; i < 199; ++i) {
+			pieces += "7 0 R ";
+			encode += "0 1 ";
+			if (i + 1 < 199) {
+				bounds += "0.5 ";
+			}
+		}
+		const PdfError many = refusal_of({"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 6 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
+			"<< /FunctionType 3 /Domain [0 1] /Functions [" + pieces + "] /Bounds [" + bounds + "] /Encode [" + encode + "] >>",
+			"<< /FunctionType 2 /Domain [0 1] /N 1 >>"});
+		EXPECT_EQ(many.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(many.refusal_reason, RefusalReason::FunctionNodes);
+	}
+	// Calculator programs count against the tree's 16 MiB: seventeen distinct 65,536-operator programs are refused.
+	{
+		std::string body = "{";
+		for (size_t i = 0; i < kMaxCalculatorOperators / 2u - 1u; ++i) {
+			body += " dup pop";
+		}
+		body += " }";
+		std::string functions;
+		std::string bounds;
+		std::string encode;
+		std::vector<std::string> objects{""};
+		for (int i = 0; i < 17; ++i) {
+			functions += std::to_string(6 + i) + " 0 R ";
+			encode += "0 1 ";
+			if (i + 1 < 17) {
+				bounds += "0.5 ";
+			}
+			auto packed = flate_compress(std::vector<uint8_t>(body.begin(), body.end()));
+			ASSERT_TRUE(packed.has_value());
+			// Each program differs by its /Range, so none is the same object.
+			objects.push_back(stream_object("/FunctionType 4 /Domain [0 1] /Range [0 " + std::to_string(i + 1) + "] /Filter /FlateDecode",
+				std::string(packed->begin(), packed->end())));
+		}
+		objects[0] = "<< /FunctionType 3 /Domain [0 1] /Functions [" + functions + "] /Bounds [" + bounds + "] /Encode [" + encode + "] >>";
+		const PdfError too_many = refusal_of(objects);
+		EXPECT_EQ(too_many.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(too_many.refusal_reason, RefusalReason::CalculatorOperators);
+		RECTO_PARSED(one, {objects[1]});
+		EXPECT_GE(one.table_bytes(), size_t{1} << 20u) << "a 65,534-operator program is charged its instructions";
+	}
+	// A sample table keeps only the bytes /Size names, not a longer decoded buffer: three functions each declaring two
+	// samples over 8 MiB of decoded stream hold almost nothing once parsed, where the buffers' capacity would be 24 MiB.
+	if (recto::test::ScopedHeapMeter::available()) {
+		const size_t eight = size_t{8} << 20u;
+		const auto padded = [&](uint8_t fill) {
+			auto packed = flate_compress(std::vector<uint8_t>(eight, fill));
+			EXPECT_TRUE(packed.has_value());
+			return stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 8 /Filter /FlateDecode",
+				packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string());
+		};
+		const auto holder = std::make_unique<ParsedFunction>();
+		holder->bytes = one_page_pdf(std::nullopt, "<< >>",
+			{"<< /FunctionType 3 /Domain [0 3] /Functions [6 0 R 7 0 R 8 0 R] /Bounds [1 2] /Encode [0 1 0 1 0 1] >>", padded(1u),
+				padded(2u), padded(3u)});
+		auto doc = Document::open_memory(holder->bytes);
+		ASSERT_TRUE(doc.has_value());
+		std::shared_ptr<const Function> kept;
+		int64_t held = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			auto parsed = Function::parse(**doc, PdfValue(IndirectRef{5u, 0u}));
+			ASSERT_TRUE(parsed.has_value());
+			kept = *parsed;
+			parsed = make_pdf_error(ErrorCode::Ok); // only `kept` holds the function now
+			held = meter.live_bytes();
+		}
+		EXPECT_LT(held, int64_t{1} << 20) << "the decoded buffers' capacity was kept";
+		EXPECT_LT(kept->table_bytes(), size_t{64} << 10u);
+	}
+
 	// Stitching nested 8 deep parses; 9 deep is refused.
 	const auto chain = [](int levels) {
 		std::vector<std::string> objects;
@@ -1970,11 +2085,12 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 							stream_object("/N 3", corpus_text("color/rgb-matrix.icc"))}))
 					.fill_color,
 		kRgbMatrix128_64_200, 2, "Separation into ICCBased");
-	// /All draws through its transform like any colorant: tint 0.25 of black is gray 0.75.
-	expect_color(painted(interpret_spaces("/A cs 0.25 scn 0 0 10 10 re f", "/A [/Separation /All /DeviceGray 5 0 R]",
-						 {"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>"}))
-					 .fill_color,
-		0.75f, 0.75f, 0.75f);
+	// /All applies its tint to every colorant and ignores its alternate and tint transform (8.6.6.4): tint 1 is black and
+	// tint 0.25 gray 0.75, even through an identity transform that would give white and gray 0.25.
+	const std::string all = "/A [/Separation /All /DeviceGray 5 0 R]";
+	const std::string identity = "<< /FunctionType 2 /Domain [0 1] /N 1 >>";
+	expect_color(painted(interpret_spaces("/A cs 1 scn 0 0 10 10 re f", all, {identity})).fill_color, 0.0f, 0.0f, 0.0f);
+	expect_color(painted(interpret_spaces("/A cs 0.25 scn 0 0 10 10 re f", all, {identity})).fill_color, 0.75f, 0.75f, 0.75f);
 
 	// DeviceN of six colorants into DeviceRGB, red from the sixth tint: two colours that differ only in it paint apart.
 	const std::string six = "/N [/DeviceN [/C1 /C2 /C3 /C4 /C5 /C6] /DeviceRGB 5 0 R]";
@@ -1993,6 +2109,27 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 	expect_color(painted(interpret_spaces("/N cs 0 0 0 0 0 0.2 scn 0.5 0.5 0.5 scn 0 0 10 10 re f", six, {sixth_to_red})).fill_color,
 		0.2f, 0.0f, 0.0f); // the wrong number of tints is skipped
 	expect_color(painted(interpret_spaces("/N cs 0 0 10 10 re f", six, {sixth_to_red})).fill_color, 1.0f, 0.0f, 0.0f); // every initial tint is 1.0
+	// Seven and thirty-two colorants: the last tint is red, past any small fixed operand array.
+	for (const int count : {7, 32}) {
+		SCOPED_TRACE(count);
+		std::string names;
+		std::string domain;
+		std::string tints;
+		std::string program = "{ " + std::to_string(count) + " 1 roll";
+		for (int i = 0; i < count; ++i) {
+			names += "/C" + std::to_string(i) + " ";
+			domain += "0 1 ";
+			tints += i + 1 == count ? "0.4 " : "0 ";
+			if (i + 1 < count) {
+				program += " pop";
+			}
+		}
+		program += " 0 0 }";
+		expect_color(painted(interpret_spaces("/N cs " + tints + "scn 0 0 10 10 re f", "/N [/DeviceN [" + names + "] /DeviceRGB 5 0 R]",
+						 {calculator(program, "/Domain [" + domain + "] /Range [0 1 0 1 0 1]")}))
+						 .fill_color,
+			0.4f, 0.0f, 0.0f);
+	}
 
 	// An NChannel /Attributes, read through the accessors.
 	{
@@ -2013,6 +2150,23 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 		EXPECT_EQ(s.process()->kind(), ColorSpaceKind::DeviceCMYK);
 		ASSERT_EQ(s.process_components().size(), 4u);
 		EXPECT_EQ(s.process_components()[3], "Black");
+	}
+
+	// /Colorants: at most 64 entries examined, and only Separation arrays resolved (an entry naming a DeviceN space is
+	// skipped unresolved, so colorant dictionaries cannot fan out into one another).
+	{
+		std::string many;
+		for (int i = 0; i < 100; ++i) {
+			many += "/S" + std::to_string(i) + " 8 0 R /D" + std::to_string(i) + " 9 0 R ";
+		}
+		const auto space = resolve_space({"[/DeviceN [/A] /DeviceGray 6 0 R 7 0 R]", "<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>", "<< /Colorants << " + many + ">> >>",
+			"[/Separation /Spot /DeviceGray 6 0 R]", "[/DeviceN [/A] /DeviceGray 6 0 R 7 0 R]"});
+		ASSERT_NE(space->space, nullptr);
+		EXPECT_LE(space->space->colorant_spaces().size(), 64u);
+		EXPECT_GE(space->space->colorant_spaces().size(), 1u);
+		for (const auto& [name, colorant] : space->space->colorant_spaces()) {
+			EXPECT_EQ(colorant->kind(), ColorSpaceKind::Separation) << name;
+		}
 	}
 
 	// /None paints nothing: the fill is dropped while the stroke still paints, and a fill alone records no command.

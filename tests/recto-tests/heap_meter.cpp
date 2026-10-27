@@ -104,6 +104,11 @@ size_t ScopedHeapMeter::allocated_bytes() const noexcept
 	return static_cast<size_t>(t_meter.allocated);
 }
 
+int64_t ScopedHeapMeter::live_bytes() const noexcept
+{
+	return t_meter.live;
+}
+
 bool ScopedHeapMeter::available() noexcept
 {
 	return true;
@@ -191,6 +196,11 @@ size_t ScopedHeapMeter::peak_bytes() const noexcept
 }
 
 size_t ScopedHeapMeter::allocated_bytes() const noexcept
+{
+	return 0;
+}
+
+int64_t ScopedHeapMeter::live_bytes() const noexcept
 {
 	return 0;
 }

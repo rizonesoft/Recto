@@ -119,6 +119,8 @@ struct Function::Node {
 	Type type = Type::Exponential;
 	size_t m = 0;
 	size_t n = 0;
+	size_t height = 0;   // levels of subfunctions below this one
+	size_t expanded = 1; // functions in this subtree, a shared subfunction counted each time it is named
 	std::vector<double> domain; // two per input
 	std::vector<double> range;  // two per output, or empty (types 2 and 3 may omit it)
 
@@ -196,10 +198,21 @@ struct ParseContext {
 	}
 }
 
-// Pairs (`/Domain`, `/Range`): an even count from 2 to 2 * `limit`, each pair ordered.
+// Every pair's span is finite, so interpolating across it never overflows to infinity or NaN.
+[[nodiscard]] bool finite_spans(const std::vector<double>& pairs) noexcept
+{
+	for (size_t i = 0; i + 1u < pairs.size(); i += 2u) {
+		if (!std::isfinite(pairs[i + 1u] - pairs[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Pairs (`/Domain`, `/Range`): an even count from 2 to 2 * `limit`, each pair ordered with a finite span.
 [[nodiscard]] bool ordered_pairs(const std::vector<double>& pairs, size_t limit) noexcept
 {
-	if (pairs.empty() || pairs.size() % 2u != 0u || pairs.size() > 2u * limit) {
+	if (pairs.empty() || pairs.size() % 2u != 0u || pairs.size() > 2u * limit || !finite_spans(pairs)) {
 		return false;
 	}
 	for (size_t i = 0; i < pairs.size(); i += 2u) {
@@ -305,8 +318,8 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 	}
 	RECTO_PDF_TRY(const std::optional<std::vector<double>> encode, numbers(document, dict, "Encode"));
 	if (encode.has_value()) {
-		if (encode->size() != 2u * node->m) {
-			return damaged("Sampled function /Encode does not give two numbers per input");
+		if (encode->size() != 2u * node->m || !finite_spans(*encode)) {
+			return damaged("Sampled function /Encode does not give two numbers per input with a finite span");
 		}
 		node->encode = *encode;
 	} else {
@@ -317,8 +330,8 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 	}
 	RECTO_PDF_TRY(const std::optional<std::vector<double>> decode, numbers(document, dict, "Decode"));
 	if (decode.has_value()) {
-		if (decode->size() != 2u * node->n) {
-			return damaged("Sampled function /Decode does not give two numbers per output");
+		if (decode->size() != 2u * node->n || !finite_spans(*decode)) {
+			return damaged("Sampled function /Decode does not give two numbers per output with a finite span");
 		}
 		node->decode = *decode;
 	} else {
@@ -337,8 +350,9 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 	if (bytes->size() < table_bytes) {
 		return damaged("Sampled function table is shorter than /Size and /BitsPerSample need");
 	}
-	bytes->resize(static_cast<size_t>(table_bytes));
-	node->samples = std::move(*bytes);
+	// An exact copy, so the node never keeps a longer decoded buffer's capacity it was not charged for.
+	node->samples.assign(bytes->begin(), bytes->begin() + static_cast<std::ptrdiff_t>(table_bytes));
+	bytes = std::vector<uint8_t>{};
 	context.bytes += node->samples.size();
 	if (order.has_value() && *order != 1 && *order != 3) {
 		// 7.10.2: only 1 and 3 are valid; any other value is drawn linearly, as the default.
@@ -352,7 +366,8 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes, node->size[0],
 			kMaxSplineSamples, "Sampled function /Order 3 table is past the spline limit; drawn linearly"));
 	} else if (order == 3) {
-		if (node->m == 1u && node->size[0] >= 3u) {
+		// Table 39: Order 3 with fewer than 4 samples in a dimension is drawn as Order 1.
+		if (node->m == 1u && node->size[0] >= 4u) {
 			context.bytes += static_cast<size_t>(spline_bytes);
 			node->cubic = true;
 			const size_t count = node->size[0];
@@ -546,6 +561,13 @@ PdfResult<std::unique_ptr<Function::Node>> parse_calculator(
 	}
 	CalculatorCompiler compiler(std::string_view(reinterpret_cast<const char*>(bytes->data()), bytes->size()));
 	RECTO_PDF_TRY(node->code, compiler.compile());
+	node->code.shrink_to_fit();
+	const size_t code_bytes = node->code.capacity() * sizeof(CalcInstr);
+	if (context.bytes + code_bytes > kMaxFunctionTreeBytes) {
+		return limited("Calculator programs of one function are larger together than their limit",
+			RefusalReason::CalculatorOperators, context.bytes + code_bytes, kMaxFunctionTreeBytes);
+	}
+	context.bytes += code_bytes;
 	return node;
 }
 
@@ -619,6 +641,11 @@ PdfResult<std::unique_ptr<Function::Node>> parse_fresh(ParseContext& context, co
 				return damaged("Exponential function /C0, /C1 and /Range disagree on the outputs");
 			}
 			node->n = node->c0.size();
+			for (size_t j = 0; j < node->n; ++j) {
+				if (!std::isfinite(node->c1[j] - node->c0[j])) {
+					return damaged("Exponential function /C0 and /C1 are too far apart");
+				}
+			}
 			const PdfValue* n_entry = dict->get("N");
 			if (n_entry == nullptr) {
 				return damaged("Exponential function has no /N");
@@ -660,7 +687,8 @@ PdfResult<std::unique_ptr<Function::Node>> parse_fresh(ParseContext& context, co
 			node->n = outputs;
 			RECTO_PDF_TRY(const std::optional<std::vector<double>> bounds, numbers(document, *dict, "Bounds"));
 			RECTO_PDF_TRY(const std::optional<std::vector<double>> encode, numbers(document, *dict, "Encode"));
-			if (!bounds.has_value() || bounds->size() != k - 1u || !encode.has_value() || encode->size() != 2u * k) {
+			if (!bounds.has_value() || bounds->size() != k - 1u || !encode.has_value() || encode->size() != 2u * k ||
+				!finite_spans(*encode)) {
 				return damaged("Stitching function /Bounds or /Encode does not match its functions");
 			}
 			double previous = node->domain[0];
@@ -702,11 +730,31 @@ PdfResult<std::shared_ptr<const Function::Node>> parse_node(ParseContext& contex
 		if (ref.has_value()) {
 			for (const auto& [number, node] : context.parsed) {
 				if (number == ref->obj_num) {
+					// A shared subtree named again counts with its depth below this point and every function in it.
+					if (depth + node->height > kMaxFunctionDepth) {
+						return limited("Functions nest deeper than their limit", RefusalReason::FunctionDepth,
+							depth + node->height, kMaxFunctionDepth);
+					}
+					context.nodes += node->expanded - 1u;
+					if (context.nodes > kMaxFunctionNodes) {
+						return limited("A function tree holds more functions than its limit", RefusalReason::FunctionNodes,
+							context.nodes, kMaxFunctionNodes);
+					}
 					return node;
 				}
 			}
 		}
 		RECTO_PDF_TRY(std::unique_ptr<Function::Node> fresh, parse_fresh(context, value, depth));
+		for (const std::shared_ptr<const Function::Node>& child : fresh->children) {
+			fresh->height = std::max(fresh->height, child->height + 1u);
+			fresh->expanded += child->expanded;
+		}
+		// Each function's own bookkeeping counts too, so a tree of many small functions is bounded like one large one.
+		if (context.bytes + sizeof(Function::Node) > kMaxFunctionTreeBytes) {
+			return limited("A function tree is larger than its limit", RefusalReason::FunctionNodes, context.nodes,
+				kMaxFunctionNodes);
+		}
+		context.bytes += sizeof(Function::Node);
 		std::shared_ptr<const Function::Node> node(std::move(fresh));
 		if (ref.has_value()) {
 			context.parsed.emplace_back(ref->obj_num, node);
@@ -747,8 +795,8 @@ void Function::Node::evaluate_sampled(std::span<const double> x, std::span<doubl
 	uint64_t base = 0;
 	double e0 = 0.0;
 	for (size_t i = 0; i < m; ++i) {
-		const double e = std::clamp(interpolate(x[i], domain[2u * i], domain[2u * i + 1u], encode[2u * i], encode[2u * i + 1u]),
-			0.0, static_cast<double>(size[i] - 1u));
+		double e = interpolate(x[i], domain[2u * i], domain[2u * i + 1u], encode[2u * i], encode[2u * i + 1u]);
+		e = std::isfinite(e) ? std::clamp(e, 0.0, static_cast<double>(size[i] - 1u)) : 0.0; // never an index from NaN
 		if (i == 0u) {
 			e0 = e;
 		}
@@ -1244,9 +1292,10 @@ bool Function::Node::evaluate(std::span<const double> in, std::span<double> out)
 		}
 		return true;
 	case Type::Array: {
+		// Each function of an array takes the input as given and clips it to its own /Domain.
 		bool ok = true;
 		for (size_t j = 0; j < n && ok; ++j) {
-			ok = children[j]->evaluate(x, out.subspan(j, 1u));
+			ok = children[j]->evaluate(in, out.subspan(j, 1u));
 		}
 		if (!ok) {
 			for (size_t j = 0; j < n; ++j) {

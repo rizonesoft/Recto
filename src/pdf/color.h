@@ -39,7 +39,6 @@ inline constexpr size_t kMaxDeviceNColorants = 64u; // entries read from a Devic
 // Tint transform tables one interpretation holds: each function object is parsed once per interpretation and shared by
 // every space naming it, and distinct ones add up to this; past it a space is unusable, with a diagnostic.
 inline constexpr size_t kMaxColorFunctionBytes = size_t{64} << 20u;
-inline constexpr size_t kMaxCachedColorFunctions = 256u;
 
 using ColorComponents = std::array<double, kMaxColorComponents>;
 

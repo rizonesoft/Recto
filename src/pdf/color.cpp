@@ -734,6 +734,15 @@ PdfResult<void> ColorSpace::to_srgb(
 		}
 		return base_->to_srgb(entries, count, intent, document, out);
 	}
+	if (kind_ == ColorSpaceKind::Separation && names_.front() == "All") {
+		// 8.6.6.4: `/All` applies its tint to every colorant at once and its alternate space and tint transform are
+		// ignored; on a composite display every colorant at tint t is gray 1 - t (a registration mark is black).
+		for (size_t i = 0; i < count; ++i) {
+			const double t = std::isfinite(in[i]) ? std::clamp(in[i], 0.0, 1.0) : 0.0;
+			out[3u * i] = out[3u * i + 1u] = out[3u * i + 2u] = 1.0 - t;
+		}
+		return {};
+	}
 	if (kind_ == ColorSpaceKind::Separation || kind_ == ColorSpaceKind::DeviceN) {
 		// Each colour's tints, clipped to 0 to 1, through the tint transform into the alternate space, converted there
 		// in one call. A failed transform gives its lowest values, recorded once for the run.
@@ -1418,9 +1427,19 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 		if (const PdfValue* colorants = dict->get("Colorants")) {
 			const std::optional<PdfValue> v = value_of(*colorants);
 			if (const PdfDict* map = v.has_value() ? v->as_dict() : nullptr) {
+				size_t examined = 0;
 				for (const auto& [name, entry] : *map) {
-					if (attributes.colorants.size() >= kMaxDeviceNColorants) {
+					// At most the bound examined, accepted or not, and only a Separation array resolved, so a
+					// /Colorants dictionary can never fan out into other DeviceN spaces.
+					if (++examined > kMaxDeviceNColorants) {
 						break;
+					}
+					const std::optional<PdfValue> colorant = value_of(entry);
+					const PdfArray* colorant_array = colorant.has_value() ? colorant->as_array() : nullptr;
+					const std::optional<PdfValue> head =
+						colorant_array != nullptr && !colorant_array->empty() ? value_of((*colorant_array)[0]) : std::nullopt;
+					if (!head.has_value() || head->as_name() != std::optional<std::string_view>("Separation")) {
+						continue;
 					}
 					RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, resolve_at(entry, depth + 1u, defaults));
 					if (space != nullptr && space->kind() == ColorSpaceKind::Separation) {
@@ -1478,8 +1497,8 @@ PdfResult<std::shared_ptr<const Function>> ColorSpaces::tint_transform(const Pdf
 		return std::shared_ptr<const Function>{};
 	}
 	function_bytes_ += bytes;
-	if (ref.has_value() && functions_.size() < kMaxCachedColorFunctions) {
-		functions_.emplace_back(ref->obj_num, *parsed);
+	if (ref.has_value()) {
+		functions_.emplace_back(ref->obj_num, *parsed); // bounded by the byte budget, each function at least its node
 	}
 	return std::move(*parsed);
 }
