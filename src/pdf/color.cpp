@@ -1398,18 +1398,15 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 	if (!usable_alternate(alternate)) {
 		return unusable("Separation or DeviceN alternate space is not a device, CIE-based or ICCBased space");
 	}
-	auto tint = Function::parse(document_, array[3]);
-	if (!tint.has_value()) {
-		if (tint.error().code == ErrorCode::OutOfMemory) {
-			return tint.error();
-		}
-		return std::shared_ptr<const ColorSpace>{}; // the parse recorded why
+	RECTO_PDF_TRY(std::shared_ptr<const Function> tint, tint_transform(array[3]));
+	if (tint == nullptr) {
+		return std::shared_ptr<const ColorSpace>{}; // recorded
 	}
-	if ((*tint)->inputs() != names.size() || (*tint)->outputs() < alternate->components()) {
+	if (tint->inputs() != names.size() || tint->outputs() < alternate->components()) {
 		return unusable("Tint transform does not take one input per colorant or give the alternate's components");
 	}
 	if (!device_n) {
-		return ColorSpace::separation(std::move(names.front()), std::move(alternate), std::move(*tint));
+		return ColorSpace::separation(std::move(names.front()), std::move(alternate), std::move(tint));
 	}
 	ColorSpace::DeviceNAttributes attributes;
 	const std::optional<PdfValue> attributes_value = array.size() >= 5u ? value_of(array[4]) : std::nullopt;
@@ -1454,7 +1451,37 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 			}
 		}
 	}
-	return ColorSpace::device_n(std::move(names), std::move(alternate), std::move(*tint), std::move(attributes));
+	return ColorSpace::device_n(std::move(names), std::move(alternate), std::move(tint), std::move(attributes));
+}
+
+PdfResult<std::shared_ptr<const Function>> ColorSpaces::tint_transform(const PdfValue& value)
+{
+	const std::optional<IndirectRef> ref = value.as_ref();
+	if (ref.has_value()) {
+		for (const auto& [number, function] : functions_) {
+			if (number == ref->obj_num) {
+				return function;
+			}
+		}
+	}
+	auto parsed = Function::parse(document_, value);
+	if (!parsed.has_value()) {
+		if (parsed.error().code == ErrorCode::OutOfMemory) {
+			return parsed.error();
+		}
+		return std::shared_ptr<const Function>{}; // the parse recorded why
+	}
+	const size_t bytes = (*parsed)->table_bytes();
+	if (function_bytes_ + bytes > kMaxColorFunctionBytes) {
+		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes,
+			function_bytes_ + bytes, kMaxColorFunctionBytes, "Tint transform tables past the page's limit"));
+		return std::shared_ptr<const Function>{};
+	}
+	function_bytes_ += bytes;
+	if (ref.has_value() && functions_.size() < kMaxCachedColorFunctions) {
+		functions_.emplace_back(ref->obj_num, *parsed);
+	}
+	return std::move(*parsed);
 }
 
 namespace detail {

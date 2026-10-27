@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 98 | Checklist items: 630
+Sections: 98 | Checklist items: 633
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -96,7 +96,7 @@ Sections: 98 | Checklist items: 630
 | [x]    | D01 T02 §29 | Type 1 and CFF charstrings to glyph outlines (`eexec`, Type 2, `seac`, subroutines)      | windows-host              | 9     |
 | [x]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
 | [x]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 7     |
-| [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 6     |
+| [ ]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 7     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
@@ -112,7 +112,7 @@ Sections: 98 | Checklist items: 630
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 9     |
 | [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 9     |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
-| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 8     |
+| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 9     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
@@ -127,7 +127,7 @@ Sections: 98 | Checklist items: 630
 | [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host              | 8     |
 | [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host              | 7     |
 | [ ]    | D01 T03 §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths               | windows-host              | 6     |
-| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 8     |
+| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 9     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host              | 8     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
@@ -157,7 +157,7 @@ Sections: 98 | Checklist items: 630
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1312
+Sections: 148 | Checklist items: 1313
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -303,7 +303,7 @@ Sections: 148 | Checklist items: 1312
 | [ ]    | D02 T01 §22 | Cold-launch path: Home interactive within the 400 ms budget                              | windows-host, display-session | 8     |
 | [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 4     |
 | [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 9     |
-| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 11    |
+| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 12    |
 | [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks           | windows-host, display-session | 14    |
@@ -712,12 +712,13 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 76 | Checklist items: 546
+Sections: 77 | Checklist items: 548
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
 | [ ]    | D01 T02 §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths                | windows-host                        | 4     |
 | [ ]    | D01 T02 §40 | Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history     | windows-host                        | 4     |
+| [ ]    | D01 T02 §41 | Cubic interpolation for multi-input `/Order 3` sampled functions                         | windows-host                        | 2     |
 | [ ]    | D06 T01 §9  | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF                 | windows-host, attended, third-party | 4     |
 | [ ]    | D06 T01 §10 | Save time and file size compared with Acrobat Pro, Foxit, PDFelement and UPDF            | windows-host, attended, third-party | 6     |
 | [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                        | 7     |
@@ -915,6 +916,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 87/846 verified sections, 34 ready to run now.
+Progress: 87/847 verified sections, 34 ready to run now.
 
-Checklist: 551/6237 items completed (includes Commit items).
+Checklist: 552/6243 items completed (includes Commit items).

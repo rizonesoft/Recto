@@ -21,6 +21,10 @@ inline constexpr size_t kMaxFunctionOutputs = 32u;
 inline constexpr size_t kMaxFunctionDepth = 8u;    // nested stitching functions
 inline constexpr size_t kMaxFunctionNodes = 256u;  // functions in one tree, shared subfunctions counted each time
 inline constexpr size_t kMaxSampledFunctionBytes = size_t{16} << 20u; // a type 0 sample table, decoded
+// All sample tables and spline tables of one function tree together: a subfunction an indirect reference names again is
+// parsed once and shared, so repeating a reference costs nothing, while distinct tables add up to this.
+inline constexpr size_t kMaxFunctionTreeBytes = kMaxSampledFunctionBytes;
+inline constexpr size_t kMaxSplineSamples = 65'536u; // a one-input `/Order 3` table past this is drawn linearly
 inline constexpr size_t kMaxCalculatorOperators = 65'536u;          // tokens in one type 4 program
 inline constexpr size_t kMaxCalculatorProgramBytes = size_t{1} << 20u; // a type 4 program's stream, decoded
 inline constexpr size_t kCalculatorStackDepth = 100u;               // 7.10.5: the operand stack
@@ -42,6 +46,8 @@ public:
 
 	[[nodiscard]] size_t inputs() const noexcept;
 	[[nodiscard]] size_t outputs() const noexcept;
+	// The bytes its sample and spline tables hold, each shared table once, for a caller's own budget.
+	[[nodiscard]] size_t table_bytes() const noexcept;
 
 	// Evaluates the function at `in` (at least `inputs()` values) into `out` (at least `outputs()` values). False when a
 	// calculator program failed (stack overflow or underflow, a type error, division by zero, a domain error or a
@@ -49,16 +55,18 @@ public:
 	// result. The caller records the diagnostic, once per conversion rather than once per pixel.
 	[[nodiscard]] bool evaluate(std::span<const double> in, std::span<double> out) const noexcept;
 
-	explicit Function(std::unique_ptr<const Node> root) noexcept;
+	Function(std::shared_ptr<const Node> root, size_t table_bytes) noexcept;
 
 private:
-	std::unique_ptr<const Node> root_;
+	std::shared_ptr<const Node> root_;
+	size_t table_bytes_ = 0;
 };
 
 namespace detail {
 
-// Test hook: the number of function evaluations made, for checking that an image row evaluates a tint transform once
-// per distinct sample value rather than once per pixel.
+// Test hook: the number of function evaluations made on the calling thread (a thread-local count, so evaluation shares
+// no state between threads), for checking that an image row evaluates a tint transform once per distinct sample value
+// rather than once per pixel.
 [[nodiscard]] size_t function_evaluations_for_testing() noexcept;
 
 } // namespace detail

@@ -36,6 +36,10 @@ inline constexpr size_t kMaxDecodedProfileBytes = size_t{256} << 20u; // all pro
 inline constexpr size_t kMaxColorComponents = 32u;
 inline constexpr size_t kMaxIndexedLookupBytes = size_t{1} << 20u; // an Indexed lookup stream, decoded
 inline constexpr size_t kMaxDeviceNColorants = 64u; // entries read from a DeviceN /Colorants dictionary
+// Tint transform tables one interpretation holds: each function object is parsed once per interpretation and shared by
+// every space naming it, and distinct ones add up to this; past it a space is unusable, with a diagnostic.
+inline constexpr size_t kMaxColorFunctionBytes = size_t{64} << 20u;
+inline constexpr size_t kMaxCachedColorFunctions = 256u;
 
 using ColorComponents = std::array<double, kMaxColorComponents>;
 
@@ -266,12 +270,18 @@ private:
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> indexed_at(const PdfArray& array, size_t depth, bool defaults);
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> spot_at(
 		const PdfArray& array, bool device_n, size_t depth, bool defaults);
+	// A tint transform: the one this interpretation already parsed from that object, or a new one within
+	// `kMaxColorFunctionBytes`; null when it cannot be used (its diagnostic recorded).
+	[[nodiscard]] PdfResult<std::shared_ptr<const Function>> tint_transform(const PdfValue& value);
 
 	const Document& document_;
 	const PdfDict* resources_;
 	std::vector<uint64_t> visiting_; // the indirect objects and resource names on the current resolution path
 	// What `named` and `device` gave, so selecting a space again returns the same space (and its decoded profile).
 	std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> resolved_;
+	// Tint transforms parsed in this interpretation, by object number, and the bytes their tables hold.
+	std::vector<std::pair<uint64_t, std::shared_ptr<const Function>>> functions_;
+	size_t function_bytes_ = 0;
 	// Allocation failure met while resolving a value, which the public call returns rather than a fallback.
 	std::optional<PdfError> fatal_;
 	[[nodiscard]] std::optional<PdfValue> value_of(const PdfValue& value);

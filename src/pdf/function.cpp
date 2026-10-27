@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -19,7 +18,7 @@ namespace recto::pdf {
 
 namespace {
 
-std::atomic<size_t> g_evaluations{0};
+thread_local size_t t_evaluations = 0; // test hook; per thread, so evaluation writes nothing another thread reads
 
 // A PostScript calculator instruction (7.10.5, Table 42), with the pushes and jumps the compiler adds.
 enum class CalcOp : uint8_t {
@@ -140,7 +139,7 @@ struct Function::Node {
 	double exponent = 1.0;
 
 	// Type 3 and function arrays.
-	std::vector<std::unique_ptr<const Node>> children;
+	std::vector<std::shared_ptr<const Node>> children;
 	std::vector<double> bounds;
 
 	// Type 4.
@@ -158,6 +157,8 @@ namespace {
 struct ParseContext {
 	const Document& document;
 	size_t nodes = 0;
+	size_t bytes = 0; // sample and spline tables parsed in this tree, each shared table once
+	std::vector<std::pair<uint32_t, std::shared_ptr<const Function::Node>>> parsed; // by object number
 };
 
 [[nodiscard]] PdfResult<PdfValue> resolved(const Document& document, const PdfValue& value) noexcept
@@ -226,7 +227,7 @@ struct ParseContext {
 	return damaged("PDF function entry is not an integer");
 }
 
-PdfResult<std::unique_ptr<Function::Node>> parse_node(ParseContext& context, const PdfValue& value, size_t depth) noexcept;
+PdfResult<std::shared_ptr<const Function::Node>> parse_node(ParseContext& context, const PdfValue& value, size_t depth) noexcept;
 
 // The natural cubic spline's second derivatives through `y` at unit spacing, for one output (`stride` apart).
 void natural_spline(const std::vector<double>& y, size_t count, size_t stride, size_t output, std::vector<double>& second,
@@ -298,6 +299,10 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 		return limited("Sampled function table is larger than its limit", RefusalReason::SampleTableBytes, table_bytes,
 			kMaxSampledFunctionBytes);
 	}
+	if (context.bytes + table_bytes > kMaxFunctionTreeBytes) {
+		return limited("Sample tables of one function are larger together than their limit",
+			RefusalReason::SampleTableBytes, context.bytes + table_bytes, kMaxFunctionTreeBytes);
+	}
 	RECTO_PDF_TRY(const std::optional<std::vector<double>> encode, numbers(document, dict, "Encode"));
 	if (encode.has_value()) {
 		if (encode->size() != 2u * node->m) {
@@ -334,11 +339,21 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 	}
 	bytes->resize(static_cast<size_t>(table_bytes));
 	node->samples = std::move(*bytes);
+	context.bytes += node->samples.size();
+	if (order.has_value() && *order != 1 && *order != 3) {
+		// 7.10.2: only 1 and 3 are valid; any other value is drawn linearly, as the default.
+		(void)make_pdf_error(ErrorCode::DamagedFormat, "Sampled function /Order is not 1 or 3; drawn linearly");
+	}
 	// `/Order 3`: a natural cubic spline for one input (7.10.2 names cubic spline interpolation without a method; one
 	// input is the common Separation tint transform), linear with a diagnostic otherwise.
-	constexpr uint32_t kMaxSplineSamples = 65'536u;
-	if (order == 3) {
-		if (node->m == 1u && node->size[0] >= 3u && node->size[0] <= kMaxSplineSamples) {
+	const uint64_t spline_bytes = node->size[0] * node->n * 2u * sizeof(double);
+	if (order == 3 && node->m == 1u &&
+		(node->size[0] > kMaxSplineSamples || context.bytes + spline_bytes > kMaxFunctionTreeBytes)) {
+		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes, node->size[0],
+			kMaxSplineSamples, "Sampled function /Order 3 table is past the spline limit; drawn linearly"));
+	} else if (order == 3) {
+		if (node->m == 1u && node->size[0] >= 3u) {
+			context.bytes += static_cast<size_t>(spline_bytes);
 			node->cubic = true;
 			const size_t count = node->size[0];
 			node->spline_values.resize(count * node->n);
@@ -505,7 +520,7 @@ private:
 			return damaged("Calculator function holds an unknown operator or a malformed number");
 		}
 		// An integer past 32 bits is a real, as in PostScript.
-		const bool integral = !real && std::fabs(value) <= 2147483647.0;
+		const bool integral = !real && value >= -2147483648.0 && value <= 2147483647.0;
 		return CalcInstr{integral ? CalcOp::PushInt : CalcOp::PushReal, value, 0};
 	}
 
@@ -542,7 +557,7 @@ PdfResult<std::unique_ptr<Function::Node>> parse_array(ParseContext& context, co
 	auto node = std::make_unique<Function::Node>();
 	node->type = Function::Node::Type::Array;
 	for (const PdfValue& element : array) {
-		RECTO_PDF_TRY(std::unique_ptr<Function::Node> child, parse_node(context, element, depth + 1u));
+		RECTO_PDF_TRY(std::shared_ptr<const Function::Node> child, parse_node(context, element, depth + 1u));
 		if (child->n != 1u || (!node->children.empty() && child->m != node->m)) {
 			return damaged("Function array holds a function that is not one output of the same inputs");
 		}
@@ -554,16 +569,9 @@ PdfResult<std::unique_ptr<Function::Node>> parse_array(ParseContext& context, co
 	return node;
 }
 
-PdfResult<std::unique_ptr<Function::Node>> parse_node(ParseContext& context, const PdfValue& value, size_t depth) noexcept
+PdfResult<std::unique_ptr<Function::Node>> parse_fresh(ParseContext& context, const PdfValue& value, size_t depth)
 {
-	try {
-		if (depth > kMaxFunctionDepth) {
-			return limited("Functions nest deeper than their limit", RefusalReason::FunctionDepth, depth, kMaxFunctionDepth);
-		}
-		if (++context.nodes > kMaxFunctionNodes) {
-			return limited("A function tree holds more functions than its limit", RefusalReason::FunctionNodes,
-				context.nodes, kMaxFunctionNodes);
-		}
+	{
 		const Document& document = context.document;
 		RECTO_PDF_TRY(const PdfValue object, resolved(document, value));
 		if (const PdfArray* array = object.as_array()) {
@@ -638,7 +646,7 @@ PdfResult<std::unique_ptr<Function::Node>> parse_node(ParseContext& context, con
 				return damaged("Stitching function /Functions is not a non-empty array");
 			}
 			for (const PdfValue& element : *functions) {
-				RECTO_PDF_TRY(std::unique_ptr<Function::Node> child, parse_node(context, element, depth + 1u));
+				RECTO_PDF_TRY(std::shared_ptr<const Function::Node> child, parse_node(context, element, depth + 1u));
 				if (child->m != 1u || (!node->children.empty() && child->n != node->children.front()->n)) {
 					return damaged("Stitching function holds a function of another shape");
 				}
@@ -675,6 +683,35 @@ PdfResult<std::unique_ptr<Function::Node>> parse_node(ParseContext& context, con
 		default:
 			return damaged("Function /FunctionType is not 0, 2, 3 or 4");
 		}
+	}
+}
+
+// Every function the tree names is counted against the depth and node bounds, each time it is named; one an indirect
+// reference names again is parsed once and shared, so its tables are held and charged once.
+PdfResult<std::shared_ptr<const Function::Node>> parse_node(ParseContext& context, const PdfValue& value, size_t depth) noexcept
+{
+	try {
+		if (depth > kMaxFunctionDepth) {
+			return limited("Functions nest deeper than their limit", RefusalReason::FunctionDepth, depth, kMaxFunctionDepth);
+		}
+		if (++context.nodes > kMaxFunctionNodes) {
+			return limited("A function tree holds more functions than its limit", RefusalReason::FunctionNodes,
+				context.nodes, kMaxFunctionNodes);
+		}
+		const std::optional<IndirectRef> ref = value.as_ref();
+		if (ref.has_value()) {
+			for (const auto& [number, node] : context.parsed) {
+				if (number == ref->obj_num) {
+					return node;
+				}
+			}
+		}
+		RECTO_PDF_TRY(std::unique_ptr<Function::Node> fresh, parse_fresh(context, value, depth));
+		std::shared_ptr<const Function::Node> node(std::move(fresh));
+		if (ref.has_value()) {
+			context.parsed.emplace_back(ref->obj_num, node);
+		}
+		return node;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading a PDF function");
 	}
@@ -744,8 +781,9 @@ void Function::Node::evaluate_sampled(std::span<const double> x, std::span<doubl
 		}
 		return;
 	}
-	if (active_count <= kMaxMultilinearInputs) {
-		// Multilinear: every corner of the cell around the point, weighted by the product of its fractions.
+	if (m <= kMaxMultilinearInputs) {
+		// Multilinear: every corner of the cell around the point, weighted by the product of its fractions. Chosen by
+		// the input count, never by how many inputs fall between samples, so the result is continuous everywhere.
 		const uint32_t corners = uint32_t{1} << active_count;
 		for (uint32_t corner = 0; corner < corners; ++corner) {
 			double weight = 1.0;
@@ -805,8 +843,8 @@ constexpr uint8_t kBool = 2u;
 
 [[nodiscard]] CalcValue number_of(double v, bool integral) noexcept
 {
-	// An integer result past 32 bits becomes a real, as in PostScript.
-	if (integral && std::fabs(v) <= 2147483647.0) {
+	// An integer result past the 32-bit range becomes a real, as in PostScript.
+	if (integral && v >= -2147483648.0 && v <= 2147483647.0) {
 		return {v, kInt};
 	}
 	return {v, kReal};
@@ -891,7 +929,7 @@ bool Function::Node::run_calculator(std::span<const double> x, std::span<double>
 				a = {std::trunc(a.v), a.kind};
 				break;
 			case CalcOp::Cvi:
-				if (std::fabs(std::trunc(a.v)) > 2147483647.0) {
+				if (std::trunc(a.v) < -2147483648.0 || std::trunc(a.v) > 2147483647.0) {
 					return false; // out of the integer range
 				}
 				a = {std::trunc(a.v), kInt};
@@ -1225,8 +1263,9 @@ bool Function::Node::evaluate(std::span<const double> in, std::span<double> out)
 // Function
 // ---------------------------------------------------------------------------------------------------------------------
 
-Function::Function(std::unique_ptr<const Node> root) noexcept
+Function::Function(std::shared_ptr<const Node> root, size_t table_bytes) noexcept
 	: root_(std::move(root))
+	, table_bytes_(table_bytes)
 {
 }
 
@@ -1236,11 +1275,11 @@ PdfResult<std::shared_ptr<const Function>> Function::parse(const Document& docum
 {
 	try {
 		ParseContext context{document};
-		RECTO_PDF_TRY(std::unique_ptr<Node> root, parse_node(context, value, 0u));
+		RECTO_PDF_TRY(std::shared_ptr<const Node> root, parse_node(context, value, 0u));
 		if (root->n == 0u) {
 			return damaged("Function gives no outputs");
 		}
-		return std::make_shared<const Function>(std::unique_ptr<const Node>(std::move(root)));
+		return std::make_shared<const Function>(std::move(root), context.bytes);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading a PDF function");
 	}
@@ -1256,9 +1295,14 @@ size_t Function::outputs() const noexcept
 	return root_->n;
 }
 
+size_t Function::table_bytes() const noexcept
+{
+	return table_bytes_;
+}
+
 bool Function::evaluate(std::span<const double> in, std::span<double> out) const noexcept
 {
-	g_evaluations.fetch_add(1u, std::memory_order_relaxed);
+	++t_evaluations;
 	return root_->evaluate(in, out);
 }
 
@@ -1266,7 +1310,7 @@ namespace detail {
 
 size_t function_evaluations_for_testing() noexcept
 {
-	return g_evaluations.load(std::memory_order_relaxed);
+	return t_evaluations;
 }
 
 } // namespace detail

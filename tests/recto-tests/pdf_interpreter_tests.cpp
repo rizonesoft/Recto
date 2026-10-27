@@ -4,6 +4,7 @@
 #include "interpreter.h"
 
 #include "color.h"
+#include "filters.h"
 #include "function.h"
 #include "test_support.h"
 #include "lexer.h"
@@ -28,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1462,6 +1464,27 @@ PdfError refusal_of(const std::vector<std::string>& objects)
 	return parsed->result->error();
 }
 
+// A one-input, one-output 8-bit sampled function of `count` samples all `value`, compressed with FlateDecode, so a
+// table of many megabytes costs a few kilobytes of file.
+std::string flat_table(size_t count, uint8_t value)
+{
+	const std::vector<uint8_t> samples(count, value);
+	auto packed = flate_compress(samples);
+	EXPECT_TRUE(packed.has_value());
+	const std::string data = packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string();
+	return stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [" + std::to_string(count) +
+			"] /BitsPerSample 8 /Filter /FlateDecode",
+		data);
+}
+
+bool recorded(ErrorCode code, RefusalReason reason = RefusalReason::None)
+{
+	const auto tail = diagnostics_tail(64u);
+	return std::any_of(tail.begin(), tail.end(), [&](const DiagnosticEntry& e) {
+		return e.code == code && (reason == RefusalReason::None || e.refusal_reason == reason);
+	});
+}
+
 TEST(PdfInterpreter, Functions)
 {
 	constexpr double kTight = 1e-9;
@@ -1546,6 +1569,88 @@ TEST(PdfInterpreter, Functions)
 		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.6875, kTight);
 		EXPECT_NEAR(evaluate(f, {1.0})[0], 1.0, kTight);
 		EXPECT_NEAR(evaluate(f, {1.5})[0], 0.6875, kTight);
+	}
+
+	// Nine inputs: the interpolation is chosen by the input count, so moving one input off a sample changes the result
+	// continuously (1 where the first two inputs are 1; the first eight at 0.5, the ninth at 0 and just above it).
+	{
+		std::string table(512u, '\0');
+		for (size_t c = 0; c < 512u; ++c) {
+			table[c] = (c & 3u) == 3u ? '\xFF' : '\0';
+		}
+		RECTO_PARSED(f, {sampled("/Domain [0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1] /Range [0 1] /Size [2 2 2 2 2 2 2 2 2] /BitsPerSample 8", table)});
+		std::vector<double> at(9u, 0.5);
+		at[8] = 0.0;
+		const double on = evaluate(f, at)[0];
+		at[8] = 1e-9;
+		const double off = evaluate(f, at)[0];
+		EXPECT_NEAR(on, off, 1e-6);
+		EXPECT_NEAR(on, 0.5, kTight); // the simplex walk: the smaller of the first two fractions
+	}
+	// /Order other than 1 or 3 is drawn linearly with a diagnostic; a one-input /Order 3 table past 65,536 samples
+	// likewise, with its limit recorded.
+	clear_diagnostics();
+	{
+		RECTO_PARSED(f, {sampled("/Domain [0 2] /Range [0 1] /Size [3] /BitsPerSample 8 /Order 2", std::string("\x00\xFF\x00", 3))});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.5, kTight);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	{
+		std::string table(kMaxSplineSamples + 1u, '\0');
+		for (size_t i = 1; i < table.size(); i += 2u) {
+			table[i] = '\xFF';
+		}
+		const std::string entries = "/Domain [0 " + std::to_string(kMaxSplineSamples) + "] /Range [0 1] /Size [" +
+			std::to_string(kMaxSplineSamples + 1u) + "] /BitsPerSample 8 /Order 3";
+		RECTO_PARSED(f, {sampled(entries, table)});
+		EXPECT_NEAR(evaluate(f, {0.5})[0], 0.5, kTight);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes));
+		std::string small = table.substr(0, kMaxSplineSamples);
+		RECTO_PARSED(g, {sampled("/Domain [0 " + std::to_string(kMaxSplineSamples - 1u) + "] /Range [0 1] /Size [" +
+				std::to_string(kMaxSplineSamples) + "] /BitsPerSample 8 /Order 3",
+			small)});
+		EXPECT_GT(std::fabs(evaluate(g, {0.5})[0] - 0.5), 0.01) << "at the limit the spline still applies";
+	}
+	// The full 32-bit integer range in a calculator: -2147483648 is an integer, and leaves the range only as a result.
+	{
+		const std::string wide = "/Domain [0 1] /Range [-3000000000 3000000000]";
+		RECTO_PARSED(f, {calculator("{ pop -2147483648 not }", wide)});
+		EXPECT_EQ(evaluate(f, {0.0})[0], 2147483647.0);
+		RECTO_PARSED(g, {calculator("{ pop -2147483648.0 cvi -1 bitshift }", wide)});
+		EXPECT_EQ(evaluate(g, {0.0})[0], 1073741824.0);
+		RECTO_PARSED(h, {calculator("{ pop -2147483648 neg 1 add }", wide)});
+		EXPECT_EQ(evaluate(h, {0.0})[0], 2147483649.0);
+		RECTO_PARSED(i, {calculator("{ pop -2147483648 neg cvi }", wide)});
+		bool ok = true;
+		(void)evaluate(i, {0.0}, &ok);
+		EXPECT_FALSE(ok) << "2147483648 is past the integer range";
+	}
+	// One function tree holds at most 16 MiB of tables: a table its references name twice is held once, while two
+	// distinct 9 MiB tables are refused.
+	{
+		const size_t nine = size_t{9} << 20u;
+		RECTO_PARSED(f, {"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 6 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
+			flat_table(nine, 0xFFu)});
+		EXPECT_EQ(f.table_bytes(), nine);
+		EXPECT_NEAR(evaluate(f, {1.5})[0], 1.0, kTight);
+		const PdfError two = refusal_of({"<< /FunctionType 3 /Domain [0 2] /Functions [6 0 R 7 0 R] /Bounds [1] /Encode [0 1 0 1] >>",
+			flat_table(nine, 0xFFu), flat_table(nine, 0x80u)});
+		EXPECT_EQ(two.code, ErrorCode::ResourceLimit);
+		EXPECT_EQ(two.refusal_reason, RefusalReason::SampleTableBytes);
+	}
+	// Evaluation writes no state another thread reads: the test count is the calling thread's own.
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 2 /Domain [0 1] /N 1 >>"});
+		const size_t before = detail::function_evaluations_for_testing();
+		std::thread other([&] {
+			for (int k = 0; k < 100; ++k) {
+				(void)evaluate(f, {0.5});
+			}
+		});
+		other.join();
+		EXPECT_EQ(detail::function_evaluations_for_testing(), before);
+		(void)evaluate(f, {0.5});
+		EXPECT_EQ(detail::function_evaluations_for_testing(), before + 1u);
 	}
 
 	// Type 2: two outputs, a fractional and a negative /N, defaults, no /Range, clipping.
@@ -1940,6 +2045,41 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 	EXPECT_EQ(resolve_space({"[/Separation /S /DeviceRGB 6 0 R]", gray})->space, nullptr);
 	EXPECT_EQ(resolve_space({"[/DeviceN [/A /B /C] /DeviceGray 6 0 R]", pair_gray})->space, nullptr) << "inputs != colorants";
 	EXPECT_EQ(resolve_space({"[/Separation /S /Pattern 6 0 R]", gray})->space, nullptr) << "a Pattern alternate";
+	// One interpretation holds at most 64 MiB of tint transform tables: four distinct 15 MiB tables draw, a fifth space
+	// is unusable (black, where its table would give white), and spaces sharing one table object cost it once.
+	{
+		const size_t fifteen = size_t{15} << 20u;
+		std::string spaces;
+		std::string content;
+		std::vector<std::string> objects;
+		for (int k = 0; k < 5; ++k) {
+			spaces += "/S" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray " +
+				std::to_string(5 + k) + " 0 R] ";
+			content += "/S" + std::to_string(k) + " cs 1 scn 0 0 10 10 re f ";
+			objects.push_back(flat_table(fifteen, static_cast<uint8_t>(0xFFu - k)));
+		}
+		clear_diagnostics();
+		const auto r = interpret_spaces(content, spaces, objects);
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 5u);
+		for (int k = 0; k < 4; ++k) {
+			EXPECT_GT(draws[k].fill_color.r, 0.9f) << "space " << k;
+		}
+		expect_color(draws[4].fill_color, 0.0f, 0.0f, 0.0f);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes));
+		std::string shared_spaces;
+		std::string shared_content;
+		for (int k = 0; k < 6; ++k) {
+			shared_spaces += "/T" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray 5 0 R] ";
+			shared_content += "/T" + std::to_string(k) + " cs 1 scn 0 0 10 10 re f ";
+		}
+		const auto shared = interpret_spaces(shared_content, shared_spaces, {flat_table(fifteen, 0xFFu)});
+		ASSERT_NE(shared.list, nullptr);
+		for (const DrawPathCommand& draw : all_of<DrawPathCommand>(*shared.list)) {
+			EXPECT_GT(draw.fill_color.r, 0.9f);
+		}
+	}
 	// A failing calculator gives its /Range low values (gray 0.25 here) and a diagnostic.
 	clear_diagnostics();
 	expect_color(painted(interpret_spaces("/B cs 0.5 scn 0 0 10 10 re f", "/B [/Separation /Bad /DeviceGray 5 0 R]",
