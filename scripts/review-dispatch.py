@@ -36,9 +36,10 @@ it asks whether building the section exactly as planned produces a 100% complete
 When the pin has a `[schedule]`, the dispatcher owns each pass's effort and lenses (owner decision 2026-10-23): the
 plan and completion passes take their scheduled effort, and a round's place in `[[schedule.rounds]]` comes from the
 rounds that returned a review already recorded in the `--record` file. Rounds past that list rotate one lens per round
-through `[schedule.rotation]` (the design lens only with `--surface`), and a low-effort round whose review reads
-`HIGHEST: P1` is followed by the `[schedule.escalation]` step. The scheduled lenses are appended to the prompt and
-recorded on an `- Lenses:` line. The JSON summary carries `position`, `escalated` and `severity_stop` (true when a
+through `[schedule.rotation]` (the design lens only with `--surface`), and a round at the rotation's effort whose review
+reads `HIGHEST: P1` is followed by the `[schedule.escalation]` step. The scheduled lenses are appended to the prompt and
+recorded on an `- Lenses:` line, and the reviewer's wall-clock time on a `- Seconds:` line (and as `seconds` in the
+summary). The JSON summary carries `position`, `escalated` and `severity_stop` (true when a
 returned round past `severity_stop_after` reads `HIGHEST: P3`: the loop may stop there; with 0, from round 1).
 """
 import argparse
@@ -65,7 +66,9 @@ CLIS = ("codex",)
 # A reviewer is never of the writer's own model family: its CLI names the family, and so does the writer.
 FAMILY = {"codex": "openai"}
 WRITER_FAMILY = {"claude": "anthropic"}
-EFFORTS = {"codex": ("low", "medium", "high", "xhigh")}
+# `max` is Codex's deepest effort, for the GPT-6.1 Terra arm of the reviewer A/B experiment (2026-10-27,
+# docs/experiments/2026-10-27-reviewer-ab.md).
+EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max")}
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # A review is prose. Output past this size is a runaway reviewer, not a review.
@@ -225,9 +228,9 @@ def scheduled(schedule, kind, rounds, surface):
 
     The position counts returned reviews only (`returned_review`): an outage, a self-review and a reply without the
     final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one per round,
-    skipping `design` when the section has no surface. After a low-effort round that declared `HIGHEST: P1`, the next
-    round is the `escalation` step instead. scripts/lib/todo_graph.py `stamp` replays this to check every recorded
-    pass, so it is the one copy of the schedule rule."""
+    skipping `design` when the section has no surface. After a round at the rotation's effort (the schedule's late,
+    cheap rounds: `low` in the live pin) that declared `HIGHEST: P1`, the next round is the `escalation` step instead.
+    scripts/lib/todo_graph.py `stamp` replays this to check every recorded pass, so it is the one copy of the rule."""
     if kind in ("plan", "completion"):
         step = schedule[kind]
         return {"position": None, "effort": step["effort"], "lenses": list(step.get("lenses", [])),
@@ -235,7 +238,8 @@ def scheduled(schedule, kind, rounds, surface):
     returned = [r for r in rounds if returned_review(r)]
     position = len(returned) + 1
     last = returned[-1] if returned else None
-    if last is not None and last.get("effort") == "low" and highest(last.get("review")) == "P1":
+    if last is not None and last.get("effort") == schedule["rotation"]["effort"] \
+            and highest(last.get("review")) == "P1":
         step, escalated = schedule["escalation"], True
     elif position <= len(schedule["rounds"]):
         step, escalated = schedule["rounds"][position - 1], False
@@ -245,7 +249,8 @@ def scheduled(schedule, kind, rounds, surface):
         step = {"effort": schedule["rotation"]["effort"],
                 "lenses": [rotation[(position - len(schedule["rounds"]) - 1) % len(rotation)]]}
         escalated = False
-    return {"position": position, "effort": step["effort"], "lenses": list(step["lenses"]), "escalated": escalated}
+    return {"position": position, "effort": step["effort"], "lenses": list(step["lenses"]), "escalated": escalated,
+            **({"after": last["effort"]} if escalated else {})}
 
 
 def lens_block(plan):
@@ -253,7 +258,7 @@ def lens_block(plan):
     where = f"Round {plan['position']}" if plan["position"] else "This pass"
     lines = ["", "", "## Lenses for this pass (scheduled by scripts/review-dispatch.py)", "",
              f"{where} runs at {plan['effort']} reasoning effort"
-             + (", escalated after a low-effort round found a P1" if plan["escalated"] else "")
+             + (f", escalated after a {plan['after']}-effort round found a P1" if plan["escalated"] else "")
              + ". Review through these lenses only, each as its own verdict, and ignore any other lens list above:",
              ""]
     lines += [f"- `{name}`: {LENSES[name]}" for name in plan["lenses"]]
@@ -395,10 +400,11 @@ def review(pin, writer, prompt_path, timeout, plan=None):
     if lenses:
         prompt = prompt.rstrip("\n") + lens_block(plan)
     scheduled_fields = {"effort": effort, "lenses": lenses} if plan else {}
+    seconds = None
 
     def none(reason):
         return {"writer": writer, "reviewer": None, "skipped": [{"reviewer": name, "reason": reason}], "review": None,
-                **scheduled_fields}
+                **scheduled_fields, **({"seconds": seconds} if seconds is not None else {})}
 
     # The resolved path, not the bare name: on Windows a CLI is often a .cmd shim that Popen cannot find by name.
     executable = find_cli(reviewer["cli"])
@@ -408,8 +414,10 @@ def review(pin, writer, prompt_path, timeout, plan=None):
     tmp = Path(tempfile.mkdtemp())
     try:
         stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
+        started = time.monotonic()
         _, problem = run(command(reviewer, executable, message_path, effort), prompt, timeout,
                          [stdout_path, message_path])
+        seconds = round(time.monotonic() - started)
         if problem is None:
             # Codex writes its final message to the -o file; stdout carries its progress, not the review.
             text = message_path.read_text(encoding="utf-8", errors="replace") if message_path.is_file() else ""
@@ -422,7 +430,8 @@ def review(pin, writer, prompt_path, timeout, plan=None):
     if problem:
         return none(problem)
     return {"writer": writer, "reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
-            "effort": effort, "skipped": [], "review": text.strip(), **({"lenses": lenses} if plan else {})}
+            "effort": effort, "seconds": seconds, "skipped": [], "review": text.strip(),
+            **({"lenses": lenses} if plan else {})}
 
 
 def blocked(text):
@@ -460,12 +469,12 @@ def atomic_write(path, text):
 # past Python's digit limit raises). A review is at most MAX_OUTPUT_BYTES, so it has at most MAX_OUTPUT_BYTES + 1 lines,
 # and the count's width follows from that: whatever `record` writes, the reader reads.
 ROUND_HEADING = re.compile(r"^## Round ([0-9]{1,6}): (none|([a-z0-9][a-z0-9-]*) \(`([^`]+)` via `([a-z]+)`\))$")
-ROUND_LINE = re.compile(r"^- (Writer|Run|Effort|Lenses|Lines|Digest|Skipped): (\S.*)$")
+ROUND_LINE = re.compile(r"^- (Writer|Run|Effort|Lenses|Seconds|Lines|Digest|Skipped): (\S.*)$")
 # The one-pass completion review, recorded beside the rounds and never counted as one. It always carries Lines, Digest
 # and the Candidate commit it reviewed; the writer's notes after it (its `- Filed:` lines) run to the next `## ` line.
 COMPLETION_HEADING = re.compile(r"^## Completion review: (none|([a-z0-9][a-z0-9-]*) \(`([^`]+)` via `([a-z]+)`\))$")
 PLAN_HEADING = re.compile(r"^## Plan review: (none|([a-z0-9][a-z0-9-]*) \(`([^`]+)` via `([a-z]+)`\))$")
-COMPLETION_LINE = re.compile(r"^- (Writer|Run|Candidate|Effort|Lenses|Lines|Digest|Skipped): (\S.*)$")
+COMPLETION_LINE = re.compile(r"^- (Writer|Run|Candidate|Effort|Lenses|Seconds|Lines|Digest|Skipped): (\S.*)$")
 # The one-pass reviews, by --kind: the heading each is recorded under and the key read_findings lists them under.
 PASSES = {"completion": ("## Completion review", COMPLETION_HEADING, "completions"),
           "plan": ("## Plan review", PLAN_HEADING, "plans")}
@@ -497,8 +506,8 @@ def _read_findings(text):
     `{"rounds": [...], "completions": [...]}`, or None when anything they write is not as they write it.
 
     A round is a `## Round` heading, a blank line, and a metadata block to the next blank line in which every line is
-    one of `record`'s fields (Writer and Run exactly once, Effort, Lines and Digest at most once, any number of Skipped;
-    Digest only with Lines). With Lines, the next N lines are the review, skipped unread, and a blank line or the end of
+    one of `record`'s fields (Writer and Run exactly once, Effort, Seconds, Lines and Digest at most once, any number of
+    Skipped; Digest only with Lines). With Lines, the next N lines are the review, skipped unread, and a blank line or the end of
     the file must follow them; with Digest, they must also hash to it, so a hand edit inside a review shows as
     unreadable even when it keeps the count. Without Lines (a round recorded before the count), the round runs to the
     next reserved heading. A completion review, and a plan review (`## Plan review`), is read the same way, with
@@ -521,11 +530,12 @@ def _read_findings(text):
             return None, head
         if completion:
             entry = {"reviewer": heading.group(2), "model": heading.group(3), "cli": heading.group(4), "writer": None,
-                     "run": None, "candidate": None, "effort": None, "lenses": None, "skipped": []}
+                     "run": None, "candidate": None, "effort": None, "lenses": None, "seconds": None,
+                     "skipped": []}
         else:
             entry = {"number": int(heading.group(1)), "reviewer": heading.group(3), "model": heading.group(4),
                      "cli": heading.group(5), "writer": None, "run": None, "effort": None, "lenses": None,
-                     "skipped": []}
+                     "seconds": None, "skipped": []}
         count = sealed = None
         i += 2
         while i < len(lines) and lines[i] != "":
@@ -547,8 +557,11 @@ def _read_findings(text):
                 if sealed is not None or not DIGEST.fullmatch(value):
                     return None, head
                 sealed = value
-            elif entry[key] is not None or (key == "candidate" and not CANDIDATE.fullmatch(value)):
+            elif entry[key] is not None or (key == "candidate" and not CANDIDATE.fullmatch(value)) \
+                    or (key == "seconds" and not COUNT.fullmatch(value)):
                 return None, head
+            elif key == "seconds":
+                entry[key] = int(value)
             elif key == "lenses":
                 names = value.split(", ")
                 if not all(name in LENSES for name in names) or len(set(names)) != len(names):
@@ -679,6 +692,9 @@ def metadata(result):
     lines = [f"- Effort: {result['effort']}"] if result.get("effort") else []
     if result.get("lenses"):
         lines.append(f"- Lenses: {', '.join(result['lenses'])}")
+    # The reviewer's wall-clock time, so review speed is read from the record itself (added 2026-10-27).
+    if result.get("seconds") is not None:
+        lines.append(f"- Seconds: {result['seconds']}")
     return lines + [f"- Skipped: {f['reviewer']} ({f['reason']})" for f in result["skipped"]]
 
 

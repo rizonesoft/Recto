@@ -314,7 +314,7 @@ class Dispatch(Harness):
         pin.write_text(pin.read_text().replace('effort = "xhigh"', 'effort = "extreme"'), encoding="utf-8")
         result = self.check_pin()
         self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "refused: reviewer 'sol' needs effort = one of low, medium, high, xhigh\n")
+        self.assertEqual(result.stdout, "refused: reviewer 'sol' needs effort = one of low, medium, high, xhigh, max\n")
 
     def test_check_pin_needs_no_writer_or_prompt(self):
         self.assertEqual(self.check_pin("--json").returncode, 0)
@@ -794,7 +794,8 @@ def bad_pins(good):
     """Every rule a parsable pin can break, each as one edit of the fixture, shared by the review and check tests."""
     mini = '\n[reviewers.mini]\ncli = "codex"\nmodel = "gpt-6-mini"\neffort = "low"\n'
     return (good.replace('effort = "xhigh"', 'effort = "extreme"'),
-            good.replace('effort = "xhigh"', 'effort = "max"'),
+            # An effort Codex offers that the dispatcher does not take (it takes `max` since 2026-10-27).
+            good.replace('effort = "xhigh"', 'effort = "ultra"'),
             good.replace('effort = "xhigh"\n', ''),
             good.replace('cli = "codex"', 'cli = "bash"'),
             # The reviewer CLIs removed on 2026-10-23: Antigravity (Gemini) and Claude Code as a reviewer.
@@ -918,6 +919,48 @@ class Schedule(Harness):
         summary, (call,) = self.round()
         self.assertEqual((summary["escalated"], self.effort_of(call)), (False, "low"),
                          "a medium escalation that finds a P1 does not escalate again")
+
+    def test_escalation_follows_the_rotation_effort_not_the_word_low(self):
+        # A schedule whose late rounds run at `high` (the GPT-6.1 Terra arm of the 2026-10-27 A/B experiment) still
+        # escalates after one of them finds a P1; with the literal `low` check its escalation step could never run.
+        pin = self.repo / ".conclave/reviewers.toml"
+        text = pin.read_text(encoding="utf-8").replace('effort = "low"', 'effort = "high"')
+        text = text.replace('[schedule.escalation]\neffort = "medium"', '[schedule.escalation]\neffort = "max"')
+        pin.write_text(text, encoding="utf-8")
+        for _ in range(3):
+            self.round()
+        summary, (call,) = self.round("1. P1 calc.py:2 subtracts.\n\nHIGHEST: P1\nOVERALL: needs-attention")
+        self.assertEqual((summary["position"], self.effort_of(call)), (4, "high"))
+        summary, (call,) = self.round()
+        self.assertEqual((summary["position"], summary["escalated"], self.effort_of(call)), (5, True, "max"))
+        self.assertIn("escalated after a high-effort round found a P1", call["stdin"])
+        module = self.module()
+        schedule = module.load_pin(str(pin))["schedule"]
+        found = {"reviewer": "sol", "cli": "codex", "writer": "claude", "effort": "high",
+                 "review": "1. P1 x.\n\nHIGHEST: P1\nOVERALL: needs-attention"}
+        self.assertTrue(module.scheduled(schedule, "round", [found], False)["escalated"],
+                        "a round at the rotation effort that finds a P1 escalates, wherever it sits")
+        self.assertFalse(module.scheduled(schedule, "round", [{**found, "effort": "medium"}], False)["escalated"],
+                         "a round above the rotation effort that finds a P1 does not")
+
+    def test_seconds_is_recorded_and_read_back_strictly(self):
+        self.round()
+        text = self.findings.read_text(encoding="utf-8")
+        self.assertRegex(text, r"\n- Seconds: [0-9]+\n")
+        (entry,) = self.module().read_rounds(text)
+        self.assertIsInstance(entry["seconds"], int)
+        for bad in ("- Seconds: 1.5", "- Seconds: ²", "- Seconds: 3\n- Seconds: 4"):
+            with self.subTest(bad=bad):
+                broken = re.sub(r"- Seconds: [0-9]+", lambda _: bad, text)
+                self.assertIsNone(self.module().read_findings(broken))
+
+    def test_max_effort_reaches_codex(self):
+        pin = self.repo / ".conclave/reviewers.toml"
+        pin.write_text(pin.read_text(encoding="utf-8").replace('[[schedule.rounds]]\neffort = "high"',
+                                                               '[[schedule.rounds]]\neffort = "max"', 1),
+                       encoding="utf-8")
+        summary, (call,) = self.round()
+        self.assertEqual((summary["effort"], self.effort_of(call)), ("max", "max"))
 
     def test_severity_stop_only_past_the_fixed_rounds_and_only_on_p3(self):
         p3 = "1. P3 calc.py:2 a name.\n\nHIGHEST: P3\nOVERALL: approve"

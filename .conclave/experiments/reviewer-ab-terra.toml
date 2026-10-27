@@ -1,0 +1,46 @@
+# Arm A of the reviewer A/B experiment (owner request 2026-10-27; protocol and results in
+# docs/experiments/2026-10-27-reviewer-ab.md). This pin is passed to scripts/review-dispatch.py with --pin only for the
+# experiment's arm A passes; .conclave/reviewers.toml (GPT-6 Astra, arm B) stays the reviewer every stamp is checked
+# against. Loaded by the same strict `load_pin` as the live pin.
+
+schema_version = 1
+
+[reviewers.terra]
+cli = "codex"
+model = "gpt-6.1-terra"
+effort = "xhigh"
+
+[routes]
+claude = ["terra"]
+
+# The owner's arm A schedule: plan xhigh, completion xhigh, rounds max, xhigh, high, rotation high, escalation max.
+# Lenses and the stop rule match the live pin, so effort and model are the only differences between the arms.
+[schedule]
+severity_stop_after = 0
+
+[schedule.plan]
+effort = "xhigh"
+lenses = ["plan"]
+
+[schedule.completion]
+effort = "xhigh"
+
+[[schedule.rounds]]
+effort = "max"
+lenses = ["adversarial", "integration", "source-defect", "plan-delivery"]
+
+[[schedule.rounds]]
+effort = "xhigh"
+lenses = ["adversarial"]
+
+[[schedule.rounds]]
+effort = "high"
+lenses = ["adversarial"]
+
+[schedule.rotation]
+effort = "high"
+lenses = ["consistency", "quality", "design", "optimization", "record"]
+
+[schedule.escalation]
+effort = "max"
+lenses = ["adversarial"]
