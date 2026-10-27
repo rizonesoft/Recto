@@ -16,7 +16,7 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 - Sections: at least three, taken in plan order from `python scripts/todo-graph.py query ready`, each built through the normal lifecycle (`process-todo-section`, then `review-todo-section`).
 - Paired, lockstep passes: every pass (plan review, completion review, each round) gives both arms the same candidate commit and the same prompt, launched at the same time, so section difficulty and machine load are shared.
 - Blind: neither arm sees the other's findings. The writer reads both replies before fixing anything.
-- Verification: the writer checks every finding against the code and the sources and records a verdict: `valid` (a real defect, fixed or filed), `invalid` (a false positive, with the reason), or `duplicate` (the same arm repeating an earlier finding). Findings both arms raised about the same defect are matched across arms.
+- Verification: the writer checks every finding against the code and the sources and records a verdict: `valid` (a real defect, fixed or filed), `invalid` (a false positive, with the reason), `duplicate` (the same arm repeating an earlier finding), or `unverified` (the source could not be checked; excluded from precision, and not acted on). Findings both arms raised about the same defect are matched across arms.
 - Stop rule: a section's loop ends when both arms' latest round on the same candidate declares no P1 or P2. An arm that declares a stop while the other still finds a valid P1 or P2 on that candidate is charged a missed severe finding.
 - Speed: `scripts/review-dispatch.py` records each pass's reviewer wall-clock time on a `- Seconds:` line (added for this experiment, 2026-10-27).
 
@@ -41,7 +41,9 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | plan | `b7f73ca` | A | xhigh | 77 | 3/3/0 | 6 | 0 | 0 |
 | D01 T02 §33 | plan | `b7f73ca` | B | medium | 103 | 2/2/0 | 4 | 0 | 0 |
 | D01 T02 §33 | completion | `e4d9920` | A | xhigh | 131 | 10 gaps (untagged) | 10 | 0 | 0 |
-| D01 T02 §33 | completion | `e4d9920` | B | medium | 210 | 9 gaps (untagged) | 7 | 1 | 1 |
+| D01 T02 §33 | completion | `e4d9920` | B | medium | 210 | 9 gaps (untagged) | 8 | 0 | 1 |
+| D01 T02 §33 | round 1 | `6be1930` | A | max | 502 | 12/0/0 | 10 | 1 | 1 |
+| D01 T02 §33 | round 1 | `6be1930` | B | high | 390 | 6/0/0 | 5 | 0 | 0 (1 unverified) |
 
 ## Finding verdicts
 
@@ -67,7 +69,7 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | completion | A | 8 | in-scope | valid | B7 | Multi-input `/Order 3` drawn linearly. Filed as `§41` (the section had recorded it as a default). |
 | D01 T02 §33 | completion | A | 9 | out-of-scope | valid | B8 | Timings against Acrobat. Filed to D06 T01 §7; generic, low value. |
 | D01 T02 §33 | completion | A | 10 | out-of-scope | valid | none | Spot plate proofing: already planned in D04 T06 §11. |
-| D01 T02 §33 | completion | B | 1a | in-scope | invalid | none | "Order 3 must be ignored below 4 samples": no source found (ISO 32000-1 Table 39 names Order 1 and 3 only). |
+| D01 T02 §33 | completion | B | 1a | in-scope | valid | A round 1 src1 | "Order 3 is Order 1 below 4 samples" (Table 39). First judged unsupported; corroborated in round 1 by Terra independently and by a third-party reader's issue quoting Table 39. Fixed in `da69517`. Verdict revised 2026-10-28. |
 | D01 T02 §33 | completion | B | 1b | in-scope | valid | A2 | Spline silently linear past 65,536 samples. |
 | D01 T02 §33 | completion | B | 2 | in-scope | valid | A1 | Interpolation discontinuity, with a worked example. |
 | D01 T02 §33 | completion | B | 3 | in-scope | valid | A4 | Minimum signed integer. |
@@ -77,6 +79,24 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | completion | B | 7 | in-scope | valid | A8, A7 | Multi-input cubic and goldens. |
 | D01 T02 §33 | completion | B | 8 | in-scope | valid | A9 | Timings against Acrobat; generic. |
 | D01 T02 §33 | completion | B | 9 | out-of-scope | duplicate | B6 | Repeats its own gap 6. |
+| D01 T02 §33 | round 1 | A | adv 1 | P1 | valid | none | DeviceN of 7 or more tints overran a 6-element stack array in `numbers()`: memory corruption from a valid file. The most severe defect of the section so far; Astra missed it, and so did the writer's 6-colorant test. Fixed. |
+| D01 T02 §33 | round 1 | A | adv 2 | P1 | valid | B 1 | Trimmed sample vectors kept the decoded buffer's capacity, uncharged. Fixed. |
+| D01 T02 §33 | round 1 | A | adv 3 | P1 | valid | B 3 | Calculator programs not charged to any budget. Fixed. |
+| D01 T02 §33 | round 1 | A | adv 4 | P1 | valid | none | `/Colorants` resolved before checking for Separation, its bound counting only accepted entries: fan-out hang. P2 by reach. Fixed. |
+| D01 T02 §33 | round 1 | A | adv 5 | P1 | valid | B 2 | A huge finite `/Encode` span overflowed to NaN, then an index. Fixed. |
+| D01 T02 §33 | round 1 | A | int 1 | P1 | valid | none | Function-array members clipped to the first member's domain. P2 by reach. Fixed. |
+| D01 T02 §33 | round 1 | A | src 1 | P1 | valid | B completion 1a | Order 3 below 4 samples. Fixed. |
+| D01 T02 §33 | round 1 | A | src 2 | P1 | valid | A completion 8 | Multi-input cubic: already filed as `§41`; a repeat of a filed gap. |
+| D01 T02 §33 | round 1 | A | src 3 | P1 | invalid | none | "Refuse a type 2 whose domain breaks 7.10.3": a conformance rule for writers; the reader evaluates the defined points and fails only the undefined one, which is the recorded design. Not taken. |
+| D01 T02 §33 | round 1 | A | pd 1 | P1 | duplicate | A adv 1 | Same overrun. |
+| D01 T02 §33 | round 1 | A | pd 2 | P1 | valid | none | Function cache capped at 256, so a repeated reference past it was charged again. P3 by reach (a safe refusal). Fixed. |
+| D01 T02 §33 | round 1 | A | pd 3 | P1 | valid | B 6 | A cached subtree skipped the depth check. Fixed. |
+| D01 T02 §33 | round 1 | B | 1 | P1 | valid | A adv 2 | Retained capacity, with a 4 GiB worked example. |
+| D01 T02 §33 | round 1 | B | 2 | P1 | valid | A adv 5 | NaN index. |
+| D01 T02 §33 | round 1 | B | 3 | P1 | valid | A adv 3 | Calculator budget. |
+| D01 T02 §33 | round 1 | B | 4 | P1 | unverified | none | "Surplus calculator operands must be an error": the ISO text could not be checked here (the spec PDF is past the fetch limit); readers commonly take the top n. Not taken; excluded from precision. |
+| D01 T02 §33 | round 1 | B | 5 | P1 | valid | none | `/All` must ignore its alternate and tint transform (8.6.6.4); the section had specified the opposite. Fixed and the contract corrected. |
+| D01 T02 §33 | round 1 | B | 6 | P1 | valid | A pd 3 | Cached subtree depth. |
 
 ## Results
 
