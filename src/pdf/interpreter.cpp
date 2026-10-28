@@ -1173,9 +1173,32 @@ private:
 
 	// A resource category (`/ExtGState`, `/ColorSpace`), resolved once per interpretation: a stream that names it on
 	// every operator costs one lookup each, not a copy of the whole category.
+	// A category dictionary of a scope's resources, shared, never copied: `owner` holds its object when it is
+	// indirect, and a direct one lives in the scope's `/Resources`, which the scope keeps alive.
 	struct Category {
 		bool resolved{false};
-		std::optional<PdfDict> dict{};
+		std::shared_ptr<const PdfValue> owner{};
+		const PdfDict* dict{nullptr};
+	};
+
+	// A value read from the resources without copying it: `value` points into `owner` (an indirect object, shared
+	// with the document's cache) or into a dictionary the interpreter already keeps alive.
+	struct Held {
+		std::shared_ptr<const PdfValue> owner{};
+		const PdfValue* value{nullptr};
+
+		explicit operator bool() const noexcept
+		{
+			return value != nullptr;
+		}
+		const PdfValue& operator*() const noexcept
+		{
+			return *value;
+		}
+		const PdfValue* operator->() const noexcept
+		{
+			return value;
+		}
 	};
 
 	// The resources a content stream draws with (ISO 32000-1 7.8.3): the page's at the bottom of `scopes_`, a Form
@@ -1220,26 +1243,54 @@ private:
 		if (!slot.resolved) {
 			slot.resolved = true;
 			if (const PdfValue* value = scope_->resources->get(name)) {
-				if (auto r = resolved(*value); r.has_value() && r->as_dict() != nullptr) {
-					slot.dict = *r->as_dict();
+				Held held = shared(*value);
+				if (held && held->as_dict() != nullptr) {
+					slot.dict = held->as_dict();
+					slot.owner = std::move(held.owner);
 				}
 			}
 		}
-		return slot.dict.has_value() ? &*slot.dict : nullptr;
+		return slot.dict;
+	}
+
+	// `value`, an indirect reference resolved through the document's shared objects, without a copy. A damaged
+	// reference or a null reads as missing; any other failure is kept for `dispatch` as `resolved` keeps it.
+	[[nodiscard]] Held shared(const PdfValue& value)
+	{
+		const std::optional<IndirectRef> ref = value.as_ref();
+		if (!ref.has_value()) {
+			return Held{nullptr, &value};
+		}
+		auto object = document_.resolve_object_shared(*ref);
+		if (!object.has_value()) {
+			if (fatal(object.error()) && !resolve_failure_.has_value()) {
+				resolve_failure_ = object.error();
+			}
+			return Held{};
+		}
+		if (*object == nullptr || (*object)->is_null()) {
+			return Held{};
+		}
+		const PdfValue* target = object->get();
+		return Held{std::move(*object), target};
 	}
 
 	// The resource named `name` in `slot`'s category, resolved, or none.
-	[[nodiscard]] std::optional<PdfValue> resource(std::string_view category_name, Category& slot, std::string_view name)
+	[[nodiscard]] Held resource(std::string_view category_name, Category& slot, std::string_view name)
 	{
 		const PdfDict* dict = category(category_name, slot);
 		if (dict == nullptr) {
-			return std::nullopt;
+			return Held{};
 		}
 		const PdfValue* entry = dict->get(name);
 		if (entry == nullptr) {
-			return std::nullopt;
+			return Held{};
 		}
-		return resolved(*entry);
+		Held held = shared(*entry);
+		if (held && held.owner == nullptr) {
+			held.owner = slot.owner; // a direct entry lives in the category's object
+		}
+		return held;
 	}
 
 	// `value` with an indirect reference resolved. A damaged reference reads as missing; any other failure (memory, a
@@ -1270,8 +1321,8 @@ private:
 	// section 15's; a dictionary missing from the resources is skipped.
 	void apply_ext_gstate(std::string_view name)
 	{
-		const auto value = resource("ExtGState", scope_->ext_gstates, name);
-		if (!value.has_value() || value->as_dict() == nullptr) {
+		const Held value = resource("ExtGState", scope_->ext_gstates, name);
+		if (!value || value->as_dict() == nullptr) {
 			return;
 		}
 		const PdfDict& gs = *value->as_dict();
@@ -1766,11 +1817,15 @@ private:
 		return {};
 	}
 
-	// A dictionary entry resolved, or none.
+	// A dictionary entry resolved, or none; an entry whose value resolves to null is absent (ISO 32000-1 7.3.9).
 	[[nodiscard]] std::optional<PdfValue> entry_of(const PdfDict& dict, std::string_view key)
 	{
 		const PdfValue* value = dict.get(key);
-		return value != nullptr ? resolved(*value) : std::nullopt;
+		std::optional<PdfValue> entry = value != nullptr ? resolved(*value) : std::nullopt;
+		if (entry.has_value() && entry->is_null()) {
+			return std::nullopt;
+		}
+		return entry;
 	}
 
 	// A form's `/Matrix` (identity when absent), or none when it is not six finite numbers or is singular.

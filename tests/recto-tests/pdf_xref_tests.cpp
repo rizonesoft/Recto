@@ -1643,6 +1643,8 @@ TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
 	lossless.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("DCTDecode")));
 	EXPECT_FALSE(filters_are_metered_lossless(lossless));
 	EXPECT_TRUE(filters_are_metered_lossless(PdfDict{}));
+	lossless.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("Crypt"))); // Identity never expands
+	EXPECT_TRUE(filters_are_metered_lossless(lossless));
 
 	// The meter itself counts a decode that fails after expanding.
 	std::string one = failing_container(5);

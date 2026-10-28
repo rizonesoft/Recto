@@ -11628,9 +11628,9 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 
 bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept
 {
-	static constexpr std::array<std::string_view, 10> kMetered = {
+	static constexpr std::array<std::string_view, 11> kMetered = {
 		"FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85", "RunLengthDecode",
-		"RL"};
+		"RL", "Crypt"};
 	const auto metered = [](const PdfValue& v) {
 		const auto name = v.as_name();
 		return name.has_value() && std::find(kMetered.begin(), kMetered.end(), *name) != kMetered.end();

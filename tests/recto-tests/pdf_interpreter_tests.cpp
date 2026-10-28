@@ -3941,6 +3941,15 @@ TEST(PdfInterpreter, FormXObjectBasics)
 		expect_point(points[0], 0.0, 0.0, "the /BBox's origin");
 		expect_point(points[1], 100.0, 50.0, "the /BBox's size");
 	}
+	// A /Matrix that resolves to null is absent (7.3.9), so the form draws under the identity.
+	{
+		const auto r = interpret("/F0 Do", "<< /XObject << /F0 5 0 R >> >>",
+			{form_object("/BBox [0 0 10 10] /Matrix 6 0 R", "0 0 1 1 re f"), "null"});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 1u) << "an indirect null /Matrix refused the form";
+		expect_rect(draws[0].bounds_pt, 0.0, 0.0, 1.0, 1.0);
+	}
 	// A nested form's matrix composes on its parent's: a unit square at the inner form's origin lands at the outer
 	// translation plus the inner one.
 	{
@@ -4032,6 +4041,36 @@ TEST(PdfInterpreter, FormXObjectResources)
 		ASSERT_EQ(draws.size(), 2u);
 		EXPECT_NEAR(draws[0].fill_color.r, 0.5f, 0.01f);
 		EXPECT_GT(std::abs(draws[1].fill_color.r - draws[0].fill_color.r), 0.05f) << "the form's /DefaultRGB was not used";
+	}
+	// A category dictionary is shared, not copied per scope: 64 forms with their own direct /Resources naming one
+	// ExtGState object of 1 MiB each draw with it while the heap grows by far less than one copy per form.
+	if (recto::test::ScopedHeapMeter::available()) {
+		std::string names;
+		std::vector<std::string> objects;
+		for (int i = 0; i < 64; ++i) {
+			names += "/F" + std::to_string(i) + " " + std::to_string(5 + i) + " 0 R ";
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Resources << /ExtGState 69 0 R >>", "/G gs 0 0 1 1 re S"));
+		}
+		objects.push_back("<< /G << /LW 2 /Pad (" + std::string(size_t{1} << 20u, 'x') + ") >> >>"); // object 69
+		std::string content;
+		for (int i = 0; i < 64; ++i) {
+			content += "/F" + std::to_string(i) + " Do ";
+		}
+		const auto bytes = one_page_pdf(content, "<< /XObject << " + names + ">> >>", objects);
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		size_t peak = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			const auto list = interpret_page(**doc, 0u);
+			ASSERT_TRUE(list.has_value());
+			EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 64u);
+			const auto styles = all_of<SetStrokeStyleCommand>(**list);
+			ASSERT_FALSE(styles.empty());
+			EXPECT_FLOAT_EQ(styles.back().line_width, 2.0f);
+			peak = meter.peak_bytes();
+		}
+		EXPECT_LT(peak, size_t{16} << 20u) << "each scope kept its own copy of the ExtGState dictionary";
 	}
 	// The tint transform budget is the page's, shared by its forms: four 15 MiB tables on the page, a fifth in a form
 	// is refused (black where its table gives white).
@@ -4232,6 +4271,14 @@ TEST(PdfInterpreter, FormXObjectWork)
 		EXPECT_EQ((*doc)->decoded_stream_count() - before, 0u) << "the form's content was decoded";
 		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 1u);
 	}
+	// /Crypt with the Identity name passes content through (7.4.10), so its form draws.
+	{
+		clear_diagnostics();
+		const auto r = interpret("/C Do", "<< /XObject << /C 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Filter /Crypt /DecodeParms << /Name /Identity >>", "0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u) << "a /Crypt /Identity form was refused as an image filter";
+	}
 	// A damaged form drawn 100 times is decoded once.
 	{
 		std::string many;
@@ -4281,6 +4328,7 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		std::string object;
 		ErrorCode code;
 	};
+	const std::string huge = "1" + std::string(200, '0') + ".0"; // the real 1e200, whose square overflows
 	const std::vector<Case> cases = {
 		{"a missing name", "/Nope Do", form_object("/BBox [0 0 1 1]", ""), ErrorCode::DamagedFormat},
 		{"no operand", "Do", form_object("/BBox [0 0 1 1]", ""), ErrorCode::DamagedFormat},
@@ -4289,7 +4337,9 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		{"an Image XObject", "/X Do", stream_object("/Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", "A"),
 			ErrorCode::UnsupportedFeature},
 		{"a singular matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 2 2 4 0 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
-		{"a non-finite matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 0 0 1 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"a five-number matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 0 0 1 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"a matrix whose determinant overflows", "/X Do",
+			form_object("/BBox [0 0 10 10] /Matrix [" + huge + " 0 0 " + huge + " 0 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
 		{"a missing /BBox", "/X Do", form_object("", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
 		{"a malformed /BBox", "/X Do", form_object("/BBox [0 0 10]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
 		{"an empty /BBox", "/X Do", form_object("/BBox [5 5 5 20]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},

@@ -215,8 +215,9 @@ enum class DctOutput : uint8_t {
 
 // Whether every stage of `stream_dict`'s /Filter (a direct name or array of names; none at all counts) is one of the
 // general-purpose lossless filters whose output detail::ScopedDecodeWorkMeter measures: FlateDecode, LZWDecode,
-// ASCIIHexDecode, ASCII85Decode, RunLengthDecode or their abbreviations. Image filters (DCT, JPX, JBIG2, CCITT) are
-// not: their raster buffers are allocated outside the meter, and they never produce PDF syntax.
+// ASCIIHexDecode, ASCII85Decode, RunLengthDecode or their abbreviations, or Crypt (which decodes only as Identity,
+// passing its input through, so it never expands it). Image filters (DCT, JPX, JBIG2, CCITT) are not: their raster
+// buffers are allocated outside the meter, and they never produce PDF syntax.
 [[nodiscard]] bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept;
 
 namespace detail {
