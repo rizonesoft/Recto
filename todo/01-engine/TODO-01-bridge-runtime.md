@@ -2,7 +2,7 @@
 schema_version: 1
 id: bridge-runtime
 domain: 01-engine
-status: done
+status: active
 title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
 frozen: true
 track: M1
@@ -52,6 +52,7 @@ track: M1
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [x] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [x] |
 | 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [x] |
+| 11 | §11 | Bounded resolved-object cache in `pdf::Document` | §10 | [ ] |
 
 ## 1. `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`
 
@@ -397,6 +398,31 @@ Implement `src/pdf/document.h` and `src/pdf/document.cpp` (`recto::pdf::Document
 
 > **Verified:** 2026-10-20 | §10 | 5e4c50a30b60093a325cd51ee7a6faf73231b352
 > **Review:** `docs/reviews/d01-t01-s10.json`
+
+## 11. Bounded resolved-object cache in `pdf::Document`
+
+`Document::resolve_object` (`src/pdf/document.h:333`) lexes and parses an indirect object again on every call: only decoded object streams are cached (`decrypted_obj_stm_cache_`). A large object shared by many references is therefore parsed once per reference. Measured 2026-10-28 while building `D01 T02 §42`: a `/Type0` descendant whose `/W` holds 65,536 elements costs about 1.5 s per font resolution in x64 Debug, because `CidWidths::build` and `Type0Font` resolve the descendant through the document several times per font, and fifty fonts sharing it took 75.7 s. Fonts, colour spaces, functions and XObjects shared across a page or a document all pay the same multiplier. Acrobat and pdfium (`CPDF_IndirectObjectHolder`) parse each object once per document; Recto should too, inside a byte budget so a hostile file cannot turn the cache into the attack. Found by `D01 T02 §42` round 1 (Astra finding 1, Terra finding 2), whose per-page font budget bounds memory but not repeated parse work. -> XREF: D01 T02 §42
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm the cache is a `mutable` member of `pdf::Document` touched only by the owning `DocumentActor` thread (no static or shared mutable state), returns values that are immutable once cached (`std::shared_ptr<const PdfValue>`), never caches a failed or partially parsed object, and stays within its byte budget under hostile input.
+
+**Build order:**
+
+1. Add the cache and the shared accessor to `src/pdf/document.h` and `src/pdf/document.cpp`. Done when: a second `resolve_object_shared` of the same reference returns the same pointer without lexing again.
+2. Route `resolve_object` and the font, colour and function resolvers through it. Done when: the shared-`/W` fixture resolves fifty fonts at least ten times faster than before in x64 Debug.
+3. Bound and test it under ASan. Done when: `PdfDocument.ObjectCache*` passes under ASan with 0 warnings.
+
+- [ ] Add `Document::resolve_object_shared(IndirectRef) -> PdfResult<std::shared_ptr<const PdfValue>>` backed by a `mutable` cache in `src/pdf/document.h` keyed by `(object number << 16) | generation` (the `object_key` form `src/pdf/function.h` uses). Done when: `PdfDocument.ObjectCacheHit` resolves one reference twice and gets the same pointer, and a counting hook on the parser shows one parse.
+- [ ] Bound the cache in `src/pdf/document.cpp` by entry count and by the bytes its values hold (`kMaxObjectCacheEntries`, `kMaxObjectCacheBytes`, sized against `kMaxDecodedStreamBytes` in `src/pdf/filters.h`), evicting least recently used entries, and never caching an object larger than a quarter of the byte budget. Done when: `PdfDocument.ObjectCacheBudget` resolves objects whose total size exceeds the budget, the cache's reported bytes never pass it, and an evicted object resolves again correctly.
+- [ ] Cache only complete, successful parses: a `PdfError`, an `OutOfMemory`, or a reference into damaged-file recovery that the xref later corrects is never stored. Done when: `PdfDocument.ObjectCacheFailures` resolves a damaged object twice and gets the same typed error both times with nothing cached, under ASan.
+- [ ] Make `resolve_object` copy from the cached value instead of parsing, keeping its signature and every existing caller's behaviour. Done when: `recto-tests.exe --gtest_filter=Pdf*` passes unchanged.
+- [ ] Move the hot resolvers to `resolve_object_shared`: `CidWidths::build` and `Type0Font` in `src/pdf/font_cid.cpp`, `TextFont::resolve` in `src/pdf/text_font.cpp`, and `ColorSpaces` and `Function::parse` in `src/pdf/color.cpp` and `src/pdf/function.cpp`. Done when: those files resolve a shared descendant, colour space or function by pointer, and `PdfInterpreter.*` and `PdfFont.*` pass.
+- [ ] Measure the shared-`/W` fixture (fifty `/Type0` fonts over one descendant with a 65,536-element `/W`) before and after in x64 Debug and Release. Done when: `PdfInterpreter.SharedDescendantParsesOnce` asserts one parse of the descendant, and the commit body quotes both timings.
+- [ ] Commit: `pdf: cache resolved objects per Document within a byte budget`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.ObjectCache*:PdfInterpreter.SharedDescendantParsesOnce:Pdf*` passes under ASan with 0 warnings.
 
 ## Verification
 

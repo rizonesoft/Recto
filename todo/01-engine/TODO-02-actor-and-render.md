@@ -1328,6 +1328,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): text state (`
 - [x] Text rendering modes (9.3.6): `Tr 0` to `2` record runs that fill, stroke or both; `Tr 3` records the run with `TextRenderMode::Invisible`, which nothing draws but text extraction reads; `Tr 4` to `7` record their mode for `§16`, which adds the glyphs to the clip at `ET`; a fill space whose `ColorSpace::paints()` is false (`§33`) drops only the fill from the mode (`Fill` becomes `Invisible`, `FillAndStroke` becomes `Stroke`, `FillAndClip` becomes `Clip`, `FillStrokeAndClip` becomes `StrokeAndClip`), a stroke space that paints nothing drops only the stroke likewise, and the run is still recorded and the text matrix still advanced, so strokes, clipping and positions survive (**Corrected 2026-10-28:** plan review: was "records no glyph run", which also lost strokes, clips and invisible positions). Done when: `PdfInterpreter.TextRenderModes` records each mode on its run, keeps an invisible run's glyph positions, and crosses every mode with a `/Separation /None` fill space and a `/Separation /None` stroke space, asserting each resulting mode, while the same text in `/Separation /Spot` spaces keeps its mode.
 - [x] Commit: `pdf: text state, positioning and text-showing operators`
 
+> **Deferred:** a shared font object parsed again for every font that names it (round 1; the per-page font budget bounds memory, not parse work) -> XREF: D01 T01 §11
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.TextFonts:PdfInterpreter.TextPositioning:PdfInterpreter.TjKerningAndSpacing:PdfInterpreter.TextRenderModes:PdfInterpreter.*` passes under ASan with 0 warnings.
 
 ## 43. Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text
