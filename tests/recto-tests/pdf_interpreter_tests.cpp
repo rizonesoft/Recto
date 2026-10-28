@@ -3587,6 +3587,20 @@ TEST(PdfInterpreter, GlyphInkBounds)
 		ASSERT_TRUE(ink.has_value() && ink->has_value());
 		EXPECT_NEAR(g[0].ink_bounds_pt->x_min, (*ink)->x_min * g[0].width_scale * 20.0, 1e-9);
 	}
+	// A negative font size under a mirrored text matrix (an upright glyph, Table 105): the glyph is recorded with its
+	// ink box in order, never refused.
+	{
+		const TextPage page = glyph_page("BT /H -12 Tf -1 0 0 -1 100 100 Tm (A) Tj ET", "/H 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"});
+		ASSERT_EQ(page.runs.size(), 1u) << "the mirrored text was dropped";
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 1u);
+		ASSERT_TRUE(g[0].ink_bounds_pt.has_value());
+		EXPECT_LE(g[0].ink_bounds_pt->x_min, g[0].ink_bounds_pt->x_max);
+		EXPECT_LE(g[0].ink_bounds_pt->y_min, g[0].ink_bounds_pt->y_max);
+		EXPECT_LT(g[0].ink_bounds_pt->y_max, 0.5) << "the mirrored ink should lie below the baseline in text space";
+		EXPECT_TRUE(page.runs[0].has_bounds);
+	}
 	// A split run (Symbol's Euro from a second face): each run's bounds are its own glyphs'.
 	{
 		const TextPage page = glyph_page("BT /Y 10 Tf (a\\310a) Tj ET", "/Y 5 0 R",

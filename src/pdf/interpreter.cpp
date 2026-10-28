@@ -1538,7 +1538,8 @@ private:
 			glyph.width_scale = drawn.width_scale;
 			glyph.is_blank = drawn.blank;
 			if (drawn.ink.has_value() && !drawn.blank) {
-				// The glyph's own ink in text space points, relative to its origin (Tz is in the run's matrix).
+				// The glyph's own ink in text space points, relative to its origin (Tz is in the run's matrix); PdfRect
+				// orders the corners, so a negative font size's mirrored box stays valid.
 				glyph.ink_bounds_pt = PdfRect{drawn.ink->x_min * size, drawn.ink->y_min * size, drawn.ink->x_max * size,
 					drawn.ink->y_max * size};
 			}
