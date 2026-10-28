@@ -176,8 +176,13 @@ The panel's data is kept per section from here, so the review effort can be judg
 | ------- | ----------------- | -------------------------- | -------------------------- | ---------------------- | ---------------------- | -------- |
 | D01 T02 §33 | 5 (plus an outage) | 1,226 | 1,325 | 25 (23) | 38 (34) | `001c43e`: Astra P3 only, Terra clean |
 | D01 T02 §42 | 5 | 1,060 | 1,211 | 19 (19) | 35 (34) | `53044b5`: both P3 only |
+| D01 T01 §11 | 3 | 845 | 882 | 11 (11) | 19 (19) | `4fcef18`: both clean |
 
 D01 T02 §42 notes: findings count the plan review's gaps, the completion review's gap list and every round's findings; Terra's one invalid finding is round 1 finding 8 (an empty string recording no run, not taken). Only Astra found the embedded program left out of the font budget (round 2), `/Flags` converted unchecked and the missing vertical spacing tests (completion). Only Terra found the Standard 14 box with `/Widths`, the zero Type 3 box, decoder limits taken as recoverable, `/Differences` retention (twice), the glyph vector's byte bound, uncharged decode work, the scanned name cache, the per-string fallback and the uncounted CFF tables. Both found the font memory budget, indirect encodings, the indirect `gs` size, unknown subtypes and fallback allocation. Terra's round 4 escalation at `max` (409 s) found four P1s after Astra's round 3 and 4 approvals.
+
+D01 T01 §11 notes: both found the Debug allocation in `heap_bytes` and the noexcept cache constructors; only Astra found the uncharged hash buckets first (Terra later too) and the descendant's per-object parse count; only Terra found the per-tier totals, the doorkeeper's false admissions, the remaining descendant copies, the crafted-collision probing and the copied `/DecodeParms`.
+
+**Owner decision 2026-10-28 (end of the panel):** the reviewer system was more than the work needed: Terra is removed, GPT-6 Astra reviews alone with every effort one level higher (plan and completion `high`, rounds `xhigh`, `high`, `medium`, rotation `medium`, escalation `high`), and the experiment pins, the 2026-10-22 trial record and the Antigravity and Muse dispatcher support are removed. `D01 T01 §11` was the last section reviewed by the panel; this ledger stays as the record.
 
 ## Limits
 

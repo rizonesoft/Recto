@@ -1,0 +1,129 @@
+{
+  "ref": "D01 T01 \u00a711",
+  "title": "Bounded resolved-object cache in `pdf::Document`",
+  "implementation_sha": "4fcef18a83ed1fe4d8bac54aac9266de5c803fd8",
+  "date": "2026-10-28",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s11.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s11.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s11.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s11.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s11.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s11.terra.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfObject.HeapBytes:PdfDocument.ObjectCacheSemantics:PdfDocument.ObjectCacheBudget:PdfDocument.ObjectCacheEviction:PdfDocument.ObjectCacheAllocationFailure:PdfDocument.ObjectCacheCopies:PdfInterpreter.SharedObjectsParseOnce:PdfInterpreter.SharedDescendantNotCopied:PdfFont.Type0SharedResolver (x64 Debug) -> [  PASSED  ] 9 tests.; (x64 Debug, AddressSanitizer, with PdfXref.*) -> [  PASSED  ] 36 tests. (3 skipped: no heap meter or injection under ASan) 0 Warning(s)",
+    "build.cmd: x64 and ARM64, Debug and Release -> 0 Warning(s), 0 Error(s) each; recto-tests.exe x64 Debug -> [  PASSED  ] 364 tests (365 ran, 1 skipped: PdfFilters.FlateCompressSpeed in Debug); x64 Release -> [  PASSED  ] 365 tests"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T01-s11.md",
+    "verdict": "filed",
+    "candidate": "6b996e5358c6060a97be954cc3b7b64f406bdc13",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T01 \u00a77",
+      "D01 T02 \u00a748"
+    ]
+  },
+  "rounds_spent": 6,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T01-s11.md",
+    "candidate": "417ce9668dd695dc2894b04744ca0a43aada5037",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "efforts": {
+      "terra": {
+        "plan": "xhigh",
+        "completion": "xhigh",
+        "rounds": [
+          "max",
+          "xhigh",
+          "high"
+        ],
+        "rotation": "high",
+        "escalation": "max"
+      }
+    }
+  }
+}

@@ -2,7 +2,7 @@
 schema_version: 1
 id: bridge-runtime
 domain: 01-engine
-status: active
+status: done
 title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
 frozen: true
 track: M1
@@ -52,7 +52,7 @@ track: M1
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [x] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [x] |
 | 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [x] |
-| 11 | §11 | Bounded resolved-object cache in `pdf::Document` | §10 | [ ] |
+| 11 | §11 | Bounded resolved-object cache in `pdf::Document` | §10 | [x] |
 
 ## 1. `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`
 
@@ -427,11 +427,14 @@ Implement `src/pdf/document.h` and `src/pdf/document.cpp` (`recto::pdf::Document
 - [x] Make `resolve_object` return a copy of the cached value, so a caller that changes its copy never changes the cache. Done when: `PdfDocument.ObjectCacheCopies` changes a returned array and resolves the object again unchanged, and `recto-tests.exe --gtest_filter=Pdf*` passes unchanged.
 - [x] Add `Document::resolve_object_shared(IndirectRef) -> PdfResult<std::shared_ptr<const PdfValue>>` and `SharedObjectResolver` alongside `IndirectObjectResolver` (`src/pdf/filters.h`), and move `CidWidths::build` and `load_type0_font` (`src/pdf/font_cid.cpp`) and `TextFont::resolve` (`src/pdf/text_font.cpp`) to it. Image and Form XObjects take it in their own sections (`D01 T02 §44`, `D01 T02 §46`). **Corrected 2026-10-28:** measured during the build: `ColorSpaces` (`src/pdf/color.cpp`) and `Function::parse` (`src/pdf/function.cpp`) already keep what they parse by `object_key` for the page (`D01 T02 §33`), so a shared colour space or function is copied once per page, not per use, and is struck from this item; before, the item moved them too. Done when: `PdfInterpreter.SharedObjectsParseOnce` checks, through `Document::parsed_object_count`, that fifty fonts over one descendant parse each object at most twice (first sight and admission), with the same widths, and `PdfFont.Type0SharedResolver` checks, by counting calls to the copying resolver, that `load_type0_font` given a `SharedObjectResolver` copies no object it reads itself (a stream's indirect filter parameters still reach `decode_stream` through the copying resolver, once per decode, which `D01 T02 §48` makes once per shared stream), and `PdfInterpreter.SharedDescendantNotCopied` checks that opening and interpreting fifty fonts over one padded descendant allocates about what one font does, so neither the document's font list (`Document::resolve_in_place`) nor the interpreter copies it per font (**Corrected 2026-10-28:** round 1 and the completion review: the font list copied every descendant at open).
 - [x] Measure the shared-`/W` fixture (fifty `/Type0` fonts over one descendant with a 65,536-element `/W`) before and after in x64 Debug and Release. **Corrected 2026-10-28:** measured during the build: the cache takes the page from 75.7 s to 18.6 s in Debug with 34 parses; the rest is `load_type0_font` building the descendant's widths once per font, which the font layer owns and `D01 T02 §48` takes with the tenfold target; before, this item claimed the tenfold fall for the cache alone. Done when: the commit body quotes both timings, and the Debug time falls at least threefold.
-- [ ] Commit: `pdf: cache resolved objects per Document within a byte budget`
+- [x] Commit: `pdf: cache resolved objects per Document within a byte budget`
 
 > **Deferred:** one built CIDFont per shared `/Type0` descendant, the rest of the shared-`/W` fixture's time -> XREF: D01 T02 §48
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfObject.HeapBytes:PdfDocument.ObjectCacheSemantics:PdfDocument.ObjectCacheBudget:PdfDocument.ObjectCacheEviction:PdfDocument.ObjectCacheAllocationFailure:PdfDocument.ObjectCacheCopies:PdfInterpreter.SharedObjectsParseOnce:PdfInterpreter.SharedDescendantNotCopied:PdfFont.Type0SharedResolver` reports `[  PASSED  ] 9 tests.` in x64 Debug (allocation injection and the heap meter available) and, under ASan, `[  PASSED  ] 6 tests.` with `PdfObject.HeapBytes`, `ObjectCacheAllocationFailure` and `SharedDescendantNotCopied` the three skipped and 0 warnings; then `recto-tests.exe --gtest_filter=Pdf*` passes.
+
+> **Verified:** 2026-10-28 | §11 | 4fcef18a83ed1fe4d8bac54aac9266de5c803fd8
+> **Review:** `docs/reviews/d01-t01-s11.json`
 
 ## Verification
 
