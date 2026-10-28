@@ -3014,22 +3014,29 @@ TEST(PdfInterpreter, TextFontBudget)
 
 TEST(PdfInterpreter, TextFontCount)
 {
-	// More distinct fonts than a page resolves: past 4,096 the rest take the fallback, recorded, and selecting one of
-	// them again never resolves it.
+	// More distinct fonts than a page resolves: past 4,096 the rest take the fallback, recorded, every time one of them
+	// is selected. Each font gives A a width of 1,000, so a resolved font advances 10 points at size 10 and the
+	// fallback (Helvetica) 6.67.
 	{
 		std::vector<std::string> objects{kF1, kF1Descriptor};
 		std::string fonts;
 		std::string content = "BT ";
 		for (int i = 0; i < 4'100; ++i) {
-			objects.emplace_back("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+			objects.emplace_back("<< /Type /Font /Subtype /Type1 /BaseFont /X /FirstChar 65 /LastChar 65 /Widths [1000] >>");
 			fonts += "/H" + std::to_string(i) + " " + std::to_string(7 + i) + " 0 R ";
 			content += "/H" + std::to_string(i) + " 10 Tf ";
 		}
-		content += "(A) Tj ET";
+		content += "(A) Tj /H0 10 Tf (A) Tj /H4099 10 Tf (A) Tj ET";
 		clear_diagnostics();
-		const auto r = interpret(content, "<< /Font << " + fonts + ">> >>", objects);
-		ASSERT_NE(r.list, nullptr);
+		TextPage page{interpret(content, "<< /Font << " + fonts + ">> >>", objects), {}};
+		ASSERT_NE(page.interpreted.list, nullptr);
 		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		page.runs = all_of<RecordedGlyphRun>(*page.interpreted.list);
+		ASSERT_EQ(page.runs.size(), 3u);
+		const double fallback = standard14_glyph_by_name(Standard14Font::Helvetica, "A")->width / 100.0;
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[0])[0].advance_pt, fallback) << "the 4,100th font was resolved";
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[1])[0].advance_pt, 10.0) << "the first font lost its resolution";
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[2])[0].advance_pt, fallback) << "selecting it again resolved it";
 	}
 }
 

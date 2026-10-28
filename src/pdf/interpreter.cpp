@@ -927,11 +927,10 @@ private:
 		// Text (ISO 32000-1 9.3 and 9.4).
 		case Op::BeginText:
 			// A nested BT, as readers read it, starts a new text object: both matrices reset.
-			in_text_ = true;
 			text_matrix_ = line_matrix_ = PdfMatrix::identity();
 			return {};
 		case Op::EndText:
-			in_text_ = false;
+			// Text shown outside a BT/ET pair is still positioned from the current matrices, as readers do.
 			return {};
 		case Op::CharSpacing:
 		case Op::WordSpacing:
@@ -1589,7 +1588,6 @@ private:
 	size_t font_bytes_{0};
 	PdfMatrix text_matrix_{};
 	PdfMatrix line_matrix_{};
-	bool in_text_{false};
 	std::optional<ColorSpaces> spaces_{};
 	std::optional<Converted> last_stroke_{};
 	std::optional<Converted> last_fill_{};
