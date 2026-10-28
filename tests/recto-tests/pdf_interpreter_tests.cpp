@@ -1759,6 +1759,7 @@ TEST(PdfInterpreter, Functions)
 		{overflow, 1.0, 0.0}, {"{ pop pop }", 1.0, 0.0}, {"{ true add }", 1.0, 0.0}, {"{ 0 div }", 1.0, 0.0},
 		{"{ cvi 0 idiv }", 1.0, 0.0}, {"{ cvi 0 mod }", 1.0, 0.0}, {"{ sqrt }", -4.0, 0.0}, {"{ ln }", 0.0, 0.0},
 		{"{ 0.5 gt }", 1.0, 0.0}, {"{ 0 0 atan }", 1.0, 0.0},
+		{"{ cvi cvr 2 idiv }", 4.0, 0.0}, // cvr makes a real, which idiv refuses: a no-op cvr would give 2
 	};
 	for (const Program& p : failures) {
 		SCOPED_TRACE(std::string(p.text).substr(0, 40));
@@ -2356,6 +2357,7 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 		}
 		const auto shared = interpret_spaces(shared_content, shared_spaces, {flat_table(fifteen, 0xFFu)});
 		ASSERT_NE(shared.list, nullptr);
+		ASSERT_EQ(all_of<DrawPathCommand>(*shared.list).size(), 6u) << "every space sharing the table draws";
 		for (const DrawPathCommand& draw : all_of<DrawPathCommand>(*shared.list)) {
 			EXPECT_GT(draw.fill_color.r, 0.9f);
 		}
