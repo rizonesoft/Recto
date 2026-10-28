@@ -1767,6 +1767,15 @@ TEST(PdfInterpreter, Functions)
 		EXPECT_EQ(evaluate(f, {p.in}, &ok)[0], -1000.0);
 		EXPECT_FALSE(ok);
 	}
+	// A failing piece of a stitching function keeps its own failure values: a calculator with /Range [0.25 1] that fails
+	// inside a type 3 function with no /Range gives 0.25, not the stitching function's 0.
+	{
+		RECTO_PARSED(f, {"<< /FunctionType 3 /Domain [0 1] /Functions [6 0 R] /Bounds [] /Encode [0 1] >>",
+			calculator("{ pop pop }", "/Domain [0 1] /Range [0.25 1]")});
+		bool ok = true;
+		EXPECT_EQ(evaluate(f, {0.5}, &ok)[0], 0.25);
+		EXPECT_FALSE(ok);
+	}
 	// A calculator output past its /Range is clipped.
 	{
 		RECTO_PARSED(f, {calculator("{ 10 mul }", "/Domain [0 1] /Range [0 2]")});
@@ -2350,6 +2359,67 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 		for (const DrawPathCommand& draw : all_of<DrawPathCommand>(*shared.list)) {
 			EXPECT_GT(draw.fill_color.r, 0.9f);
 		}
+	}
+	// A tint transform that fails is decoded once per page, however many spaces name it: 50 spaces over one function
+	// whose 4 MiB table is a byte short decode it once, not 50 times.
+	if (recto::test::ScopedHeapMeter::available()) {
+		const size_t four = size_t{4} << 20u;
+		auto packed = flate_compress(std::vector<uint8_t>(four - 1u, 0x80u));
+		ASSERT_TRUE(packed.has_value());
+		const std::string broken = stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [" + std::to_string(four) +
+				"] /BitsPerSample 8 /Filter /FlateDecode",
+			std::string(packed->begin(), packed->end()));
+		std::string spaces;
+		std::string content;
+		for (int k = 0; k < 50; ++k) {
+			spaces += "/B" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray 5 0 R] ";
+			content += "/B" + std::to_string(k) + " cs ";
+		}
+		const auto bytes = one_page_pdf(content, "<< /ColorSpace << " + spaces + ">> >>", {broken});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		size_t work = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			auto list = interpret_page(**doc, 0u);
+			ASSERT_TRUE(list.has_value());
+			work = meter.allocated_bytes();
+		}
+		EXPECT_LT(work, size_t{64} << 20u) << "the failed tint transform was decoded again for each space";
+	}
+	// Decoding tint transforms costs a page at most 256 MiB: twenty distinct functions whose 15 MiB tables are a byte
+	// short exhaust it after eighteen, and the rest are refused undecoded with their limit recorded.
+	{
+		const size_t fifteen = size_t{15} << 20u;
+		std::string spaces;
+		std::string content;
+		std::vector<std::string> objects;
+		for (int k = 0; k < 20; ++k) {
+			auto packed = flate_compress(std::vector<uint8_t>(fifteen - 1u, static_cast<uint8_t>(k)));
+			ASSERT_TRUE(packed.has_value());
+			objects.push_back(stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [" + std::to_string(fifteen) +
+					"] /BitsPerSample 8 /Filter /FlateDecode",
+				std::string(packed->begin(), packed->end())));
+			spaces += "/D" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray " +
+				std::to_string(5 + k) + " 0 R] ";
+			content += "/D" + std::to_string(k) + " cs ";
+		}
+		clear_diagnostics();
+		const auto r = interpret_spaces(content + "0 0 10 10 re f", spaces, objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes));
+	}
+	// A reference to a generation the file does not hold never finds another generation's parsed function: /G1 names
+	// 5 0 R (white at tint 1), /G2 names 5 1 R, which resolves to nothing, so /G2 is unusable (black).
+	{
+		const auto r = interpret_spaces("/G1 cs 1 scn 0 0 10 10 re f /G2 cs 1 scn 0 0 10 10 re f",
+			"/G1 [/Separation /A /DeviceGray 5 0 R] /G2 [/Separation /B /DeviceGray 5 1 R]",
+			{"<< /FunctionType 2 /Domain [0 1] /N 1 >>"});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		expect_color(draws[0].fill_color, 1.0f, 1.0f, 1.0f);
+		expect_color(draws[1].fill_color, 0.0f, 0.0f, 0.0f);
 	}
 	// A failing calculator gives its /Range low values (gray 0.25 here) and a diagnostic.
 	clear_diagnostics();

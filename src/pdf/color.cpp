@@ -508,7 +508,7 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 						continue;
 					}
 					decoded_bytes += bytes->size();
-					auto profile = IccProfile::make(std::move(*bytes), 4u, ref.has_value() ? ref->obj_num : 0u);
+					auto profile = IccProfile::make(std::move(*bytes), 4u, ref.has_value() ? object_key(*ref) : 0u);
 					if (profile.has_value()) {
 						impl_->default_cmyk = std::move(*profile);
 						impl_->default_read = true;
@@ -1259,10 +1259,11 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				return alternate;
 			}
 			ColorProfileCache& cache = document_.color_profiles();
-			std::shared_ptr<const IccProfile> profile = ref.has_value() ? cache.profile(ref->obj_num) : nullptr;
+			const uint64_t profile_key = ref.has_value() ? object_key(*ref) : 0u;
+			std::shared_ptr<const IccProfile> profile = ref.has_value() ? cache.profile(profile_key) : nullptr;
 			if (profile == nullptr || profile->components != n) {
 				// A stream rejected before is not decoded again, and all decoding is bounded per document.
-				if (ref.has_value() && !cache.may_decode(ref->obj_num)) {
+				if (ref.has_value() && !cache.may_decode(profile_key)) {
 					return alternate;
 				}
 				g_profile_decodes.fetch_add(1u);
@@ -1272,18 +1273,18 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 						return bytes.error();
 					}
 					if (ref.has_value()) {
-						cache.reject(ref->obj_num);
+						cache.reject(profile_key);
 					}
 					return alternate; // the decode recorded its own diagnostic
 				}
 				cache.note_decoded(bytes->size());
-				auto made = IccProfile::make(std::move(*bytes), n, ref.has_value() ? ref->obj_num : 0u);
+				auto made = IccProfile::make(std::move(*bytes), n, profile_key);
 				if (!made.has_value()) {
 					if (made.error().code == ErrorCode::OutOfMemory) {
 						return made.error();
 					}
 					if (ref.has_value()) {
-						cache.reject(ref->obj_num);
+						cache.reject(profile_key);
 					}
 					return alternate; // recorded by make_pdf_error
 				}
@@ -1498,29 +1499,44 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 PdfResult<std::shared_ptr<const Function>> ColorSpaces::tint_transform(const PdfValue& value)
 {
 	const std::optional<IndirectRef> ref = value.as_ref();
+	const uint64_t key = ref.has_value() ? object_key(*ref) : 0u;
 	if (ref.has_value()) {
 		for (const auto& [number, function] : functions_) {
-			if (number == ref->obj_num) {
+			if (number == key) {
 				return function;
 			}
 		}
+		if (std::find(rejected_functions_.begin(), rejected_functions_.end(), key) != rejected_functions_.end()) {
+			return std::shared_ptr<const Function>{}; // failed or refused before: never decoded again
+		}
 	}
-	auto parsed = Function::parse(document_, value);
+	const auto reject = [&]() {
+		if (ref.has_value()) {
+			rejected_functions_.push_back(key);
+		}
+		return std::shared_ptr<const Function>{};
+	};
+	if (function_decoded_ >= kMaxColorFunctionDecodeBytes) {
+		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes,
+			function_decoded_, kMaxColorFunctionDecodeBytes, "Tint transform decoding past the page's limit"));
+		return reject();
+	}
+	auto parsed = Function::parse(document_, value, &function_decoded_);
 	if (!parsed.has_value()) {
 		if (parsed.error().code == ErrorCode::OutOfMemory) {
 			return parsed.error();
 		}
-		return std::shared_ptr<const Function>{}; // the parse recorded why
+		return reject(); // the parse recorded why
 	}
 	const size_t bytes = (*parsed)->table_bytes();
 	if (function_bytes_ + bytes > kMaxColorFunctionBytes) {
 		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes,
 			function_bytes_ + bytes, kMaxColorFunctionBytes, "Tint transform tables past the page's limit"));
-		return std::shared_ptr<const Function>{};
+		return reject();
 	}
 	function_bytes_ += bytes;
 	if (ref.has_value()) {
-		functions_.emplace_back(ref->obj_num, *parsed); // bounded by the byte budget, each function at least its node
+		functions_.emplace_back(key, *parsed); // bounded by the byte budget, each function at least its node
 	}
 	return std::move(*parsed);
 }

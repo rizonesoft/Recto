@@ -8,6 +8,7 @@
 #include "object.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -30,15 +31,23 @@ inline constexpr size_t kMaxCalculatorProgramBytes = size_t{1} << 20u; // a type
 inline constexpr size_t kCalculatorStackDepth = 100u;               // 7.10.5: the operand stack
 inline constexpr size_t kMaxMultilinearInputs = 8u; // past this a sampled function interpolates on a simplex
 
+// An indirect object's identity for a cache: its object number and generation together (ISO 32000-1 7.3.10), so a
+// reference to a generation the file does not hold never finds another generation's parsed object.
+[[nodiscard]] constexpr uint64_t object_key(const IndirectRef& ref) noexcept
+{
+	return (uint64_t{ref.obj_num} << 16u) | ref.gen_num;
+}
+
 class Function {
 public:
 	struct Node;
 
 	// A function given as a dictionary, a stream or an array of one-output functions (read as one function of their
 	// common inputs), direct or indirect. A malformed function is `DamagedFormat`; one past a bound above
-	// `ResourceLimit`; allocation failure `OutOfMemory`.
+	// `ResourceLimit`; allocation failure `OutOfMemory`. `decoded`, when given, is increased by the bytes its streams
+	// decoded, whether the parse succeeded or not, so a caller can bound the decoding work of many functions.
 	[[nodiscard]] static PdfResult<std::shared_ptr<const Function>> parse(
-		const Document& document, const PdfValue& value) noexcept;
+		const Document& document, const PdfValue& value, size_t* decoded = nullptr) noexcept;
 
 	~Function();
 	Function(const Function&) = delete;

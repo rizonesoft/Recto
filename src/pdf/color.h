@@ -39,6 +39,9 @@ inline constexpr size_t kMaxDeviceNColorants = 64u; // entries read from a Devic
 // Tint transform tables one interpretation holds: each function object is parsed once per interpretation and shared by
 // every space naming it, and distinct ones add up to this; past it a space is unusable, with a diagnostic.
 inline constexpr size_t kMaxColorFunctionBytes = size_t{64} << 20u;
+// Decoding all tint transform streams may cost one interpretation, failed parses included: a function object that
+// fails or is refused is remembered and never decoded again, and past this budget no new one is decoded.
+inline constexpr size_t kMaxColorFunctionDecodeBytes = size_t{256} << 20u;
 // Spaces visited to resolve one value (each nested space, `/Alternate`, base and `/Colorants` entry): far past any real
 // space, so attributes that name spaces naming more attributes cannot multiply into millions of resolutions.
 inline constexpr size_t kMaxColorSpaceSteps = 4'096u;
@@ -285,8 +288,10 @@ private:
 	// What `named` and `device` gave, so selecting a space again returns the same space (and its decoded profile).
 	std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> resolved_;
 	// Tint transforms parsed in this interpretation, by object number, and the bytes their tables hold.
-	std::vector<std::pair<uint64_t, std::shared_ptr<const Function>>> functions_;
+	std::vector<std::pair<uint64_t, std::shared_ptr<const Function>>> functions_; // by `object_key`
+	std::vector<uint64_t> rejected_functions_; // function objects that failed or were refused, never parsed again
 	size_t function_bytes_ = 0;
+	size_t function_decoded_ = 0; // against `kMaxColorFunctionDecodeBytes`
 	size_t steps_ = 0; // spaces visited by the current public call, against `kMaxColorSpaceSteps`
 	// Allocation failure met while resolving a value, which the public call returns rather than a fallback.
 	std::optional<PdfError> fatal_;

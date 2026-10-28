@@ -161,8 +161,9 @@ namespace {
 struct ParseContext {
 	const Document& document;
 	size_t nodes = 0;
-	size_t bytes = 0; // sample and spline tables parsed in this tree, each shared table once
-	std::vector<std::pair<uint32_t, std::shared_ptr<const Function::Node>>> parsed; // by object number
+	size_t bytes = 0;   // sample and spline tables parsed in this tree, each shared table once
+	size_t decoded = 0; // bytes the tree's streams decoded, failed parses included
+	std::vector<std::pair<uint64_t, std::shared_ptr<const Function::Node>>> parsed; // by `object_key`
 };
 
 [[nodiscard]] PdfResult<PdfValue> resolved(const Document& document, const PdfValue& value) noexcept
@@ -341,6 +342,9 @@ PdfResult<std::unique_ptr<Function::Node>> parse_sampled(
 	}
 	RECTO_PDF_TRY(const std::optional<int64_t> order, integer(document, dict, "Order"));
 	auto bytes = document.decode_stream(stream, kMaxSampledFunctionBytes);
+	if (bytes.has_value()) {
+		context.decoded += bytes->size();
+	}
 	if (!bytes.has_value()) {
 		const ErrorCode code = bytes.error().code;
 		if (code == ErrorCode::DecompressionLimitExceeded || code == ErrorCode::ResourceLimit) {
@@ -562,6 +566,9 @@ PdfResult<std::unique_ptr<Function::Node>> parse_calculator(
 		return damaged("Calculator function has no /Range");
 	}
 	auto bytes = context.document.decode_stream(stream, kMaxCalculatorProgramBytes);
+	if (bytes.has_value()) {
+		context.decoded += bytes->size();
+	}
 	if (!bytes.has_value()) {
 		const ErrorCode code = bytes.error().code;
 		if (code == ErrorCode::DecompressionLimitExceeded || code == ErrorCode::ResourceLimit) {
@@ -740,7 +747,7 @@ PdfResult<std::shared_ptr<const Function::Node>> parse_node(ParseContext& contex
 		const std::optional<IndirectRef> ref = value.as_ref();
 		if (ref.has_value()) {
 			for (const auto& [number, node] : context.parsed) {
-				if (number == ref->obj_num) {
+				if (number == object_key(*ref)) {
 					// A shared subtree named again counts with its depth below this point and every function in it.
 					if (depth + node->height > kMaxFunctionDepth) {
 						return limited("Functions nest deeper than their limit", RefusalReason::FunctionDepth,
@@ -768,7 +775,7 @@ PdfResult<std::shared_ptr<const Function::Node>> parse_node(ParseContext& contex
 		context.bytes += sizeof(Function::Node);
 		std::shared_ptr<const Function::Node> node(std::move(fresh));
 		if (ref.has_value()) {
-			context.parsed.emplace_back(ref->obj_num, node);
+			context.parsed.emplace_back(object_key(*ref), node);
 		}
 		return node;
 	} catch (const std::bad_alloc&) {
@@ -1288,16 +1295,15 @@ bool Function::Node::evaluate(std::span<const double> in, std::span<double> out)
 		const double hi = piece == k - 1u ? domain[1] : bounds[piece];
 		const double e = interpolate(x[0], lo, hi, encode[2u * piece], encode[2u * piece + 1u]);
 		const std::array<double, 1> sub_in{e};
-		if (!children[piece]->evaluate(sub_in, out)) {
-			fail(out);
-			return false;
-		}
+		// A failing piece has already written its own failure values (its /Range lows); they stand, clipped to this
+		// function's /Range like any output, and the failure is reported.
+		const bool ok = children[piece]->evaluate(sub_in, out);
 		if (!range.empty()) {
 			for (size_t j = 0; j < n; ++j) {
 				out[j] = std::clamp(out[j], range[2u * j], range[2u * j + 1u]);
 			}
 		}
-		return true;
+		return ok;
 	}
 	case Type::Calculator:
 		if (!run_calculator(x, out)) {
@@ -1334,15 +1340,22 @@ Function::Function(std::shared_ptr<const Node> root, size_t table_bytes) noexcep
 
 Function::~Function() = default;
 
-PdfResult<std::shared_ptr<const Function>> Function::parse(const Document& document, const PdfValue& value) noexcept
+PdfResult<std::shared_ptr<const Function>> Function::parse(
+	const Document& document, const PdfValue& value, size_t* decoded) noexcept
 {
 	try {
 		ParseContext context{document};
-		RECTO_PDF_TRY(std::shared_ptr<const Node> root, parse_node(context, value, 0u));
-		if (root->n == 0u) {
+		auto root = parse_node(context, value, 0u);
+		if (decoded != nullptr) {
+			*decoded += context.decoded;
+		}
+		if (!root.has_value()) {
+			return root.error();
+		}
+		if ((*root)->n == 0u) {
 			return damaged("Function gives no outputs");
 		}
-		return std::make_shared<const Function>(std::move(root), context.bytes);
+		return std::make_shared<const Function>(std::move(*root), context.bytes);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading a PDF function");
 	}
