@@ -1571,6 +1571,33 @@ namespace {
 
 } // namespace
 
+std::optional<std::span<const uint8_t>> opentype_cff_table(std::span<const uint8_t> sfnt) noexcept
+{
+	if (sfnt.size() < 12u) {
+		return std::nullopt;
+	}
+	const size_t tables = (size_t{sfnt[4]} << 8u) | sfnt[5];
+	for (size_t i = 0; i < tables; ++i) {
+		const size_t at = 12u + 16u * i;
+		if (at + 16u > sfnt.size()) {
+			return std::nullopt;
+		}
+		if (std::memcmp(sfnt.data() + at, "CFF ", 4u) != 0) {
+			continue;
+		}
+		const auto u32 = [&](size_t o) {
+			return (uint32_t{sfnt[o]} << 24u) | (uint32_t{sfnt[o + 1u]} << 16u) | (uint32_t{sfnt[o + 2u]} << 8u) | sfnt[o + 3u];
+		};
+		const size_t offset = u32(at + 8u);
+		const size_t length = u32(at + 12u);
+		if (offset > sfnt.size() || length > sfnt.size() - offset) {
+			return std::nullopt;
+		}
+		return sfnt.subspan(offset, length);
+	}
+	return std::nullopt;
+}
+
 PdfResult<std::shared_ptr<const LoadedFont>> load_embedded_font(
 	std::shared_ptr<const std::vector<uint8_t>> program,
 	FontProgramFormat format) noexcept

@@ -7,6 +7,7 @@
 #include "filters.h"
 #include "function.h"
 #include "text_font.h"
+#include "font_encoding.h"
 #include "test_support.h"
 #include "lexer.h"
 
@@ -2865,7 +2866,13 @@ TEST(PdfInterpreter, TjKerningAndSpacing)
 			EXPECT_GE(g.origin_pt.x, page.runs[0].bounds_pt.x_min);
 			EXPECT_LE(g.origin_pt.x, page.runs[0].bounds_pt.x_max);
 		}
-		EXPECT_DOUBLE_EQ(page.runs[0].bounds_pt.y_min, -2.0); // the box's -200 at size 10
+		// Since section 43 the bounds are the glyphs' own ink, not the font's box (-200 at size 10 would be -2).
+		double ink_bottom = 1e300;
+		for (const PositionedGlyph& g : glyphs_of(page, page.runs[0])) {
+			ASSERT_TRUE(g.ink_bounds_pt.has_value());
+			ink_bottom = std::min(ink_bottom, g.origin_pt.y + g.ink_bounds_pt->y_min);
+		}
+		EXPECT_DOUBLE_EQ(page.runs[0].bounds_pt.y_min, ink_bottom);
 	}
 }
 
@@ -3243,6 +3250,548 @@ TEST(PdfInterpreter, SharedDescendantNotCopied)
 	const size_t fifty = measured(50);
 	const size_t one_copy = 65'536u * sizeof(PdfValue);
 	EXPECT_LT(fifty, one + 49u * one_copy / 4u) << "the descendant was copied per font: " << one << " then " << fifty << " bytes";
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Glyphs for every font kind (D01 T02 section 43). Glyph IDs are checked against the face or program they come from,
+// read directly through section 2, 27 and 29's loaders, so each test proves the route from a code to its glyph.
+// ---------------------------------------------------------------------------------------------------------------------
+
+std::string corpus_font_bytes(std::string_view name)
+{
+	const auto bytes = recto::test::read_file_bytes(recto::test::corpus_path(std::string("fonts/") + std::string(name)));
+	return std::string(bytes.begin(), bytes.end());
+}
+
+std::shared_ptr<const std::vector<uint8_t>> shared_bytes(const std::string& s)
+{
+	return std::make_shared<const std::vector<uint8_t>>(s.begin(), s.end());
+}
+
+// A PFA fixture's /Length1 to /Length3 (`scripts/build-corpus.py` writes 8 lines of 64 zeros and `cleartomark`).
+std::string pfa_lengths_entries(const std::string& pfa)
+{
+	const size_t length1 = pfa.find("currentfile eexec\n") + std::string_view("currentfile eexec\n").size();
+	const size_t length3 = 8u * 65u + std::string_view("cleartomark\n").size();
+	return "/Length1 " + std::to_string(length1) + " /Length2 " + std::to_string(pfa.size() - length1 - length3) +
+		" /Length3 " + std::to_string(length3);
+}
+
+// `ttf` with its `cmap` replaced by one holding the single subtable `subtable` for (platform, encoding), appended at
+// the end and pointed at from the table directory (checksums are not read).
+std::string with_cmap(const std::string& ttf, uint16_t platform, uint16_t encoding, const std::string& subtable)
+{
+	std::string out = ttf;
+	while (out.size() % 4u != 0u) {
+		out.push_back('\0');
+	}
+	const auto be16 = [](uint16_t v) { return std::string{static_cast<char>(v >> 8u), static_cast<char>(v & 0xFFu)}; };
+	const auto be32 = [](uint32_t v) {
+		return std::string{static_cast<char>(v >> 24u), static_cast<char>((v >> 16u) & 0xFFu), static_cast<char>((v >> 8u) & 0xFFu),
+			static_cast<char>(v & 0xFFu)};
+	};
+	const std::string table = be16(0) + be16(1) + be16(platform) + be16(encoding) + be32(12u) + subtable;
+	const uint32_t offset = static_cast<uint32_t>(out.size());
+	out += table;
+	const size_t tables = (static_cast<uint8_t>(out[4]) << 8u) | static_cast<uint8_t>(out[5]);
+	for (size_t i = 0; i < tables; ++i) {
+		const size_t at = 12u + 16u * i;
+		if (out.compare(at, 4u, "cmap") == 0) {
+			out.replace(at + 8u, 4u, be32(offset));
+			out.replace(at + 12u, 4u, be32(static_cast<uint32_t>(table.size())));
+		}
+	}
+	return out;
+}
+
+// A format 4 subtable mapping each code in `codes` to the glyph beside it, one segment each.
+std::string cmap_format4(const std::vector<std::pair<uint16_t, uint16_t>>& codes)
+{
+	const auto be16 = [](uint16_t v) { return std::string{static_cast<char>(v >> 8u), static_cast<char>(v & 0xFFu)}; };
+	const uint16_t segments = static_cast<uint16_t>(codes.size() + 1u);
+	std::string ends, starts, deltas, offsets;
+	for (const auto& [code, glyph] : codes) {
+		ends += be16(code);
+		starts += be16(code);
+		deltas += be16(static_cast<uint16_t>(glyph - code));
+		offsets += be16(0);
+	}
+	ends += be16(0xFFFFu);
+	starts += be16(0xFFFFu);
+	deltas += be16(1u);
+	offsets += be16(0);
+	const std::string body = be16(static_cast<uint16_t>(segments * 2u)) + be16(0) + be16(0) + be16(0) + ends + be16(0) +
+		starts + deltas + offsets;
+	return be16(4) + be16(static_cast<uint16_t>(6u + body.size())) + be16(0) + body;
+}
+
+// A format 0 subtable mapping each code in `codes` to the glyph beside it.
+std::string cmap_format0(const std::vector<std::pair<uint8_t, uint8_t>>& codes)
+{
+	std::string glyphs(256u, '\0');
+	for (const auto& [code, glyph] : codes) {
+		glyphs[code] = static_cast<char>(glyph);
+	}
+	return std::string{0, 0, 0x01, 0x06, 0, 0} + glyphs;
+}
+
+TextPage glyph_page(const std::string& content, const std::string& fonts, const std::vector<std::string>& objects)
+{
+	TextPage page{interpret(content, "<< /Font << " + fonts + " >> >>", objects), {}};
+	if (page.interpreted.list != nullptr) {
+		page.runs = all_of<RecordedGlyphRun>(*page.interpreted.list);
+	}
+	return page;
+}
+
+const LoadedFont* handle_of(const RecordedGlyphRun& run)
+{
+	return static_cast<const LoadedFont*>(run.font_handle.get());
+}
+
+TEST(PdfInterpreter, TextFontGlyphs)
+{
+	const auto bytes_of = [](std::string_view s) {
+		return std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+	};
+	const std::string ttf = corpus_font_bytes("truetype-full-short-loca.ttf");
+	// A standard font: Helvetica's face, the glyph its cmap gives `A`, with that glyph's ink.
+	{
+		const TextPage page = glyph_page("BT /H 10 Tf (A ) Tj ET", "/H 5 0 R", {"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		const auto face = standard14_face_glyph(Standard14Font::Helvetica, U'A');
+		ASSERT_TRUE(face.has_value() && face->has_value());
+		EXPECT_EQ(handle_of(page.runs[0]), (*face)->face.get());
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		EXPECT_EQ(g[0].glyph_index, (*face)->glyph);
+		ASSERT_TRUE(g[0].ink_bounds_pt.has_value());
+		const auto ink = (*face)->face->ink_box((*face)->glyph);
+		ASSERT_TRUE(ink.has_value() && ink->has_value());
+		EXPECT_NEAR(g[0].ink_bounds_pt->x_max, (*ink)->x_max * 10.0, 1e-9);
+		EXPECT_TRUE(g[1].is_blank) << "the space paints nothing";
+	}
+	// An embedded TrueType program: A is glyph 1 through its (3,1) cmap.
+	{
+		const TextPage page = glyph_page("BT /T 10 Tf (AO) Tj ET", "/T 5 0 R",
+			{"<< /Type /Font /Subtype /TrueType /BaseFont /Fixture /FirstChar 65 /LastChar 79 /Widths [600 0 0 0 0 0 0 0 0 0 0 0 0 0 700] /FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 32 /FontBBox [0 0 1000 1000] /FontFile2 7 0 R >>",
+				stream_object("", ttf)});
+		ASSERT_EQ(page.runs.size(), 1u);
+		ASSERT_NE(handle_of(page.runs[0]), nullptr);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		EXPECT_EQ(g[0].glyph_index, 1u);
+		EXPECT_EQ(g[1].glyph_index, 3u);
+	}
+	// A Type 3 font: no face (its procedures are section 31's), not blank, its run's handle null.
+	{
+		const TextPage page = glyph_page("BT /T3 10 Tf (a) Tj ET", "/T3 5 0 R",
+			{"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /FirstChar 97 /LastChar 97 "
+			 "/Widths [500] /CharProcs << >> /Encoding << /Differences [97 /a] >> >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_EQ(handle_of(page.runs[0]), nullptr);
+		EXPECT_FALSE(glyphs_of(page, page.runs[0])[0].is_blank);
+		EXPECT_TRUE(page.runs[0].has_bounds);
+	}
+	// A /Type0 over an embedded /CIDFontType2 with a non-identity /CIDToGIDMap: CID 1 is glyph 4, CID 2 glyph 6.
+	{
+		const std::string map{0, 0, 0, 4, 0, 6};
+		const TextPage page = glyph_page("BT /C 10 Tf <00010002> Tj ET", "/C 5 0 R",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /Fixture /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+				"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Fixture /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+				"/FontDescriptor 7 0 R /CIDToGIDMap 9 0 R /DW 600 >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 4 /FontBBox [0 0 1000 1000] /FontFile2 8 0 R >>",
+				stream_object("", ttf), stream_object("", map)});
+		ASSERT_EQ(page.runs.size(), 1u);
+		ASSERT_NE(handle_of(page.runs[0]), nullptr);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		EXPECT_EQ(g[0].glyph_index, 4u);
+		EXPECT_EQ(g[1].glyph_index, 6u);
+		EXPECT_TRUE(g[0].ink_bounds_pt.has_value()) << "the composite glyph's ink was not read from its face";
+	}
+	// A /Type0 whose CIDFont embeds no program: positioned, advance-only, its absence recorded.
+	{
+		clear_diagnostics();
+		const TextPage page = glyph_page("BT /C 10 Tf <0001> Tj ET", "/C 5 0 R",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+				"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 500 >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_EQ(handle_of(page.runs[0]), nullptr);
+		EXPECT_TRUE(glyphs_of(page, page.runs[0])[0].is_blank);
+		EXPECT_TRUE(recorded(ErrorCode::UnsupportedFeature));
+	}
+	(void)bytes_of;
+	// The font budget charges each font's embedded program: fifty fonts over one small program stay within it, fifty
+	// distinct 2 MiB programs reach it.
+	for (const bool large : {false, true}) {
+		std::vector<std::string> objects{kF1, kF1Descriptor};
+		std::string fonts;
+		std::string content = "BT ";
+		std::string padded = ttf;
+		if (large) {
+			padded.resize(size_t{2} << 20u, '\0');
+		}
+		const std::string program = stream_object("", padded);
+		objects.push_back(program); // object 7, shared by every font when not large
+		for (int i = 0; i < 50; ++i) {
+			const int font_number = 8 + 2 * i;
+			objects.push_back("<< /Type /Font /Subtype /TrueType /BaseFont /F" + std::to_string(i) +
+				" /FirstChar 65 /LastChar 65 /Widths [600] /FontDescriptor " + std::to_string(font_number + 1) + " 0 R >>");
+			const std::string file = large ? std::to_string(108 + i) : std::string("7");
+			objects.push_back("<< /Type /FontDescriptor /FontName /F" + std::to_string(i) + " /Flags 32 /FontBBox [0 0 1000 1000] /FontFile2 " +
+				file + " 0 R >>");
+			fonts += "/F" + std::to_string(i) + " " + std::to_string(font_number) + " 0 R ";
+			content += "/F" + std::to_string(i) + " 10 Tf (A) Tj ";
+		}
+		if (large) {
+			for (int i = 0; i < 50; ++i) {
+				objects.push_back(program); // objects 108 to 157, each its own copy
+			}
+		}
+		clear_diagnostics();
+		const TextPage page = glyph_page(content + "ET", fonts, objects);
+		ASSERT_NE(page.interpreted.list, nullptr) << (large ? "large" : "shared");
+		EXPECT_EQ(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes), large) << (large ? "large" : "shared");
+	}
+}
+
+TEST(PdfInterpreter, Standard14FittedWidths)
+{
+	// The glyphs whose Windows face advance differs from the AFM's (PdfFont.Standard14Repertoire's list), by
+	// /Differences at codes 1 to 15: each origin at the sum of the AFM advances before it, each glyph fitted by
+	// its AFM width over its face advance.
+	const std::array<std::string_view, 15> names = {"Lcaron", "commaaccent", "dcaron", "divide", "imacron", "lcaron",
+		"lessequal", "greaterequal", "macron", "minus", "notequal", "partialdiff", "summation", "tcaron", "Ydieresis"};
+	std::string differences = "[1";
+	std::string shown;
+	for (size_t i = 0; i < names.size(); ++i) {
+		differences += " /" + std::string(names[i]);
+		shown.push_back(static_cast<char>(1 + i));
+	}
+	differences += "]";
+	for (const auto& [base, which] : {std::pair{std::string("Helvetica"), Standard14Font::Helvetica},
+			 std::pair{std::string("Times-Italic"), Standard14Font::TimesItalic}}) {
+		SCOPED_TRACE(base);
+		std::string hex;
+		for (const char c : shown) {
+			char buffer[3];
+			std::snprintf(buffer, sizeof(buffer), "%02X", static_cast<unsigned char>(c));
+			hex += buffer;
+		}
+		const TextPage page = glyph_page("BT /S 10 Tf <" + hex + "> Tj ET", "/S 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /" + base + " /Encoding << /Differences " + differences + " >> >>"});
+		ASSERT_GE(page.runs.size(), 1u);
+		double x = 0.0;
+		size_t at = 0;
+		for (const RecordedGlyphRun& run : page.runs) {
+			for (const PositionedGlyph& g : glyphs_of(page, run)) {
+				ASSERT_LT(at, names.size());
+				const std::string_view name = names[at];
+				SCOPED_TRACE(std::string(name));
+				const Standard14Glyph* afm = standard14_glyph_by_name(which, name);
+				ASSERT_NE(afm, nullptr);
+				EXPECT_NEAR(g.origin_pt.x, x, 1e-9) << "the origin is not the sum of the AFM advances before it";
+				EXPECT_NEAR(g.advance_pt, afm->width / 100.0, 1e-9);
+				const auto point = drawable_unicode(name);
+				ASSERT_TRUE(point.has_value());
+				const auto face = standard14_face_glyph(which, *point);
+				ASSERT_TRUE(face.has_value() && face->has_value());
+				EXPECT_EQ(handle_of(run), (*face)->face.get());
+				EXPECT_EQ(g.glyph_index, (*face)->glyph);
+				const auto advance = (*face)->face->advance((*face)->glyph);
+				ASSERT_TRUE(advance.has_value());
+				// A glyph the face gives no advance (a combining mark such as commaaccent) cannot be fitted by scaling.
+				const double fitted = *advance > 0.0 ? (afm->width / 1000.0) / *advance : 1.0;
+				EXPECT_NEAR(g.width_scale, std::abs(fitted - 1.0) > 1e-3 ? fitted : 1.0, 1e-9);
+				x += g.advance_pt;
+				++at;
+			}
+		}
+		EXPECT_EQ(at, names.size());
+	}
+	// Symbol by its built-in codes: alpha, summation, integral, and the Euro through /Differences, which Symbol's
+	// Windows face lacks and Segoe UI Symbol draws: three runs, the middle one in the second face.
+	{
+		const TextPage page = glyph_page("BT /Y 10 Tf (a\\345\\362\\310) Tj ET", "/Y 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /Encoding << /Differences [200 /Euro] >> >>"});
+		std::vector<std::pair<const LoadedFont*, uint16_t>> drawn;
+		for (const RecordedGlyphRun& run : page.runs) {
+			for (const PositionedGlyph& g : glyphs_of(page, run)) {
+				drawn.emplace_back(handle_of(run), g.glyph_index);
+			}
+		}
+		ASSERT_EQ(drawn.size(), 4u);
+		size_t i = 0;
+		for (const std::string_view name : {"alpha", "summation", "integral", "Euro"}) {
+			const Standard14Glyph* afm = standard14_glyph_by_name(Standard14Font::Symbol, name);
+			ASSERT_NE(afm, nullptr) << name;
+			const auto face = standard14_face_glyph(Standard14Font::Symbol, static_cast<char32_t>(afm->code));
+			ASSERT_TRUE(face.has_value() && face->has_value()) << name;
+			EXPECT_EQ(drawn[i].first, (*face)->face.get()) << name;
+			EXPECT_EQ(drawn[i].second, (*face)->glyph) << name;
+			++i;
+		}
+		EXPECT_NE(drawn[3].first, drawn[0].first) << "the Euro is drawn from a second face";
+		EXPECT_GE(page.runs.size(), 2u);
+		const auto last = glyphs_of(page, page.runs.back());
+		const auto first = glyphs_of(page, page.runs.front());
+		EXPECT_GT(last.back().origin_pt.x, first.front().origin_pt.x) << "origins continue across the split";
+	}
+}
+
+TEST(PdfInterpreter, GlyphInkBounds)
+{
+	// Spaces only: every glyph blank, nothing to bound.
+	{
+		const TextPage page = glyph_page("BT /H 10 Tf (   ) Tj ET", "/H 5 0 R", {"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		for (const PositionedGlyph& g : glyphs_of(page, page.runs[0])) {
+			EXPECT_TRUE(g.is_blank);
+		}
+		EXPECT_FALSE(page.runs[0].has_bounds);
+	}
+	// Times-Italic `f` reaches left of its origin and right past its advance; each glyph's ink is its face's, scaled
+	// by the size, and the run's bounds are the union of its glyphs' ink.
+	{
+		const TextPage page = glyph_page("BT /I 20 Tf (ffj) Tj ET", "/I 5 0 R", {"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 3u);
+		bool left = false;
+		bool right = false;
+		PdfRect u{1e300, 1e300, -1e300, -1e300};
+		double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+		for (const PositionedGlyph& glyph : g) {
+			ASSERT_TRUE(glyph.ink_bounds_pt.has_value());
+			left = left || glyph.ink_bounds_pt->x_min < 0.0;
+			right = right || glyph.ink_bounds_pt->x_max > glyph.advance_pt;
+			x0 = std::min(x0, glyph.origin_pt.x + glyph.ink_bounds_pt->x_min);
+			y0 = std::min(y0, glyph.origin_pt.y + glyph.ink_bounds_pt->y_min);
+			x1 = std::max(x1, glyph.origin_pt.x + glyph.ink_bounds_pt->x_max);
+			y1 = std::max(y1, glyph.origin_pt.y + glyph.ink_bounds_pt->y_max);
+		}
+		(void)u;
+		EXPECT_TRUE(left) << "no glyph reached left of its origin";
+		EXPECT_TRUE(right) << "no glyph overhung its advance";
+		ASSERT_TRUE(page.runs[0].has_bounds);
+		EXPECT_NEAR(page.runs[0].bounds_pt.x_min, x0, 1e-9);
+		EXPECT_NEAR(page.runs[0].bounds_pt.x_max, x1, 1e-9);
+		EXPECT_NEAR(page.runs[0].bounds_pt.y_min, y0, 1e-9);
+		EXPECT_NEAR(page.runs[0].bounds_pt.y_max, y1, 1e-9);
+		const auto face = standard14_face_glyph(Standard14Font::TimesItalic, U'f');
+		ASSERT_TRUE(face.has_value() && face->has_value());
+		const auto ink = (*face)->face->ink_box((*face)->glyph);
+		ASSERT_TRUE(ink.has_value() && ink->has_value());
+		EXPECT_NEAR(g[0].ink_bounds_pt->x_min, (*ink)->x_min * g[0].width_scale * 20.0, 1e-9);
+	}
+	// A split run (Symbol's Euro from a second face): each run's bounds are its own glyphs'.
+	{
+		const TextPage page = glyph_page("BT /Y 10 Tf (a\\310a) Tj ET", "/Y 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /Encoding << /Differences [200 /Euro] >> >>"});
+		ASSERT_EQ(page.runs.size(), 3u);
+		for (const RecordedGlyphRun& run : page.runs) {
+			const auto g = glyphs_of(page, run);
+			ASSERT_EQ(g.size(), 1u);
+			ASSERT_TRUE(g[0].ink_bounds_pt.has_value());
+			ASSERT_TRUE(run.has_bounds);
+			EXPECT_NEAR(run.bounds_pt.x_min, g[0].origin_pt.x + g[0].ink_bounds_pt->x_min, 1e-9);
+			EXPECT_NEAR(run.bounds_pt.x_max, g[0].origin_pt.x + g[0].ink_bounds_pt->x_max, 1e-9);
+		}
+	}
+}
+
+TEST(PdfInterpreter, MissingFaceText)
+{
+	// The system face fails to load: the text is advance-only in a run with no font handle, the failure recorded, and
+	// the text after it stays where the file put it.
+	detail::reset_standard14_faces();
+	clear_diagnostics();
+	TextPage page{Interpreted{}, {}};
+	{
+		const detail::ScopedFontLoaderFailure fail(detail::FontLoaderStage::SystemFont, static_cast<int32_t>(0x80004005));
+		page = glyph_page("BT /C 10 Tf (AB) Tj (C) Tj ET", "/C 5 0 R", {"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"});
+	}
+	detail::reset_standard14_faces(); // later tests load the faces afresh
+	ASSERT_NE(page.interpreted.list, nullptr);
+	ASSERT_EQ(page.runs.size(), 2u);
+	for (const RecordedGlyphRun& run : page.runs) {
+		EXPECT_EQ(handle_of(run), nullptr);
+		for (const PositionedGlyph& g : glyphs_of(page, run)) {
+			EXPECT_TRUE(g.is_blank);
+		}
+	}
+	EXPECT_FALSE(diagnostics_tail(32u).empty()) << "the face's failure was not recorded";
+	EXPECT_NEAR(page.runs[1].text_matrix.e, 2.0 * 6.0, 1e-9) << "the next string did not start after the first";
+}
+
+TEST(PdfInterpreter, SimpleFontGlyphs)
+{
+	const std::string ttf = corpus_font_bytes("truetype-full-short-loca.ttf");
+	// A WinAnsi Type 1 with /Differences (Helvetica): code 196 is Adieresis by WinAnsi, code 66 is /O by /Differences.
+	{
+		const TextPage page = glyph_page("BT /H 10 Tf (\\304B) Tj ET", "/H 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /BaseEncoding /WinAnsiEncoding /Differences [66 /O] >> >>"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		const auto adieresis = standard14_face_glyph(Standard14Font::Helvetica, U'Ä');
+		const auto o = standard14_face_glyph(Standard14Font::Helvetica, U'O');
+		ASSERT_TRUE(adieresis.has_value() && adieresis->has_value() && o.has_value() && o->has_value());
+		EXPECT_EQ(g[0].glyph_index, (*adieresis)->glyph);
+		EXPECT_EQ(g[1].glyph_index, (*o)->glyph);
+	}
+	// A symbolic TrueType through (3,0): code 0x41 at 0xF041, which maps to glyph 4 (B's outline).
+	{
+		const std::string program = with_cmap(ttf, 3u, 0u, cmap_format4({{uint16_t{0xF041}, uint16_t{4}}}));
+		const TextPage page = glyph_page("BT /T 10 Tf (A) Tj ET", "/T 5 0 R",
+			{"<< /Type /Font /Subtype /TrueType /BaseFont /Fixture /FirstChar 65 /LastChar 65 /Widths [600] /FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 4 /FontBBox [0 0 1000 1000] /FontFile2 7 0 R >>",
+				stream_object("", program)});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_EQ(glyphs_of(page, page.runs[0])[0].glyph_index, 4u);
+	}
+	// A non-symbolic TrueType through (1,0): code 66 is /A by /Differences, A's Mac Roman code 65 maps to glyph 5.
+	{
+		const std::string program = with_cmap(ttf, 1u, 0u, cmap_format0({{uint8_t{65}, uint8_t{5}}, {uint8_t{66}, uint8_t{6}}}));
+		const TextPage page = glyph_page("BT /T 10 Tf (B) Tj ET", "/T 5 0 R",
+			{"<< /Type /Font /Subtype /TrueType /BaseFont /Fixture /FirstChar 66 /LastChar 66 /Widths [600] /Encoding << /Differences [66 /A] >> "
+			 "/FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 32 /FontBBox [0 0 1000 1000] /FontFile2 7 0 R >>",
+				stream_object("", program)});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_EQ(glyphs_of(page, page.runs[0])[0].glyph_index, 5u) << "the code's name was not looked up by its Mac Roman code";
+	}
+}
+
+TEST(PdfInterpreter, EmbeddedType1AndCffText)
+{
+	const std::string pfa = corpus_font_bytes("type1-outlines.pfa");
+	const std::string cff = corpus_font_bytes("cff-outlines.cff");
+	const std::string otf = corpus_font_bytes("opentype-cff.otf");
+	const std::string ttf = corpus_font_bytes("truetype-full-short-loca.ttf");
+	const std::string cid = corpus_font_bytes("cff-cid.cff");
+	const auto type1 = load_charstring_font(shared_bytes(pfa), CharstringFormat::Type1);
+	ASSERT_TRUE(type1.has_value());
+	const auto expect_run = [](const TextPage& page, std::vector<uint16_t> glyphs, const char* what) {
+		ASSERT_EQ(page.runs.size(), 1u) << what;
+		ASSERT_NE(handle_of(page.runs[0]), nullptr) << what;
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), glyphs.size()) << what;
+		for (size_t i = 0; i < g.size(); ++i) {
+			EXPECT_EQ(g[i].glyph_index, glyphs[i]) << what << " glyph " << i;
+		}
+	};
+	const std::string descriptor_head = "<< /Type /FontDescriptor /FontName /Fixture /Flags 4 /FontBBox [0 0 1000 1000] ";
+	// An embedded Type 1 (PFA with its lengths) and its custom built-in encoding, no /BaseEncoding: code 66 is `box`.
+	{
+		const TextPage page = glyph_page("BT /P 10 Tf (AB) Tj ET", "/P 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 66 /Widths [600 600] /FontDescriptor 6 0 R >>",
+				descriptor_head + "/FontFile 7 0 R >>", stream_object(pfa_lengths_entries(pfa), pfa)});
+		expect_run(page, {*(*type1)->glyph_for_name("A"), *(*type1)->glyph_for_name("box")}, "Type 1");
+	}
+	// No /Widths: the program's advances (A is 600, Helvetica's 667); conflicting /Widths win over the program.
+	{
+		const TextPage page = glyph_page("BT /P 10 Tf (A) Tj ET", "/P 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FontDescriptor 6 0 R >>", descriptor_head + "/FontFile 7 0 R >>",
+				stream_object(pfa_lengths_entries(pfa), pfa)});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_NEAR(glyphs_of(page, page.runs[0])[0].advance_pt, 6.0, 1e-9);
+		const TextPage stated = glyph_page("BT /P 10 Tf (A) Tj ET", "/P 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 65 /Widths [900] /FontDescriptor 6 0 R >>",
+				descriptor_head + "/FontFile 7 0 R >>", stream_object(pfa_lengths_entries(pfa), pfa)});
+		ASSERT_EQ(stated.runs.size(), 1u);
+		EXPECT_NEAR(glyphs_of(stated, stated.runs[0])[0].advance_pt, 9.0, 1e-9);
+	}
+	// A /Type1C program: its built-in encoding puts `acute` at 194.
+	{
+		const auto program = load_charstring_font(shared_bytes(cff), CharstringFormat::Type1C);
+		ASSERT_TRUE(program.has_value());
+		const TextPage page = glyph_page("BT /F 10 Tf (A\\302) Tj ET", "/F 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 194 /FontDescriptor 6 0 R >>",
+				descriptor_head + "/FontFile3 7 0 R >>", stream_object("/Subtype /Type1C", cff)});
+		expect_run(page, {*(*program)->glyph_for_name("A"), *(*program)->glyph_for_name("acute")}, "Type1C");
+	}
+	// Simple fonts over OpenType programs, one CFF-based and one TrueType-based, both through their (3,1) cmaps.
+	for (const auto& [program, what] : {std::pair{otf, "OpenType CFF"}, std::pair{ttf, "OpenType TrueType"}}) {
+		const auto tables = TrueTypeTables::parse(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(program.data()), program.size()));
+		ASSERT_TRUE(tables.has_value()) << what;
+		const TextPage page = glyph_page("BT /O 10 Tf (A) Tj ET", "/O 5 0 R",
+			{"<< /Type /Font /Subtype /TrueType /BaseFont /Fixture /FirstChar 65 /LastChar 65 /Widths [600] /FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 32 /FontBBox [0 0 1000 1000] /FontFile3 7 0 R >>",
+				stream_object("/Subtype /OpenType", program)});
+		expect_run(page, {tables->lookup(3u, 1u, U'A').value_or(0u)}, what);
+		ASSERT_EQ(page.runs.size(), 1u) << what;
+		ASSERT_FALSE(glyphs_of(page, page.runs[0]).empty()) << what;
+		EXPECT_NE(glyphs_of(page, page.runs[0])[0].glyph_index, 0u) << what;
+	}
+	// A /Type0 over a /CIDFontType0C: each CID's glyph by the program's charset.
+	{
+		const auto program = load_charstring_font(shared_bytes(cid), CharstringFormat::CIDFontType0C);
+		ASSERT_TRUE(program.has_value());
+		const TextPage page = glyph_page("BT /K 10 Tf <0001> Tj ET", "/K 5 0 R",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /Fixture /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+				"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /Fixture /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+				"/FontDescriptor 7 0 R /DW 1000 >>",
+				descriptor_head + "/FontFile3 8 0 R >>", stream_object("/Subtype /CIDFontType0C", cid)});
+		expect_run(page, {(*program)->glyph_for_cid(1u).value_or(0u)}, "CIDFontType0C");
+	}
+	// A /Type0 over a /CIDFontType2 with the identity map: CID 1 is glyph 1.
+	{
+		const TextPage page = glyph_page("BT /K 10 Tf <0001> Tj ET", "/K 5 0 R",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /Fixture /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+				"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Fixture /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+				"/FontDescriptor 7 0 R /DW 1000 >>",
+				descriptor_head + "/FontFile2 8 0 R >>", stream_object("", ttf)});
+		expect_run(page, {1u}, "CIDFontType2");
+	}
+	// A damaged Type 1 program: the serif flag picks Times, the damage is recorded.
+	{
+		clear_diagnostics();
+		const TextPage page = glyph_page("BT /P 10 Tf (A) Tj ET", "/P 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 65 /Widths [600] /FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 34 /FontBBox [0 0 1000 1000] /FontFile 7 0 R >>",
+				stream_object("/Length1 10 /Length2 10 /Length3 0", "not a font program at all")});
+		ASSERT_EQ(page.runs.size(), 1u);
+		const auto times = standard14_face_glyph(Standard14Font::TimesRoman, U'A');
+		ASSERT_TRUE(times.has_value() && times->has_value());
+		EXPECT_EQ(handle_of(page.runs[0]), (*times)->face.get());
+		EXPECT_EQ(glyphs_of(page, page.runs[0])[0].glyph_index, (*times)->glyph);
+		EXPECT_TRUE(damaged_recorded());
+	}
+}
+
+TEST(PdfInterpreter, FontLoaderOutOfMemory)
+{
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable in this build";
+	}
+	// Every allocation of 1 KiB or more while a page loads its embedded program runs out in turn: interpreting the
+	// page returns OutOfMemory with no list, never a page drawn without the font.
+	const std::string ttf = corpus_font_bytes("truetype-full-short-loca.ttf");
+	const auto bytes = one_page_pdf("BT /T 10 Tf (A) Tj ET", "<< /Font << /T 5 0 R >> >>",
+		{"<< /Type /Font /Subtype /TrueType /BaseFont /Fixture /FirstChar 65 /LastChar 65 /Widths [600] /FontDescriptor 6 0 R >>",
+			"<< /Type /FontDescriptor /FontName /Fixture /Flags 32 /FontBBox [0 0 1000 1000] /FontFile2 7 0 R >>", stream_object("", ttf)});
+	bool failed_once = false;
+	for (uint32_t nth = 1; nth < 200u; ++nth) {
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		PdfResult<std::shared_ptr<const DisplayList>> list = make_pdf_error(ErrorCode::Ok);
+		{
+			const recto::test::ScopedAllocationFailure fail(nth, 1'024u);
+			list = interpret_page(**doc, 0u);
+		}
+		if (list.has_value()) {
+			if (failed_once) {
+				break;
+			}
+			continue;
+		}
+		failed_once = true;
+		EXPECT_EQ(list.error().code, ErrorCode::OutOfMemory) << "nth " << nth;
+	}
+	EXPECT_TRUE(failed_once);
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

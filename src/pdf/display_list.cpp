@@ -2023,6 +2023,11 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 				ErrorCode::DamagedFormat,
 				"DisplayListBuilder::draw_glyph_run glyph origin and advance must be finite in text and page space");
 		}
+		if (!std::isfinite(g.width_scale) || g.width_scale <= 0.0) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayListBuilder::draw_glyph_run glyph width_scale must be finite and positive");
+		}
 		if (g.ink_bounds_pt.has_value()) {
 			if (!is_valid_rect(*g.ink_bounds_pt)) {
 				return make_pdf_error(

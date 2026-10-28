@@ -333,6 +333,10 @@ struct PositionedGlyph {
 	uint32_t unicode_codepoint{0};
 	PdfPoint origin_pt{}; // Glyph origin in text/user space
 	double advance_pt{0.0};
+	// The horizontal glyph-space scale the rasterizer applies to the outline about `origin_pt` before placing it
+	// (D01 T02 section 43: a substitute face's glyph fitted to the advance the PDF gives it); `advance_pt`, origins
+	// and `ink_bounds_pt` already include it. Finite and positive.
+	double width_scale{1.0};
 	// Glyph outline ink bounding box relative to `origin_pt` in text space
 	// (`[left_bearing, descender, right_bearing, ascender]`), in the same
 	// text-space points as `origin_pt` and `advance_pt`: the caller has already

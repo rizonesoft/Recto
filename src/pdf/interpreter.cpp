@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <map>
 #include <unordered_map>
 #include <vector>
 
@@ -1509,6 +1510,7 @@ private:
 		const double size = state_.font_size;
 		const bool vertical = font->vertical();
 		std::vector<PositionedGlyph> glyphs;
+		std::vector<uint8_t> faces; // each glyph's face in `font->faces()`, TextGlyph::kNoFace for none
 		double x = 0.0;
 		double y = 0.0;
 		// A run that could not be recorded is refused before it is built, so a long string never allocates past the
@@ -1519,6 +1521,7 @@ private:
 		RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(std::min(bytes.size(), room) * font->code_cost()));
 		try {
 			glyphs.reserve(std::min(bytes.size(), room));
+			faces.reserve(std::min(bytes.size(), room));
 		} catch (const std::bad_alloc&) {
 			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory positioning a text string");
 		}
@@ -1529,7 +1532,17 @@ private:
 			const TextCode code = font->next(bytes.subspan(at));
 			at += code.length != 0u ? code.length : 1u; // a code no codespace matches skips one byte
 			const double spacing = state_.char_spacing + (code.word_space ? state_.word_spacing : 0.0);
+			RECTO_PDF_TRY(const TextGlyph drawn, glyph_of(*font, code));
 			PositionedGlyph glyph;
+			glyph.glyph_index = drawn.glyph;
+			glyph.width_scale = drawn.width_scale;
+			glyph.is_blank = drawn.blank;
+			if (drawn.ink.has_value() && !drawn.blank) {
+				// The glyph's own ink in text space points, relative to its origin (Tz is in the run's matrix).
+				glyph.ink_bounds_pt = PdfRect{drawn.ink->x_min * size, drawn.ink->y_min * size, drawn.ink->x_max * size,
+					drawn.ink->y_max * size};
+			}
+			faces.push_back(drawn.face);
 			if (!vertical) {
 				glyph.origin_pt = PdfPoint{x, state_.rise};
 				glyph.advance_pt = code.w0 * size + spacing;
@@ -1554,26 +1567,85 @@ private:
 		const double bx1 = std::max(box.x_min * size, box.x_max * size);
 		const double by0 = std::min(box.y_min * size, box.y_max * size);
 		const double by1 = std::max(box.y_min * size, box.y_max * size);
-		PdfRect bounds{glyphs.front().origin_pt.x + bx0, glyphs.front().origin_pt.y + by0,
-			glyphs.front().origin_pt.x + bx1, glyphs.front().origin_pt.y + by1};
-		for (const PositionedGlyph& glyph : glyphs) {
-			bounds.x_min = std::min(bounds.x_min, glyph.origin_pt.x + bx0);
-			bounds.y_min = std::min(bounds.y_min, glyph.origin_pt.y + by0);
-			bounds.x_max = std::max(bounds.x_max, glyph.origin_pt.x + bx1);
-			bounds.y_max = std::max(bounds.y_max, glyph.origin_pt.y + by1);
-		}
 		RECTO_PDF_RETURN_IF_ERROR(sync_state(mode_strokes(mode)));
 		RECTO_PDF_TRY(const ColorRgba fill_color, rgba(state_.fill, false));
 		RECTO_PDF_TRY(const ColorRgba stroke_color, rgba(state_.stroke, true));
-		auto drawn = builder_.draw_glyph_run(glyphs, size, mode, fill_color, stroke_color, run_matrix, bounds);
+		// One run per face within the string (a standard font can draw a code from a second face), each under the
+		// string's run matrix with its glyphs' origins continuing; a glyph with no face (advance-only, or a Type 3
+		// glyph) goes in a run whose font handle is null. Each run's conservative box (the font box over its glyph
+		// origins) holds any glyph whose own ink is unknown.
+		PdfResult<void> drawn;
+		const std::span<const PositionedGlyph> all(glyphs);
+		for (size_t first = 0; first < glyphs.size() && drawn.has_value();) {
+			size_t last = first + 1u;
+			while (last < glyphs.size() && faces[last] == faces[first]) {
+				++last;
+			}
+			const std::span<const PositionedGlyph> run = all.subspan(first, last - first);
+			PdfRect bounds{run.front().origin_pt.x + bx0, run.front().origin_pt.y + by0, run.front().origin_pt.x + bx1,
+				run.front().origin_pt.y + by1};
+			for (const PositionedGlyph& glyph : run) {
+				bounds.x_min = std::min(bounds.x_min, glyph.origin_pt.x + bx0);
+				bounds.y_min = std::min(bounds.y_min, glyph.origin_pt.y + by0);
+				bounds.x_max = std::max(bounds.x_max, glyph.origin_pt.x + bx1);
+				bounds.y_max = std::max(bounds.y_max, glyph.origin_pt.y + by1);
+			}
+			std::shared_ptr<const void> handle;
+			if (faces[first] != TextGlyph::kNoFace && faces[first] < font->faces().size()) {
+				handle = font->faces()[faces[first]];
+			}
+			// The font-wide box only for a glyph whose own ink is unknown: with every ink known the run's recorded
+			// bounds are exactly its glyphs' ink.
+			const bool unknown_ink = std::any_of(run.begin(), run.end(),
+				[](const PositionedGlyph& g) { return !g.is_blank && !g.ink_bounds_pt.has_value(); });
+			drawn = builder_.draw_glyph_run(run, size, mode, fill_color, stroke_color, run_matrix,
+				unknown_ink ? std::optional<PdfRect>(bounds) : std::nullopt, std::move(handle));
+			first = last;
+		}
 		// The text matrix advances whether or not the builder kept the run (a run it refuses is skipped like any
 		// malformed operator), so the text after it stays where the file put it.
 		advance_text(vertical ? 0.0 : x * state_.horizontal_scaling, vertical ? y : 0.0);
 		return drawn;
 	}
 
+	// `code`'s glyph, with a composite font's ink read from its face once per face and glyph on the page (at most
+	// kMaxInkMemo of them kept; past that each is read as it is shown).
+	[[nodiscard]] PdfResult<TextGlyph> glyph_of(const TextFont& font, const TextCode& code)
+	{
+		TextGlyph drawn = font.glyph(code);
+		if (drawn.ink_known || drawn.face == TextGlyph::kNoFace || drawn.face >= font.faces().size()) {
+			return drawn;
+		}
+		const std::shared_ptr<const LoadedFont>& face = font.faces()[drawn.face];
+		const InkKey key{face, drawn.glyph};
+		if (const auto it = ink_memo_.find(key); it != ink_memo_.end()) {
+			drawn.ink = it->second.first;
+			drawn.blank = it->second.second;
+			return drawn;
+		}
+		auto ink = face->ink_box(drawn.glyph);
+		if (!ink.has_value()) {
+			if (ink.error().code == ErrorCode::OutOfMemory) {
+				return ink.error();
+			}
+		} else if (ink->has_value()) {
+			drawn.ink = **ink;
+		} else {
+			drawn.blank = true;
+		}
+		if (ink_memo_.size() < kMaxInkMemo) {
+			try {
+				ink_memo_.emplace(key, std::make_pair(drawn.ink, drawn.blank));
+			} catch (const std::bad_alloc&) {
+				return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory keeping a glyph's ink box");
+			}
+		}
+		return drawn;
+	}
+
 	static constexpr size_t kMaxCachedFonts = 4'096u;
 	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
+	static constexpr size_t kMaxInkMemo = 65'536u;
 
 	const Document& document_;
 	const PdfDict& resources_;
@@ -1584,6 +1656,25 @@ private:
 	std::unordered_map<std::string, std::shared_ptr<const TextFont>, StringHash, std::equal_to<>> fonts_{};
 	std::unordered_map<uint64_t, std::shared_ptr<const TextFont>> font_objects_{};
 	std::shared_ptr<const TextFont> fallback_{};
+	// Keyed by the face's control block (a weak reference, so a face freed during the page is never mistaken for a
+	// later one at the same address) and the glyph.
+	struct InkKey {
+		std::weak_ptr<const LoadedFont> face;
+		uint16_t glyph{0};
+	};
+	struct InkKeyLess {
+		bool operator()(const InkKey& a, const InkKey& b) const noexcept
+		{
+			if (a.face.owner_before(b.face)) {
+				return true;
+			}
+			if (b.face.owner_before(a.face)) {
+				return false;
+			}
+			return a.glyph < b.glyph;
+		}
+	};
+	std::map<InkKey, std::pair<std::optional<PdfRect>, bool>, InkKeyLess> ink_memo_{};
 	size_t fonts_resolved_{0};
 	size_t font_bytes_{0};
 	PdfMatrix text_matrix_{};

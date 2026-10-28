@@ -280,6 +280,10 @@ struct Standard14Metrics {
 // `TimesNewRomanPS-BoldMT`, `CourierNew`, `CourierNewPSMT` and their style suffixes). None for any other name.
 [[nodiscard]] std::optional<Standard14Font> standard14_from_base_font(std::string_view base_font) noexcept;
 
+// The `CFF ` table of an OpenType program, or none when it has none or its directory runs outside the program: the
+// charset and encoding a CFF-based OpenType font's glyph names come from (D01 T02 sections 30 and 43).
+[[nodiscard]] std::optional<std::span<const uint8_t>> opentype_cff_table(std::span<const uint8_t> sfnt) noexcept;
+
 [[nodiscard]] const Standard14Metrics& standard14_metrics(Standard14Font font) noexcept;
 
 // The glyph of that name, or of that built-in code, or null.

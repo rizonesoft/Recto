@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <vector>
 
 namespace recto::pdf {
 
@@ -35,6 +36,21 @@ struct TextCode {
 	double vx = 0.0;    // position vector, for /WMode 1
 	double vy = 0.0;
 	bool word_space = false; // the single-byte code 32, to which word spacing applies (9.3.3)
+	uint16_t glyph = 0;      // a composite font's glyph, from its descendant's CIDToGIDMap or program charset
+};
+
+// A code's glyph (D01 T02 section 43): the face it is drawn from, its glyph there, the horizontal scale fitting it to
+// the advance the PDF gives it, and its ink box in text space per unit of font size (width scale included).
+struct TextGlyph {
+	static constexpr uint8_t kNoFace = 0xFFu;
+	// An index into `TextFont::faces()`. kNoFace: a Type 3 glyph (drawn by its procedure, section 31), or a code no
+	// face draws, which is `blank` (advance-only).
+	uint8_t face = kNoFace;
+	uint16_t glyph = 0;
+	double width_scale = 1.0;
+	std::optional<PdfRect> ink{}; // none: unknown (the run's conservative box holds it) or, when `blank`, nothing
+	bool blank = false;           // paints nothing: an empty outline, or no face to draw it
+	bool ink_known = true;        // false: the interpreter reads `ink` from the face (a composite font's glyphs)
 };
 
 class TextFont {
@@ -74,11 +90,21 @@ public:
 	{
 		return type0_ != nullptr ? std::max<size_t>(1u, type0_->cmap().codespace_count()) : 1u;
 	}
-	// The heap this font holds, for the interpreter's per-page font budget.
+	// The heap this font holds, for the interpreter's per-page font budget: its tables, its composite font, and the
+	// embedded program it loaded (the Windows faces of the standard fonts are a process-wide cache of at most fifteen,
+	// not counted per font).
 	[[nodiscard]] size_t memory_bytes() const noexcept
 	{
-		return sizeof(*this) + (type0_ != nullptr ? type0_->memory_bytes() : 0u);
+		return sizeof(*this) + (type0_ != nullptr ? type0_->memory_bytes() : 0u) + owned_face_bytes_ +
+			faces_.capacity() * sizeof(std::shared_ptr<const LoadedFont>);
 	}
+	// The faces this font's glyphs are drawn from, each a glyph run's font handle.
+	[[nodiscard]] const std::vector<std::shared_ptr<const LoadedFont>>& faces() const noexcept
+	{
+		return faces_;
+	}
+	// The glyph `code` draws.
+	[[nodiscard]] TextGlyph glyph(const TextCode& code) const noexcept;
 	// The composite font, for section 43's glyphs; null for every other kind.
 	[[nodiscard]] const std::shared_ptr<const Type0Font>& type0() const noexcept
 	{
@@ -98,6 +124,9 @@ private:
 	PdfRect bbox_{0.0, -0.25, 1.0, 1.0};
 	bool bbox_known_ = true;
 	std::array<double, 256> widths_{}; // one-byte kinds: each code's w0
+	std::array<TextGlyph, 256> glyphs_{}; // one-byte kinds: each code's glyph
+	std::vector<std::shared_ptr<const LoadedFont>> faces_{};
+	size_t owned_face_bytes_ = 0; // the embedded program this font loaded
 	std::shared_ptr<const Type0Font> type0_{};
 };
 

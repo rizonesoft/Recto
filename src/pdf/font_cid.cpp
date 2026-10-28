@@ -782,34 +782,6 @@ struct Type0Loader {
 		std::optional<CidToGidMap> charset;
 	};
 
-	// The `CFF ` table of an OpenType font, or none.
-	[[nodiscard]] static std::optional<std::span<const uint8_t>> cff_table(const std::vector<uint8_t>& sfnt) noexcept
-	{
-		if (sfnt.size() < 12u) {
-			return std::nullopt;
-		}
-		const size_t tables = (size_t{sfnt[4]} << 8u) | sfnt[5];
-		for (size_t i = 0; i < tables; ++i) {
-			const size_t at = 12u + 16u * i;
-			if (at + 16u > sfnt.size()) {
-				return std::nullopt;
-			}
-			if (std::memcmp(sfnt.data() + at, "CFF ", 4u) != 0) {
-				continue;
-			}
-			const auto u32 = [&](size_t o) {
-				return (uint32_t{sfnt[o]} << 24u) | (uint32_t{sfnt[o + 1u]} << 16u) | (uint32_t{sfnt[o + 2u]} << 8u) | sfnt[o + 3u];
-			};
-			const size_t offset = u32(at + 8u);
-			const size_t length = u32(at + 12u);
-			if (offset > sfnt.size() || length > sfnt.size() - offset) {
-				return std::nullopt;
-			}
-			return std::span<const uint8_t>(sfnt).subspan(offset, length);
-		}
-		return std::nullopt;
-	}
-
 	[[nodiscard]] PdfResult<Program> program_with_charset(const PdfDict& descriptor, CidFontKind kind) const
 	{
 		RECTO_PDF_TRY(std::shared_ptr<const LoadedFont> font, program(descriptor));
@@ -817,7 +789,7 @@ struct Type0Loader {
 		if (kind != CidFontKind::CIDFontType0 || out.font == nullptr || out.font->kind() != LoadedFontKind::OpenType) {
 			return out;
 		}
-		const std::optional<std::span<const uint8_t>> table = cff_table(*out.font->program());
+		const std::optional<std::span<const uint8_t>> table = opentype_cff_table(*out.font->program());
 		if (!table.has_value()) {
 			return out;
 		}

@@ -2406,6 +2406,34 @@ TEST(PdfDisplayList, CubicRootsSurviveCancellation)
 	EXPECT_EQ(dl->content_bounds_pt(), (PdfRect{0.0, 100.0, 300.0, 200.0}));
 }
 
+// A glyph's horizontal fitting scale (D01 T02 section 43) is recorded and read back; one that is not finite and
+// positive is refused.
+TEST(PdfDisplayList, GlyphWidthScale)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+	PositionedGlyph fitted{7u, U'm', PdfPoint{10.0, 10.0}, 5.0, PdfRect{0.0, 0.0, 5.0, 6.0}};
+	fitted.width_scale = 0.6;
+	const PositionedGlyph glyphs[] = {PositionedGlyph{6u, U'a', PdfPoint{0.0, 10.0}, 10.0, PdfRect{0.0, 0.0, 9.0, 6.0}}, fitted};
+	ASSERT_TRUE(builder.draw_glyph_run(glyphs, 10.0, TextRenderMode::Fill, ColorRgba::black(), ColorRgba::white()).has_value());
+	for (const double bad : {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
+		PositionedGlyph refused = fitted;
+		refused.width_scale = bad;
+		const PositionedGlyph one[] = {refused};
+		const auto r = builder.draw_glyph_run(one, 10.0, TextRenderMode::Fill, ColorRgba::black(), ColorRgba::white());
+		ASSERT_FALSE(r.has_value()) << bad;
+		EXPECT_EQ(r.error().code, ErrorCode::DamagedFormat) << bad;
+	}
+	auto dl = builder.finish();
+	ASSERT_TRUE(dl.has_value());
+	const auto* run = (*dl)->commands().back().as<DrawGlyphRunCommand>();
+	ASSERT_NE(run, nullptr);
+	const auto read = (*dl)->glyphs(*run);
+	ASSERT_TRUE(read.has_value());
+	ASSERT_EQ(read->size(), 2u);
+	EXPECT_DOUBLE_EQ((*read)[0].width_scale, 1.0);
+	EXPECT_DOUBLE_EQ((*read)[1].width_scale, 0.6);
+}
+
 TEST(PdfDisplayList, NearReversingMiterKeepsItsApex)
 {
 	// Round 2 finding 2: `2 w 0 J 0 j 1e9 M 100 150 m 150 150 l 100 150.0000005 l S`.
