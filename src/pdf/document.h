@@ -20,9 +20,11 @@
 #include "object.h"
 #include "xref.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <list>
 #include <memory>
 #include <optional>
 #include <span>
@@ -186,6 +188,76 @@ struct DocumentDescription {
 
 class ColorProfileCache;
 
+// The objects a document has parsed, kept so a shared object is not parsed again (D01 T01 section 11). Admission
+// follows W-TinyLFU's shape: every newly parsed value enters a small window (`kMaxWindowEntries`, `kMaxWindowBytes`),
+// and moves to the main cache (`kMaxObjectCacheEntries`, `kMaxObjectCacheBytes`) when it is asked for again, by a hit
+// in the window or by a miss whose key the doorkeeper (an 8 KiB bit filter, cleared every `kDoorkeeperResetCount`
+// sightings) has seen. An object read once, as a traversal reads each node, never costs more than the window. Each
+// tier drops its least recently used entries first; each entry is charged its value's `heap_bytes()` and its
+// bookkeeping; a value over a quarter of the main budget, or a stream whose body is over `kMaxCachedStreamBytes`
+// (re-reading it is a copy, cheaper than the room it would take), is never kept. Values are immutable and shared:
+// eviction drops only the cache's reference, so a value a caller holds stays valid. Owned, like every `Document`
+// member, by the document's actor thread.
+class ResolvedObjectCache {
+public:
+	static constexpr size_t kMaxObjectCacheEntries = 65'536u;
+	static constexpr size_t kMaxObjectCacheBytes = size_t{64} << 20u;
+	static constexpr size_t kMaxWindowEntries = 16u;
+	static constexpr size_t kMaxWindowBytes = size_t{1} << 20u;
+	static constexpr size_t kMaxCachedStreamBytes = size_t{64} << 10u;
+	static constexpr size_t kDoorkeeperResetCount = 8'192u;
+
+	// The value cached under `key` (object number and generation, `(obj << 16) | gen`), now the most recently used
+	// (a window entry moves to the main cache); null when none is. Never allocates.
+	[[nodiscard]] std::shared_ptr<const PdfValue> find(uint64_t key) noexcept;
+
+	// Records a newly parsed `value` under `key`: into the main cache when the doorkeeper has seen `key`, else into
+	// the window, evicting to stay within every bound; a value too large to keep is not kept. `OutOfMemory` leaves the
+	// cache as it was.
+	[[nodiscard]] PdfResult<void> insert(uint64_t key, std::shared_ptr<const PdfValue> value) noexcept;
+
+	// What one entry for `value` is charged: its heap, the value itself and its shared control block, and the list
+	// node and map slot that track it.
+	[[nodiscard]] static size_t entry_bytes(const PdfValue& value) noexcept;
+
+	[[nodiscard]] size_t size() const noexcept
+	{
+		return slots_.size();
+	}
+	[[nodiscard]] size_t bytes() const noexcept
+	{
+		return main_bytes_ + window_bytes_;
+	}
+	[[nodiscard]] size_t main_size() const noexcept
+	{
+		return main_.size();
+	}
+
+private:
+	struct Entry {
+		uint64_t key{0};
+		std::shared_ptr<const PdfValue> value{};
+		size_t bytes{0};
+	};
+	using List = std::list<Entry>;
+	struct Slot {
+		List::iterator entry{};
+		bool main{false};
+	};
+
+	// Sets `key`'s two doorkeeper bits and says whether both were set already.
+	[[nodiscard]] bool seen_before(uint64_t key) noexcept;
+	void evict() noexcept;
+
+	List main_{};   // most recently used first
+	List window_{}; // likewise
+	std::unordered_map<uint64_t, Slot> slots_{};
+	size_t main_bytes_{0};
+	size_t window_bytes_{0};
+	std::array<uint64_t, 1'024> doorkeeper_{};
+	size_t doorkeeper_count_{0};
+};
+
 class Document {
 public:
 	Document() = default;
@@ -329,8 +401,27 @@ public:
 	[[nodiscard]] PdfResult<PdfDict> page_dict(size_t page_index) const noexcept;
 
 	// Resolves indirect object `ref` from `xref_` (decrypting strings and
-	// streams when `is_encrypted()`).
+	// streams when `is_encrypted()`). The value is a copy of the cached one, so
+	// changing it never changes what the next resolve returns.
 	[[nodiscard]] PdfResult<PdfValue> resolve_object(IndirectRef ref) const noexcept;
+
+	// Resolves `ref` as `resolve_object` does, without copying: the immutable value
+	// the document caches (parsed once while it stays cached).
+	[[nodiscard]] PdfResult<std::shared_ptr<const PdfValue>> resolve_object_shared(IndirectRef ref) const noexcept;
+
+	// The resolved-object cache's entries and charged bytes, and how many object bodies this document has parsed.
+	[[nodiscard]] size_t cached_object_count() const noexcept
+	{
+		return object_cache_.size();
+	}
+	[[nodiscard]] size_t cached_object_bytes() const noexcept
+	{
+		return object_cache_.bytes();
+	}
+	[[nodiscard]] uint64_t parsed_object_count() const noexcept
+	{
+		return parsed_objects_;
+	}
 
 	// How many decrypted object streams this document holds decoded (encrypted documents only); siblings share one.
 	[[nodiscard]] size_t cached_decrypted_obj_stream_count() const noexcept
@@ -415,9 +506,26 @@ private:
 		PdfValue terminal_value{PdfNull{}};
 	};
 
-	[[nodiscard]] PdfResult<SingleHopResult> resolve_single_indirect_hop(
+	// One hop read from the file: the next reference of an alias, or the object's parsed (and decrypted) body.
+	[[nodiscard]] PdfResult<SingleHopResult> read_single_indirect_hop(
 		IndirectRef current,
 		const std::vector<IndirectRef>& visited_refs) const;
+
+	struct SharedHop {
+		std::optional<IndirectRef> next_ref{std::nullopt};
+		std::shared_ptr<const PdfValue> terminal{};
+	};
+
+	// One hop through the resolved-object cache: a cached body without reading, else `read_single_indirect_hop`,
+	// keeping a parsed body that is not null.
+	[[nodiscard]] PdfResult<SharedHop> resolve_single_indirect_hop(
+		IndirectRef current,
+		const std::vector<IndirectRef>& visited_refs) const;
+
+	// Walks `ref`'s chain (cycle and depth checks before every hop, cached or not) to its shared terminal value.
+	[[nodiscard]] PdfResult<std::shared_ptr<const PdfValue>> resolve_shared_with_visited(
+		IndirectRef ref,
+		std::vector<IndirectRef>& visited_refs) const;
 
 	[[nodiscard]] PdfResult<PdfValue> resolve_object_with_visited(
 		IndirectRef ref,
@@ -437,6 +545,9 @@ private:
 	// Decrypted, decoded object streams of an encrypted document, keyed by container number, so sibling objects
 	// share one decode (bounded by count and decoded bytes). Owned, like every member, by the DocumentActor thread.
 	mutable ObjStmCache decrypted_obj_stm_cache_{};
+	// Parsed object bodies, so a shared object is parsed once (D01 T01 section 11); actor thread only.
+	mutable ResolvedObjectCache object_cache_{};
+	mutable uint64_t parsed_objects_{0};
 	// The colour transforms built for this document (D01 T02 section 32), made on first use; actor thread only.
 	mutable std::shared_ptr<ColorProfileCache> color_profiles_{};
 	PdfDict catalog_{};

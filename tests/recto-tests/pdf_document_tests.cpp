@@ -790,6 +790,276 @@ TEST(PdfDocument, RetainedPageDictionariesShareOneBudget)
 // An outline is read one item at a time: each level keeps only the reference it reads next, so 64 nested items with
 // a 10,000-element /Pad array each (about 64 times one item's dictionary if every ancestor stayed alive) open within a
 // few items' memory (D06 T05 section 24, audit round 2). The heap meter measures in the Debug and Release runs.
+// A resolve gives the same value or the same typed error cold (parsed), from the window (second) and from the main
+// cache (third), so caching never changes what a reference means (D01 T01 section 11).
+TEST(PdfDocument, ObjectCacheSemantics)
+{
+	const auto same = [](const PdfResult<PdfValue>& a, const PdfResult<PdfValue>& b) {
+		if (a.has_value() != b.has_value()) {
+			return false;
+		}
+		return a.has_value() ? *a == *b : a.error().code == b.error().code;
+	};
+	const auto three_times = [&](const Document& doc, IndirectRef ref, const std::string& what) {
+		const auto cold = doc.resolve_object(ref);
+		const auto window = doc.resolve_object(ref);
+		const auto main = doc.resolve_object(ref);
+		EXPECT_TRUE(same(cold, window)) << what;
+		EXPECT_TRUE(same(cold, main)) << what;
+		return cold;
+	};
+	// Every object of the corpus files that exercise object streams, encryption, incremental updates and recovery,
+	// at generation 0 and 1.
+	for (const char* file : {"render/compressed-xref-2p.pdf", "render/encrypted-aes-128.pdf", "render/encrypted-rc4-128.pdf",
+			 "render/incremental-2rev.pdf", "broken/corrupt-xref-recoverable.pdf", "render/simple-1p.pdf"}) {
+		const auto bytes = read_corpus_bytes(file);
+		const bool encrypted = std::string_view(file).find("encrypted") != std::string_view::npos;
+		const auto open = [&] { return encrypted ? Document::authenticate(bytes, "recto-test") : Document::open_memory(bytes); };
+		auto doc = open();
+		ASSERT_TRUE(doc.has_value()) << file << ": " << doc.error().message.view();
+		auto fresh = open();
+		ASSERT_TRUE(fresh.has_value());
+		for (uint32_t num = 1; num < 64u; ++num) {
+			for (uint16_t gen : {uint16_t{0}, uint16_t{1}}) {
+				const std::string what = std::string(file) + " " + std::to_string(num) + " " + std::to_string(gen);
+				const auto cold = three_times(**doc, IndirectRef{num, gen}, what);
+				EXPECT_TRUE(same(cold, (*fresh)->resolve_object(IndirectRef{num, gen}))) << what;
+			}
+		}
+	}
+	// A two-object cycle, a 33-hop chain whose end is already cached, a missing object and a generation mismatch.
+	std::vector<std::pair<uint32_t, std::string>> objects = {
+		{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+		{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R >>"},
+		{5, "6 0 R"},
+		{6, "5 0 R"},
+		{100, "<< /End true >>"},
+	};
+	for (uint32_t i = 0; i < 33u; ++i) {
+		objects.emplace_back(10u + i, std::to_string(i + 1u < 33u ? 11u + i : 100u) + " 0 R");
+	}
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	const auto cycle = three_times(**doc, IndirectRef{5u, 0u}, "cycle");
+	EXPECT_FALSE(cycle.has_value());
+	(void)three_times(**doc, IndirectRef{100u, 0u}, "chain end");
+	ASSERT_GE((*doc)->cached_object_count(), 1u);
+	const auto chain = three_times(**doc, IndirectRef{10u, 0u}, "33-hop chain");
+	EXPECT_FALSE(chain.has_value()) << "a cached end let an over-long chain resolve";
+	const auto short_chain = three_times(**doc, IndirectRef{12u, 0u}, "31-hop chain");
+	ASSERT_TRUE(short_chain.has_value());
+	EXPECT_TRUE(short_chain->as_dict() != nullptr);
+	EXPECT_TRUE(three_times(**doc, IndirectRef{9'999u, 0u}, "missing")->is_null());
+	EXPECT_TRUE(three_times(**doc, IndirectRef{100u, 1u}, "generation mismatch")->is_null());
+}
+
+// The cache's budget: every bound holds, the reported bytes are the sum of what it keeps and match the heap it holds,
+// the least recently used entry goes first, and a value too large is returned but never kept.
+TEST(PdfDocument, ObjectCacheBudget)
+{
+	const auto string_value = [](size_t bytes) {
+		return std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>(bytes, 'x')));
+	};
+	// Seen twice, as a shared object is: into the main cache (from the window, or past it when it is too large for it).
+	const auto admit = [](ResolvedObjectCache& cache, uint64_t key, const std::shared_ptr<const PdfValue>& value) {
+		ASSERT_TRUE(cache.insert(key, value).has_value());
+		ASSERT_TRUE(cache.insert(key, value).has_value());
+		(void)cache.find(key);
+	};
+	// Bytes: 200 values of 512 KiB pass the 64 MiB main budget.
+	{
+		ResolvedObjectCache cache;
+		const recto::test::ScopedHeapMeter meter;
+		size_t held = 0;
+		for (uint64_t key = 1; key <= 200u; ++key) {
+			admit(cache, key, string_value(size_t{512} << 10u));
+			EXPECT_LE(cache.bytes(), ResolvedObjectCache::kMaxObjectCacheBytes + ResolvedObjectCache::kMaxWindowBytes);
+		}
+		for (uint64_t key = 1; key <= 200u; ++key) {
+			if (std::shared_ptr<const PdfValue> v = cache.find(key)) {
+				held += ResolvedObjectCache::entry_bytes(*v);
+			}
+		}
+		EXPECT_EQ(cache.bytes(), held) << "the reported bytes are not the sum of the entries";
+		EXPECT_LT(cache.main_size(), 200u);
+		if (recto::test::ScopedHeapMeter::available()) {
+			const auto live = static_cast<size_t>(meter.live_bytes());
+			EXPECT_GE(cache.bytes(), live) << "the cache undercounts the heap it holds";
+			EXPECT_LE(cache.bytes(), live + live / 10u);
+		}
+	}
+	// Least recently used first: with the main cache full, a promoted early entry stays and the next oldest goes.
+	{
+		ResolvedObjectCache cache;
+		const size_t per = size_t{1} << 20u;
+		const size_t fit = ResolvedObjectCache::kMaxObjectCacheBytes / ResolvedObjectCache::entry_bytes(*string_value(per - 4'096u));
+		for (uint64_t key = 1; key <= fit; ++key) {
+			admit(cache, key, string_value(per - 4'096u));
+		}
+		ASSERT_NE(cache.find(1u), nullptr); // promoted
+		admit(cache, 10'000u, string_value(per - 4'096u));
+		EXPECT_NE(cache.find(1u), nullptr) << "the promoted entry was evicted";
+		EXPECT_EQ(cache.find(2u), nullptr) << "the least recently used entry was kept";
+	}
+	// Entries: 65,537 small values in the main cache keep 65,536.
+	{
+		ResolvedObjectCache cache;
+		for (uint64_t key = 1; key <= ResolvedObjectCache::kMaxObjectCacheEntries + 1u; ++key) {
+			admit(cache, key, std::make_shared<const PdfValue>(int64_t{1}));
+		}
+		EXPECT_EQ(cache.main_size(), ResolvedObjectCache::kMaxObjectCacheEntries);
+		EXPECT_EQ(cache.find(1u), nullptr);
+	}
+	// The window keeps 16 entries; a value over a quarter of the budget, or a stream body over 64 KiB, is never kept.
+	{
+		ResolvedObjectCache cache;
+		for (uint64_t key = 1; key <= 17u; ++key) {
+			ASSERT_TRUE(cache.insert(key << 20u, std::make_shared<const PdfValue>(int64_t{1})).has_value());
+		}
+		EXPECT_EQ(cache.size(), ResolvedObjectCache::kMaxWindowEntries);
+		EXPECT_EQ(cache.find(uint64_t{1} << 20u), nullptr);
+		admit(cache, 5'000u, string_value(size_t{17} << 20u));
+		EXPECT_EQ(cache.find(5'000u), nullptr) << "a value over a quarter of the budget was kept";
+		PdfDict dict;
+		admit(cache, 5'001u, std::make_shared<const PdfValue>(PdfStream(dict, std::vector<uint8_t>(size_t{65} << 10u, 1u))));
+		EXPECT_EQ(cache.find(5'001u), nullptr) << "a large stream body was kept";
+		admit(cache, 5'002u, std::make_shared<const PdfValue>(PdfStream(dict, std::vector<uint8_t>(size_t{1} << 10u, 1u))));
+		EXPECT_NE(cache.find(5'002u), nullptr) << "a small stream was not kept";
+	}
+	// A document resolving each of 100 one-use objects keeps no more than the window.
+	{
+		std::vector<std::pair<uint32_t, std::string>> objects = {
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R >>"},
+		};
+		for (uint32_t i = 0; i < 100u; ++i) {
+			objects.emplace_back(10u + i, "<< /N " + std::to_string(i) + " >>");
+		}
+		const auto bytes = build_synthetic_pdf_from_objects("1.7", objects);
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		for (uint32_t i = 0; i < 100u; ++i) {
+			ASSERT_TRUE((*doc)->resolve_object(IndirectRef{10u + i, 0u}).has_value());
+		}
+		EXPECT_LE((*doc)->cached_object_count(), ResolvedObjectCache::kMaxWindowEntries + 8u);
+	}
+}
+
+// Eviction drops only the cache's reference: a value a caller holds stays readable, and the cache's bytes fall.
+TEST(PdfDocument, ObjectCacheEviction)
+{
+	ResolvedObjectCache cache;
+	const auto big = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>(size_t{8} << 20u, 'h')));
+	ASSERT_TRUE(cache.insert(1u, big).has_value()); // too large for the window: not kept on first sight
+	EXPECT_EQ(cache.find(1u), nullptr);
+	ASSERT_TRUE(cache.insert(1u, big).has_value()); // seen again: into the main cache
+	std::shared_ptr<const PdfValue> held = cache.find(1u);
+	ASSERT_NE(held, nullptr);
+	const size_t before = cache.bytes();
+	const size_t one = ResolvedObjectCache::entry_bytes(*held);
+	// Fill the main cache past its budget with other values (without touching the held one, which would promote it).
+	const auto filler = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>((size_t{1} << 20u) - 4'096u, 'f')));
+	for (uint64_t key = 2; key < 2u + 2u * ResolvedObjectCache::kMaxObjectCacheBytes / ResolvedObjectCache::entry_bytes(*filler); ++key) {
+		ASSERT_TRUE(cache.insert(key, filler).has_value());
+		(void)cache.find(key);
+	}
+	EXPECT_EQ(cache.find(1u), nullptr);
+	ASSERT_NE(held->as_string(), nullptr);
+	EXPECT_EQ(held->as_string()->bytes.size(), size_t{8} << 20u);
+	EXPECT_EQ(held->as_string()->bytes.back(), 'h');
+	EXPECT_LE(cache.bytes() + one, before + ResolvedObjectCache::kMaxObjectCacheBytes) << "the evicted value is still charged";
+}
+
+// Memory running out while resolving, caching or copying is OutOfMemory, with nothing half cached, and the next
+// resolve succeeds.
+TEST(PdfDocument, ObjectCacheAllocationFailure)
+{
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable in this build";
+	}
+	std::string pad;
+	for (int i = 0; i < 2'000; ++i) {
+		pad += std::to_string(i) + " ";
+	}
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", {
+		{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+		{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R >>"},
+		{10, "<< /Pad [" + pad + "] /Name /Shared >>"},
+	});
+	const auto expected = [&] {
+		auto doc = Document::open_memory(bytes);
+		EXPECT_TRUE(doc.has_value());
+		return *(*doc)->resolve_object(IndirectRef{10u, 0u});
+	}();
+	for (int warm = 0; warm < 3; ++warm) { // cold, from the window, from the main cache
+		bool failed_once = false;
+		for (uint32_t nth = 1; nth < 200u; ++nth) {
+			auto doc = Document::open_memory(bytes);
+			ASSERT_TRUE(doc.has_value());
+			for (int i = 0; i < warm; ++i) {
+				ASSERT_TRUE((*doc)->resolve_object(IndirectRef{10u, 0u}).has_value());
+			}
+			const size_t entries = (*doc)->cached_object_count();
+			const size_t charged = (*doc)->cached_object_bytes();
+			PdfResult<PdfValue> r = make_pdf_error(ErrorCode::Ok);
+			{
+				const recto::test::ScopedAllocationFailure fail(nth, 32u);
+				r = (*doc)->resolve_object(IndirectRef{10u, 0u});
+			}
+			if (r.has_value()) {
+				EXPECT_EQ(*r, expected);
+				if (failed_once) {
+					break; // every allocation of this resolve has had its turn to fail
+				}
+				continue;
+			}
+			failed_once = true;
+			EXPECT_EQ(r.error().code, ErrorCode::OutOfMemory) << "warm " << warm << " nth " << nth;
+			// Nothing half kept: either the cache is as it was, or (only the caller's copy having failed) it holds the
+			// complete value, charged exactly once.
+			const size_t count_now = (*doc)->cached_object_count();
+			const size_t bytes_now = (*doc)->cached_object_bytes();
+			const bool unchanged = count_now == entries && bytes_now == charged;
+			const auto cached = (*doc)->resolve_object_shared(IndirectRef{10u, 0u}); // a hit when it was kept
+			const bool kept_whole = count_now == entries + 1u && cached.has_value() && **cached == expected &&
+				bytes_now == charged + ResolvedObjectCache::entry_bytes(**cached);
+			EXPECT_TRUE(unchanged || kept_whole) << "warm " << warm << " nth " << nth << ": " << count_now << " entries, " << bytes_now << " bytes";
+			const auto retry = (*doc)->resolve_object(IndirectRef{10u, 0u});
+			ASSERT_TRUE(retry.has_value()) << "warm " << warm << " nth " << nth;
+			EXPECT_EQ(*retry, expected);
+		}
+		EXPECT_TRUE(failed_once) << "no allocation of the resolve was made to fail, warm " << warm;
+	}
+}
+
+// resolve_object hands out a copy: changing it never changes what the next resolve returns.
+TEST(PdfDocument, ObjectCacheCopies)
+{
+	const auto bytes = build_synthetic_pdf_from_objects("1.7", {
+		{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+		{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 100 100] /Kids [3 0 R] >>"},
+		{3, "<< /Type /Page /Parent 2 0 R >>"},
+		{10, "[1 2 3]"},
+	});
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value());
+	for (int i = 0; i < 3; ++i) {
+		auto value = (*doc)->resolve_object(IndirectRef{10u, 0u});
+		ASSERT_TRUE(value.has_value());
+		ASSERT_NE(value->as_array(), nullptr);
+		ASSERT_EQ(value->as_array()->size(), 3u) << "a caller's change reached the cache, pass " << i;
+		value->as_array_mut()->push_back(PdfValue(int64_t{4}));
+	}
+	const auto shared = (*doc)->resolve_object_shared(IndirectRef{10u, 0u});
+	ASSERT_TRUE(shared.has_value());
+	EXPECT_EQ((*shared)->as_array()->size(), 3u);
+	EXPECT_EQ((*doc)->resolve_object_shared(IndirectRef{10u, 0u}).value().get(), shared->get()) << "the shared value was copied";
+}
+
 TEST(PdfDocument, OutlineTraversalHoldsOneItemAtATime)
 {
 	constexpr uint32_t kLevels = 64u;

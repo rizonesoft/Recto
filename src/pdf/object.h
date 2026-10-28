@@ -297,6 +297,10 @@ public:
 
 	bool operator==(const PdfDict& other) const noexcept;
 
+	// The heap this dictionary holds: its entries' storage, each key and value's own heap, and the lookup index when
+	// it has one (estimated from the index's nodes and buckets, never below what it allocates).
+	[[nodiscard]] size_t heap_bytes() const noexcept;
+
 private:
 	struct TransparentStringHash {
 		using is_transparent = void;
@@ -575,6 +579,10 @@ public:
 	// Exceeding the effective depth returns ErrorCode::RecursionLimitExceeded.
 	[[nodiscard]] PdfResult<PdfValue> deep_clone(
 		size_t max_depth = kMaxObjectCloneDepth) const noexcept;
+
+	// The heap this value holds beyond its own size, recursively: strings, names, arrays, dictionaries and a stream's
+	// dictionary and buffers, by capacity. A caller's memory budget charges it (the resolved-object cache's does).
+	[[nodiscard]] size_t heap_bytes() const noexcept;
 
 	bool operator==(const PdfValue& other) const noexcept
 	{

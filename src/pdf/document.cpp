@@ -1482,7 +1482,7 @@ namespace {
 
 } // namespace
 
-PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
+PdfResult<Document::SingleHopResult> Document::read_single_indirect_hop(
 	IndirectRef current,
 	const std::vector<IndirectRef>& visited_refs) const
 {
@@ -1587,12 +1587,14 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 			RECTO_PDF_TRY_REF(
 				inner_val,
 				extract_object_stream_member(*cached_stm, stm_index, current));
+			++parsed_objects_;
 			return SingleHopResult{std::nullopt, std::move(inner_val)};
 		}
 
 		RECTO_PDF_TRY(
 			IndirectObject raw_obj,
 			xref_.read_indirect_object(file_bytes_, current));
+		++parsed_objects_;
 		if (const auto next_ref = raw_obj.value.as_ref()) {
 			return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
 		}
@@ -1614,13 +1616,142 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 	RECTO_PDF_TRY(
 		IndirectObject raw_obj,
 		xref_.read_indirect_object(file_bytes_, current));
+	++parsed_objects_;
 	if (const auto next_ref = raw_obj.value.as_ref()) {
 		return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
 	}
 	return SingleHopResult{std::nullopt, std::move(raw_obj.value)};
 }
 
-PdfResult<PdfValue> Document::resolve_object_with_visited(
+namespace {
+
+// The value every free, missing or null terminal resolves to, shared so a null costs no allocation.
+[[nodiscard]] const std::shared_ptr<const PdfValue>& shared_null()
+{
+	static const std::shared_ptr<const PdfValue> null = std::make_shared<const PdfValue>(PdfNull{});
+	return null;
+}
+
+} // namespace
+
+std::shared_ptr<const PdfValue> ResolvedObjectCache::find(uint64_t key) noexcept
+{
+	const auto it = slots_.find(key);
+	if (it == slots_.end()) {
+		return nullptr;
+	}
+	Slot& slot = it->second;
+	if (slot.main) {
+		main_.splice(main_.begin(), main_, slot.entry); // relinks the node: no allocation, iterators stay valid
+	} else {
+		// Asked for again while in the window: it moves to the main cache.
+		window_bytes_ -= slot.entry->bytes;
+		main_bytes_ += slot.entry->bytes;
+		main_.splice(main_.begin(), window_, slot.entry);
+		slot.main = true;
+	}
+	std::shared_ptr<const PdfValue> value = slot.entry->value;
+	evict();
+	return value;
+}
+
+size_t ResolvedObjectCache::entry_bytes(const PdfValue& value) noexcept
+{
+	// The shared value and its control block (one make_shared allocation, counted at twice the value for the block's
+	// counts and alignment), the list node (two links and the entry), and the map node (two links and the slot) with
+	// its share of the buckets.
+	return value.heap_bytes() + 2u * sizeof(PdfValue) + sizeof(Entry) + 2u * sizeof(void*) +
+		sizeof(std::pair<const uint64_t, Slot>) + 4u * sizeof(void*);
+}
+
+bool ResolvedObjectCache::seen_before(uint64_t key) noexcept
+{
+	if (doorkeeper_count_ >= kDoorkeeperResetCount) {
+		doorkeeper_.fill(0u); // cleared before it fills, so a key seen once rarely passes for one seen twice
+		doorkeeper_count_ = 0;
+	}
+	++doorkeeper_count_;
+	uint64_t h = key + 0x9E3779B97F4A7C15ull; // splitmix64
+	h = (h ^ (h >> 30u)) * 0xBF58476D1CE4E5B9ull;
+	h = (h ^ (h >> 27u)) * 0x94D049BB133111EBull;
+	h ^= h >> 31u;
+	constexpr size_t kBits = 1'024u * 64u;
+	const size_t a = static_cast<size_t>(h % kBits);
+	const size_t b = static_cast<size_t>((h >> 32u) % kBits);
+	const bool seen = ((doorkeeper_[a / 64u] >> (a % 64u)) & 1u) != 0u && ((doorkeeper_[b / 64u] >> (b % 64u)) & 1u) != 0u;
+	doorkeeper_[a / 64u] |= uint64_t{1} << (a % 64u);
+	doorkeeper_[b / 64u] |= uint64_t{1} << (b % 64u);
+	return seen;
+}
+
+void ResolvedObjectCache::evict() noexcept
+{
+	while (window_.size() > kMaxWindowEntries || window_bytes_ > kMaxWindowBytes) {
+		const Entry& oldest = window_.back();
+		window_bytes_ -= oldest.bytes;
+		slots_.erase(oldest.key);
+		window_.pop_back();
+	}
+	while (main_.size() > kMaxObjectCacheEntries || main_bytes_ > kMaxObjectCacheBytes) {
+		const Entry& oldest = main_.back();
+		main_bytes_ -= oldest.bytes;
+		slots_.erase(oldest.key);
+		main_.pop_back();
+	}
+}
+
+PdfResult<void> ResolvedObjectCache::insert(uint64_t key, std::shared_ptr<const PdfValue> value) noexcept
+{
+	if (value == nullptr || slots_.contains(key)) {
+		return {};
+	}
+	const PdfStream* stream = value->as_stream();
+	const size_t bytes = entry_bytes(*value);
+	if (bytes > kMaxObjectCacheBytes / 4u || (stream != nullptr && stream->raw_bytes.size() > kMaxCachedStreamBytes)) {
+		return {}; // too large to keep: the caller uses it once
+	}
+	const bool main = seen_before(key);
+	if (!main && bytes > kMaxWindowBytes) {
+		return {}; // too large for the window: kept once it is asked for again
+	}
+	List& list = main ? main_ : window_;
+	try {
+		list.push_front(Entry{key, std::move(value), bytes});
+		try {
+			slots_.emplace(key, Slot{list.begin(), main});
+		} catch (...) {
+			list.pop_front();
+			throw;
+		}
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory caching a resolved object");
+	}
+	(main ? main_bytes_ : window_bytes_) += bytes;
+	evict();
+	return {};
+}
+
+PdfResult<Document::SharedHop> Document::resolve_single_indirect_hop(
+	IndirectRef current,
+	const std::vector<IndirectRef>& visited_refs) const
+{
+	const uint64_t key = (uint64_t{current.obj_num} << 16u) | current.gen_num;
+	if (std::shared_ptr<const PdfValue> cached = object_cache_.find(key)) {
+		return SharedHop{std::nullopt, std::move(cached)};
+	}
+	RECTO_PDF_TRY(SingleHopResult step, read_single_indirect_hop(current, visited_refs));
+	if (step.next_ref.has_value()) {
+		return SharedHop{step.next_ref, nullptr};
+	}
+	if (step.terminal_value.is_null()) {
+		return SharedHop{std::nullopt, shared_null()};
+	}
+	auto value = std::make_shared<const PdfValue>(std::move(step.terminal_value));
+	RECTO_PDF_RETURN_IF_ERROR(object_cache_.insert(key, value));
+	return SharedHop{std::nullopt, std::move(value)};
+}
+
+PdfResult<std::shared_ptr<const PdfValue>> Document::resolve_shared_with_visited(
 	IndirectRef ref,
 	std::vector<IndirectRef>& visited_refs) const
 {
@@ -1646,14 +1777,22 @@ PdfResult<PdfValue> Document::resolve_object_with_visited(
 		}
 		visited_refs.push_back(current);
 		RECTO_PDF_TRY(
-			SingleHopResult step,
+			SharedHop step,
 			resolve_single_indirect_hop(current, visited_refs));
 		if (step.next_ref.has_value()) {
 			current = *step.next_ref;
 			continue;
 		}
-		return std::move(step.terminal_value);
+		return std::move(step.terminal);
 	}
+}
+
+PdfResult<PdfValue> Document::resolve_object_with_visited(
+	IndirectRef ref,
+	std::vector<IndirectRef>& visited_refs) const
+{
+	RECTO_PDF_TRY(const std::shared_ptr<const PdfValue> value, resolve_shared_with_visited(ref, visited_refs));
+	return PdfValue(*value); // a copy: the caller may change it, the cache's stays as parsed
 }
 
 PdfResult<PdfValue> Document::resolve_object(IndirectRef ref) const noexcept
@@ -1662,6 +1801,29 @@ PdfResult<PdfValue> Document::resolve_object(IndirectRef ref) const noexcept
 		std::vector<IndirectRef> visited_refs;
 		visited_refs.reserve(kMaxIndirectRefDepth);
 		return resolve_object_with_visited(ref, visited_refs);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while resolving PDF indirect object",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while resolving PDF indirect object",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+}
+
+PdfResult<std::shared_ptr<const PdfValue>> Document::resolve_object_shared(IndirectRef ref) const noexcept
+{
+	try {
+		std::vector<IndirectRef> visited_refs;
+		visited_refs.reserve(kMaxIndirectRefDepth);
+		return resolve_shared_with_visited(ref, visited_refs);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -1934,13 +2096,13 @@ PdfResult<void> Document::load_document_structure()
 			}
 			out_hop_refs.push_back(current);
 			RECTO_PDF_TRY(
-				SingleHopResult step,
+				SharedHop step,
 				resolve_single_indirect_hop(current, out_hop_refs));
 			if (step.next_ref.has_value()) {
 				current = *step.next_ref;
 				continue;
 			}
-			return CachedChainResult{false, 0u, std::move(step.terminal_value)};
+			return CachedChainResult{false, 0u, PdfValue(*step.terminal)};
 		}
 	};
 
@@ -3600,7 +3762,7 @@ PdfResult<void> Document::load_document_structure()
 					cur_val = PdfValue(*step_res->next_ref);
 					continue;
 				}
-				cur_val = std::move(step_res->terminal_value);
+				cur_val = *step_res->terminal;
 				break;
 			}
 			if (already_visited) {

@@ -105,6 +105,7 @@ track: M1
 | 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
 | 46 | §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap | §3 | [ ] |
 | 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [ ] |
+| 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1431,6 +1432,29 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): marked conten
 - [ ] Commit: `pdf: optional-content marked content for layer visibility`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.OptionalContentBlocks` passes under ASan with 0 warnings.
+
+## 48. One built CIDFont per shared `/Type0` descendant object
+
+Filed 2026-10-28 from `D01 T01 §11`'s measurement: with the resolved-object cache, fifty `/Type0` fonts over one descendant whose `/W` holds 65,534 widths parse it twice in all (34 parses for the page) but still take 18.6 s in x64 Debug (75.7 s before the cache), because `load_type0_font` (`src/pdf/font_cid.cpp`) rebuilds the descendant's width runs, CIDToGIDMap and program for every font that names it, about 370 ms each. Acrobat and pdfium (`CPDF_CIDFont` per descendant dictionary) build a CIDFont once and share it. Recto shares the built descendant (its `CidWidths`, `CidToGidMap`, program and descriptor) across every `/Type0` font of a page that names the same descendant object, keyed by `object_key`, within the page's font budget (`§42`), while each font keeps its own encoding CMap. -> XREF: D01 T01 §11
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the shared descendants live on the stack of one `interpret_page` call (or an immutable value the `TextFont`s hold), are immutable once built, and that no `Document` dictionary is mutated.
+
+**Build order:**
+
+1. Split the descendant's built state out of `Type0Font` in `src/pdf/font_cid.h` and `src/pdf/font_cid.cpp`. Done when: two `Type0Font`s built over one descendant hold the same descendant pointer.
+2. Share it through the interpreter's font resolution in `src/pdf/text_font.cpp` and `src/pdf/interpreter.cpp`. Done when: the fifty-font fixture builds its descendant once.
+3. Test and measure. Done when: the tests below pass under ASan and the commit quotes the timing.
+
+- [ ] Add `CidDescendant` (immutable: `CidWidths`, `CidToGidMap`, kind, program, its `memory_bytes()`) in `src/pdf/font_cid.h`, and let `load_type0_font` take an optional memo from descendant `object_key` to `std::shared_ptr<const CidDescendant>`, building on a miss and reusing on a hit. Done when: `PdfFont.SharedDescendant` loads two `/Type0` dictionaries with different encodings over one indirect descendant and checks one build (the same pointer), each font's own CMap, and widths equal to an unshared load.
+- [ ] Charge a shared descendant once against the page's 64 MiB font budget (`TextFont::memory_bytes` counts it only for the font that built it) and keep the memo on the interpreter's page state. Done when: `PdfInterpreter.SharedDescendantBudget` shows fifty fonts over one 128 KiB-map descendant stay within the budget (no `WorkingBytes` refusal), while fifty distinct descendants of the same size still hit it as `PdfInterpreter.TextFontBudget` does.
+- [ ] A descendant that fails to build is not memoized as a success: each font naming it takes the fallback with its diagnostic, as `§42` specifies. Done when: `PdfFont.SharedDescendant` resolves two fonts over a damaged descendant and both take the fallback, with the damage recorded.
+- [ ] Measure the fifty-font fixture of `PdfInterpreter.SharedObjectsParseOnce` in x64 Debug and Release. Done when: the Debug time falls at least tenfold from 18.6 s and the commit body quotes both timings.
+- [ ] Commit: `pdf: one built CIDFont per shared Type 0 descendant`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.SharedDescendant:PdfInterpreter.SharedDescendantBudget:PdfInterpreter.SharedObjectsParseOnce:PdfInterpreter.*:PdfFont.*` passes under ASan with 0 warnings.
 
 ## Verification
 

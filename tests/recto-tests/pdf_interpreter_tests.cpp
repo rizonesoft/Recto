@@ -3134,6 +3134,54 @@ TEST(PdfInterpreter, TextFontLookupWork)
 	}
 }
 
+// A shared object is parsed at most twice (on first sight, and when the resolved-object cache admits it) however many
+// resources use it, and each use costs no copy of it (D01 T01 section 11): fifty /Type0 fonts over one descendant
+// whose /W holds 65,534 widths.
+TEST(PdfInterpreter, SharedObjectsParseOnce)
+{
+	std::string widths = "[0 [";
+	for (int i = 0; i < 65'534; ++i) {
+		widths += i % 2 == 0 ? "500 " : "501 ";
+	}
+	widths += "]]";
+	std::vector<std::string> objects{kF1, kF1Descriptor,
+		"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /W " +
+			widths + " >>"};
+	std::string fonts;
+	std::string content = "BT ";
+	for (int i = 0; i < 50; ++i) {
+		objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) + " /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
+		fonts += "/C" + std::to_string(i) + " " + std::to_string(8 + i) + " 0 R ";
+		content += "/C" + std::to_string(i) + " 10 Tf <0001> Tj ";
+	}
+	const auto bytes = one_page_pdf(content + "ET", "<< /Font << " + fonts + ">> >>", objects);
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value());
+	const uint64_t parsed_before = (*doc)->parsed_object_count();
+	size_t allocated = 0;
+	const auto start = std::chrono::steady_clock::now();
+	PdfResult<std::shared_ptr<const DisplayList>> list = make_pdf_error(ErrorCode::Ok);
+	{
+		const recto::test::ScopedHeapMeter meter;
+		list = interpret_page(**doc, 0u);
+		allocated = meter.allocated_bytes();
+	}
+	const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+	ASSERT_TRUE(list.has_value()) << list.error().message.view();
+	const auto runs = all_of<RecordedGlyphRun>(**list);
+	ASSERT_EQ(runs.size(), 50u);
+	for (const RecordedGlyphRun& run : runs) {
+		const auto glyphs = (*list)->glyphs(run);
+		ASSERT_TRUE(glyphs.has_value());
+		EXPECT_DOUBLE_EQ((*glyphs)[0].advance_pt, 5.01) << "the shared widths were not read";
+	}
+	const uint64_t parses = (*doc)->parsed_object_count() - parsed_before;
+	std::printf("[ SharedObjectsParseOnce ] %.3f s, %llu parses, %zu bytes allocated, sizeof(PdfValue) %zu\n", seconds,
+		static_cast<unsigned long long>(parses), allocated, sizeof(PdfValue));
+	// Fifty fonts, their descendant, the page's resources: each parsed at most twice.
+	EXPECT_LE(parses, 2u * (50u + 8u)) << "a shared object was parsed again for each use";
+}
+
 TEST(PdfInterpreter, TextDecodeWork)
 {
 	// Decoding a string is charged to the page's work budget before the builder sees the run, at the font's codespace

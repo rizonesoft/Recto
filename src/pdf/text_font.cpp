@@ -304,7 +304,8 @@ struct TextFontBuilder {
 		std::optional<PdfError>& fatal)
 	{
 		const IndirectObjectResolver resolver = [&document](IndirectRef ref) { return document.resolve_object(ref); };
-		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver));
+		const SharedObjectResolver shared = [&document](IndirectRef ref) { return document.resolve_object_shared(ref); };
+		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver, &shared));
 		auto font = std::make_shared<TextFont>();
 		font->kind_ = TextFontKind::Composite;
 		font->vertical_ = type0->cmap().vertical();

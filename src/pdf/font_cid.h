@@ -143,8 +143,9 @@ public:
 	// resolver finds missing or damaged, is skipped, as readers do, a later entry winning over an earlier one; any
 	// other resolver error is passed on; more than `kMaxCidWidthElements` elements, or a range reaching past CID
 	// 65,535, is `ResourceLimit`.
+	// With `shared`, indirect entries are read from the document's cached values without a copy.
 	[[nodiscard]] static PdfResult<CidWidths> build(const PdfValue* dw, const PdfValue* w, const PdfValue* dw2,
-		const PdfValue* w2, const IndirectObjectResolver* resolver) noexcept;
+		const PdfValue* w2, const IndirectObjectResolver* resolver, const SharedObjectResolver* shared = nullptr) noexcept;
 
 	[[nodiscard]] double advance(uint32_t cid) const noexcept;
 	// A CID without a `/W2` entry: `w1y` and `vy` from `/DW2`, `vx` half its horizontal advance.
@@ -227,8 +228,9 @@ private:
 // through `/UseCMap`, at most `kMaxUseCMapLevels` CMaps, a cycle `DamagedFormat`; another name `UnsupportedFeature`),
 // its one `/DescendantFonts` entry (`/CIDFontType0` or `/CIDFontType2`, else `DamagedFormat`) with its widths and
 // `/CIDToGIDMap`, and its descriptor's `/FontFile2` or `/FontFile3` program, every indirect object through `resolver`
-// and every stream through `decode_stream`.
+// and every stream through `decode_stream`. With `shared`, indirect objects are read from the document's cached values
+// without a copy (D01 T01 section 11); `resolver` still serves the stream decoders.
 [[nodiscard]] PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
-	const PdfDict& type0, const IndirectObjectResolver& resolver) noexcept;
+	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared = nullptr) noexcept;
 
 } // namespace recto::pdf

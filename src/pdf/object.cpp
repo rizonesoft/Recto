@@ -681,6 +681,67 @@ std::optional<PdfMatrix> PdfDict::get_matrix(std::string_view key) const noexcep
 	return std::nullopt;
 }
 
+namespace {
+
+// MSVC's checked iterators give every container its own heap-allocated proxy; counted so a Debug build's estimate
+// does not fall short of what it allocates.
+#if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL != 0
+inline constexpr size_t kContainerProxyBytes = sizeof(std::_Container_proxy);
+#else
+inline constexpr size_t kContainerProxyBytes = 0u;
+#endif
+
+// A string's heap: its proxy, and its capacity and terminator once it outgrows the small-string buffer.
+[[nodiscard]] size_t string_heap(const std::string& s) noexcept
+{
+	return kContainerProxyBytes + (s.capacity() > std::string{}.capacity() ? s.capacity() + 1u : 0u);
+}
+
+} // namespace
+
+size_t PdfDict::heap_bytes() const noexcept
+{
+	size_t bytes = kContainerProxyBytes + entries_.capacity() * sizeof(Entry);
+	for (const auto& [key, value] : entries_) {
+		bytes += string_heap(key.value) + value.heap_bytes();
+	}
+	if (index_ != nullptr) {
+		// Each node holds its key and slot with two links; the buckets hold two iterators each (MSVC's layout,
+		// counted from its sizes so the estimate does not undercount); plus the map object itself.
+		bytes += sizeof(IndexMap) + 2u * kContainerProxyBytes + index_->bucket_count() * 2u * sizeof(void*) + (index_->size() + 1u) *
+			(sizeof(IndexMap::value_type) + 2u * sizeof(void*));
+		for (const auto& [key, slot] : *index_) {
+			bytes += string_heap(key);
+		}
+	}
+	return bytes;
+}
+
+size_t PdfValue::heap_bytes() const noexcept
+{
+	if (const auto* name = std::get_if<PdfName>(&storage_)) {
+		return string_heap(name->value);
+	}
+	if (const auto* string = std::get_if<PdfString>(&storage_)) {
+		return kContainerProxyBytes + string->bytes.capacity();
+	}
+	if (const auto* array = std::get_if<PdfArray>(&storage_)) {
+		size_t bytes = kContainerProxyBytes + array->capacity() * sizeof(PdfValue);
+		for (const PdfValue& item : *array) {
+			bytes += item.heap_bytes();
+		}
+		return bytes;
+	}
+	if (const auto* dict = std::get_if<PdfDict>(&storage_)) {
+		return dict->heap_bytes();
+	}
+	if (const auto* stream = std::get_if<PdfStream>(&storage_)) {
+		return stream->dict.heap_bytes() + kContainerProxyBytes + stream->raw_bytes.capacity() +
+			(stream->decoded_bytes.has_value() ? kContainerProxyBytes + stream->decoded_bytes->capacity() : 0u);
+	}
+	return 0u;
+}
+
 bool PdfDict::operator==(const PdfDict& other) const noexcept
 {
 	if (entries_.size() != other.entries_.size()) {

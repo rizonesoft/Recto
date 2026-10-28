@@ -451,13 +451,31 @@ uint16_t cid_glyph(uint32_t cid, CidFontKind kind, const CidToGidMap& map, const
 
 namespace {
 
+// A resolved value's keeper: the document's shared value when a shared resolver gave one, else an owned copy.
+struct Held {
+	PdfValue owned{};
+	std::shared_ptr<const PdfValue> shared{};
+};
+
 // A value with its indirect reference resolved, or null when it is absent, unresolvable or there is no resolver.
 // Allocation failure is the one resolver error passed on.
-[[nodiscard]] PdfResult<const PdfValue*> deref(
-	const PdfValue* value, PdfValue& holder, const IndirectObjectResolver* resolver) noexcept
+// Through `shared` when given, the document's cached value is held without a copy (D01 T01 section 11).
+[[nodiscard]] PdfResult<const PdfValue*> deref(const PdfValue* value, Held& holder, const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared = nullptr) noexcept
 {
 	if (value == nullptr || !value->is_ref()) {
 		return value;
+	}
+	if (shared != nullptr && *shared) {
+		auto resolved = (*shared)(*value->as_ref());
+		if (!resolved.has_value()) {
+			if (resolved.error().code != ErrorCode::DamagedFormat) {
+				return resolved.error();
+			}
+			return static_cast<const PdfValue*>(nullptr);
+		}
+		holder.shared = std::move(*resolved);
+		return static_cast<const PdfValue*>(holder.shared == nullptr || holder.shared->is_ref() ? nullptr : holder.shared.get());
 	}
 	if (resolver == nullptr || !*resolver) {
 		return static_cast<const PdfValue*>(nullptr);
@@ -469,8 +487,8 @@ namespace {
 		}
 		return static_cast<const PdfValue*>(nullptr);
 	}
-	holder = std::move(*resolved);
-	return static_cast<const PdfValue*>(holder.is_ref() ? nullptr : &holder);
+	holder.owned = std::move(*resolved);
+	return static_cast<const PdfValue*>(holder.owned.is_ref() ? nullptr : &holder.owned);
 }
 
 [[nodiscard]] std::optional<uint32_t> cid_value(const PdfValue* value) noexcept
@@ -494,7 +512,7 @@ namespace {
 // values` gives the CIDs of the range one group; a malformed entry is skipped.
 template <typename OnRun>
 [[nodiscard]] PdfResult<void> walk_widths(
-	const PdfArray& array, size_t group, const IndirectObjectResolver* resolver, OnRun on_run)
+	const PdfArray& array, size_t group, const IndirectObjectResolver* resolver, const SharedObjectResolver* shared, OnRun on_run)
 {
 	size_t elements = array.size();
 	const auto counted = [&](size_t more) -> PdfResult<void> {
@@ -506,9 +524,9 @@ template <typename OnRun>
 	};
 	RECTO_PDF_RETURN_IF_ERROR(counted(0u));
 	std::array<double, 3> values{};
-	const auto read_group = [&](const PdfArray& from, size_t at, PdfValue* holders) -> PdfResult<bool> {
+	const auto read_group = [&](const PdfArray& from, size_t at, Held* holders) -> PdfResult<bool> {
 		for (size_t k = 0; k < group; ++k) {
-			RECTO_PDF_TRY(const PdfValue* v, deref(&from[at + k], holders[k], resolver));
+			RECTO_PDF_TRY(const PdfValue* v, deref(&from[at + k], holders[k], resolver, shared));
 			const std::optional<double> n = v != nullptr ? v->as_number() : std::nullopt;
 			if (!n.has_value()) {
 				return false;
@@ -519,15 +537,15 @@ template <typename OnRun>
 	};
 	size_t i = 0;
 	while (i < array.size()) {
-		PdfValue first_holder;
-		RECTO_PDF_TRY(const PdfValue* first_value, deref(&array[i], first_holder, resolver));
+		Held first_holder;
+		RECTO_PDF_TRY(const PdfValue* first_value, deref(&array[i], first_holder, resolver, shared));
 		const std::optional<uint32_t> first = cid_value(first_value);
 		if (!first.has_value() || i + 1u >= array.size()) {
 			++i; // not a CID: skipped
 			continue;
 		}
-		PdfValue second_holder;
-		RECTO_PDF_TRY(const PdfValue* second, deref(&array[i + 1u], second_holder, resolver));
+		Held second_holder;
+		RECTO_PDF_TRY(const PdfValue* second, deref(&array[i + 1u], second_holder, resolver, shared));
 		if (second != nullptr && second->is_array()) {
 			const PdfArray& list = *second->as_array();
 			RECTO_PDF_RETURN_IF_ERROR(counted(list.size()));
@@ -536,7 +554,7 @@ template <typename OnRun>
 				return oversized_range();
 			}
 			for (size_t g = 0; g < groups; ++g) {
-				std::array<PdfValue, 3> holders{};
+				std::array<Held, 3> holders{};
 				RECTO_PDF_TRY(const bool ok, read_group(list, g * group, holders.data()));
 				if (ok) {
 					on_run(*first + static_cast<uint32_t>(g), *first + static_cast<uint32_t>(g), values);
@@ -553,7 +571,7 @@ template <typename OnRun>
 		if (*last > kMaxCid) {
 			return oversized_range();
 		}
-		std::array<PdfValue, 3> holders{};
+		std::array<Held, 3> holders{};
 		RECTO_PDF_TRY(const bool ok, read_group(array, i + 2u, holders.data()));
 		if (ok) {
 			on_run(*first, *last, values);
@@ -594,25 +612,25 @@ template <typename V>
 } // namespace
 
 PdfResult<CidWidths> CidWidths::build(const PdfValue* dw, const PdfValue* w, const PdfValue* dw2, const PdfValue* w2,
-	const IndirectObjectResolver* resolver) noexcept
+	const IndirectObjectResolver* resolver, const SharedObjectResolver* shared) noexcept
 {
 	try {
 		CidWidths widths;
-		PdfValue holder;
-		RECTO_PDF_TRY(const PdfValue* dw_value, deref(dw, holder, resolver));
+		Held holder;
+		RECTO_PDF_TRY(const PdfValue* dw_value, deref(dw, holder, resolver, shared));
 		if (dw_value != nullptr) {
 			if (const std::optional<double> n = dw_value->as_number()) {
 				widths.default_width_ = *n / 1000.0;
 			}
 		}
-		PdfValue dw2_holder;
-		RECTO_PDF_TRY(const PdfValue* dw2_value, deref(dw2, dw2_holder, resolver));
+		Held dw2_holder;
+		RECTO_PDF_TRY(const PdfValue* dw2_value, deref(dw2, dw2_holder, resolver, shared));
 		if (dw2_value != nullptr && dw2_value->is_array() && dw2_value->as_array()->size() == 2u) {
 			const PdfArray& pair = *dw2_value->as_array();
-			PdfValue vy_holder;
-			PdfValue w1y_holder;
-			RECTO_PDF_TRY(const PdfValue* vy_value, deref(&pair[0], vy_holder, resolver));
-			RECTO_PDF_TRY(const PdfValue* w1y_value, deref(&pair[1], w1y_holder, resolver));
+			Held vy_holder;
+			Held w1y_holder;
+			RECTO_PDF_TRY(const PdfValue* vy_value, deref(&pair[0], vy_holder, resolver, shared));
+			RECTO_PDF_TRY(const PdfValue* w1y_value, deref(&pair[1], w1y_holder, resolver, shared));
 			const std::optional<double> vy = vy_value != nullptr ? vy_value->as_number() : std::nullopt;
 			const std::optional<double> w1y = w1y_value != nullptr ? w1y_value->as_number() : std::nullopt;
 			if (vy.has_value() && w1y.has_value()) {
@@ -620,21 +638,21 @@ PdfResult<CidWidths> CidWidths::build(const PdfValue* dw, const PdfValue* w, con
 				widths.default_w1y_ = *w1y / 1000.0;
 			}
 		}
-		PdfValue w_holder;
-		RECTO_PDF_TRY(const PdfValue* w_value, deref(w, w_holder, resolver));
+		Held w_holder;
+		RECTO_PDF_TRY(const PdfValue* w_value, deref(w, w_holder, resolver, shared));
 		if (w_value != nullptr && w_value->is_array()) {
 			std::map<uint64_t, Span<double>> set;
-			RECTO_PDF_RETURN_IF_ERROR(walk_widths(*w_value->as_array(), 1u, resolver,
+			RECTO_PDF_RETURN_IF_ERROR(walk_widths(*w_value->as_array(), 1u, resolver, shared,
 				[&](uint32_t low, uint32_t high, const std::array<double, 3>& v) {
 					lay_over(set, Span<double>{low, high, v[0]}, same_value<double>);
 				}));
 			widths.widths_ = to_runs(set);
 		}
-		PdfValue w2_holder;
-		RECTO_PDF_TRY(const PdfValue* w2_value, deref(w2, w2_holder, resolver));
+		Held w2_holder;
+		RECTO_PDF_TRY(const PdfValue* w2_value, deref(w2, w2_holder, resolver, shared));
 		if (w2_value != nullptr && w2_value->is_array()) {
 			std::map<uint64_t, Span<CidVertical>> set;
-			RECTO_PDF_RETURN_IF_ERROR(walk_widths(*w2_value->as_array(), 3u, resolver,
+			RECTO_PDF_RETURN_IF_ERROR(walk_widths(*w2_value->as_array(), 3u, resolver, shared,
 				[&](uint32_t low, uint32_t high, const std::array<double, 3>& v) {
 					lay_over(set, Span<CidVertical>{low, high, CidVertical{v[0], v[1], v[2]}}, same_value<CidVertical>);
 				}));
@@ -699,16 +717,21 @@ namespace {
 
 struct Type0Loader {
 	const IndirectObjectResolver& resolver;
+	const SharedObjectResolver* shared_resolver; // the document's cached values, held without a copy; null for copies
 	std::set<uint32_t> cmap_objects; // the embedded CMaps on the `/UseCMap` chain so far
 
 	// A value with its reference resolved, held by the caller; a reference that does not resolve is its error.
-	[[nodiscard]] PdfResult<const PdfValue*> value(const PdfValue* v, PdfValue& holder) const
+	[[nodiscard]] PdfResult<const PdfValue*> value(const PdfValue* v, Held& holder) const
 	{
 		if (v == nullptr || !v->is_ref()) {
 			return v;
 		}
-		RECTO_PDF_TRY(holder, resolver(*v->as_ref()));
-		return static_cast<const PdfValue*>(&holder);
+		if (shared_resolver != nullptr && *shared_resolver) {
+			RECTO_PDF_TRY(holder.shared, (*shared_resolver)(*v->as_ref()));
+			return static_cast<const PdfValue*>(holder.shared.get());
+		}
+		RECTO_PDF_TRY(holder.owned, resolver(*v->as_ref()));
+		return static_cast<const PdfValue*>(&holder.owned);
 	}
 
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> bytes(const PdfStream& stream, size_t limit) const
@@ -729,7 +752,7 @@ struct Type0Loader {
 					return cid_error(ErrorCode::DamagedFormat, "CID CMap /UseCMap chain is a cycle");
 				}
 			}
-			PdfValue holder;
+			Held holder;
 			RECTO_PDF_TRY(const PdfValue* inherited, value(use, holder));
 			if (const std::optional<std::string_view> name = inherited->as_name()) {
 				if (*name != "Identity-H" && *name != "Identity-V") {
@@ -745,7 +768,7 @@ struct Type0Loader {
 		}
 		RECTO_PDF_TRY(const std::vector<uint8_t> data, bytes(stream, kMaxCidCMapStreamBytes));
 		RECTO_PDF_TRY_REF(parsed, CidCMap::parse(data, base.has_value() ? &*base : nullptr));
-		PdfValue mode_holder;
+		Held mode_holder;
 		RECTO_PDF_TRY(const PdfValue* mode, value(stream.dict.get("WMode"), mode_holder));
 		if (mode != nullptr && mode->as_int().has_value()) {
 			parsed.set_vertical(*mode->as_int() == 1);
@@ -817,7 +840,7 @@ struct Type0Loader {
 	[[nodiscard]] PdfResult<std::shared_ptr<const LoadedFont>> program(const PdfDict& descriptor) const
 	{
 		for (const std::string_view key : {std::string_view("FontFile2"), std::string_view("FontFile3")}) {
-			PdfValue holder;
+			Held holder;
 			RECTO_PDF_TRY(const PdfValue* file, value(descriptor.get(key), holder));
 			if (file == nullptr) {
 				continue;
@@ -831,7 +854,7 @@ struct Type0Loader {
 			if (key == "FontFile2") {
 				return load_embedded_font(std::move(shared), FontProgramFormat::TrueType);
 			}
-			PdfValue subtype_holder;
+			Held subtype_holder;
 			RECTO_PDF_TRY(const PdfValue* subtype_value, value(stream.dict.get("Subtype"), subtype_holder));
 			const std::optional<std::string_view> subtype =
 				subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
@@ -853,12 +876,12 @@ struct Type0Loader {
 } // namespace
 
 PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
-	const PdfDict& type0, const IndirectObjectResolver& resolver) noexcept
+	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared) noexcept
 {
 	try {
-		Type0Loader loader{resolver, {}};
+		Type0Loader loader{resolver, shared, {}};
 		// The encoding CMap.
-		PdfValue encoding_holder;
+		Held encoding_holder;
 		RECTO_PDF_TRY(const PdfValue* encoding, loader.value(type0.get("Encoding"), encoding_holder));
 		std::optional<CidCMap> cmap;
 		if (encoding != nullptr && encoding->is_name()) {
@@ -877,18 +900,18 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font has no /Encoding CMap");
 		}
 		// The one descendant CIDFont.
-		PdfValue descendants_holder;
+		Held descendants_holder;
 		RECTO_PDF_TRY(const PdfValue* descendants, loader.value(type0.get("DescendantFonts"), descendants_holder));
 		if (descendants == nullptr || !descendants->is_array() || descendants->as_array()->size() != 1u) {
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font does not have exactly one descendant font");
 		}
-		PdfValue descendant_holder;
+		Held descendant_holder;
 		RECTO_PDF_TRY(const PdfValue* descendant_value, loader.value(&(*descendants->as_array())[0], descendant_holder));
 		if (descendant_value == nullptr || !descendant_value->is_dict()) {
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is not a font dictionary");
 		}
 		const PdfDict& descendant = *descendant_value->as_dict();
-		PdfValue subtype_holder;
+		Held subtype_holder;
 		RECTO_PDF_TRY(const PdfValue* subtype_value, loader.value(descendant.get("Subtype"), subtype_holder));
 		const std::optional<std::string_view> subtype =
 			subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
@@ -899,10 +922,10 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is neither CIDFontType0 nor CIDFontType2");
 		}
 		RECTO_PDF_TRY_REF(widths, CidWidths::build(descendant.get("DW"), descendant.get("W"), descendant.get("DW2"),
-									  descendant.get("W2"), &resolver));
+									  descendant.get("W2"), &resolver, shared));
 		CidToGidMap map = CidToGidMap::identity();
 		if (kind == CidFontKind::CIDFontType2) {
-			PdfValue map_holder;
+			Held map_holder;
 			RECTO_PDF_TRY(const PdfValue* map_value, loader.value(descendant.get("CIDToGIDMap"), map_holder));
 			if (map_value != nullptr && map_value->is_stream()) {
 				RECTO_PDF_TRY(const std::vector<uint8_t> data, loader.bytes(*map_value->as_stream(), kMaxDecodedStreamBytes));
@@ -914,7 +937,7 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 		}
 		// The descriptor's program, if it embeds one.
 		std::shared_ptr<const LoadedFont> font;
-		PdfValue descriptor_holder;
+		Held descriptor_holder;
 		RECTO_PDF_TRY(const PdfValue* descriptor, loader.value(descendant.get("FontDescriptor"), descriptor_holder));
 		if (descriptor != nullptr && descriptor->is_dict()) {
 			RECTO_PDF_TRY_REF(program, loader.program_with_charset(*descriptor->as_dict(), kind));

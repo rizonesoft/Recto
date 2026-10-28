@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,10 @@ inline constexpr size_t kMaxFilterChainDepth = 8;
 // `/JBIG2Globals` is an indirect reference `N G R`) to resolve an indirect
 // object from the owning `XrefTable` / `Document`.
 using IndirectObjectResolver = std::function<PdfResult<PdfValue>(IndirectRef)>;
+
+// Resolves an indirect object to the owning `Document`'s cached, immutable value without copying it
+// (`Document::resolve_object_shared`, D01 T01 section 11), for readers of large shared objects.
+using SharedObjectResolver = std::function<PdfResult<std::shared_ptr<const PdfValue>>(IndirectRef)>;
 
 struct PredictorParams {
 	int32_t predictor{1};

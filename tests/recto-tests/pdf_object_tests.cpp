@@ -121,6 +121,60 @@ TEST(PdfObject, AllTenVariantKindsAndAccessors)
 	EXPECT_EQ(v_ref.as_ref()->gen_num, 0u);
 }
 
+// heap_bytes() counts what a value holds on the heap: never less than the heap meter measures for it, and within 10%.
+TEST(PdfObject, HeapBytes)
+{
+	if (!recto::test::ScopedHeapMeter::available()) {
+		GTEST_SKIP() << "the heap meter is unavailable in this build";
+	}
+	// What the meter itself adds once a measured call allocates (a constant few dozen bytes), from a value whose heap
+	// is one buffer of known size, taken off each measurement.
+	const int64_t baseline = [] {
+		const recto::test::ScopedHeapMeter meter;
+		const PdfValue value(PdfString(std::vector<uint8_t>(4'096u, 'b')));
+		return meter.live_bytes() - static_cast<int64_t>(value.heap_bytes());
+	}();
+	ASSERT_GE(baseline, 0);
+	ASSERT_LT(baseline, 256);
+	const auto check = [baseline](const char* what, auto make) {
+		const recto::test::ScopedHeapMeter meter;
+		const PdfValue value = make();
+		const int64_t live = meter.live_bytes() - baseline;
+		ASSERT_GT(live, 0) << what;
+		const size_t counted = value.heap_bytes();
+		// A first call may also leave a one-time static of a few dozen bytes alive, which is not the value's.
+		EXPECT_GE(counted + 64u, static_cast<size_t>(live)) << what << ": heap_bytes undercounts";
+		EXPECT_LE(counted, static_cast<size_t>(live) + static_cast<size_t>(live) / 10u + 256u) << what;
+	};
+	check("nested array", [] {
+		PdfArray outer;
+		outer.reserve(1'000u);
+		for (int i = 0; i < 1'000; ++i) {
+			PdfArray inner;
+			inner.reserve(10u);
+			for (int k = 0; k < 10; ++k) {
+				inner.emplace_back(int64_t{k});
+			}
+			outer.emplace_back(std::move(inner));
+		}
+		return PdfValue(std::move(outer));
+	});
+	check("indexed dictionary", [] {
+		PdfDict dict;
+		for (int i = 0; i < 100; ++i) {
+			dict.set(PdfName("AQuiteLongKeyName_" + std::to_string(i)), PdfValue(PdfName("AnEquallyLongValueName_" + std::to_string(i))));
+		}
+		return PdfValue(std::move(dict));
+	});
+	check("1 MiB string", [] { return PdfValue(PdfString(std::vector<uint8_t>(size_t{1} << 20u, 'x'))); });
+	check("stream", [] {
+		PdfDict dict;
+		dict.set("Length", PdfValue(int64_t{65'536}));
+		dict.set("Filter", PdfValue(PdfName("FlateDecode")));
+		return PdfValue(PdfStream(std::move(dict), std::vector<uint8_t>(65'536u, 7u)));
+	});
+}
+
 TEST(PdfObject, NumericPromotion)
 {
 	const PdfValue int_val(int64_t{72});

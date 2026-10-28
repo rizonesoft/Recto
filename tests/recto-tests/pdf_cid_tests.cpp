@@ -421,6 +421,52 @@ TEST(PdfFont, CidFontWidths)
 	}
 }
 
+// Given a SharedObjectResolver, load_type0_font reads every indirect object through it and copies none (D01 T01
+// section 11): the copying resolver is never called, and the font matches one loaded by copies.
+TEST(PdfFont, Type0SharedResolver)
+{
+	Objects o;
+	o.table.emplace(2u, array({ref(3u)}));
+	o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"W", ref(4u)},
+							{"DW", number(1000)}, {"DW2", ref(8u)}, {"CIDToGIDMap", ref(5u)}, {"FontDescriptor", ref(6u)}})));
+	o.table.emplace(4u, array({number(0), array({number(500), ref(9u), number(700)})}));
+	o.table.emplace(5u, stream(PdfDict{}, {0u, 2u, 0u, 1u, 0u, 3u}));
+	o.table.emplace(6u, PdfValue(dict({{"FontFile2", ref(7u)}})));
+	o.table.emplace(7u, stream(PdfDict{}, *corpus_font("truetype-full-short-loca.ttf")));
+	o.table.emplace(8u, array({number(880), number(-1000)}));
+	o.table.emplace(9u, number(600));
+	const PdfDict type0 = dict({{"Type", name("Font")}, {"Subtype", name("Type0")}, {"Encoding", name("Identity-H")},
+		{"DescendantFonts", ref(2u)}});
+	size_t copies = 0;
+	const IndirectObjectResolver counting = [&](IndirectRef r) {
+		++copies;
+		return o.resolver(r);
+	};
+	size_t shares = 0;
+	std::map<uint32_t, std::shared_ptr<const PdfValue>> cache;
+	const SharedObjectResolver shared = [&](IndirectRef r) -> PdfResult<std::shared_ptr<const PdfValue>> {
+		++shares;
+		auto& slot = cache[r.obj_num];
+		if (slot == nullptr) {
+			RECTO_PDF_TRY(PdfValue value, o.resolver(r));
+			slot = std::make_shared<const PdfValue>(std::move(value));
+		}
+		return slot;
+	};
+	auto by_share = load_type0_font(type0, counting, &shared);
+	ASSERT_TRUE(by_share.has_value()) << by_share.error().message.view();
+	EXPECT_EQ(copies, 0u) << "an object was copied although a shared resolver was given";
+	EXPECT_GE(shares, 6u);
+	auto by_copy = load_type0_font(type0, o.resolver);
+	ASSERT_TRUE(by_copy.has_value());
+	for (uint32_t cid : {0u, 1u, 2u, 3u}) {
+		EXPECT_DOUBLE_EQ((*by_share)->widths().advance(cid), (*by_copy)->widths().advance(cid)) << cid;
+		EXPECT_DOUBLE_EQ((*by_share)->widths().vertical(cid).vy, (*by_copy)->widths().vertical(cid).vy) << cid;
+	}
+	EXPECT_DOUBLE_EQ((*by_share)->widths().advance(1u), 0.6) << "the indirect width inside /W was not read";
+	ASSERT_NE((*by_share)->font(), nullptr);
+}
+
 // A Type 0 font assembled from its object graph, indirect references throughout.
 TEST(PdfFont, Type0Assembly)
 {
