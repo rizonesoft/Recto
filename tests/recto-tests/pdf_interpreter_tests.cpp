@@ -4108,7 +4108,12 @@ TEST(PdfInterpreter, FormXObjectWork)
 		ASSERT_FALSE(list.has_value()) << "the fan-out was not bounded";
 		EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
 		EXPECT_NE(list.error().message.view().find("work budget"), std::string_view::npos) << list.error().message.view();
-		EXPECT_LT(seconds, 5.0);
+#if !defined(__SANITIZE_ADDRESS__) && !defined(_DEBUG)
+		// Time is held in Release, where the refusal takes about 40 ms; Debug and ASan builds check the refusal only.
+		EXPECT_LT(seconds, 1.0);
+#else
+		(void)seconds;
+#endif
 	}
 	// The content charge itself: a 6-level fan-out (127 invocations) of forms padded to 2,000 bytes charges 254,000
 	// against a budget of 100,000 and is refused, while the forms' own operators and clips cost far less, so the same
@@ -4190,6 +4195,43 @@ TEST(PdfInterpreter, FormXObjectWork)
 		EXPECT_EQ(all_of<DrawPathCommand>(*sum.list).size(), 4u) << "the page's own draws go on";
 		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes)) << "the fourth 20 MiB form passes 64 MiB";
 	}
+	// Decodes that fail still spend what they produced: four distinct forms that each inflate 20 MiB and then fail
+	// their Adler-32 checksum exhaust the budget, so a valid form after them is refused while the page's own drawing
+	// goes on.
+	{
+		auto twenty = flate_compress(std::vector<uint8_t>(size_t{20} << 20u, ' '));
+		ASSERT_TRUE(twenty.has_value());
+		std::string damaged(twenty->begin(), twenty->end());
+		damaged.back() = static_cast<char>(damaged.back() ^ 0x5A); // the trailer no longer matches
+		std::string names;
+		std::string content;
+		std::vector<std::string> objects;
+		for (int i = 0; i < 4; ++i) {
+			names += "/D" + std::to_string(i) + " " + std::to_string(5 + i) + " 0 R ";
+			content += "/D" + std::to_string(i) + " Do ";
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Filter /FlateDecode", damaged));
+		}
+		objects.push_back(form_object("/BBox [-1000 -1000 1000 1000]", "0 0 1 1 re f")); // object 9
+		clear_diagnostics();
+		const auto r = interpret(content + "/V Do 5 5 1 1 re f", "<< /XObject << " + names + "/V 9 0 R >> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 1u) << "failed decodes were not charged, so the valid form still drew";
+		expect_rect(draws[0].bounds_pt, 5.0, 5.0, 6.0, 6.0);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
+	// A form whose content names an image filter is not decoded at all.
+	{
+		const auto bytes = one_page_pdf("/I Do 5 5 1 1 re f", "<< /XObject << /I 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Filter [/ASCIIHexDecode 6 0 R]", "0 0 1 1 re f"), "/DCTDecode"});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		const uint64_t before = (*doc)->decoded_stream_count();
+		const auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		EXPECT_EQ((*doc)->decoded_stream_count() - before, 0u) << "the form's content was decoded";
+		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 1u);
+	}
 	// A damaged form drawn 100 times is decoded once.
 	{
 		std::string many;
@@ -4261,6 +4303,17 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		ASSERT_EQ(draws.size(), 1u) << "the refused XObject drew, or the page's next draw was lost";
 		expect_rect(draws[0].bounds_pt, 50.0, 50.0, 51.0, 51.0);
 		EXPECT_TRUE(recorded(c.code));
+	}
+	// A form whose content ends inside an unterminated dictionary: the operator its operands belonged to is the form's to skip,
+	// and the caller's next operator still runs.
+	{
+		clear_diagnostics();
+		const auto r = interpret("/X Do 50 50 1 1 re f", "<< /XObject << /X 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000]", "0 0 1 1 re f 7 << /A 1")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 2u) << "the form's damaged tail swallowed the caller's re";
+		expect_rect(draws[1].bounds_pt, 50.0, 50.0, 51.0, 51.0);
 	}
 	// A form with /Group (section 15) or /OC (section 47) draws as plain content meanwhile.
 	for (const char* entry : {"/Group << /S /Transparency /I true >>", "/OC << /Type /OCG /Name (Layer) >>"}) {

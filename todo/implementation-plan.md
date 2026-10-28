@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 106 | Checklist items: 665
+Sections: 106 | Checklist items: 671
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -101,26 +101,26 @@ Sections: 106 | Checklist items: 665
 | [x]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 5     |
 | [x]    | D01 T02 §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text           | windows-host              | 7     |
 | [ ]    | D01 T02 §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap         | windows-host              | 7     |
-| [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 2     |
+| [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 3     |
 | [ ]    | D01 T02 §48 | One built CIDFont per shared `/Type0` descendant object                                  | windows-host              | 6     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
-| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 2     |
+| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 3     |
 | [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 2     |
 | [ ]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 2     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
-| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 9     |
+| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 10    |
 | [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 7     |
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
-| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 9     |
+| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 10    |
 | [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 9     |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
-| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 9     |
+| [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 10    |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
@@ -135,7 +135,7 @@ Sections: 106 | Checklist items: 665
 | [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host              | 8     |
 | [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host              | 7     |
 | [ ]    | D01 T03 §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths               | windows-host              | 6     |
-| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 9     |
+| [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host              | 10    |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host              | 8     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
@@ -165,7 +165,7 @@ Sections: 106 | Checklist items: 665
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1313
+Sections: 148 | Checklist items: 1314
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -311,7 +311,7 @@ Sections: 148 | Checklist items: 1313
 | [ ]    | D02 T01 §22 | Cold-launch path: Home interactive within the 400 ms budget                              | windows-host, display-session | 8     |
 | [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 4     |
 | [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 9     |
-| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 12    |
+| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 13    |
 | [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks           | windows-host, display-session | 14    |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 91/855 verified sections, 38 ready to run now.
 
-Checklist: 579/6275 items completed (includes Commit items).
+Checklist: 579/6282 items completed (includes Commit items).

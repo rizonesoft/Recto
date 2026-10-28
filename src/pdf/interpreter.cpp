@@ -1196,6 +1196,7 @@ private:
 		size_t floor{0};
 		size_t caller_floor{0};
 		size_t caller_ignored{0};
+		bool caller_skip{false};
 		PdfMatrix text{};
 		PdfMatrix line{};
 		PathBuilder path{};
@@ -1879,6 +1880,31 @@ private:
 		}
 	}
 
+	// Whether every `/Filter` stage, references resolved, is one the decode work meter measures
+	// (`filters_are_metered_lossless`): image filters never produce content, and their buffers are not metered.
+	[[nodiscard]] bool metered_filters(const PdfDict& dict)
+	{
+		const std::optional<PdfValue> filter = entry_of(dict, "Filter");
+		if (!filter.has_value()) {
+			return true;
+		}
+		PdfDict probe;
+		if (const PdfArray* stages = filter->as_array()) {
+			if (stages->size() > kMaxFilterChainDepth) {
+				return false;
+			}
+			PdfArray names;
+			for (const PdfValue& stage : *stages) {
+				std::optional<PdfValue> name = resolved(stage);
+				names.push_back(name.has_value() ? std::move(*name) : PdfValue(PdfNull{}));
+			}
+			probe.set("Filter", PdfValue(std::move(names)));
+		} else {
+			probe.set("Filter", *filter);
+		}
+		return filters_are_metered_lossless(probe);
+	}
+
 	// A form's decoded content: kept per form for the page, decoded at most once, each decode capped at what remains
 	// of kMaxFormContentBytes. Null when it cannot be drawn (damaged, or past the budget), its diagnostic recorded and
 	// the refusal remembered; OutOfMemory and other fatal errors are returned.
@@ -1900,7 +1926,17 @@ private:
 				kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
 			return remember(nullptr);
 		}
+		if (!metered_filters(stream.dict)) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject's content names an image filter; it is not drawn"); // recorded
+			return remember(nullptr);
+		}
+		// Every byte the decoders produce counts, kept or not: a stream that inflates and then fails its checksum
+		// spends the budget too, so distinct damaged forms cannot each cost a full decode.
+		detail::ScopedDecodeWorkMeter work;
 		auto decoded = document_.decode_stream(stream, kMaxFormContentBytes - form_decoded_);
+		const auto charge = [&](uint64_t bytes) {
+			form_decoded_ = static_cast<size_t>(std::min<uint64_t>(kMaxFormContentBytes, uint64_t{form_decoded_} + bytes));
+		};
 		if (!decoded.has_value()) {
 			const ErrorCode code = decoded.error().code;
 			if (code == ErrorCode::OutOfMemory) {
@@ -1910,12 +1946,15 @@ private:
 				form_decoded_ = kMaxFormContentBytes; // what it decoded used the rest of the budget
 				record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, form_decoded_,
 					kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
-			} else if (code != ErrorCode::DamagedFormat) {
-				record_diagnostic(decoded.error());
+			} else {
+				charge(work.bytes());
+				if (code != ErrorCode::DamagedFormat) {
+					record_diagnostic(decoded.error());
+				}
 			}
 			return remember(nullptr);
 		}
-		form_decoded_ += decoded->size();
+		charge(std::max<uint64_t>(work.bytes(), decoded->size()));
 		return remember(std::make_shared<const std::vector<uint8_t>>(std::move(*decoded)));
 	}
 
@@ -1958,6 +1997,7 @@ private:
 		exit->floor = state_stack_.size();
 		exit->caller_floor = std::exchange(save_floor_, exit->floor);
 		exit->caller_ignored = std::exchange(ignored_saves_, size_t{0});
+		exit->caller_skip = std::exchange(skip_next_, false);
 		exit->text = text_matrix_;
 		exit->line = line_matrix_;
 		exit->path = std::move(path_);
@@ -2003,6 +2043,7 @@ private:
 		state_stack_.pop_back();
 		save_floor_ = exit.caller_floor;
 		ignored_saves_ = exit.caller_ignored;
+		skip_next_ = exit.caller_skip; // an operator the form's damaged tail would skip is the form's, not the caller's
 		text_matrix_ = exit.text;
 		line_matrix_ = exit.line;
 		path_ = std::move(exit.path);
