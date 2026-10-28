@@ -211,8 +211,10 @@ public:
 	// collide cost bounded work. The hash is keyed by a per-cache seed, so collisions cannot be precomputed.
 	static constexpr size_t kMaxSightingProbes = 32u;
 
-	ResolvedObjectCache() noexcept;
-	explicit ResolvedObjectCache(uint64_t seed) noexcept
+	// Not noexcept: the lists allocate their sentinels as they are built, so memory running out here throws
+	// std::bad_alloc, which `Document::open` returns as `OutOfMemory`.
+	ResolvedObjectCache();
+	explicit ResolvedObjectCache(uint64_t seed)
 		: seed_(seed)
 	{
 	}

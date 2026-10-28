@@ -181,7 +181,9 @@ class XrefTable {
 public:
 	using EntryMap = std::unordered_map<uint32_t, XrefEntry>;
 
-	XrefTable() noexcept = default;
+	// Not noexcept: MSVC's unordered_map allocates as it is built, so memory running out throws std::bad_alloc, which
+	// `Document::open` returns as `OutOfMemory` (found by D01 T01 section 11's allocation tests).
+	XrefTable() = default;
 
 	// Scans the first 1,024 bytes of `file_bytes` for `%PDF-<major>.<minor>`
 	// and returns its byte offset. Returns `ErrorCode::NotAPdf` when `%PDF-` is

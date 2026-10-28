@@ -1657,7 +1657,7 @@ std::shared_ptr<const PdfValue> ResolvedObjectCache::find(uint64_t key) noexcept
 	return value;
 }
 
-ResolvedObjectCache::ResolvedObjectCache() noexcept
+ResolvedObjectCache::ResolvedObjectCache()
 {
 	// An unpredictable seed for the sighting hash: this object's address (randomised by ASLR), the clock, and a count
 	// of caches made, so a file cannot be crafted against it.

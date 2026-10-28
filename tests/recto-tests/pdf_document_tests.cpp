@@ -1096,6 +1096,23 @@ TEST(PdfDocument, ObjectCacheAllocationFailure)
 		}
 		EXPECT_TRUE(failed_once) << "no allocation of the resolve was made to fail, warm " << warm;
 	}
+	// Building a cache allocates (the lists' sentinels): memory running out throws std::bad_alloc rather than
+	// terminating, and opening a document returns OutOfMemory at every allocation it makes.
+	{
+		const recto::test::ScopedAllocationFailure fail(1u, 32u);
+		EXPECT_THROW({ ResolvedObjectCache cache; }, std::bad_alloc);
+	}
+	for (uint32_t nth = 1; nth < 400u; ++nth) {
+		PdfResult<std::unique_ptr<Document>> opened = make_pdf_error(ErrorCode::Ok);
+		{
+			const recto::test::ScopedAllocationFailure fail(nth, 32u);
+			opened = Document::open_memory(bytes);
+		}
+		if (opened.has_value()) {
+			break; // every allocation of open has had its turn to fail
+		}
+		EXPECT_EQ(opened.error().code, ErrorCode::OutOfMemory) << "nth " << nth;
+	}
 	// Inserts that evict, into a full window and a full main cache: a failure leaves every entry and byte as it was,
 	// and the retry succeeds.
 	const auto big = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>((size_t{1} << 20u) - 8'192u, 'm')));
