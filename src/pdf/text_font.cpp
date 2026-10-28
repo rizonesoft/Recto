@@ -22,7 +22,31 @@ namespace {
 	return code == ErrorCode::DamagedFormat || code == ErrorCode::UnsupportedFeature || code == ErrorCode::ResourceLimit;
 }
 
-[[nodiscard]] std::optional<PdfValue> resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal);
+// A resolved entry: the document's cached value for a reference, shared without a copy (D01 T01 section 11), else the
+// entry itself, which its container must outlive.
+struct Resolved {
+	std::shared_ptr<const PdfValue> owner{};
+	const PdfValue* value{nullptr};
+
+	[[nodiscard]] bool has_value() const noexcept
+	{
+		return value != nullptr;
+	}
+	explicit operator bool() const noexcept
+	{
+		return value != nullptr;
+	}
+	const PdfValue& operator*() const noexcept
+	{
+		return *value;
+	}
+	const PdfValue* operator->() const noexcept
+	{
+		return value;
+	}
+};
+
+[[nodiscard]] Resolved resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal);
 
 inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 
@@ -35,10 +59,10 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 		return encoding;
 	}
 	PdfDict out = *dict;
-	if (const std::optional<PdfValue> base = resolved(document, dict->get("BaseEncoding"), fatal)) {
+	if (const Resolved base = resolved(document, dict->get("BaseEncoding"), fatal)) {
 		out.set("BaseEncoding", *base);
 	}
-	if (const std::optional<PdfValue> differences = resolved(document, dict->get("Differences"), fatal)) {
+	if (const Resolved differences = resolved(document, dict->get("Differences"), fatal)) {
 		if (const PdfArray* array = differences->as_array()) {
 			PdfArray direct;
 			direct.reserve(std::min(array->size(), kMaxDifferencesEntries + 1u));
@@ -54,7 +78,7 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 				// Only a number or a name means anything here (Table 114); a reference to anything else is kept as
 				// null, and past kMaxIndirectDifferences references (a real array has at most 512 entries that
 				// matter) the rest are not resolved at all.
-				std::optional<PdfValue> value;
+				Resolved value;
 				if (++references <= kMaxIndirectDifferences) {
 					value = resolved(document, &element, fatal);
 				} else if (references == kMaxIndirectDifferences + 1u) {
@@ -63,7 +87,7 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 				const std::optional<std::string_view> name = value.has_value() ? value->as_name() : std::nullopt;
 				const bool meaningful = value.has_value() &&
 					(value->as_number().has_value() || (name.has_value() && name->size() <= kMaxGlyphNameBytes));
-				direct.push_back(meaningful ? std::move(*value) : PdfValue(PdfNull{}));
+				direct.push_back(meaningful ? PdfValue(*value) : PdfValue(PdfNull{}));
 			}
 			out.set("Differences", PdfValue(std::move(direct)));
 		}
@@ -72,22 +96,27 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 }
 
 // `value` resolved, or none when it is missing or damaged; `fatal` takes any failure that must stop the page.
-[[nodiscard]] std::optional<PdfValue> resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal)
+[[nodiscard]] Resolved resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal)
 {
 	if (value == nullptr) {
-		return std::nullopt;
+		return {};
 	}
-	auto r = document.resolve_value(*value);
+	if (!value->is_ref()) {
+		return Resolved{nullptr, value};
+	}
+	auto r = document.resolve_object_shared(*value->as_ref());
 	if (!r.has_value()) {
 		if (!recoverable(r.error().code) && !fatal.has_value()) {
 			fatal = r.error();
 		}
-		return std::nullopt;
+		return {};
 	}
-	return std::move(*r);
+	Resolved out{std::move(*r), nullptr};
+	out.value = out.owner.get();
+	return out;
 }
 
-[[nodiscard]] std::optional<double> finite_number(const std::optional<PdfValue>& value) noexcept
+[[nodiscard]] std::optional<double> finite_number(const Resolved& value) noexcept
 {
 	const std::optional<double> n = value.has_value() ? value->as_number() : std::nullopt;
 	return n.has_value() && std::isfinite(*n) ? n : std::nullopt;
@@ -96,7 +125,7 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 // Four finite numbers, normalised so the minimum comes first (9.8: a /FontBBox may be given in any corner order).
 [[nodiscard]] std::optional<PdfRect> box_of(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal)
 {
-	const std::optional<PdfValue> array_value = resolved(document, value, fatal);
+	const Resolved array_value = resolved(document, value, fatal);
 	const PdfArray* array = array_value.has_value() ? array_value->as_array() : nullptr;
 	if (array == nullptr || array->size() != 4u) {
 		return std::nullopt;
@@ -124,11 +153,11 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 }
 
 // A view into `value`, which must outlive it (never a temporary).
-[[nodiscard]] std::optional<std::string_view> name_of(const std::optional<PdfValue>& value) noexcept
+[[nodiscard]] std::optional<std::string_view> name_of(const Resolved& value) noexcept
 {
 	return value.has_value() ? value->as_name() : std::nullopt;
 }
-std::optional<std::string_view> name_of(std::optional<PdfValue>&&) = delete; // a view into a temporary dangles
+std::optional<std::string_view> name_of(Resolved&&) = delete; // a view into a temporary dangles
 
 } // namespace
 
@@ -153,7 +182,7 @@ struct TextFontBuilder {
 		std::optional<PdfError>& fatal)
 	{
 		font.widths_.fill(missing);
-		const std::optional<PdfValue> list = resolved(document, dict.get("Widths"), fatal);
+		const Resolved list = resolved(document, dict.get("Widths"), fatal);
 		const PdfArray* array = list.has_value() ? list->as_array() : nullptr;
 		if (array == nullptr) {
 			return false;
@@ -174,12 +203,12 @@ struct TextFontBuilder {
 	{
 		auto font = std::make_shared<TextFont>();
 		font->kind_ = TextFontKind::Simple;
-		const std::optional<PdfValue> descriptor_value = resolved(document, dict.get("FontDescriptor"), fatal);
+		const Resolved descriptor_value = resolved(document, dict.get("FontDescriptor"), fatal);
 		const PdfDict* descriptor = descriptor_value.has_value() ? descriptor_value->as_dict() : nullptr;
 		const double missing = descriptor != nullptr
 			? finite_number(resolved(document, descriptor->get("MissingWidth"), fatal)).value_or(0.0) / 1000.0
 			: 0.0;
-		const std::optional<PdfValue> base_font_value = resolved(document, dict.get("BaseFont"), fatal); // kept alive for the view
+		const Resolved base_font_value = resolved(document, dict.get("BaseFont"), fatal); // kept alive for the view
 		const std::optional<std::string_view> base_font = name_of(base_font_value);
 		const std::optional<Standard14Font> standard = base_font.has_value() ? standard14_from_base_font(*base_font)
 																			  : std::nullopt;
@@ -210,9 +239,9 @@ struct TextFontBuilder {
 						(void)make_pdf_error(ErrorCode::DamagedFormat, "Font descriptor /Flags is not a 32-bit integer");
 					}
 				}
-				std::optional<PdfValue> encoding_value = resolved(document, dict.get("Encoding"), fatal);
-				if (encoding_value.has_value()) {
-					encoding_value = direct_encoding(document, *encoding_value, fatal);
+				std::optional<PdfValue> encoding_value;
+				if (const Resolved encoding_entry = resolved(document, dict.get("Encoding"), fatal)) {
+					encoding_value = direct_encoding(document, *encoding_entry, fatal);
 				}
 				RECTO_PDF_TRY(const SimpleEncoding encoding, SimpleEncoding::build(
 					encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, &built_in));
@@ -255,7 +284,7 @@ struct TextFontBuilder {
 		auto font = std::make_shared<TextFont>();
 		font->kind_ = TextFontKind::Type3;
 		double matrix[6] = {0.001, 0.0, 0.0, 0.001, 0.0, 0.0};
-		const std::optional<PdfValue> matrix_value = resolved(document, dict.get("FontMatrix"), fatal);
+		const Resolved matrix_value = resolved(document, dict.get("FontMatrix"), fatal);
 		if (const PdfArray* array = matrix_value.has_value() ? matrix_value->as_array() : nullptr; array != nullptr &&
 			array->size() == 6u) {
 			double m[6]{};
@@ -311,14 +340,14 @@ struct TextFontBuilder {
 		font->vertical_ = type0->cmap().vertical();
 		font->type0_ = std::move(type0);
 		// The box of the one descendant's descriptor (9.7.4.1).
-		const std::optional<PdfValue> descendants = resolved(document, dict.get("DescendantFonts"), fatal);
+		const Resolved descendants = resolved(document, dict.get("DescendantFonts"), fatal);
 		const PdfArray* list = descendants.has_value() ? descendants->as_array() : nullptr;
 		if (list != nullptr && !list->empty()) {
-			const std::optional<PdfValue> descendant = resolved(document, &(*list)[0], fatal);
+			const Resolved descendant = resolved(document, &(*list)[0], fatal);
 			const PdfDict* cid_font = descendant.has_value() ? descendant->as_dict() : nullptr;
-			const std::optional<PdfValue> descriptor = cid_font != nullptr
+			const Resolved descriptor = cid_font != nullptr
 				? resolved(document, cid_font->get("FontDescriptor"), fatal)
-				: std::nullopt;
+				: Resolved{};
 			const PdfDict* d = descriptor.has_value() ? descriptor->as_dict() : nullptr;
 			if (const std::optional<PdfRect> box = d != nullptr ? box_of(document, d->get("FontBBox"), fatal) : std::nullopt;
 				box.has_value() && has_extent(*box)) {
@@ -358,12 +387,12 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& doc
 			}
 			return made;
 		};
-		const std::optional<PdfValue> value = resolved(document, &font, fatal);
+		const Resolved value = resolved(document, &font, fatal);
 		const PdfDict* dict = value.has_value() ? value->as_dict() : nullptr;
 		if (dict == nullptr) {
 			return finish(make_pdf_error(ErrorCode::DamagedFormat, "Font resource is not a font dictionary"));
 		}
-		const std::optional<PdfValue> subtype_value = resolved(document, dict->get("Subtype"), fatal); // kept alive for the view
+		const Resolved subtype_value = resolved(document, dict->get("Subtype"), fatal); // kept alive for the view
 		const std::optional<std::string_view> subtype = name_of(subtype_value);
 		if (subtype == std::optional<std::string_view>("Type0")) {
 			return finish(TextFontBuilder::composite(document, *dict, fatal));

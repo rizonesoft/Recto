@@ -1664,23 +1664,45 @@ size_t ResolvedObjectCache::entry_bytes(const PdfValue& value) noexcept
 		sizeof(std::pair<const uint64_t, Slot>) + 4u * sizeof(void*);
 }
 
-bool ResolvedObjectCache::seen_before(uint64_t key) noexcept
+bool ResolvedObjectCache::seen_before(uint64_t key)
 {
-	if (doorkeeper_count_ >= kDoorkeeperResetCount) {
-		doorkeeper_.fill(0u); // cleared before it fills, so a key seen once rarely passes for one seen twice
-		doorkeeper_count_ = 0;
+	if (key == 0u) {
+		return false; // object 0 is the free list's head: never parsed, never cached
 	}
-	++doorkeeper_count_;
+	if (sightings_[0].empty()) {
+		std::vector<uint64_t> current(kSightingSlots, 0u);
+		std::vector<uint64_t> previous(kSightingSlots, 0u);
+		sightings_[0] = std::move(current);
+		sightings_[1] = std::move(previous);
+	}
 	uint64_t h = key + 0x9E3779B97F4A7C15ull; // splitmix64
 	h = (h ^ (h >> 30u)) * 0xBF58476D1CE4E5B9ull;
 	h = (h ^ (h >> 27u)) * 0x94D049BB133111EBull;
 	h ^= h >> 31u;
-	constexpr size_t kBits = 1'024u * 64u;
-	const size_t a = static_cast<size_t>(h % kBits);
-	const size_t b = static_cast<size_t>((h >> 32u) % kBits);
-	const bool seen = ((doorkeeper_[a / 64u] >> (a % 64u)) & 1u) != 0u && ((doorkeeper_[b / 64u] >> (b % 64u)) & 1u) != 0u;
-	doorkeeper_[a / 64u] |= uint64_t{1} << (a % 64u);
-	doorkeeper_[b / 64u] |= uint64_t{1} << (b % 64u);
+	const auto probe = [&](const std::vector<uint64_t>& table) {
+		size_t at = static_cast<size_t>(h) & (kSightingSlots - 1u);
+		while (table[at] != 0u && table[at] != key) {
+			at = (at + 1u) & (kSightingSlots - 1u);
+		}
+		return at;
+	};
+	std::vector<uint64_t>& current = sightings_[current_];
+	const std::vector<uint64_t>& previous = sightings_[current_ ^ 1u];
+	const size_t slot = probe(current);
+	if (current[slot] == key) {
+		return true;
+	}
+	const bool seen = previous[probe(previous)] == key;
+	if (sightings_count_ >= kSightingGeneration) {
+		// A new generation: the previous table is cleared and becomes the current one, at most half full by then.
+		current_ ^= 1u;
+		std::fill(sightings_[current_].begin(), sightings_[current_].end(), 0u);
+		sightings_count_ = 0;
+		sightings_[current_][probe(sightings_[current_])] = key;
+	} else {
+		current[slot] = key;
+	}
+	++sightings_count_;
 	return seen;
 }
 
@@ -1692,11 +1714,15 @@ void ResolvedObjectCache::evict() noexcept
 		slots_.erase(oldest.key);
 		window_.pop_back();
 	}
-	while (main_.size() > kMaxObjectCacheEntries || main_bytes_ > kMaxObjectCacheBytes) {
-		const Entry& oldest = main_.back();
-		main_bytes_ -= oldest.bytes;
+	// Both tiers together (and the sighting tables) within the totals: the main cache's least recently used entries go
+	// first, then the window's.
+	while (slots_.size() > kMaxObjectCacheEntries || bytes() > kMaxObjectCacheBytes) {
+		List& from = main_.empty() ? window_ : main_;
+		size_t& bytes = main_.empty() ? window_bytes_ : main_bytes_;
+		const Entry& oldest = from.back();
+		bytes -= oldest.bytes;
 		slots_.erase(oldest.key);
-		main_.pop_back();
+		from.pop_back();
 	}
 }
 
@@ -1710,7 +1736,12 @@ PdfResult<void> ResolvedObjectCache::insert(uint64_t key, std::shared_ptr<const 
 	if (bytes > kMaxObjectCacheBytes / 4u || (stream != nullptr && stream->raw_bytes.size() > kMaxCachedStreamBytes)) {
 		return {}; // too large to keep: the caller uses it once
 	}
-	const bool main = seen_before(key);
+	bool main = false;
+	try {
+		main = seen_before(key);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory recording a resolved object");
+	}
 	if (!main && bytes > kMaxWindowBytes) {
 		return {}; // too large for the window: kept once it is asked for again
 	}
@@ -1792,6 +1823,7 @@ PdfResult<PdfValue> Document::resolve_object_with_visited(
 	std::vector<IndirectRef>& visited_refs) const
 {
 	RECTO_PDF_TRY(const std::shared_ptr<const PdfValue> value, resolve_shared_with_visited(ref, visited_refs));
+	++copied_objects_;
 	return PdfValue(*value); // a copy: the caller may change it, the cache's stays as parsed
 }
 

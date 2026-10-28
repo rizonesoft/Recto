@@ -190,11 +190,11 @@ class ColorProfileCache;
 
 // The objects a document has parsed, kept so a shared object is not parsed again (D01 T01 section 11). Admission
 // follows W-TinyLFU's shape: every newly parsed value enters a small window (`kMaxWindowEntries`, `kMaxWindowBytes`),
-// and moves to the main cache (`kMaxObjectCacheEntries`, `kMaxObjectCacheBytes`) when it is asked for again, by a hit
-// in the window or by a miss whose key the doorkeeper (an 8 KiB bit filter, cleared every `kDoorkeeperResetCount`
-// sightings) has seen. An object read once, as a traversal reads each node, never costs more than the window. Each
-// tier drops its least recently used entries first; each entry is charged its value's `heap_bytes()` and its
-// bookkeeping; a value over a quarter of the main budget, or a stream whose body is over `kMaxCachedStreamBytes`
+// and moves to the main cache when it is asked for again, by a hit in the window or by a miss whose key was seen among
+// the last `kSightingGeneration` to twice that many sightings (two exact key tables, so a first sighting never passes
+// for a second). An object read once, as a traversal reads each node, never costs more than the window. Both tiers
+// together stay within `kMaxObjectCacheEntries` entries and `kMaxObjectCacheBytes` bytes (the sighting tables counted), least recently used main
+// entries going first; each entry is charged its value's `heap_bytes()` and its bookkeeping; a value over a quarter of the main budget, or a stream whose body is over `kMaxCachedStreamBytes`
 // (re-reading it is a copy, cheaper than the room it would take), is never kept. Values are immutable and shared:
 // eviction drops only the cache's reference, so a value a caller holds stays valid. Owned, like every `Document`
 // member, by the document's actor thread.
@@ -205,7 +205,8 @@ public:
 	static constexpr size_t kMaxWindowEntries = 16u;
 	static constexpr size_t kMaxWindowBytes = size_t{1} << 20u;
 	static constexpr size_t kMaxCachedStreamBytes = size_t{64} << 10u;
-	static constexpr size_t kDoorkeeperResetCount = 8'192u;
+	static constexpr size_t kSightingGeneration = 8'192u;
+	static constexpr size_t kSightingSlots = 2u * kSightingGeneration; // per table: open addressing at most half full
 
 	// The value cached under `key` (object number and generation, `(obj << 16) | gen`), now the most recently used
 	// (a window entry moves to the main cache); null when none is. Never allocates.
@@ -224,9 +225,15 @@ public:
 	{
 		return slots_.size();
 	}
+	// Every byte the cache holds: its entries and its sighting tables, all within `kMaxObjectCacheBytes`.
 	[[nodiscard]] size_t bytes() const noexcept
 	{
-		return main_bytes_ + window_bytes_;
+		return main_bytes_ + window_bytes_ + sightings_bytes();
+	}
+	// The sighting tables' share of `bytes()`.
+	[[nodiscard]] size_t sightings_bytes() const noexcept
+	{
+		return (sightings_[0].capacity() + sightings_[1].capacity()) * sizeof(uint64_t);
 	}
 	[[nodiscard]] size_t main_size() const noexcept
 	{
@@ -245,8 +252,9 @@ private:
 		bool main{false};
 	};
 
-	// Sets `key`'s two doorkeeper bits and says whether both were set already.
-	[[nodiscard]] bool seen_before(uint64_t key) noexcept;
+	// Records a sighting of `key` and says whether it was seen within the last two generations. Allocates the tables on
+	// first use (std::bad_alloc then, with nothing changed).
+	[[nodiscard]] bool seen_before(uint64_t key);
 	void evict() noexcept;
 
 	List main_{};   // most recently used first
@@ -254,8 +262,9 @@ private:
 	std::unordered_map<uint64_t, Slot> slots_{};
 	size_t main_bytes_{0};
 	size_t window_bytes_{0};
-	std::array<uint64_t, 1'024> doorkeeper_{};
-	size_t doorkeeper_count_{0};
+	std::vector<uint64_t> sightings_[2]{}; // current and previous generation; 0 is an empty slot
+	size_t current_{0};
+	size_t sightings_count_{0}; // in the current generation
 };
 
 class Document {
@@ -422,6 +431,12 @@ public:
 	{
 		return parsed_objects_;
 	}
+	// How many values `resolve_object` and `resolve_value` (and the resolvers built on them) have copied out of the
+	// cache: a reader of a large shared object that uses `resolve_object_shared` adds none.
+	[[nodiscard]] uint64_t copied_object_count() const noexcept
+	{
+		return copied_objects_;
+	}
 
 	// How many decrypted object streams this document holds decoded (encrypted documents only); siblings share one.
 	[[nodiscard]] size_t cached_decrypted_obj_stream_count() const noexcept
@@ -548,6 +563,7 @@ private:
 	// Parsed object bodies, so a shared object is parsed once (D01 T01 section 11); actor thread only.
 	mutable ResolvedObjectCache object_cache_{};
 	mutable uint64_t parsed_objects_{0};
+	mutable uint64_t copied_objects_{0};
 	// The colour transforms built for this document (D01 T02 section 32), made on first use; actor thread only.
 	mutable std::shared_ptr<ColorProfileCache> color_profiles_{};
 	PdfDict catalog_{};

@@ -875,14 +875,15 @@ TEST(PdfDocument, ObjectCacheBudget)
 		size_t held = 0;
 		for (uint64_t key = 1; key <= 200u; ++key) {
 			admit(cache, key, string_value(size_t{512} << 10u));
-			EXPECT_LE(cache.bytes(), ResolvedObjectCache::kMaxObjectCacheBytes + ResolvedObjectCache::kMaxWindowBytes);
+			EXPECT_LE(cache.bytes(), ResolvedObjectCache::kMaxObjectCacheBytes) << "the tiers together passed the budget";
 		}
 		for (uint64_t key = 1; key <= 200u; ++key) {
 			if (std::shared_ptr<const PdfValue> v = cache.find(key)) {
 				held += ResolvedObjectCache::entry_bytes(*v);
 			}
 		}
-		EXPECT_EQ(cache.bytes(), held) << "the reported bytes are not the sum of the entries";
+		EXPECT_EQ(cache.bytes(), held + cache.sightings_bytes()) << "the reported bytes are not the entries and the tables";
+		EXPECT_GT(cache.sightings_bytes(), 0u);
 		EXPECT_LT(cache.main_size(), 200u);
 		if (recto::test::ScopedHeapMeter::available()) {
 			const auto live = static_cast<size_t>(meter.live_bytes());
@@ -894,7 +895,8 @@ TEST(PdfDocument, ObjectCacheBudget)
 	{
 		ResolvedObjectCache cache;
 		const size_t per = size_t{1} << 20u;
-		const size_t fit = ResolvedObjectCache::kMaxObjectCacheBytes / ResolvedObjectCache::entry_bytes(*string_value(per - 4'096u));
+		const size_t tables = 2u * ResolvedObjectCache::kSightingSlots * sizeof(uint64_t); // the sighting tables' share
+		const size_t fit = (ResolvedObjectCache::kMaxObjectCacheBytes - tables) / ResolvedObjectCache::entry_bytes(*string_value(per - 4'096u));
 		for (uint64_t key = 1; key <= fit; ++key) {
 			admit(cache, key, string_value(per - 4'096u));
 		}
@@ -911,6 +913,24 @@ TEST(PdfDocument, ObjectCacheBudget)
 		}
 		EXPECT_EQ(cache.main_size(), ResolvedObjectCache::kMaxObjectCacheEntries);
 		EXPECT_EQ(cache.find(1u), nullptr);
+		// The window's entries count toward the same total.
+		for (uint64_t key = 1; key <= ResolvedObjectCache::kMaxWindowEntries; ++key) {
+			ASSERT_TRUE(cache.insert((uint64_t{1} << 40u) + key, std::make_shared<const PdfValue>(int64_t{2})).has_value());
+		}
+		EXPECT_EQ(cache.size(), ResolvedObjectCache::kMaxObjectCacheEntries) << "the tiers together passed the entry limit";
+		EXPECT_EQ(cache.main_size(), ResolvedObjectCache::kMaxObjectCacheEntries - ResolvedObjectCache::kMaxWindowEntries);
+	}
+	// A one-pass traversal of 20,000 objects keeps no more than the window: no first sighting passes for a second.
+	// A key seen again within two generations (8,192 to 16,384 sightings) is admitted.
+	{
+		ResolvedObjectCache cache;
+		for (uint64_t key = 1; key <= 20'000u; ++key) {
+			ASSERT_TRUE(cache.insert(key << 16u, std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>(64u, 'x')))).has_value());
+		}
+		EXPECT_EQ(cache.main_size(), 0u) << "a first sighting was taken for a second";
+		EXPECT_LE(cache.size(), ResolvedObjectCache::kMaxWindowEntries);
+		ASSERT_TRUE(cache.insert(uint64_t{15'000} << 16u, std::make_shared<const PdfValue>(int64_t{3})).has_value());
+		EXPECT_EQ(cache.main_size(), 1u) << "a key seen 5,000 sightings ago was not admitted";
 	}
 	// The window keeps 16 entries; a value over a quarter of the budget, or a stream body over 64 KiB, is never kept.
 	{
@@ -1033,6 +1053,53 @@ TEST(PdfDocument, ObjectCacheAllocationFailure)
 			EXPECT_EQ(*retry, expected);
 		}
 		EXPECT_TRUE(failed_once) << "no allocation of the resolve was made to fail, warm " << warm;
+	}
+	// Inserts that evict, into a full window and a full main cache: a failure leaves every entry and byte as it was,
+	// and the retry succeeds.
+	const auto big = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>((size_t{1} << 20u) - 8'192u, 'm')));
+	const auto small = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>(256u, 's')));
+	for (const bool into_main : {false, true}) {
+		bool failed_once = false;
+		for (uint32_t nth = 1; nth < 40u; ++nth) {
+			ResolvedObjectCache cache;
+			for (uint64_t key = 1; key <= 64u; ++key) { // the main cache full of 1 MiB values
+				ASSERT_TRUE(cache.insert(key, big).has_value());
+				ASSERT_NE(cache.find(key), nullptr); // asked for again: into the main cache
+			}
+			for (uint64_t key = 100; key < 100u + ResolvedObjectCache::kMaxWindowEntries; ++key) { // the window full
+				ASSERT_TRUE(cache.insert(key, small).has_value());
+			}
+			const uint64_t key = 9'999u;
+			if (into_main) {
+				ASSERT_TRUE(cache.insert(key, small).has_value()); // seen once, then pushed out of the window
+				for (uint64_t k = 200; k < 200u + ResolvedObjectCache::kMaxWindowEntries; ++k) {
+					ASSERT_TRUE(cache.insert(k, small).has_value());
+				}
+				ASSERT_EQ(cache.find(key), nullptr);
+			}
+			const size_t entries = cache.size();
+			const size_t charged = cache.bytes();
+			PdfResult<void> r;
+			{
+				const recto::test::ScopedAllocationFailure fail(nth, 32u);
+				r = cache.insert(key, into_main ? big : small);
+			}
+			if (r.has_value()) {
+				EXPECT_NE(cache.find(key), nullptr);
+				if (failed_once) {
+					break;
+				}
+				continue;
+			}
+			failed_once = true;
+			EXPECT_EQ(r.error().code, ErrorCode::OutOfMemory);
+			EXPECT_EQ(cache.size(), entries) << (into_main ? "main" : "window") << " nth " << nth;
+			EXPECT_EQ(cache.bytes(), charged) << (into_main ? "main" : "window") << " nth " << nth;
+			EXPECT_NE(cache.find(into_main ? 64u : 115u), nullptr) << "an entry was lost";
+			ASSERT_TRUE(cache.insert(key, into_main ? big : small).has_value());
+			EXPECT_NE(cache.find(key), nullptr);
+		}
+		EXPECT_TRUE(failed_once) << "no allocation of an evicting insert was made to fail, " << (into_main ? "main" : "window");
 	}
 }
 
