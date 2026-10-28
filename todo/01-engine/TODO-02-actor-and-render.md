@@ -61,7 +61,7 @@ track: M1
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
 | 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
-| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
+| 4 | §4 | Content-stream interpreter complete over the render corpus | §2, §3, §27, §28, §29, §30, §32, §33, §42, §43, §44, §45, §46, §47, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [x] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
@@ -99,6 +99,12 @@ track: M1
 | 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37, D06 T01 §7 | [ ] |
 | 40 | §40 | Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history | §13 | [ ] |
 | 41 | §41 | Cubic interpolation for multi-input `/Order 3` sampled functions | §33 | [ ] |
+| 42 | §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances | §2, §3, §27, §28, §29, §30, §33 | [ ] |
+| 43 | §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text | §42 | [ ] |
+| 44 | §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks | §3, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
+| 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
+| 46 | §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap | §3 | [ ] |
+| 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -211,16 +217,13 @@ Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/p
 > **Verified:** 2026-10-24 | §3 | 4253e3bae1fab95c230b7b4b4b5f630d0ab8c045
 > **Review:** `docs/reviews/d01-t02-s3.json`
 
-## 4. Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects
+## 4. Content-stream interpreter complete over the render corpus
 
 > **Groomed 2026-10-23:** added `D06 T05 §32` (JPX per-component decode) and `D06 T05 §33` (DCT `/ColorTransform`, Adobe CMYK and YCCK) to `Depends On`: `/Do` image decoding renders wrong colours and sizes until those decoder repairs ship, and the corpus sweep below would pin the wrong pixels.
 
-Complete `src/pdf/interpreter.cpp` with text state and positioning operators, image XObjects, inline images, and recursive Form XObjects (ISO 32000-1 sections 8.8, 8.9, and 9):
-- Text state and positioning (`BT` begin text, `ET` end text, `Tc` char spacing, `Tw` word spacing for ASCII `0x20`, `Tz` horizontal scaling, `TL` leading, `Tf` font and size, `Tr` rendering mode `0..7` including `3` invisible text and `4..7` text clipping, `Ts` text rise, `Td`, `TD`, `Tm`, `T*`, `Tj`, `TJ` with thousandths-of-em adjustments, `'`, `"`).
-- External `/Do` operator:
-  - `/Subtype /Image`: decode pixel buffer via `D01 T01 §7-§8`, apply `/ImageMask` stencil tinting with current fill colour, `/Mask` explicit mask or colour-key range, `/SMask` soft-mask alpha channel, and `/Interpolate` flag, and record `DrawImage` transformed by the `1x1` unit-square `CTM`.
-  - `/Subtype /Form`: save state, apply `/Matrix` and `/BBox` clip, resolve `/Resources` (falling back to parent page resources), and recursively interpret the Form XObject stream with a strict **recursion cap of 32 levels** to stop cyclic Form XObjects (`F1 -> F1`).
-- Inline images (`BI ... ID <bytes> EI`): map abbreviated keys (`W`/`Width`, `H`/`Height`, `BPC`/`BitsPerComponent`, `CS`/`ColorSpace` `G`/`RGB`/`CMYK`/`I`, `F`/`Filter` `AHx`/`A85`/`LZW`/`Fl`/`RL`/`CCF`/`DCT`, `DP`/`DecodeParms`, `IM`/`ImageMask`) and decode into `DrawImage`.
+> **Corrected 2026-10-28:** (validation before the build) split for single responsibility (AGENTS.md, todo/README.md): this section held text operators, glyphs for four font kinds, image XObjects, inline images, Form XObjects, optional content and the corpus sweep, ten items each a section's work. They moved verbatim to `§42` (text operators), `§43` (glyphs), `§44` (image XObjects), `§45` (inline images), `§46` (Form XObjects) and `§47` (optional content). This section keeps the corpus sweep and depends on all six, so every section that depends on `§4` still waits for the whole interpreter.
+
+The content-stream interpreter of `src/pdf/interpreter.cpp` interprets every page of the render corpus once text (`§42`, `§43`), images (`§44`, `§45`), Form XObjects (`§46`) and optional content (`§47`) are built (ISO 32000-1 sections 8.8, 8.9 and 9).
 
 **Phase:** 1
 **Needs:** windows-host
@@ -229,20 +232,10 @@ Complete `src/pdf/interpreter.cpp` with text state and positioning operators, im
 
 **Build order:**
 
-1. Implement text state/positioning/showing (`BT`/`ET`/`Tf`/`Td`/`TD`/`Tm`/`T*`/`Tj`/`TJ`/`'`/`"`), `/Do` (`/Image` with `/SMask`/`/ImageMask` and `/Form` with depth-32 cap), inline images (`BI`/`ID`/`EI`), and `BDC`/`EMC` optional-content layer visibility filtering in `src/pdf/interpreter.cpp`. Done when: `interpreter.cpp` compiles cleanly on `x64` and `ARM64`.
-2. Extend `tests/recto-tests/pdf_interpreter_tests.cpp` testing all `tests/corpus/render/` files, `TJ` kerning adjustments, `/Image` + `/SMask`, `BI`/`ID`/`EI` inline images, and cyclic `/Form` XObject (`F1 -> F1`) recursion protection. Done when: `PdfInterpreter.*` passes 100% under ASan.
+1. Run the corpus sweep over `tests/corpus/render/` in `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: `PdfInterpreter.CorpusRenderSweep` passes under ASan.
 
-- [ ] Implement text state operators (`BT`, `ET`, `Tc`, `Tw`, `Tz`, `TL`, `Tf`, `Tr`, `Ts`) and text matrix positioning (`Td`, `TD`, `Tm`, `T*`). Done when: `PdfInterpreter.TextPositioning` computes exact user-space glyph positions across multi-line `Td`/`T*` sequences.
-- [ ] Implement text-showing operators (`Tj`, `TJ`, `'`, `"`) computing per-glyph horizontal/vertical advances: `tx = ((w0 - TJ_num / 1000.0) * font_size + Tc + (char == 0x20 ? Tw : 0)) * (Tz / 100.0)`. Done when: `PdfInterpreter.TjKerningAndSpacing` places glyphs at exact ISO 32000-1 section 9.4.4 coordinates and skips drawing when `Tr == 3` (invisible OCR text).
-- [ ] Implement `/Do` for `/Subtype /Image` XObjects, converting samples through `§32`'s `ColorSpaces::resolve` and `ColorSpace::convert_samples` (the image's own ICC profile when its dictionary names no colour space, `/Default*` spaces applied), supporting 1/2/4/8/16-bit components, `/Indexed` palettes, `/ImageMask true` (painting 1-bit stencil masks in the current non-stroking colour), explicit `/Mask`, and grayscale `/SMask` alpha compositing; text and stencil masks painted in a fill space whose `ColorSpace::paints()` is false (Separation or all-`/None` DeviceN, or Indexed over one, `§33`) and images whose own colour space paints nothing draw nothing (**Corrected 2026-10-27:** from `§33`'s validation and plan review). Done when: `render/images-and-vectors.pdf` decodes and records all embedded JPEG, Flate+SMask, and CCITT mask images, and `PdfInterpreter.NoneColorant` records no command for `Tj` text, an `/ImageMask` image and a `/Separation /None` image drawn over a red rectangle, while the same content in a `/Separation /Spot` space records each.
-- [ ] Implement inline image parsing (`BI ... ID <data> EI`) expanding abbreviated dictionary keys (`W`, `H`, `BPC`, `CS`, `F`, `DP`, `IM`, `I`) and locating the `EI` delimiter safely via expected decoded row size + filter length. Done when: `PdfInterpreter.InlineImages` decodes `A85`, `Fl`, and raw inline images without misidentifying `EI` bytes inside binary pixel data. **Corrected 2026-10-24:** `D01 T02 §3` already parses the dictionary and frames the data (by length unfiltered, by decoding to the full sample size filtered, a 64 MiB work budget, CR LF after `ID`) and refuses an image whose end it cannot verify; this item decodes the image on that framing and keeps the rule that no `EI` is taken on trust (the reviews of `§3` showed every printable-bytes heuristic runs pixels as operators).
-- [ ] Implement `/Do` for `/Subtype /Form` XObjects (pushing graphics state, concatenating `/Matrix`, clipping to `/BBox`, binding `/Resources` with parent fallback, and enforcing the **32-level recursion ceiling**). Done when: `PdfInterpreter.FormXObjectCycle` stops a self-referencing `F1 -> F1` Form XObject at depth 32 and returns cleanly under ASan. Cheaper substitute: unbounded recursive `interpret()` calls that overflow the stack on cyclic Form XObjects.
-- [ ] Record optional-content marked-content blocks (`BDC` / `BMC` ... `EMC` with `/OC` property references) so `D02 T03 §7` can toggle OCG layer visibility without re-parsing the PDF file. Done when: hidden OCG groups are skipped when an OCG visibility predicate marks them off.
 - [ ] Interpret every page of `tests/corpus/render/` (`simple-1p.pdf`, `compressed-xref-2p.pdf`, `incremental-2rev.pdf`, `rotated-pages.pdf`, `images-and-vectors.pdf`, and unlocked `encrypted-*.pdf`) into `DisplayList`s with zero errors under ASan. Done when: `PdfInterpreter.CorpusRenderSweep` passes 100%.
-- [ ] Draw a non-embedded standard font's glyph through its Windows face (`§27`'s `standard14_face_glyph`) scaled horizontally to its AFM advance wherever the face's own advance differs, so a glyph never overlaps or gaps its neighbours (filed by the `§27` completion review, `docs/reviews/01-engine/D01-T02-s27.md`; the reviewed differences are `kKnownWidthDifferences` in `PdfFont.Standard14Repertoire`: `summation` 713 against 600, `macron` 552 against 333, and so on). Done when: `PdfInterpreter.Standard14FittedWidths` draws a Helvetica and a Times line holding each of those glyphs with every glyph origin at the sum of the AFM advances before it and each substitute glyph scaled horizontally by its AFM width over its face advance (an overhang the AFM box allows, such as Times-Italic `macron`, stays). -> XREF: D01 T02 §27
-- [ ] Draw simple-font text through `§28`: each code's glyph by the font's effective encoding (`SimpleEncoding::build` with the font's built-in encoding: `§27`'s AFM codes for a standard font, `§29`'s for an embedded Type 1) and, for a TrueType program, `simple_truetype_glyph` over its `TrueTypeTables` (filed by the `§28` completion review, `docs/reviews/01-engine/D01-T02-s28.md`). Done when: `PdfInterpreter.SimpleFontGlyphs` draws real-PDF fixtures (a WinAnsi Type 1 with `/Differences`, a symbolic TrueType through `(3,0)`, a non-symbolic TrueType through `(1,0)`) with the exact glyph IDs asserted. -> XREF: D01 T02 §28
-- [ ] Load each embedded font program by its font descriptor key (filed by the `§29` completion review, `docs/reviews/01-engine/D01-T02-s29.md`): `/FontFile2` and `/FontFile3 /Subtype /OpenType` through `load_embedded_font`, `/FontFile` through `load_charstring_font` with `CharstringFormat::Type1` and the stream's `/Length1` to `/Length3`, `/FontFile3 /Subtype /Type1C` and `/CIDFontType0C` through `load_charstring_font`; each code's glyph by `LoadedFont::glyph_for_name` over the effective encoding built on `built_in_encoding()`; the advance from `/Widths`, the program's own as fallback; a program refused with its typed error drawn in the substitute font of `§17`, with its diagnostic recorded. A `/Type0` font draws through `§30`'s `load_type0_font`, each code of a shown string by its CID, glyph and `/W` advance. Done when: `PdfInterpreter.EmbeddedType1AndCffText` draws a PDF holding an embedded Type 1 (a PFA stream with its lengths), a `/Type1C`, a `/Type0` over a `/CIDFontType0C` and a `/Type0` over a `/CIDFontType2` font to their glyph outlines at the expected origins, and a PDF whose Type 1 program is damaged draws its text in the substitute font. -> XREF: D01 T02 §29
-- [ ] Commit: `pdf: add content-stream text operators, image XObjects, inline images and Form XObjects`
+- [ ] Commit: `pdf: interpret every page of the render corpus`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.*` passes under ASan across all corpus render and broken files.
 
@@ -1310,6 +1303,123 @@ Filed 2026-10-27 by the `§33` completion review (`docs/reviews/01-engine/D01-T0
 - [ ] Commit: `pdf: cubic interpolation for multi-input sampled functions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Functions:PdfInterpreter.CubicFunctions` passes under ASan with 0 warnings.
+
+## 42. Text state, positioning and text-showing operators with ISO 32000-1 advances
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): text state (`BT`, `ET`, `Tc`, `Tw`, `Tz`, `TL`, `Tf`, `Tr`, `Ts`), positioning (`Td`, `TD`, `Tm`, `T*`) and showing (`Tj`, `TJ`, `'`, `"`) with ISO 32000-1 section 9.4.4 advances, recorded as glyph runs for `§43`'s glyphs (ISO 32000-1 sections 9.3 and 9.4). The `/None` rule for text moved here from `§44`'s item.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the interpreter keeps every page's state on the stack of its one `interpret_page` call, records only into the page's `DisplayListBuilder`, and mutates no shared `Document` dictionary.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Implement text state operators (`BT`, `ET`, `Tc`, `Tw`, `Tz`, `TL`, `Tf`, `Tr`, `Ts`) and text matrix positioning (`Td`, `TD`, `Tm`, `T*`). Done when: `PdfInterpreter.TextPositioning` computes exact user-space glyph positions across multi-line `Td`/`T*` sequences.
+- [ ] Implement text-showing operators (`Tj`, `TJ`, `'`, `"`) computing per-glyph horizontal/vertical advances: `tx = ((w0 - TJ_num / 1000.0) * font_size + Tc + (char == 0x20 ? Tw : 0)) * (Tz / 100.0)`. Done when: `PdfInterpreter.TjKerningAndSpacing` places glyphs at exact ISO 32000-1 section 9.4.4 coordinates and skips drawing when `Tr == 3` (invisible OCR text). Text painted in a fill space whose `ColorSpace::paints()` is false (`§33`) records no glyph run, and `PdfInterpreter.TjKerningAndSpacing` asserts it.
+- [ ] Commit: `pdf: text state, positioning and text-showing operators`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.TextPositioning:PdfInterpreter.TjKerningAndSpacing` passes under ASan with 0 warnings.
+
+## 43. Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): each font kind's glyphs for `§42`'s glyph runs: non-embedded Standard 14 faces fitted to their AFM advances (`§27`), simple-font encodings and TrueType cmaps (`§28`), embedded Type 1, CFF and OpenType programs (`§29`) and composite `/Type0` fonts (`§30`).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the interpreter keeps every page's state on the stack of its one `interpret_page` call, records only into the page's `DisplayListBuilder`, and mutates no shared `Document` dictionary.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Draw a non-embedded standard font's glyph through its Windows face (`§27`'s `standard14_face_glyph`) scaled horizontally to its AFM advance wherever the face's own advance differs, so a glyph never overlaps or gaps its neighbours (filed by the `§27` completion review, `docs/reviews/01-engine/D01-T02-s27.md`; the reviewed differences are `kKnownWidthDifferences` in `PdfFont.Standard14Repertoire`: `summation` 713 against 600, `macron` 552 against 333, and so on). Done when: `PdfInterpreter.Standard14FittedWidths` draws a Helvetica and a Times line holding each of those glyphs with every glyph origin at the sum of the AFM advances before it and each substitute glyph scaled horizontally by its AFM width over its face advance (an overhang the AFM box allows, such as Times-Italic `macron`, stays). -> XREF: D01 T02 §27
+- [ ] Draw simple-font text through `§28`: each code's glyph by the font's effective encoding (`SimpleEncoding::build` with the font's built-in encoding: `§27`'s AFM codes for a standard font, `§29`'s for an embedded Type 1) and, for a TrueType program, `simple_truetype_glyph` over its `TrueTypeTables` (filed by the `§28` completion review, `docs/reviews/01-engine/D01-T02-s28.md`). Done when: `PdfInterpreter.SimpleFontGlyphs` draws real-PDF fixtures (a WinAnsi Type 1 with `/Differences`, a symbolic TrueType through `(3,0)`, a non-symbolic TrueType through `(1,0)`) with the exact glyph IDs asserted. -> XREF: D01 T02 §28
+- [ ] Load each embedded font program by its font descriptor key (filed by the `§29` completion review, `docs/reviews/01-engine/D01-T02-s29.md`): `/FontFile2` and `/FontFile3 /Subtype /OpenType` through `load_embedded_font`, `/FontFile` through `load_charstring_font` with `CharstringFormat::Type1` and the stream's `/Length1` to `/Length3`, `/FontFile3 /Subtype /Type1C` and `/CIDFontType0C` through `load_charstring_font`; each code's glyph by `LoadedFont::glyph_for_name` over the effective encoding built on `built_in_encoding()`; the advance from `/Widths`, the program's own as fallback; a program refused with its typed error drawn in `§27`'s Standard 14 face matching its font descriptor's `/Flags` (fixed pitch, serif, symbolic) and `/FontWeight` and `/ItalicAngle`, with its diagnostic recorded (**Corrected 2026-10-28:** was "the substitute font of `§17`"; `§17` depends on `§4`, which now depends on this section, so `§17` widens this fallback later). A `/Type0` font draws through `§30`'s `load_type0_font`, each code of a shown string by its CID, glyph and `/W` advance. Done when: `PdfInterpreter.EmbeddedType1AndCffText` draws a PDF holding an embedded Type 1 (a PFA stream with its lengths), a `/Type1C`, a `/Type0` over a `/CIDFontType0C` and a `/Type0` over a `/CIDFontType2` font to their glyph outlines at the expected origins, and a PDF whose Type 1 program is damaged draws its text in the substitute font. -> XREF: D01 T02 §29
+- [ ] Commit: `pdf: glyphs for every font kind in text runs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Standard14FittedWidths:PdfInterpreter.SimpleFontGlyphs:PdfInterpreter.EmbeddedType1AndCffText` passes under ASan with 0 warnings.
+
+## 44. Image XObjects with stencil masks, explicit and colour-key masks and soft masks
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/Subtype /Image`: samples decoded through the stream filters and converted through `§32`'s and `§33`'s colour spaces, stencil masks, explicit and colour-key `/Mask`, `/SMask` alpha and `/Interpolate`, recorded as `DrawImage` in the unit square under the CTM (ISO 32000-1 sections 8.9.4 to 8.9.6, 11.6.5.3). The text half of the `/None` rule moved to `§42`.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that decoded image bitmaps are stored as `std::shared_ptr<const DecodedBitmap>` in `DisplayList` and that decoding mutates no shared `Document` dictionary.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Implement `/Do` for `/Subtype /Image` XObjects (`PdfInterpreter.ImageXObjects` covering each case), converting samples through `§32`'s `ColorSpaces::resolve` and `ColorSpace::convert_samples` (the image's own ICC profile when its dictionary names no colour space, `/Default*` spaces applied), supporting 1/2/4/8/16-bit components, `/Indexed` palettes, `/ImageMask true` (painting 1-bit stencil masks in the current non-stroking colour), explicit `/Mask`, and grayscale `/SMask` alpha compositing; stencil masks painted in a fill space whose `ColorSpace::paints()` is false (Separation or all-`/None` DeviceN, or Indexed over one, `§33`) and images whose own colour space paints nothing draw nothing (**Corrected 2026-10-27:** from `§33`'s validation and plan review). Done when: `render/images-and-vectors.pdf` decodes and records all embedded JPEG, Flate+SMask, and CCITT mask images, and `PdfInterpreter.NoneColorant` records no command for an `/ImageMask` image and a `/Separation /None` image drawn over a red rectangle, while the same content in a `/Separation /Spot` space records each.
+- [ ] Commit: `pdf: image XObjects with masks and soft masks`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.ImageXObjects:PdfInterpreter.NoneColorant` passes under ASan with 0 warnings.
+
+## 45. Inline images decoded on the interpreter's verified framing
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): inline images (`BI ... ID ... EI`) decoded through `§44`'s image path on the framing `§3` already verifies (ISO 32000-1 section 8.9.7).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the interpreter keeps every page's state on the stack of its one `interpret_page` call, records only into the page's `DisplayListBuilder`, and mutates no shared `Document` dictionary.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Implement inline image parsing (`BI ... ID <data> EI`) expanding abbreviated dictionary keys (`W`, `H`, `BPC`, `CS`, `F`, `DP`, `IM`, `I`) and locating the `EI` delimiter safely via expected decoded row size + filter length. Done when: `PdfInterpreter.InlineImages` decodes `A85`, `Fl`, and raw inline images without misidentifying `EI` bytes inside binary pixel data. **Corrected 2026-10-24:** `D01 T02 §3` already parses the dictionary and frames the data (by length unfiltered, by decoding to the full sample size filtered, a 64 MiB work budget, CR LF after `ID`) and refuses an image whose end it cannot verify; this item decodes the image on that framing and keeps the rule that no `EI` is taken on trust (the reviews of `§3` showed every printable-bytes heuristic runs pixels as operators).
+- [ ] Commit: `pdf: inline images decoded into DrawImage`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.InlineImages` passes under ASan with 0 warnings.
+
+## 46. Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/Subtype /Form`: the form interpreted in a saved graphics state under its `/Matrix`, clipped to its `/BBox`, with its own `/Resources` or its parent's, at most 32 levels deep (ISO 32000-1 section 8.10).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that recursive `/Subtype /Form` interpretation enforces the 32-level depth cap without mutating shared `Document` dictionaries.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Implement `/Do` for `/Subtype /Form` XObjects (pushing graphics state, concatenating `/Matrix`, clipping to `/BBox`, binding `/Resources` with parent fallback, and enforcing the **32-level recursion ceiling**). Done when: `PdfInterpreter.FormXObjectCycle` stops a self-referencing `F1 -> F1` Form XObject at depth 32 and returns cleanly under ASan. Cheaper substitute: unbounded recursive `interpret()` calls that overflow the stack on cyclic Form XObjects.
+- [ ] Commit: `pdf: Form XObjects with matrix, clip, resources and a depth cap`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.FormXObjectCycle` passes under ASan with 0 warnings.
+
+## 47. Optional-content marked content recorded for layer visibility
+
+Filed 2026-10-28 from `§4`'s split (validation before the build): marked content (`BMC`, `BDC`, `EMC`) with `/OC` property references recorded so `D02 T03 §7` toggles optional-content groups without re-parsing (ISO 32000-1 sections 8.11 and 14.6).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the interpreter keeps every page's state on the stack of its one `interpret_page` call, records only into the page's `DisplayListBuilder`, and mutates no shared `Document` dictionary.
+
+**Build order:**
+
+1. Implement it in `src/pdf/interpreter.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] Record optional-content marked-content blocks (`BDC` / `BMC` ... `EMC` with `/OC` property references) so `D02 T03 §7` can toggle OCG layer visibility without re-parsing the PDF file. Done when: `PdfInterpreter.OptionalContentBlocks` skips the commands of a hidden group, keeps a visible one's, and nests `BMC`/`BDC` blocks within `EMC` balance (**Corrected 2026-10-28:** the item named no test).
+- [ ] Commit: `pdf: optional-content marked content for layer visibility`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.OptionalContentBlocks` passes under ASan with 0 warnings.
 
 ## Verification
 
