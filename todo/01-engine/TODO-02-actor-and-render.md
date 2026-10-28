@@ -99,7 +99,7 @@ track: M1
 | 39 | §39 | Flate compressor at zlib-ng parity: a medium-effort parser and SIMD paths | §37, D06 T01 §7 | [ ] |
 | 40 | §40 | Staged revisions over shared bytes: no file copy per edit, and a 10,000-edit history | §13 | [ ] |
 | 41 | §41 | Cubic interpolation for multi-input `/Order 3` sampled functions | §33 | [ ] |
-| 42 | §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances | §2, §3, §27, §28, §29, §30, §33 | [ ] |
+| 42 | §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances | §2, §3, §27, §28, §29, §30, §33 | [x] |
 | 43 | §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text | §42 | [ ] |
 | 44 | §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks | §3, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
 | 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
@@ -1331,6 +1331,9 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): text state (`
 > **Deferred:** a shared font object parsed again for every font that names it (round 1; the per-page font budget bounds memory, not parse work) -> XREF: D01 T01 §11
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.TextFonts:PdfInterpreter.TextPositioning:PdfInterpreter.TjKerningAndSpacing:PdfInterpreter.TextRenderModes:PdfInterpreter.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-28 | §42 | 53044b5ef4b3cc673d17ae943fde14ec043db455
+> **Review:** `docs/reviews/d01-t02-s42.json`
 
 ## 43. Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text
 

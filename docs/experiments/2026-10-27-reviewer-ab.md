@@ -175,6 +175,9 @@ The panel's data is kept per section from here, so the review effort can be judg
 | Section | Rounds to the end | Astra seconds (all passes) | Terra seconds (all passes) | Astra findings (valid) | Terra findings (valid) | Ended on |
 | ------- | ----------------- | -------------------------- | -------------------------- | ---------------------- | ---------------------- | -------- |
 | D01 T02 §33 | 5 (plus an outage) | 1,226 | 1,325 | 25 (23) | 38 (34) | `001c43e`: Astra P3 only, Terra clean |
+| D01 T02 §42 | 5 | 1,060 | 1,211 | 19 (19) | 35 (34) | `53044b5`: both P3 only |
+
+D01 T02 §42 notes: findings count the plan review's gaps, the completion review's gap list and every round's findings; Terra's one invalid finding is round 1 finding 8 (an empty string recording no run, not taken). Only Astra found the embedded program left out of the font budget (round 2), `/Flags` converted unchecked and the missing vertical spacing tests (completion). Only Terra found the Standard 14 box with `/Widths`, the zero Type 3 box, decoder limits taken as recoverable, `/Differences` retention (twice), the glyph vector's byte bound, uncharged decode work, the scanned name cache, the per-string fallback and the uncounted CFF tables. Both found the font memory budget, indirect encodings, the indirect `gs` size, unknown subtypes and fallback allocation. Terra's round 4 escalation at `max` (409 s) found four P1s after Astra's round 3 and 4 approvals.
 
 ## Limits
 

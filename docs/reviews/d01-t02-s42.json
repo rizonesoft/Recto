@@ -1,0 +1,151 @@
+{
+  "ref": "D01 T02 \u00a742",
+  "title": "Text state, positioning and text-showing operators with ISO 32000-1 advances",
+  "implementation_sha": "53044b5ef4b3cc673d17ae943fde14ec043db455",
+  "date": "2026-10-28",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s42.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s42.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s42.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s42.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s42.md",
+      "verdict": "stopped-low-severity"
+    },
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s42.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s42.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s42.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s42.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s42.terra.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfColor.*:PdfDisplayList.*:PdfCid*.*:PdfFont.* (x64 Debug, AddressSanitizer) -> [  PASSED  ] 91 tests. 0 Warning(s)",
+    "build.cmd: x64 and ARM64, Debug and Release -> 0 Warning(s), 0 Error(s) each; recto-tests.exe x64 Debug -> [  PASSED  ] 352 tests (356 ran, 4 skipped: Ui.App self-tests need a desktop session, PdfFilters.FlateCompressSpeed in Debug); x64 Release -> [  PASSED  ] 353 tests (3 skipped)"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s42.md",
+    "verdict": "filed",
+    "candidate": "2d75fa826e490c5214c4385045601050309ab6e6",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a743",
+      "D06 T01 \u00a77",
+      "D06 T01 \u00a71"
+    ]
+  },
+  "rounds_spent": 10,
+  "round_cap": 33,
+  "cap_outcome": "stopped on round 5 with both Astra and Terra at HIGHEST: P3 on 53044b5; their P3s (TextFontCount never reselecting an over-limit font, the unread in_text_ member) implemented in the commit after the stamp",
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s42.md",
+    "candidate": "0746de14f634180a4fb6c6e3c91b642757fe52db",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "efforts": {
+      "terra": {
+        "plan": "xhigh",
+        "completion": "xhigh",
+        "rounds": [
+          "max",
+          "xhigh",
+          "high"
+        ],
+        "rotation": "high",
+        "escalation": "max"
+      }
+    }
+  }
+}

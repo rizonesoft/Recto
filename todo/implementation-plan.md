@@ -98,7 +98,7 @@ Sections: 105 | Checklist items: 648
 | [x]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
 | [x]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 7     |
 | [x]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 7     |
-| [ ]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 5     |
+| [x]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 5     |
 | [ ]    | D01 T02 §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text           | windows-host              | 4     |
 | [ ]    | D01 T02 §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap         | windows-host              | 2     |
 | [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 2     |
@@ -923,6 +923,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 88/854 verified sections, 39 ready to run now.
+Progress: 89/854 verified sections, 39 ready to run now.
 
 Checklist: 557/6258 items completed (includes Commit items).
