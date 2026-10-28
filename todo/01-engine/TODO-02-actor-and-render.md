@@ -1306,6 +1306,8 @@ Filed 2026-10-27 by the `§33` completion review (`docs/reviews/01-engine/D01-T0
 
 ## 42. Text state, positioning and text-showing operators with ISO 32000-1 advances
 
+> **Started:** 2026-10-28T01:33Z
+
 Filed 2026-10-28 from `§4`'s split (validation before the build): text state (`BT`, `ET`, `Tc`, `Tw`, `Tz`, `TL`, `Tf`, `Tr`, `Ts`), positioning (`Td`, `TD`, `Tm`, `T*`) and showing (`Tj`, `TJ`, `'`, `"`) with ISO 32000-1 section 9.4.4 advances, recorded as glyph runs for `§43`'s glyphs (ISO 32000-1 sections 9.3 and 9.4). The `/None` rule for text moved here from `§44`'s item.
 
 > **Corrected 2026-10-28:** (validation before the build) the section named no source for a code's width or for splitting a string into codes, so a `TextFont` in `src/pdf/text_font.h/.cpp` now resolves both for every font kind; horizontal scaling and rise needed a home in the recorded run; vertical writing (`/WMode 1`) was unmentioned; `Tr 3` was "skip drawing", which would lose the positions text extraction and searchable OCR layers need, so an invisible run is recorded and drawn by nothing; `Tr 4` to `7` record their mode for `§16`, which clips at `ET`. Glyph indices and outlines are `§43`'s: this section records each glyph's index as 0 until `§43` fills it.
