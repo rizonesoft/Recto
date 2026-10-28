@@ -6,6 +6,7 @@
 #include "color.h"
 #include "filters.h"
 #include "function.h"
+#include "text_font.h"
 #include "test_support.h"
 #include "lexer.h"
 
@@ -2515,6 +2516,326 @@ TEST(PdfColor, SpecialSpaceSamples)
 		EXPECT_EQ(detail::translate_calls_for_testing() - calls, 1u);
 		ASSERT_EQ(wide.size(), 1200u);
 		EXPECT_LE(std::abs(wide[1] - kRgbMatrix30_180_90.g), 2);
+	}
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Text state, positioning and showing (D01 T02 section 42). Positions follow by hand from ISO 32000-1 9.3 and 9.4 and
+// the widths each font states; glyph indices are section 43's.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// F1: a simple Type 1 with /Widths for A, B, C (500, 600, 700), /MissingWidth 250 and a box; object 5 and 6.
+const std::string kF1 = "<< /Type /Font /Subtype /Type1 /BaseFont /Foo /FirstChar 65 /Widths [500 600 700] /FontDescriptor 6 0 R >>";
+const std::string kF1Descriptor = "<< /Type /FontDescriptor /FontName /Foo /Flags 32 /FontBBox [-100 -200 1000 900] /MissingWidth 250 >>";
+
+struct TextPage {
+	Interpreted interpreted;
+	std::vector<RecordedGlyphRun> runs;
+};
+
+// A page whose resources hold F1 (objects 5 and 6) and `extra` resources, interpreting `content`.
+TextPage text_page(std::string_view content, std::string_view extra_resources = "", const std::vector<std::string>& more = {})
+{
+	std::vector<std::string> objects{kF1, kF1Descriptor};
+	objects.insert(objects.end(), more.begin(), more.end());
+	TextPage out{interpret(content, "<< /Font << /F1 5 0 R >> " + std::string(extra_resources) + " >>", objects), {}};
+	if (out.interpreted.list != nullptr) {
+		out.runs = all_of<RecordedGlyphRun>(*out.interpreted.list);
+	}
+	return out;
+}
+
+std::vector<PositionedGlyph> glyphs_of(const TextPage& page, const RecordedGlyphRun& run)
+{
+	auto glyphs = page.interpreted.list->glyphs(run);
+	EXPECT_TRUE(glyphs.has_value());
+	return glyphs.has_value() ? std::vector<PositionedGlyph>(glyphs->begin(), glyphs->end()) : std::vector<PositionedGlyph>{};
+}
+
+// A glyph origin on the page: through the run's text matrix, then the CTM in force.
+PdfPoint page_point(const RecordedGlyphRun& run, const PositionedGlyph& glyph)
+{
+	return transform_point(concat_matrix(run.text_matrix, run.ctm), glyph.origin_pt);
+}
+
+void expect_point(const PdfPoint& p, double x, double y, std::string_view label)
+{
+	EXPECT_NEAR(p.x, x, 1e-9) << label;
+	EXPECT_NEAR(p.y, y, 1e-9) << label;
+}
+
+TEST(PdfInterpreter, TextFonts)
+{
+	const auto font_of = [](const std::vector<std::string>& objects) {
+		auto holder = std::make_unique<ResolvedSpace>(); // reuses the document holder: bytes and document only
+		holder->bytes = one_page_pdf(std::nullopt, "<< >>", objects);
+		auto doc = Document::open_memory(holder->bytes);
+		EXPECT_TRUE(doc.has_value());
+		holder->document = std::move(*doc);
+		auto font = TextFont::resolve(*holder->document, PdfValue(IndirectRef{5u, 0u}));
+		EXPECT_TRUE(font.has_value());
+		return std::pair{std::move(holder), font.has_value() ? *font : nullptr};
+	};
+	const auto bytes = [](std::string_view s) {
+		return std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+	};
+	// A simple Type 1 with /Widths and /MissingWidth.
+	{
+		const auto [holder, f] = font_of({kF1, kF1Descriptor});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Simple);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, 0.5);
+		EXPECT_DOUBLE_EQ(f->next(bytes("C")).w0, 0.7);
+		EXPECT_DOUBLE_EQ(f->next(bytes("D")).w0, 0.25) << "past /Widths: /MissingWidth";
+		const TextCode space = f->next(bytes(" "));
+		EXPECT_EQ(space.length, 1u);
+		EXPECT_TRUE(space.word_space);
+		EXPECT_DOUBLE_EQ(f->bbox().x_min, -0.1);
+		EXPECT_DOUBLE_EQ(f->bbox().y_max, 0.9);
+	}
+	// A Standard 14 font without /Widths under /Differences: code 65 is W, whose Helvetica AFM width it takes.
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences [65 /W] >> >>"});
+		ASSERT_NE(f, nullptr);
+		const Standard14Glyph* w = standard14_glyph_by_name(Standard14Font::Helvetica, "W");
+		ASSERT_NE(w, nullptr);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, w->width / 1000.0);
+		const Standard14Glyph* b = standard14_glyph_by_name(Standard14Font::Helvetica, "B");
+		EXPECT_DOUBLE_EQ(f->next(bytes("B")).w0, b->width / 1000.0);
+		EXPECT_DOUBLE_EQ(f->bbox().x_min, standard14_metrics(Standard14Font::Helvetica).font_box[0] / 1000.0);
+	}
+	// A Type 3 font: /Widths through /FontMatrix [0.002 0 0 0.002 0 0], its box likewise.
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 500] /FontMatrix [0.002 0 0 0.002 0 0] "
+										  "/FirstChar 65 /LastChar 65 /Widths [400] /CharProcs << >> /Encoding << /Differences [65 /a] >> >>"});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Type3);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, 0.8);
+		EXPECT_DOUBLE_EQ(f->bbox().x_max, 2.0);
+		EXPECT_DOUBLE_EQ(f->bbox().y_max, 1.0);
+	}
+	// A /Type0 over Identity-H with /W: two-byte codes, /W and /DW widths.
+	const std::string cid_font = "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+								 "/FontDescriptor 7 0 R /DW 1000 /W [1 [500 600]] /W2 [1 [-1000 300 880]] >>";
+	const std::string cid_descriptor = "<< /Type /FontDescriptor /FontName /X /Flags 4 /FontBBox [0 -100 1000 900] >>";
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+			cid_font, cid_descriptor});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Composite);
+		EXPECT_FALSE(f->vertical());
+		const TextCode one = f->next(bytes(std::string("\x00\x01", 2)));
+		EXPECT_EQ(one.length, 2u);
+		EXPECT_EQ(one.cid, 1u);
+		EXPECT_DOUBLE_EQ(one.w0, 0.5);
+		EXPECT_DOUBLE_EQ(f->next(bytes(std::string("\x00\x03", 2))).w0, 1.0) << "/DW";
+		EXPECT_FALSE(f->next(bytes(std::string("\x00\x20", 2))).word_space) << "a two-byte code 32 takes no word spacing";
+		EXPECT_DOUBLE_EQ(f->bbox().y_min, -0.1);
+	}
+	// A vertical /Type0 (Identity-V): /W2 for CID 1, /DW2 with half the horizontal advance for CID 2.
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-V /DescendantFonts [6 0 R] >>",
+			cid_font, cid_descriptor});
+		ASSERT_NE(f, nullptr);
+		EXPECT_TRUE(f->vertical());
+		const TextCode one = f->next(bytes(std::string("\x00\x01", 2)));
+		EXPECT_DOUBLE_EQ(one.w1, -1.0);
+		EXPECT_DOUBLE_EQ(one.vx, 0.3);
+		EXPECT_DOUBLE_EQ(one.vy, 0.88);
+		const TextCode two = f->next(bytes(std::string("\x00\x02", 2)));
+		EXPECT_DOUBLE_EQ(two.w1, -1.0);
+		EXPECT_DOUBLE_EQ(two.vx, 0.3) << "/DW2: half of /W's 600";
+		EXPECT_DOUBLE_EQ(two.vy, 0.88);
+	}
+	// Fallbacks: a missing /Font resource and a damaged font position with Helvetica's widths, each recorded.
+	clear_diagnostics();
+	{
+		const TextPage page = text_page("BT /Missing 10 Tf (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		const Standard14Glyph* a = standard14_glyph_by_code(Standard14Font::Helvetica, 'A');
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[0])[0].advance_pt, a->width / 100.0);
+		EXPECT_TRUE(damaged_recorded());
+	}
+	clear_diagnostics();
+	{
+		const auto [holder, f] = font_of({"(not a font)"});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Fallback);
+		EXPECT_TRUE(damaged_recorded());
+	}
+	// Memory running out while reading a font is OutOfMemory, never the fallback.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		auto doc = Document::open_memory(one_page_pdf(std::nullopt, "<< >>", {kF1, kF1Descriptor}));
+		ASSERT_TRUE(doc.has_value());
+		const recto::test::ScopedAllocationFailure fail(1u, sizeof(TextFont));
+		const auto font = TextFont::resolve(**doc, PdfValue(IndirectRef{5u, 0u}));
+		ASSERT_FALSE(font.has_value());
+		EXPECT_EQ(font.error().code, ErrorCode::OutOfMemory);
+	}
+}
+
+TEST(PdfInterpreter, TextPositioning)
+{
+	// Multi-line Td and T* under a rotated and sheared CTM: shear (x + 0.5y, y), then rotate (300 - y, x).
+	{
+		const TextPage page = text_page("0 1 -1 0 300 0 cm 1 0 0.5 1 0 0 cm BT /F1 10 Tf 12 TL 100 100 Td (AB) Tj T* (C) Tj ET");
+		ASSERT_EQ(page.runs.size(), 2u);
+		const auto first = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(first.size(), 2u);
+		expect_point(page_point(page.runs[0], first[0]), 200.0, 150.0, "A at (100, 100)");
+		expect_point(page_point(page.runs[0], first[1]), 200.0, 155.0, "B at (105, 100)");
+		expect_point(page_point(page.runs[1], glyphs_of(page, page.runs[1])[0]), 212.0, 144.0, "C at (100, 88)");
+	}
+	// BT resets both matrices but keeps the text state (Tc, the font).
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 3 Tc 50 60 Td ET BT (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.e, 0.0);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, 0.0);
+		EXPECT_DOUBLE_EQ(page.runs[0].font_size, 10.0);
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[0])[0].advance_pt, 8.0); // 0.5 * 10 + Tc 3
+	}
+	// q and Q inside a text object restore the parameters but not the matrices.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 10 20 Td q 5 Tc 30 40 Td Q (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.e, 40.0);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, 60.0);
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[0])[0].advance_pt, 5.0) << "Tc restored to 0";
+	}
+	// TD sets the leading to -ty.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 0 -14 TD T* (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, -28.0);
+	}
+	// Tm replaces both matrices, so T* moves from it.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 10 TL 5 5 Td 2 0 0 2 100 200 Tm T* (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.a, 2.0);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.e, 100.0);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, 180.0); // (0, -10) through the scale of 2
+	}
+	// A nested BT starts over; text shown outside a text object uses the current matrices.
+	{
+		const TextPage nested = text_page("BT /F1 10 Tf 10 10 Td BT (A) Tj ET");
+		ASSERT_EQ(nested.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(nested.runs[0].text_matrix.e, 0.0);
+		const TextPage outside = text_page("/F1 10 Tf (A) Tj");
+		ASSERT_EQ(outside.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(outside.runs[0].text_matrix.e, 0.0);
+	}
+	// A font selected only through gs /Font, and its restoration by Q.
+	{
+		const std::string gs = "/ExtGState << /G1 << /Font [5 0 R 12] >> >>";
+		const TextPage page = text_page("BT /G1 gs (A) Tj ET", gs);
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].font_size, 12.0);
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[0])[0].advance_pt, 6.0);
+		const TextPage restored = text_page("q /G1 gs Q BT (A) Tj ET", gs);
+		ASSERT_EQ(restored.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(restored.runs[0].font_size, 0.0) << "Q restored the size before gs";
+	}
+}
+
+TEST(PdfInterpreter, TjKerningAndSpacing)
+{
+	// Tc, Tw on the single-byte code 32, Tz in the run's matrix, Ts as each origin's y.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 2 Tc 3 Tw 50 Tz 1.5 Ts ( A) Tj (B) Tj ET");
+		ASSERT_EQ(page.runs.size(), 2u);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		EXPECT_DOUBLE_EQ(g[0].advance_pt, 0.25 * 10 + 2 + 3);
+		EXPECT_DOUBLE_EQ(g[1].advance_pt, 0.5 * 10 + 2);
+		expect_point(g[0].origin_pt, 0.0, 1.5, "space");
+		expect_point(g[1].origin_pt, 7.5, 1.5, "A");
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.a, 0.5);
+		EXPECT_DOUBLE_EQ(page.runs[1].text_matrix.e, (7.5 + 7.0) * 0.5) << "advanced by the scaled string";
+	}
+	// TJ: a number between strings, before the first, after the last, and alone.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf [(A) -500 (B)] TJ ET");
+		ASSERT_EQ(page.runs.size(), 2u);
+		EXPECT_DOUBLE_EQ(page.runs[1].text_matrix.e, 5.0 + 5.0);
+		const TextPage edges = text_page("BT /F1 10 Tf [100 (A) 200] TJ (B) Tj [300] TJ (C) Tj ET");
+		ASSERT_EQ(edges.runs.size(), 3u);
+		EXPECT_DOUBLE_EQ(edges.runs[0].text_matrix.e, -1.0);
+		EXPECT_DOUBLE_EQ(edges.runs[1].text_matrix.e, -1.0 + 5.0 - 2.0);
+		EXPECT_DOUBLE_EQ(edges.runs[2].text_matrix.e, 2.0 + 6.0 - 3.0);
+	}
+	// ' and ".
+	{
+		const TextPage page = text_page("BT /F1 10 Tf 12 TL (A) ' 5 1 (A) \" ET");
+		ASSERT_EQ(page.runs.size(), 2u);
+		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, -12.0);
+		EXPECT_DOUBLE_EQ(page.runs[1].text_matrix.f, -24.0);
+		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[1])[0].advance_pt, 5.0 + 1.0);
+	}
+	// A vertical /Type0 line: origins at the position vectors, displacement by w1.
+	{
+		const std::vector<std::string> more{"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-V /DescendantFonts [8 0 R] >>",
+			"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+			"/FontDescriptor 9 0 R /DW 1000 /W [1 [500 600]] /W2 [1 [-1000 300 880]] >>",
+			"<< /Type /FontDescriptor /FontName /X /Flags 4 /FontBBox [0 -100 1000 900] >>"};
+		const TextPage vertical = [&] {
+			TextPage out{interpret("BT /V 10 Tf <00010002> Tj <0001> Tj ET", "<< /Font << /V 7 0 R >> >>",
+							 {kF1, kF1Descriptor, more[0], more[1], more[2]}),
+				{}};
+			if (out.interpreted.list != nullptr) {
+				out.runs = all_of<RecordedGlyphRun>(*out.interpreted.list);
+			}
+			return out;
+		}();
+		ASSERT_EQ(vertical.runs.size(), 2u);
+		const auto g = glyphs_of(vertical, vertical.runs[0]);
+		ASSERT_EQ(g.size(), 2u);
+		expect_point(g[0].origin_pt, -3.0, -8.8, "CID 1 at -v");
+		expect_point(g[1].origin_pt, -3.0, -10.0 - 8.8, "CID 2 one w1 below");
+		EXPECT_DOUBLE_EQ(vertical.runs[1].text_matrix.f, -20.0) << "the matrix moved by both displacements";
+		EXPECT_DOUBLE_EQ(vertical.runs[1].text_matrix.e, 0.0);
+	}
+	// A visible run carries bounds that hold every glyph origin.
+	{
+		const TextPage page = text_page("BT /F1 10 Tf (ABC) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		ASSERT_TRUE(page.runs[0].has_bounds);
+		for (const PositionedGlyph& g : glyphs_of(page, page.runs[0])) {
+			EXPECT_GE(g.origin_pt.x, page.runs[0].bounds_pt.x_min);
+			EXPECT_LE(g.origin_pt.x, page.runs[0].bounds_pt.x_max);
+		}
+		EXPECT_DOUBLE_EQ(page.runs[0].bounds_pt.y_min, -2.0); // the box's -200 at size 10
+	}
+}
+
+TEST(PdfInterpreter, TextRenderModes)
+{
+	for (int mode = 0; mode < 8; ++mode) {
+		SCOPED_TRACE(mode);
+		const TextPage page = text_page("BT /F1 10 Tf " + std::to_string(mode) + " Tr (A) Tj ET");
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_EQ(static_cast<int>(page.runs[0].render_mode), mode);
+		EXPECT_EQ(glyphs_of(page, page.runs[0]).size(), 1u) << "every mode keeps its glyph positions";
+	}
+	// /None drops only the paint whose space marks nothing; /Spot keeps every mode.
+	const std::string spaces = "/ColorSpace << /None [/Separation /None /DeviceGray 7 0 R] /Spot [/Separation /Spot /DeviceGray 7 0 R] >>";
+	const std::vector<std::string> fn{"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>"};
+	constexpr int kFillNone[8] = {3, 1, 1, 3, 7, 5, 5, 7};
+	constexpr int kStrokeNone[8] = {0, 3, 0, 3, 4, 7, 4, 7};
+	for (int mode = 0; mode < 8; ++mode) {
+		SCOPED_TRACE(mode);
+		const std::string tr = std::to_string(mode) + " Tr (A) Tj ET";
+		const TextPage fill_none = text_page("/None cs /Spot CS BT /F1 10 Tf " + tr, spaces, fn);
+		ASSERT_EQ(fill_none.runs.size(), 1u);
+		EXPECT_EQ(static_cast<int>(fill_none.runs[0].render_mode), kFillNone[mode]);
+		const TextPage stroke_none = text_page("/Spot cs /None CS BT /F1 10 Tf " + tr, spaces, fn);
+		ASSERT_EQ(stroke_none.runs.size(), 1u);
+		EXPECT_EQ(static_cast<int>(stroke_none.runs[0].render_mode), kStrokeNone[mode]);
+		const TextPage spot = text_page("/Spot cs /Spot CS BT /F1 10 Tf " + tr, spaces, fn);
+		ASSERT_EQ(spot.runs.size(), 1u);
+		EXPECT_EQ(static_cast<int>(spot.runs[0].render_mode), mode);
 	}
 }
 

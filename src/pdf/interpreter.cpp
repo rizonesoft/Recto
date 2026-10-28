@@ -3,6 +3,7 @@
 #include "interpreter.h"
 
 #include "color.h"
+#include "text_font.h"
 #include "lexer.h"
 #include "filters.h"
 #include "parser.h"
@@ -74,7 +75,47 @@ struct GraphicsState {
 	double flatness{1.0};
 	bool style_recorded{true};
 	bool alpha_recorded{true};
+	// The text state (ISO 32000-1 9.3), saved and restored by `q` and `Q` with the rest; the text matrices are not
+	// part of it (9.4.1). A null font shows text with `TextFont::fallback()`.
+	double char_spacing{0.0};
+	double word_spacing{0.0};
+	double horizontal_scaling{1.0}; // Tz / 100
+	double leading{0.0};
+	std::shared_ptr<const TextFont> font{};
+	double font_size{0.0};
+	TextRenderMode text_mode{TextRenderMode::Fill};
+	double rise{0.0};
 };
+
+[[nodiscard]] constexpr bool mode_fills(TextRenderMode mode) noexcept
+{
+	return mode == TextRenderMode::Fill || mode == TextRenderMode::FillAndStroke || mode == TextRenderMode::FillAndClip ||
+		mode == TextRenderMode::FillStrokeAndClip;
+}
+
+[[nodiscard]] constexpr bool mode_strokes(TextRenderMode mode) noexcept
+{
+	return mode == TextRenderMode::Stroke || mode == TextRenderMode::FillAndStroke ||
+		mode == TextRenderMode::StrokeAndClip || mode == TextRenderMode::FillStrokeAndClip;
+}
+
+// A text rendering mode with the fill or the stroke dropped when its colour space marks nothing (a `/None` colorant,
+// 8.6.6.4): the run keeps its clip and its positions, and only the paint that cannot mark goes.
+[[nodiscard]] constexpr TextRenderMode painting_mode(TextRenderMode mode, bool fill_paints, bool stroke_paints) noexcept
+{
+	const bool fill = mode_fills(mode) && fill_paints;
+	const bool stroke = mode_strokes(mode) && stroke_paints;
+	if (mode >= TextRenderMode::FillAndClip) {
+		return fill && stroke ? TextRenderMode::FillStrokeAndClip
+			: fill            ? TextRenderMode::FillAndClip
+			: stroke          ? TextRenderMode::StrokeAndClip
+							  : TextRenderMode::Clip;
+	}
+	return fill && stroke ? TextRenderMode::FillAndStroke
+		: fill            ? TextRenderMode::Fill
+		: stroke          ? TextRenderMode::Stroke
+						  : TextRenderMode::Invisible;
+}
 
 [[nodiscard]] std::optional<BlendMode> blend_mode_named(std::string_view name) noexcept
 {
@@ -149,14 +190,36 @@ enum class Op : uint8_t {
 	FillColor,
 	StrokeColor,
 	BeginInlineImage,
+	// Text (D01 T02 section 42).
+	BeginText,
+	EndText,
+	CharSpacing,
+	WordSpacing,
+	HorizontalScale,
+	Leading,
+	Font,
+	TextMode,
+	Rise,
+	TextMove,
+	TextMoveLeading,
+	TextMatrix,
+	NextLine,
+	ShowText,
+	ShowTextArray,
+	NextLineShow,
+	NextLineShowSpaced,
 };
 
 // Sorted by name (byte order) for the binary search in `op_named`.
-inline constexpr std::array<std::pair<std::string_view, Op>, 43> kOperators = {{
+inline constexpr std::array<std::pair<std::string_view, Op>, 60> kOperators = {{
+	{"\"", Op::NextLineShowSpaced},
+	{"'", Op::NextLineShow},
 	{"B", Op::FillStroke},
 	{"B*", Op::FillStrokeEvenOdd},
 	{"BI", Op::BeginInlineImage},
+	{"BT", Op::BeginText},
 	{"CS", Op::StrokeSpace},
+	{"ET", Op::EndText},
 	{"F", Op::Fill},
 	{"G", Op::StrokeGray},
 	{"J", Op::LineCap},
@@ -167,6 +230,19 @@ inline constexpr std::array<std::pair<std::string_view, Op>, 43> kOperators = {{
 	{"S", Op::Stroke},
 	{"SC", Op::StrokeColor},
 	{"SCN", Op::StrokeColor},
+	{"T*", Op::NextLine},
+	{"TD", Op::TextMoveLeading},
+	{"TJ", Op::ShowTextArray},
+	{"TL", Op::Leading},
+	{"Tc", Op::CharSpacing},
+	{"Td", Op::TextMove},
+	{"Tf", Op::Font},
+	{"Tj", Op::ShowText},
+	{"Tm", Op::TextMatrix},
+	{"Tr", Op::TextMode},
+	{"Ts", Op::Rise},
+	{"Tw", Op::WordSpacing},
+	{"Tz", Op::HorizontalScale},
 	{"W", Op::Clip},
 	{"W*", Op::ClipEvenOdd},
 	{"b", Op::CloseFillStroke},
@@ -627,6 +703,9 @@ private:
 		case Op::EndPath:
 		case Op::Clip:
 		case Op::ClipEvenOdd:
+		case Op::BeginText:
+		case Op::EndText:
+		case Op::NextLine:
 			return true;
 		default:
 			return false;
@@ -833,6 +912,123 @@ private:
 			}
 			return {};
 		}
+		// Text (ISO 32000-1 9.3 and 9.4).
+		case Op::BeginText:
+			// A nested BT, as readers read it, starts a new text object: both matrices reset.
+			in_text_ = true;
+			text_matrix_ = line_matrix_ = PdfMatrix::identity();
+			return {};
+		case Op::EndText:
+			in_text_ = false;
+			return {};
+		case Op::CharSpacing:
+		case Op::WordSpacing:
+		case Op::HorizontalScale:
+		case Op::Leading:
+		case Op::Rise: {
+			const auto n = numbers(operands, 1u);
+			if (!n.has_value()) {
+				return {};
+			}
+			const double v = (*n)[0];
+			if (op == Op::CharSpacing) {
+				state_.char_spacing = v;
+			} else if (op == Op::WordSpacing) {
+				state_.word_spacing = v;
+			} else if (op == Op::HorizontalScale) {
+				state_.horizontal_scaling = v / 100.0;
+			} else if (op == Op::Leading) {
+				state_.leading = v;
+			} else {
+				state_.rise = v;
+			}
+			return {};
+		}
+		case Op::TextMode: {
+			const auto n = numbers(operands, 1u);
+			if (n.has_value() && (*n)[0] == std::floor((*n)[0]) && (*n)[0] >= 0.0 && (*n)[0] <= 7.0) {
+				state_.text_mode = static_cast<TextRenderMode>(static_cast<int>((*n)[0]));
+			}
+			return {};
+		}
+		case Op::Font: {
+			if (operands.size() != 2u) {
+				return {};
+			}
+			const auto name = operands[0].as_name();
+			const auto size = number(operands[1]);
+			if (!name.has_value() || !size.has_value()) {
+				return {};
+			}
+			RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, named_font(*name));
+			state_.font = std::move(font);
+			state_.font_size = *size;
+			return {};
+		}
+		case Op::TextMove:
+		case Op::TextMoveLeading: {
+			const auto n = numbers(operands, 2u);
+			if (!n.has_value()) {
+				return {};
+			}
+			if (op == Op::TextMoveLeading) {
+				state_.leading = -(*n)[1];
+			}
+			move_line((*n)[0], (*n)[1]);
+			return {};
+		}
+		case Op::TextMatrix: {
+			const auto m = numbers(operands, 6u);
+			if (m.has_value()) {
+				text_matrix_ = line_matrix_ = PdfMatrix{(*m)[0], (*m)[1], (*m)[2], (*m)[3], (*m)[4], (*m)[5]};
+			}
+			return {};
+		}
+		case Op::NextLine:
+			move_line(0.0, -state_.leading);
+			return {};
+		case Op::ShowText:
+		case Op::NextLineShow: {
+			if (operands.size() != 1u || operands[0].as_string() == nullptr) {
+				return {};
+			}
+			if (op == Op::NextLineShow) {
+				move_line(0.0, -state_.leading);
+			}
+			return show(operands[0].as_string()->span());
+		}
+		case Op::NextLineShowSpaced: {
+			if (operands.size() != 3u || operands[2].as_string() == nullptr) {
+				return {};
+			}
+			const auto aw = number(operands[0]);
+			const auto ac = number(operands[1]);
+			if (!aw.has_value() || !ac.has_value()) {
+				return {};
+			}
+			state_.word_spacing = *aw;
+			state_.char_spacing = *ac;
+			move_line(0.0, -state_.leading);
+			return show(operands[2].as_string()->span());
+		}
+		case Op::ShowTextArray: {
+			const PdfArray* array = operands.size() == 1u ? operands[0].as_array() : nullptr;
+			if (array == nullptr) {
+				return {};
+			}
+			for (const PdfValue& element : *array) {
+				if (const PdfString* text = element.as_string()) {
+					RECTO_PDF_RETURN_IF_ERROR(show(text->span()));
+				} else if (const auto n = number(element)) {
+					// A number moves the text matrix by thousandths of the font size, with no character or word
+					// spacing, wherever it stands in the array (9.4.3).
+					const double shift = -(*n) / 1000.0 * state_.font_size;
+					const bool vertical = state_.font != nullptr && state_.font->vertical();
+					advance_text(vertical ? 0.0 : shift * state_.horizontal_scaling, vertical ? shift : 0.0);
+				}
+			}
+			return {};
+		}
 		case Op::Other:
 		case Op::BeginInlineImage:
 			break;
@@ -991,6 +1187,22 @@ private:
 			return;
 		}
 		const PdfDict& gs = *value->as_dict();
+		// `/Font [font size]` sets the font and size as `Tf` does (Table 58).
+		if (const auto font = entry(gs, "Font"); font.has_value() && font->as_array() != nullptr &&
+			font->as_array()->size() == 2u) {
+			const PdfArray& pair = *font->as_array();
+			if (const auto size = number(pair[1])) {
+				auto resolved_font = font_value(pair[0]);
+				if (!resolved_font.has_value()) {
+					if (!resolve_failure_.has_value()) {
+						resolve_failure_ = resolved_font.error(); // a failure that stops the page, after this operator
+					}
+				} else {
+					state_.font = std::move(*resolved_font);
+					state_.font_size = *size;
+				}
+			}
+		}
 		if (const auto ri = entry(gs, "RI"); ri.has_value()) {
 			if (const auto n = ri->as_name()) {
 				state_.rendering_intent = rendering_intent_named(*n);
@@ -1202,11 +1414,131 @@ private:
 		closed_ = false;
 	}
 
+	// The font a `/Font` resource names, resolved once per interpretation. A missing resource positions its text with
+	// the fallback, its diagnostic recorded.
+	[[nodiscard]] PdfResult<std::shared_ptr<const TextFont>> named_font(std::string_view name)
+	{
+		for (const auto& [key, font] : fonts_) {
+			if (key == name) {
+				return font;
+			}
+		}
+		const PdfDict* fonts = category("Font", font_resources_);
+		const PdfValue* entry_value = fonts != nullptr ? fonts->get(name) : nullptr;
+		std::shared_ptr<const TextFont> font;
+		if (entry_value == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "Tf names a font the resources do not hold"); // recorded
+			font = TextFont::fallback();
+		} else {
+			RECTO_PDF_TRY(font, font_value(*entry_value));
+		}
+		if (fonts_.size() < kMaxCachedFonts) {
+			fonts_.emplace_back(std::string(name), font);
+		}
+		return font;
+	}
+
+	// The font a font value (a reference or a dictionary) gives, an indirect one resolved once per interpretation.
+	[[nodiscard]] PdfResult<std::shared_ptr<const TextFont>> font_value(const PdfValue& value)
+	{
+		const std::optional<IndirectRef> ref = value.as_ref();
+		if (ref.has_value()) {
+			for (const auto& [key, font] : font_objects_) {
+				if (key == object_key(*ref)) {
+					return font;
+				}
+			}
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, TextFont::resolve(document_, value));
+		if (ref.has_value() && font_objects_.size() < kMaxCachedFonts) {
+			font_objects_.emplace_back(object_key(*ref), font);
+		}
+		return font;
+	}
+
+	// `Td`: the line matrix moved by (tx, ty) and the text matrix set to it (9.4.2).
+	void move_line(double tx, double ty) noexcept
+	{
+		line_matrix_ = concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, tx, ty}, line_matrix_);
+		text_matrix_ = line_matrix_;
+	}
+
+	// The text matrix moved by (tx, ty) in text space (9.4.4).
+	void advance_text(double tx, double ty) noexcept
+	{
+		text_matrix_ = concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, tx, ty}, text_matrix_);
+	}
+
+	// One shown string (9.4.3, 9.4.4): each code's glyph origin and displacement, recorded as one glyph run whose
+	// matrix carries the horizontal scaling (`[Tz/100 0 0 1 0 0] x Tm`), then the text matrix advanced past it. Glyph
+	// indices and outlines are section 43's; the run's bounds are the font's box at the font size over its glyphs.
+	[[nodiscard]] PdfResult<void> show(std::span<const uint8_t> bytes)
+	{
+		const std::shared_ptr<const TextFont> font = state_.font != nullptr ? state_.font : TextFont::fallback();
+		const double size = state_.font_size;
+		const bool vertical = font->vertical();
+		std::vector<PositionedGlyph> glyphs;
+		double x = 0.0;
+		double y = 0.0;
+		for (size_t at = 0; at < bytes.size();) {
+			const TextCode code = font->next(bytes.subspan(at));
+			at += code.length != 0u ? code.length : 1u; // a code no codespace matches skips one byte
+			const double spacing = state_.char_spacing + (code.word_space ? state_.word_spacing : 0.0);
+			PositionedGlyph glyph;
+			if (!vertical) {
+				glyph.origin_pt = PdfPoint{x, state_.rise};
+				glyph.advance_pt = code.w0 * size + spacing;
+				x += glyph.advance_pt;
+			} else {
+				// Vertical writing: the glyph sits at its position vector below the current point (9.7.4.3).
+				glyph.origin_pt = PdfPoint{-code.vx * size, y - code.vy * size + state_.rise};
+				glyph.advance_pt = code.w1 * size + spacing;
+				y += glyph.advance_pt;
+			}
+			glyphs.push_back(glyph);
+		}
+		if (glyphs.empty()) {
+			return {};
+		}
+		const PdfMatrix run_matrix =
+			concat_matrix(PdfMatrix{state_.horizontal_scaling, 0.0, 0.0, 1.0, 0.0, 0.0}, text_matrix_);
+		const TextRenderMode mode = painting_mode(state_.text_mode, state_.fill.paints(), state_.stroke.paints());
+		const PdfRect& box = font->bbox();
+		const double bx0 = std::min(box.x_min * size, box.x_max * size);
+		const double bx1 = std::max(box.x_min * size, box.x_max * size);
+		const double by0 = std::min(box.y_min * size, box.y_max * size);
+		const double by1 = std::max(box.y_min * size, box.y_max * size);
+		PdfRect bounds{glyphs.front().origin_pt.x + bx0, glyphs.front().origin_pt.y + by0,
+			glyphs.front().origin_pt.x + bx1, glyphs.front().origin_pt.y + by1};
+		for (const PositionedGlyph& glyph : glyphs) {
+			bounds.x_min = std::min(bounds.x_min, glyph.origin_pt.x + bx0);
+			bounds.y_min = std::min(bounds.y_min, glyph.origin_pt.y + by0);
+			bounds.x_max = std::max(bounds.x_max, glyph.origin_pt.x + bx1);
+			bounds.y_max = std::max(bounds.y_max, glyph.origin_pt.y + by1);
+		}
+		RECTO_PDF_RETURN_IF_ERROR(sync_state(mode_strokes(mode)));
+		RECTO_PDF_TRY(const ColorRgba fill_color, rgba(state_.fill, false));
+		RECTO_PDF_TRY(const ColorRgba stroke_color, rgba(state_.stroke, true));
+		auto drawn = builder_.draw_glyph_run(glyphs, size, mode, fill_color, stroke_color, run_matrix, bounds);
+		// The text matrix advances whether or not the builder kept the run (a run it refuses is skipped like any
+		// malformed operator), so the text after it stays where the file put it.
+		advance_text(vertical ? 0.0 : x * state_.horizontal_scaling, vertical ? y : 0.0);
+		return drawn;
+	}
+
+	static constexpr size_t kMaxCachedFonts = 4'096u;
+
 	const Document& document_;
 	const PdfDict& resources_;
 	DisplayListBuilder builder_;
 	Category ext_gstates_{};
 	Category color_spaces_{};
+	Category font_resources_{};
+	std::vector<std::pair<std::string, std::shared_ptr<const TextFont>>> fonts_{};
+	std::vector<std::pair<uint64_t, std::shared_ptr<const TextFont>>> font_objects_{};
+	PdfMatrix text_matrix_{};
+	PdfMatrix line_matrix_{};
+	bool in_text_{false};
 	std::optional<ColorSpaces> spaces_{};
 	std::optional<Converted> last_stroke_{};
 	std::optional<Converted> last_fill_{};
