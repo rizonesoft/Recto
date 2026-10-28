@@ -1191,7 +1191,8 @@ private:
 		if (const auto font = entry(gs, "Font"); font.has_value() && font->as_array() != nullptr &&
 			font->as_array()->size() == 2u) {
 			const PdfArray& pair = *font->as_array();
-			if (const auto size = number(pair[1])) {
+			const std::optional<PdfValue> size_value = resolved(pair[1]); // the size may be indirect too
+			if (const auto size = size_value.has_value() ? number(*size_value) : std::nullopt) {
 				auto resolved_font = font_value(pair[0]);
 				if (!resolved_font.has_value()) {
 					if (!resolve_failure_.has_value()) {
@@ -1449,8 +1450,17 @@ private:
 				}
 			}
 		}
+		// Each page resolves at most kMaxCachedFonts fonts within kMaxTextFontBytes: past either, a font takes the
+		// fallback unresolved, so a page of many distinct fonts never rebuilds or holds them without bound.
+		if (fonts_resolved_ >= kMaxCachedFonts || font_bytes_ >= kMaxTextFontBytes) {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, font_bytes_,
+				kMaxTextFontBytes, "Fonts past the page's limit; drawn with the fallback"));
+			return TextFont::fallback();
+		}
+		++fonts_resolved_;
 		RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, TextFont::resolve(document_, value));
-		if (ref.has_value() && font_objects_.size() < kMaxCachedFonts) {
+		font_bytes_ += font->memory_bytes();
+		if (ref.has_value()) {
 			font_objects_.emplace_back(object_key(*ref), font);
 		}
 		return font;
@@ -1512,7 +1522,8 @@ private:
 		const PdfMatrix run_matrix =
 			concat_matrix(PdfMatrix{state_.horizontal_scaling, 0.0, 0.0, 1.0, 0.0, 0.0}, text_matrix_);
 		const TextRenderMode mode = painting_mode(state_.text_mode, state_.fill.paints(), state_.stroke.paints());
-		const PdfRect& box = font->bbox();
+		// A font whose box promises nothing takes one a thousand ems wide, which holds any glyph a file draws.
+		const PdfRect box = font->bbox_known() ? font->bbox() : PdfRect{-1000.0, -1000.0, 1000.0, 1000.0};
 		const double bx0 = std::min(box.x_min * size, box.x_max * size);
 		const double bx1 = std::max(box.x_min * size, box.x_max * size);
 		const double by0 = std::min(box.y_min * size, box.y_max * size);
@@ -1536,6 +1547,7 @@ private:
 	}
 
 	static constexpr size_t kMaxCachedFonts = 4'096u;
+	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
 
 	const Document& document_;
 	const PdfDict& resources_;
@@ -1545,6 +1557,8 @@ private:
 	Category font_resources_{};
 	std::vector<std::pair<std::string, std::shared_ptr<const TextFont>>> fonts_{};
 	std::vector<std::pair<uint64_t, std::shared_ptr<const TextFont>>> font_objects_{};
+	size_t fonts_resolved_{0};
+	size_t font_bytes_{0};
 	PdfMatrix text_matrix_{};
 	PdfMatrix line_matrix_{};
 	bool in_text_{false};

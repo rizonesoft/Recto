@@ -15,12 +15,39 @@ namespace recto::pdf {
 
 namespace {
 
-// A font this reader cannot use for one of these reasons is drawn with the fallback; anything else stops the page.
+// A font this reader cannot use for one of these reasons is drawn with the fallback; anything else (memory, a decoder
+// or recursion limit, an internal error) stops the page, as every other resolver failure in the interpreter does.
 [[nodiscard]] bool recoverable(ErrorCode code) noexcept
 {
-	return code == ErrorCode::DamagedFormat || code == ErrorCode::UnsupportedFeature ||
-		code == ErrorCode::ResourceLimit || code == ErrorCode::DecompressionLimitExceeded ||
-		code == ErrorCode::RecursionLimitExceeded;
+	return code == ErrorCode::DamagedFormat || code == ErrorCode::UnsupportedFeature || code == ErrorCode::ResourceLimit;
+}
+
+[[nodiscard]] std::optional<PdfValue> resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal);
+
+// A direct copy of an encoding dictionary with its `/BaseEncoding` and `/Differences` (and the array's elements)
+// resolved, since `SimpleEncoding::build` reads only direct values (9.6.6.1).
+[[nodiscard]] PdfValue direct_encoding(const Document& document, const PdfValue& encoding, std::optional<PdfError>& fatal)
+{
+	const PdfDict* dict = encoding.as_dict();
+	if (dict == nullptr) {
+		return encoding;
+	}
+	PdfDict out = *dict;
+	if (const std::optional<PdfValue> base = resolved(document, dict->get("BaseEncoding"), fatal)) {
+		out.set("BaseEncoding", *base);
+	}
+	if (const std::optional<PdfValue> differences = resolved(document, dict->get("Differences"), fatal)) {
+		if (const PdfArray* array = differences->as_array()) {
+			PdfArray direct;
+			direct.reserve(array->size());
+			for (const PdfValue& element : *array) {
+				std::optional<PdfValue> value = resolved(document, &element, fatal);
+				direct.push_back(value.has_value() ? std::move(*value) : PdfValue(PdfNull{}));
+			}
+			out.set("Differences", PdfValue(std::move(direct)));
+		}
+	}
+	return PdfValue(std::move(out));
 }
 
 // `value` resolved, or none when it is missing or damaged; `fatal` takes any failure that must stop the page.
@@ -162,7 +189,10 @@ struct TextFontBuilder {
 						(void)make_pdf_error(ErrorCode::DamagedFormat, "Font descriptor /Flags is not a 32-bit integer");
 					}
 				}
-				const std::optional<PdfValue> encoding_value = resolved(document, dict.get("Encoding"), fatal);
+				std::optional<PdfValue> encoding_value = resolved(document, dict.get("Encoding"), fatal);
+				if (encoding_value.has_value()) {
+					encoding_value = direct_encoding(document, *encoding_value, fatal);
+				}
 				RECTO_PDF_TRY(const SimpleEncoding encoding, SimpleEncoding::build(
 					encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, &built_in));
 				for (size_t code = 0; code < 256u; ++code) {
@@ -222,7 +252,12 @@ struct TextFontBuilder {
 		}
 		// A glyph's displacement (w0, 0) in glyph space, through the font matrix (9.6.5).
 		(void)widths(document, dict, matrix[0], 0.0, *font, fatal);
-		if (const std::optional<PdfRect> box = box_of(document, dict.get("FontBBox"), fatal)) {
+		const std::optional<PdfRect> declared = box_of(document, dict.get("FontBBox"), fatal);
+		if (declared.has_value() && declared->x_min == 0.0 && declared->y_min == 0.0 && declared->x_max == 0.0 &&
+			declared->y_max == 0.0) {
+			font->bbox_known_ = false; // all zeros: no assumption about the glyphs (Table 112)
+		}
+		if (const std::optional<PdfRect> box = declared; box.has_value() && font->bbox_known_) {
 			const double xs[4] = {box->x_min, box->x_max, box->x_min, box->x_max};
 			const double ys[4] = {box->y_min, box->y_min, box->y_max, box->y_max};
 			// Plain extremes: PdfRect's constructor orders its corners, so it cannot hold an empty starting box.

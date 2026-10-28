@@ -2868,6 +2868,119 @@ TEST(PdfInterpreter, TjKerningAndSpacing)
 	}
 }
 
+TEST(PdfInterpreter, TextFontEdges)
+{
+	const auto bytes = [](std::string_view s) {
+		return std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(s.data()), s.size());
+	};
+	const auto resolve_5 = [](const std::vector<std::string>& objects) {
+		auto holder = std::make_unique<ResolvedSpace>();
+		holder->bytes = one_page_pdf(std::nullopt, "<< >>", objects);
+		auto doc = Document::open_memory(holder->bytes);
+		EXPECT_TRUE(doc.has_value());
+		holder->document = std::move(*doc);
+		auto font = TextFont::resolve(*holder->document, PdfValue(IndirectRef{5u, 0u}));
+		EXPECT_TRUE(font.has_value());
+		return std::pair{std::move(holder), font.has_value() ? *font : nullptr};
+	};
+	// An indirect /Differences array (and its elements) is read: code 65 is W.
+	{
+		const auto [holder, f] = resolve_5({"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences 6 0 R >> >>", "[65 7 0 R]", "/W"});
+		ASSERT_NE(f, nullptr);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, standard14_glyph_by_name(Standard14Font::Helvetica, "W")->width / 1000.0);
+	}
+	// A vertical /Type0 whose descendant gives only /DW2 [750 -1200]: vy 0.75, w1 -1.2, vx half of /W's 500.
+	{
+		const auto [holder, f] = resolve_5({"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding /Identity-V /DescendantFonts [6 0 R] >>",
+			"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> "
+			"/FontDescriptor 7 0 R /W [1 [500]] /DW2 [750 -1200] >>",
+			"<< /Type /FontDescriptor /FontName /X /Flags 4 /FontBBox [0 -100 1000 900] >>"});
+		ASSERT_NE(f, nullptr);
+		const TextCode one = f->next(bytes(std::string("\x00\x01", 2)));
+		EXPECT_DOUBLE_EQ(one.vy, 0.75);
+		EXPECT_DOUBLE_EQ(one.w1, -1.2);
+		EXPECT_DOUBLE_EQ(one.vx, 0.25);
+	}
+	// A Type 3 /FontBBox of zeros promises nothing: the run's bounds are wide enough for any glyph.
+	{
+		TextPage page{interpret("BT /T3 10 Tf (A) Tj ET", "<< /Font << /T3 5 0 R >> >>",
+						  {"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 0 0] /FontMatrix [0.001 0 0 0.001 0 0] /FirstChar 65 /LastChar 65 "
+						   "/Widths [500] /CharProcs << >> /Encoding << /Differences [65 /a] >> >>"}),
+			{}};
+		ASSERT_NE(page.interpreted.list, nullptr);
+		page.runs = all_of<RecordedGlyphRun>(*page.interpreted.list);
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_LE(page.runs[0].bounds_pt.x_min, -10'000.0);
+		EXPECT_GE(page.runs[0].bounds_pt.x_max, 10'000.0);
+	}
+	// An indirect size in /ExtGState /Font is resolved.
+	{
+		const TextPage page = text_page("BT /G1 gs (A) Tj ET", "/ExtGState << /G1 << /Font [5 0 R 7 0 R] >> >>", {"12"});
+		ASSERT_EQ(page.runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(page.runs[0].font_size, 12.0);
+	}
+	// A font whose CMap decodes past its decoder limit stops the page, as every decoder limit in the interpreter does.
+	{
+		auto packed = flate_compress(std::vector<uint8_t>(size_t{6} << 20u, ' '));
+		ASSERT_TRUE(packed.has_value());
+		const auto pdf = one_page_pdf("BT /C 10 Tf <0001> Tj ET", "<< /Font << /C 5 0 R >> >>",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding 6 0 R /DescendantFonts [7 0 R] >>",
+				stream_object("/Type /CMap /CMapName /Big /Filter /FlateDecode", std::string(packed->begin(), packed->end())),
+				"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 1000 >>"});
+		auto doc = Document::open_memory(pdf);
+		ASSERT_TRUE(doc.has_value());
+		const auto list = interpret_page(**doc, 0u);
+		EXPECT_FALSE(list.has_value()) << "the decoder limit was taken as a recoverable font failure";
+	}
+}
+
+TEST(PdfInterpreter, TextFontBudget)
+{
+	// Six hundred distinct /Type0 fonts over one descendant whose /CIDToGIDMap holds 65,536 entries (128 KiB each,
+	// from a small compressed stream): the page's 64 MiB font budget runs out near the 512th, and the rest take the
+	// fallback, recorded, instead of each holding its own table.
+	auto packed = flate_compress(std::vector<uint8_t>(size_t{2} << 16u, 1u));
+	ASSERT_TRUE(packed.has_value());
+	std::vector<std::string> objects{kF1, kF1Descriptor,
+		"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
+		"/Supplement 0 >> /CIDToGIDMap 8 0 R >>",
+		stream_object("/Filter /FlateDecode", std::string(packed->begin(), packed->end()))};
+	std::string fonts;
+	std::string content = "BT ";
+	for (int i = 0; i < 600; ++i) {
+		objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) +
+			" /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
+		fonts += "/C" + std::to_string(i) + " " + std::to_string(9 + i) + " 0 R ";
+		content += "/C" + std::to_string(i) + " 10 Tf <0001> Tj ";
+	}
+	clear_diagnostics();
+	const auto r = interpret(content + "ET", "<< /Font << " + fonts + ">> >>", objects);
+	ASSERT_NE(r.list, nullptr);
+	EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	EXPECT_EQ(all_of<RecordedGlyphRun>(*r.list).size(), 600u) << "every string is still positioned";
+}
+
+TEST(PdfInterpreter, TextFontCount)
+{
+	// More distinct fonts than a page resolves: past 4,096 the rest take the fallback, recorded, and selecting one of
+	// them again never resolves it.
+	{
+		std::vector<std::string> objects{kF1, kF1Descriptor};
+		std::string fonts;
+		std::string content = "BT ";
+		for (int i = 0; i < 4'100; ++i) {
+			objects.emplace_back("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+			fonts += "/H" + std::to_string(i) + " " + std::to_string(7 + i) + " 0 R ";
+			content += "/H" + std::to_string(i) + " 10 Tf ";
+		}
+		content += "(A) Tj ET";
+		clear_diagnostics();
+		const auto r = interpret(content, "<< /Font << " + fonts + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
+}
+
 TEST(PdfInterpreter, TextGlyphLimit)
 {
 	// A string longer than the list's glyph limit is refused before its run is built: the page stops with

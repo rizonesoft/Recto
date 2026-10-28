@@ -74,6 +74,12 @@ public:
 		uint32_t cid;
 	};
 
+	// The heap this CMap holds, for a caller's memory budget.
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return name_.capacity() + codespace_.capacity() * sizeof(Range) + (cids_.capacity() + notdefs_.capacity()) * sizeof(Mapping);
+	}
+
 private:
 	bool identity_ = false;
 	bool vertical_ = false;
@@ -93,6 +99,11 @@ public:
 	[[nodiscard]] static PdfResult<CidToGidMap> parse(std::span<const uint8_t> stream) noexcept;
 	// The CID's glyph, 0 past the map.
 	[[nodiscard]] uint32_t glyph(uint32_t cid) const noexcept;
+
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return glyphs_.capacity() * sizeof(uint16_t);
+	}
 
 private:
 	bool identity_ = true;
@@ -132,6 +143,11 @@ public:
 	[[nodiscard]] double advance(uint32_t cid) const noexcept;
 	// A CID without a `/W2` entry: `w1y` and `vy` from `/DW2`, `vx` half its horizontal advance.
 	[[nodiscard]] CidVertical vertical(uint32_t cid) const noexcept;
+
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return widths_.capacity() * sizeof(Run<double>) + verticals_.capacity() * sizeof(Run<CidVertical>);
+	}
 
 	template <typename V>
 	struct Run {
@@ -183,6 +199,13 @@ public:
 	[[nodiscard]] const std::shared_ptr<const LoadedFont>& font() const noexcept
 	{
 		return font_;
+	}
+
+	// The heap its CMap, maps and widths hold (the embedded program is counted by whoever loads it), for a caller's
+	// memory budget.
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return sizeof(*this) + cmap_.memory_bytes() + map_.memory_bytes() + widths_.memory_bytes();
 	}
 
 private:

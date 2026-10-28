@@ -61,6 +61,17 @@ public:
 	{
 		return bbox_;
 	}
+	// False when the font declares a box of all zeros, which promises nothing (Table 112, 9.8): a run then takes a
+	// box wide enough for any glyph.
+	[[nodiscard]] bool bbox_known() const noexcept
+	{
+		return bbox_known_;
+	}
+	// The heap this font holds, for the interpreter's per-page font budget.
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return sizeof(*this) + (type0_ != nullptr ? type0_->memory_bytes() : 0u);
+	}
 	// The composite font, for section 43's glyphs; null for every other kind.
 	[[nodiscard]] const std::shared_ptr<const Type0Font>& type0() const noexcept
 	{
@@ -78,6 +89,7 @@ private:
 	TextFontKind kind_ = TextFontKind::Fallback;
 	bool vertical_ = false;
 	PdfRect bbox_{0.0, -0.25, 1.0, 1.0};
+	bool bbox_known_ = true;
 	std::array<double, 256> widths_{}; // one-byte kinds: each code's w0
 	std::shared_ptr<const Type0Font> type0_{};
 };
