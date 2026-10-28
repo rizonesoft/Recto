@@ -1444,7 +1444,10 @@ DisplayListBuilder::DisplayListBuilder(
 size_t DisplayListBuilder::glyph_room() const noexcept
 {
 	const size_t max_glyphs = std::min(limits_.max_glyphs, kMaxU32);
-	return glyphs_.size() < max_glyphs ? max_glyphs - glyphs_.size() : 0u;
+	const size_t by_count = glyphs_.size() < max_glyphs ? max_glyphs - glyphs_.size() : 0u;
+	const size_t used = current_pool_bytes();
+	const size_t by_bytes = used < limits_.max_total_bytes ? (limits_.max_total_bytes - used) / sizeof(PositionedGlyph) : 0u;
+	return std::min(by_count, by_bytes);
 }
 
 size_t DisplayListBuilder::current_pool_bytes() const noexcept

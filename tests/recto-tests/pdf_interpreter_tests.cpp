@@ -2913,6 +2913,33 @@ TEST(PdfInterpreter, TextFontEdges)
 		EXPECT_LE(page.runs[0].bounds_pt.x_min, -10'000.0);
 		EXPECT_GE(page.runs[0].bounds_pt.x_max, 10'000.0);
 	}
+	// 3,000 references to one 16 KiB string in /Differences: only numbers and names are kept, and past 1,024
+	// references the rest are not resolved, so the encoding never holds the strings.
+	{
+		std::string differences = "[65 /W";
+		for (int i = 0; i < 3'000; ++i) {
+			differences += " 7 0 R";
+		}
+		differences += "]";
+		clear_diagnostics();
+		size_t peak = 0;
+		std::shared_ptr<const TextFont> f;
+		std::unique_ptr<ResolvedSpace> holder;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			auto resolved_font = resolve_5({"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences 6 0 R >> >>",
+				differences, "(" + std::string(16'384u, 'x') + ")"});
+			holder = std::move(resolved_font.first);
+			f = std::move(resolved_font.second);
+			peak = meter.peak_bytes();
+		}
+		ASSERT_NE(f, nullptr);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, standard14_glyph_by_name(Standard14Font::Helvetica, "W")->width / 1000.0);
+		EXPECT_TRUE(damaged_recorded());
+		if (recto::test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{8} << 20u) << "the encoding held the strings its references named";
+		}
+	}
 	// An indirect size in /ExtGState /Font is resolved.
 	{
 		const TextPage page = text_page("BT /G1 gs (A) Tj ET", "/ExtGState << /G1 << /Font [5 0 R 7 0 R] >> >>", {"12"});
@@ -3002,6 +3029,19 @@ TEST(PdfInterpreter, TextGlyphLimit)
 	EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
 	if (recto::test::ScopedHeapMeter::available()) {
 		EXPECT_LT(work, size_t{3} << 20u) << "the run's glyphs were built before the limit was checked";
+	}
+	// The list's byte budget bounds the run as its glyph count does.
+	DisplayListLimits bytes_only;
+	bytes_only.max_total_bytes = size_t{64} << 10u;
+	{
+		const recto::test::ScopedHeapMeter meter;
+		list = interpret_page(**doc, 0u, bytes_only);
+		work = meter.allocated_bytes();
+	}
+	ASSERT_FALSE(list.has_value());
+	EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
+	if (recto::test::ScopedHeapMeter::available()) {
+		EXPECT_LT(work, size_t{3} << 20u) << "the run's glyphs were built past the list's byte budget";
 	}
 }
 

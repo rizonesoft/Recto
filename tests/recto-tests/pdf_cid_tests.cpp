@@ -440,6 +440,9 @@ TEST(PdfFont, Type0Assembly)
 		ASSERT_TRUE(font.has_value()) << font.error().message.view();
 		ASSERT_NE((*font)->font(), nullptr);
 		EXPECT_EQ((*font)->kind(), CidFontKind::CIDFontType2);
+		// The retained program counts toward the font's memory, which a page's font budget charges.
+		ASSERT_NE((*font)->font()->program(), nullptr);
+		EXPECT_GE((*font)->memory_bytes(), (*font)->font()->program()->size());
 		const std::vector<uint8_t> text{0u, 0u, 0u, 1u, 0u, 2u, 0u, 3u};
 		std::span<const uint8_t> rest(text);
 		// CID 2's glyph 9 and CID 3 (past the map) are not in the font: each is drawn as CID 0 (no notdef mapping in

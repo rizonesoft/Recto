@@ -24,6 +24,8 @@ namespace {
 
 [[nodiscard]] std::optional<PdfValue> resolved(const Document& document, const PdfValue* value, std::optional<PdfError>& fatal);
 
+inline constexpr size_t kMaxIndirectDifferences = 1'024u;
+
 // A direct copy of an encoding dictionary with its `/BaseEncoding` and `/Differences` (and the array's elements)
 // resolved, since `SimpleEncoding::build` reads only direct values (9.6.6.1).
 [[nodiscard]] PdfValue direct_encoding(const Document& document, const PdfValue& encoding, std::optional<PdfError>& fatal)
@@ -39,10 +41,27 @@ namespace {
 	if (const std::optional<PdfValue> differences = resolved(document, dict->get("Differences"), fatal)) {
 		if (const PdfArray* array = differences->as_array()) {
 			PdfArray direct;
-			direct.reserve(array->size());
+			direct.reserve(std::min(array->size(), kMaxDifferencesEntries + 1u));
+			size_t references = 0;
 			for (const PdfValue& element : *array) {
-				std::optional<PdfValue> value = resolved(document, &element, fatal);
-				direct.push_back(value.has_value() ? std::move(*value) : PdfValue(PdfNull{}));
+				if (direct.size() > kMaxDifferencesEntries) {
+					break; // past the limit: `SimpleEncoding::build` refuses the array by its length
+				}
+				if (!element.is_ref()) {
+					direct.push_back(element);
+					continue;
+				}
+				// Only a number or a name means anything here (Table 114); a reference to anything else is kept as
+				// null, and past kMaxIndirectDifferences references (a real array has at most 512 entries that
+				// matter) the rest are not resolved at all.
+				std::optional<PdfValue> value;
+				if (++references <= kMaxIndirectDifferences) {
+					value = resolved(document, &element, fatal);
+				} else if (references == kMaxIndirectDifferences + 1u) {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "/Differences holds more indirect entries than its limit");
+				}
+				const bool meaningful = value.has_value() && (value->as_number().has_value() || value->as_name().has_value());
+				direct.push_back(meaningful ? std::move(*value) : PdfValue(PdfNull{}));
 			}
 			out.set("Differences", PdfValue(std::move(direct)));
 		}

@@ -1494,8 +1494,13 @@ private:
 		double x = 0.0;
 		double y = 0.0;
 		// A run that could not be recorded is refused before it is built, so a long string never allocates past the
-		// list's glyph limit.
+		// list's glyph or byte limit; every code takes at least a byte, so the reservation is exact and never doubles.
 		const size_t room = builder_.glyph_room();
+		try {
+			glyphs.reserve(std::min(bytes.size(), room));
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory positioning a text string");
+		}
 		for (size_t at = 0; at < bytes.size();) {
 			if (glyphs.size() >= room) {
 				return make_pdf_error(ErrorCode::ResourceLimit, "Text string exceeds the display list's glyph limit");
