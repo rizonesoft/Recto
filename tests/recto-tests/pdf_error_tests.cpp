@@ -505,7 +505,7 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 // 23).
 TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 {
-	constexpr std::array<std::string_view, 41> kNamesByValue = {
+	constexpr std::array<std::string_view, 42> kNamesByValue = {
 		"None",
 		"CommandCount",
 		"ChangeSetSize",
@@ -547,6 +547,7 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 		"SampleTableBytes",
 		"CalculatorOperators",
 		"ColorSpaceSteps",
+		"FormDepth",
 	};
 	static_assert(noexcept(refusal_reason_name(RefusalReason::None)));
 	static_assert(refusal_reason_name(RefusalReason::OutputUnwritable) == "OutputUnwritable");

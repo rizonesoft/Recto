@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -3861,6 +3862,414 @@ TEST(PdfInterpreter, FontLoaderOutOfMemory)
 		EXPECT_EQ(list.error().code, ErrorCode::OutOfMemory) << "nth " << nth;
 	}
 	EXPECT_TRUE(failed_once);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Form XObjects (D01 T02 section 46).
+// ---------------------------------------------------------------------------------------------------------------------
+
+// A Form XObject stream object with its dictionary entries (`/Type /XObject /Subtype /Form` added) and content.
+std::string form_object(std::string_view entries, std::string_view content)
+{
+	return stream_object("/Type /XObject /Subtype /Form " + std::string(entries), content);
+}
+
+// The axis-aligned box of `box`'s corners mapped by `m`.
+PdfRect mapped_box(const PdfRect& box, const PdfMatrix& m)
+{
+	const PdfPoint corners[4] = {{box.x_min, box.y_min}, {box.x_max, box.y_min}, {box.x_min, box.y_max}, {box.x_max, box.y_max}};
+	double x0 = 1e300, y0 = 1e300, x1 = -1e300, y1 = -1e300;
+	for (const PdfPoint& c : corners) {
+		const PdfPoint p = transform_point(m, c);
+		x0 = std::min(x0, p.x);
+		y0 = std::min(y0, p.y);
+		x1 = std::max(x1, p.x);
+		y1 = std::max(y1, p.y);
+	}
+	return PdfRect{x0, y0, x1, y1};
+}
+
+// The painted boxes of the page's path draws, in order.
+std::vector<CommandBounds> draw_bounds(const DisplayList& list)
+{
+	std::vector<CommandBounds> out;
+	const auto commands = list.commands();
+	const auto bounds = list.command_bounds();
+	for (size_t i = 0; i < commands.size(); ++i) {
+		if (commands[i].as<DrawPathCommand>() != nullptr) {
+			out.push_back(bounds[i]);
+		}
+	}
+	return out;
+}
+
+TEST(PdfInterpreter, FormXObjectBasics)
+{
+	// A form rotated 30 degrees and sheared, under a caller CTM that scales by 2 and translates by (10, 20): its fill
+	// is clipped to its /BBox mapped by the form matrix and the CTM; the caller's drawing after Do is under the
+	// caller's CTM and clip again.
+	const double c = std::cos(std::numbers::pi / 6.0);
+	const double sn = std::sin(std::numbers::pi / 6.0);
+	const PdfMatrix form{c, sn, -sn + 0.2, c, 5.0, 7.0};
+	const PdfMatrix ctm{2.0, 0.0, 0.0, 2.0, 10.0, 20.0};
+	char matrix[160];
+	std::snprintf(matrix, sizeof(matrix), "/Matrix [%.17g %.17g %.17g %.17g %.17g %.17g]", form.a, form.b, form.c, form.d, form.e, form.f);
+	{
+		const auto r = interpret("0 0 150 150 re W n 2 0 0 2 10 20 cm /F0 Do 75 75 1 1 re f 10 0 1 1 re f",
+			"<< /XObject << /F0 5 0 R >> >>",
+			{form_object(std::string("/BBox [0 0 100 50] ") + matrix, "-1000 -1000 3000 3000 re f")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 3u);
+		ASSERT_TRUE(draws[0].has_bounds);
+		const PdfRect clip = mapped_box(PdfRect{0.0, 0.0, 100.0, 50.0}, concat_matrix(form, ctm));
+		const PdfRect page_clip{0.0, 0.0, 150.0, 150.0}; // inside the 200 by 200 test page
+		expect_rect(draws[0].bounds_pt, std::max(clip.x_min, page_clip.x_min), std::max(clip.y_min, page_clip.y_min),
+			std::min(clip.x_max, page_clip.x_max), std::min(clip.y_max, page_clip.y_max));
+		// (160, 170) is inside the page but outside the caller's 150 by 150 clip: still clipped after Do.
+		EXPECT_FALSE(draws[1].has_bounds) << "the caller's clip no longer applies after Do";
+		// (30, 20) is inside the caller's clip but below the form's /BBox (its lowest point is y 34): drawn, so the
+		// form's clip ended with it.
+		ASSERT_TRUE(draws[2].has_bounds) << "the form's clip leaked out of it";
+		expect_rect(draws[2].bounds_pt, 30.0, 20.0, 32.0, 22.0);
+		// The clip path recorded is the /BBox in form space.
+		const auto clips = all_of<PushClipPathCommand>(*r.list);
+		ASSERT_EQ(clips.size(), 2u);
+		ASSERT_EQ(verbs_of(*r.list, clips[1].path_index), std::vector<PathVerb>{PathVerb::Rect});
+		const auto points = points_of(*r.list, clips[1].path_index);
+		ASSERT_EQ(points.size(), 2u);
+		expect_point(points[0], 0.0, 0.0, "the /BBox's origin");
+		expect_point(points[1], 100.0, 50.0, "the /BBox's size");
+	}
+	// A nested form's matrix composes on its parent's: a unit square at the inner form's origin lands at the outer
+	// translation plus the inner one.
+	{
+		const auto r = interpret("/Outer Do", "<< /XObject << /Outer 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Matrix [1 0 0 1 100 0] /Resources << /XObject << /Inner 6 0 R >> >>", "/Inner Do"),
+				form_object("/BBox [-1000 -1000 1000 1000] /Matrix [2 0 0 2 0 50]", "0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 1u);
+		expect_rect(draws[0].bounds_pt, 100.0, 50.0, 102.0, 52.0);
+	}
+	// A form leaving two q, a surplus Q, an unfinished path, a pending W and an open BT: it draws inside, and the
+	// caller's own unfinished path and text matrix go on as if the form were not there.
+	{
+		const auto r = interpret("BT 1 0 0 1 50 60 Tm 100 100 m /F0 Do 110 100 l S /F1 10 Tf (A) Tj ET",
+			"<< /XObject << /F0 5 0 R >> /Font << /F1 6 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000]", "q q 0 0 5 5 re f Q Q Q Q 1 1 m 2 2 l 0 0 9 9 re W BT 1 0 0 1 999 999 Tm"),
+				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		expect_rect(draws[0].bounds_pt, 0.0, 0.0, 5.0, 5.0);
+		ASSERT_TRUE(draws[1].has_bounds) << "the caller's stroke was lost or clipped";
+		EXPECT_NEAR(draws[1].bounds_pt.x_min, 100.0, 1.0) << "the caller's path did not resume at 100 100";
+		const auto runs = all_of<RecordedGlyphRun>(*r.list);
+		ASSERT_EQ(runs.size(), 1u);
+		EXPECT_DOUBLE_EQ(runs[0].text_matrix.e, 50.0);
+		EXPECT_DOUBLE_EQ(runs[0].text_matrix.f, 60.0);
+	}
+}
+
+TEST(PdfInterpreter, FormXObjectResources)
+{
+	const std::string helvetica = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+	const std::string courier = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>";
+	const auto face_of = [](Standard14Font font) {
+		const auto drawn = standard14_face_glyph(font, U'A');
+		return drawn.has_value() && drawn->has_value() ? (*drawn)->face.get() : nullptr;
+	};
+	const auto handles = [](const DisplayList& list) {
+		std::vector<const void*> out;
+		for (const RecordedGlyphRun& run : all_of<RecordedGlyphRun>(list)) {
+			out.push_back(run.font_handle.get());
+		}
+		return out;
+	};
+	// The page's /F1 is Helvetica; the form's own /F1 is Courier; a resource-less form, drawn by the page and by the
+	// Courier form, draws with the page's Helvetica.
+	{
+		const auto r = interpret("BT /F1 10 Tf (A) Tj ET /Own Do /Bare Do",
+			"<< /Font << /F1 5 0 R >> /XObject << /Own 7 0 R /Bare 8 0 R >> >>",
+			{helvetica, courier,
+				form_object("/BBox [-1000 -1000 1000 1000] /Resources << /Font << /F1 6 0 R >> /XObject << /Bare 8 0 R >> >>",
+					"BT /F1 10 Tf (A) Tj ET /Bare Do"),
+				form_object("/BBox [-1000 -1000 1000 1000]", "BT /F1 10 Tf (A) Tj ET")});
+		ASSERT_NE(r.list, nullptr);
+		const auto h = handles(*r.list);
+		ASSERT_EQ(h.size(), 4u);
+		EXPECT_EQ(h[0], face_of(Standard14Font::Helvetica)) << "page";
+		EXPECT_EQ(h[1], face_of(Standard14Font::Courier)) << "the form's own /F1";
+		EXPECT_EQ(h[2], face_of(Standard14Font::Helvetica)) << "a resource-less form inside the Courier form takes the page's /F1";
+		EXPECT_EQ(h[3], face_of(Standard14Font::Helvetica)) << "a resource-less form drawn by the page";
+	}
+	// An ExtGState and a colour space named alike in both scopes each resolve to their own.
+	{
+		const auto r = interpret("/G1 gs /C0 cs 1 sc 0 0 1 1 re B /Own Do",
+			"<< /ExtGState << /G1 << /LW 3 >> >> /ColorSpace << /C0 /DeviceGray >> /XObject << /Own 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Resources << /ExtGState << /G1 << /LW 7 >> >> /ColorSpace << /C0 /DeviceCMYK >> >>",
+				"/G1 gs /C0 cs 0 0 0 1 sc 0 0 1 1 re B")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		EXPECT_GT(draws[0].fill_color.r, 0.9f) << "the page's /C0 is gray: 1 is white";
+		EXPECT_LT(draws[1].fill_color.r, 0.2f) << "the form's /C0 is CMYK: 0 0 0 1 is black";
+		const auto styles = all_of<SetStrokeStyleCommand>(*r.list);
+		ASSERT_GE(styles.size(), 2u);
+		EXPECT_FLOAT_EQ(styles.front().line_width, 3.0f);
+		EXPECT_FLOAT_EQ(styles.back().line_width, 7.0f);
+	}
+	// A form's /DefaultRGB (8.6.5.6) draws its device RGB through a CalRGB space; the page's draws the same values as
+	// plain RGB.
+	{
+		const auto r = interpret("0.5 0.5 0.5 rg 0 0 1 1 re f /Own Do", "<< /XObject << /Own 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Resources << /ColorSpace << /DefaultRGB [/CalRGB << /WhitePoint [0.9505 1 1.089] "
+				"/Gamma [5 5 5] >>] >> >>",
+				"0.5 0.5 0.5 rg 0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		EXPECT_NEAR(draws[0].fill_color.r, 0.5f, 0.01f);
+		EXPECT_GT(std::abs(draws[1].fill_color.r - draws[0].fill_color.r), 0.05f) << "the form's /DefaultRGB was not used";
+	}
+	// The tint transform budget is the page's, shared by its forms: four 15 MiB tables on the page, a fifth in a form
+	// is refused (black where its table gives white).
+	{
+		const size_t fifteen = size_t{15} << 20u;
+		std::string spaces;
+		std::string content;
+		std::vector<std::string> objects;
+		for (int k = 0; k < 4; ++k) {
+			spaces += "/S" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray " + std::to_string(5 + k) + " 0 R] ";
+			content += "/S" + std::to_string(k) + " cs 1 scn 0 0 10 10 re f ";
+			objects.push_back(flat_table(fifteen, 0xFFu));
+		}
+		objects.push_back(flat_table(fifteen, 0xFFu)); // object 9, the form's
+		objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Resources << /ColorSpace << /S4 [/Separation /Spot4 /DeviceGray 9 0 R] >> >>",
+			"/S4 cs 1 scn 0 0 10 10 re f")); // object 10
+		clear_diagnostics();
+		const auto r = interpret(content + "/Own Do", "<< /ColorSpace << " + spaces + ">> /XObject << /Own 10 0 R >> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = all_of<DrawPathCommand>(*r.list);
+		ASSERT_EQ(draws.size(), 5u);
+		EXPECT_LT(draws[4].fill_color.r, 0.1f) << "the form's table was not charged to the page's budget";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::SampleTableBytes));
+	}
+}
+
+TEST(PdfInterpreter, FormXObjectCycle)
+{
+	// F1 draws itself: refused at its first repeat, and the page's drawing after it kept.
+	{
+		clear_diagnostics();
+		const auto r = interpret("/F1 Do 0 0 1 1 re f", "<< /XObject << /F1 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Resources << /XObject << /F1 5 0 R >> >>", "2 2 1 1 re f /F1 Do")});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 2u) << "the form once, then the page";
+		EXPECT_TRUE(damaged_recorded());
+	}
+	// A chain of 33 distinct forms: 32 levels drawn, the 33rd refused with FormDepth, the page going on.
+	{
+		std::vector<std::string> objects;
+		for (int i = 0; i < 33; ++i) {
+			const std::string next = i + 1 < 33
+				? "/Resources << /XObject << /N " + std::to_string(6 + i) + " 0 R >> >>"
+				: std::string();
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] " + next, i + 1 < 33 ? "0 0 1 1 re f /N Do" : "0 0 1 1 re f"));
+		}
+		clear_diagnostics();
+		const auto r = interpret("/N Do 5 5 1 1 re f", "<< /XObject << /N 5 0 R >> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 32u + 1u) << "32 levels and the page";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::FormDepth));
+	}
+}
+
+TEST(PdfInterpreter, FormXObjectWork)
+{
+	// A 20-level fan-out (each form drawing the next twice) under a work budget of 100,000, every other limit far
+	// above what it draws: refused by the work budget itself, quickly.
+	{
+		std::vector<std::string> objects;
+		for (int i = 0; i < 20; ++i) {
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Resources << /XObject << /N " + std::to_string(6 + i) + " 0 R >> >>",
+				"/N Do /N Do"));
+		}
+		objects.push_back(form_object("/BBox [-1000 -1000 1000 1000]", "")); // the leaf, object 25
+		const auto bytes = one_page_pdf("/N Do", "<< /XObject << /N 5 0 R >> >>", objects);
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		DisplayListLimits limits;
+		limits.max_geometry_work_ops = 100'000u;
+		const auto start = std::chrono::steady_clock::now();
+		const auto list = interpret_page(**doc, 0u, limits);
+		const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+		ASSERT_FALSE(list.has_value()) << "the fan-out was not bounded";
+		EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
+		EXPECT_NE(list.error().message.view().find("work budget"), std::string_view::npos) << list.error().message.view();
+		EXPECT_LT(seconds, 5.0);
+	}
+	// The content charge itself: a 6-level fan-out (127 invocations) of forms padded to 2,000 bytes charges 254,000
+	// against a budget of 100,000 and is refused, while the forms' own operators and clips cost far less, so the same
+	// page with unpadded forms draws.
+	{
+		const auto fan_out = [](size_t padding) {
+			std::vector<std::string> objects;
+			for (int i = 0; i < 6; ++i) {
+				objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Resources << /XObject << /N " + std::to_string(6 + i) + " 0 R >> >>",
+					"/N Do /N Do" + std::string(padding, ' ')));
+			}
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000]", "0 0 1 1 re f" + std::string(padding, ' ')));
+			const auto bytes = one_page_pdf("/N Do", "<< /XObject << /N 5 0 R >> >>", objects);
+			auto doc = Document::open_memory(bytes);
+			EXPECT_TRUE(doc.has_value());
+			DisplayListLimits limits;
+			limits.max_geometry_work_ops = 100'000u;
+			return interpret_page(**doc, 0u, limits);
+		};
+		const auto padded = fan_out(2'000u);
+		ASSERT_FALSE(padded.has_value()) << "the forms' content was not charged to the work budget";
+		EXPECT_NE(padded.error().message.view().find("work budget"), std::string_view::npos) << padded.error().message.view();
+		const auto plain = fan_out(0u);
+		ASSERT_TRUE(plain.has_value()) << plain.error().message.view();
+		EXPECT_EQ(all_of<DrawPathCommand>(**plain).size(), 64u);
+	}
+	// One form drawn 1,000 times is decoded once and recorded 1,000 times.
+	{
+		std::string many;
+		for (int i = 0; i < 1'000; ++i) {
+			many += "/F0 Do ";
+		}
+		const auto decodes = [&](const std::string& content) {
+			const auto bytes = one_page_pdf(content, "<< /XObject << /F0 5 0 R >> >>",
+				{form_object("/BBox [-1000 -1000 1000 1000]", "0 0 1 1 re f")});
+			auto doc = Document::open_memory(bytes);
+			EXPECT_TRUE(doc.has_value());
+			const uint64_t before = (*doc)->decoded_stream_count();
+			const auto list = interpret_page(**doc, 0u);
+			EXPECT_TRUE(list.has_value());
+			if (list.has_value()) {
+				EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), content == many ? 1'000u : 1u);
+			}
+			return (*doc)->decoded_stream_count() - before;
+		};
+		EXPECT_EQ(decodes(many), decodes("/F0 Do")) << "the form was decoded more than once";
+	}
+	// Decoding is budgeted at 64 MiB per page: a form whose content decodes past it is refused and the next form
+	// drawn; forms whose decodes sum past it are refused from the first that would pass it.
+	{
+		auto big = flate_compress(std::vector<uint8_t>(size_t{65} << 20u, ' '));
+		ASSERT_TRUE(big.has_value());
+		auto twenty = flate_compress(std::vector<uint8_t>(size_t{20} << 20u, ' '));
+		ASSERT_TRUE(twenty.has_value());
+		const std::string big_s(big->begin(), big->end());
+		const std::string twenty_s(twenty->begin(), twenty->end());
+		clear_diagnostics();
+		// The oversized decode spends what remained of the budget (so distinct oversized forms cannot each cost a
+		// 64 MiB decode); later forms are refused, and the page's own drawing goes on.
+		const auto r = interpret("/Big Do /Small Do 5 5 1 1 re f", "<< /XObject << /Big 5 0 R /Small 6 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Filter /FlateDecode", big_s),
+				form_object("/BBox [-1000 -1000 1000 1000]", "0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		const auto oversized = draw_bounds(*r.list);
+		ASSERT_EQ(oversized.size(), 1u) << "only the page's own rectangle";
+		expect_rect(oversized[0].bounds_pt, 5.0, 5.0, 6.0, 6.0);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		std::string names;
+		std::string content;
+		std::vector<std::string> objects;
+		for (int i = 0; i < 4; ++i) {
+			names += "/T" + std::to_string(i) + " " + std::to_string(5 + i) + " 0 R ";
+			content += "/T" + std::to_string(i) + " Do 0 0 1 1 re f ";
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Filter /FlateDecode", twenty_s));
+		}
+		clear_diagnostics();
+		const auto sum = interpret(content, "<< /XObject << " + names + ">> >>", objects);
+		ASSERT_NE(sum.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*sum.list).size(), 4u) << "the page's own draws go on";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes)) << "the fourth 20 MiB form passes 64 MiB";
+	}
+	// A damaged form drawn 100 times is decoded once.
+	{
+		std::string many;
+		for (int i = 0; i < 100; ++i) {
+			many += "/D Do ";
+		}
+		const auto bytes = one_page_pdf(many + "0 0 1 1 re f", "<< /XObject << /D 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Filter /FlateDecode", "not flate data at all")});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		const uint64_t before = (*doc)->decoded_stream_count();
+		const auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 1u);
+		EXPECT_LE((*doc)->decoded_stream_count() - before, 2u) << "the damaged form was decoded again for each Do";
+	}
+	// Memory running out while decoding a form's content is OutOfMemory from interpret_page.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		auto packed = flate_compress(std::vector<uint8_t>(size_t{1} << 20u, ' '));
+		ASSERT_TRUE(packed.has_value());
+		const auto bytes = one_page_pdf("/F0 Do", "<< /XObject << /F0 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000] /Filter /FlateDecode", std::string(packed->begin(), packed->end()))});
+		bool failed = false;
+		for (uint32_t nth = 1; nth < 64u && !failed; ++nth) {
+			auto doc = Document::open_memory(bytes);
+			ASSERT_TRUE(doc.has_value());
+			PdfResult<std::shared_ptr<const DisplayList>> list = make_pdf_error(ErrorCode::Ok);
+			{
+				const recto::test::ScopedAllocationFailure fail(nth, size_t{512} << 10u);
+				list = interpret_page(**doc, 0u);
+			}
+			if (!list.has_value()) {
+				failed = true;
+				EXPECT_EQ(list.error().code, ErrorCode::OutOfMemory) << "nth " << nth;
+			}
+		}
+		EXPECT_TRUE(failed) << "no allocation of the decode was made to fail";
+	}
+}
+
+TEST(PdfInterpreter, FormXObjectRefusals)
+{
+	// Each refusal is recorded and the page's next drawing still recorded.
+	struct Case {
+		const char* what;
+		std::string content;
+		std::string object;
+		ErrorCode code;
+	};
+	const std::vector<Case> cases = {
+		{"a missing name", "/Nope Do", form_object("/BBox [0 0 1 1]", ""), ErrorCode::DamagedFormat},
+		{"no operand", "Do", form_object("/BBox [0 0 1 1]", ""), ErrorCode::DamagedFormat},
+		{"a non-stream", "/X Do", "<< /Type /XObject /Subtype /Form >>", ErrorCode::DamagedFormat},
+		{"a PostScript XObject", "/X Do", stream_object("/Type /XObject /Subtype /PS", "showpage"), ErrorCode::UnsupportedFeature},
+		{"an Image XObject", "/X Do", stream_object("/Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", "A"),
+			ErrorCode::UnsupportedFeature},
+		{"a singular matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 2 2 4 0 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"a non-finite matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 0 0 1 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"a missing /BBox", "/X Do", form_object("", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"a malformed /BBox", "/X Do", form_object("/BBox [0 0 10]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+		{"an empty /BBox", "/X Do", form_object("/BBox [5 5 5 20]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
+	};
+	for (const Case& c : cases) {
+		SCOPED_TRACE(c.what);
+		clear_diagnostics();
+		const auto r = interpret(c.content + " 50 50 1 1 re f", "<< /XObject << /X 5 0 R >> >>", {c.object});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 1u) << "the refused XObject drew, or the page's next draw was lost";
+		expect_rect(draws[0].bounds_pt, 50.0, 50.0, 51.0, 51.0);
+		EXPECT_TRUE(recorded(c.code));
+	}
+	// A form with /Group (section 15) or /OC (section 47) draws as plain content meanwhile.
+	for (const char* entry : {"/Group << /S /Transparency /I true >>", "/OC << /Type /OCG /Name (Layer) >>"}) {
+		SCOPED_TRACE(entry);
+		const auto r = interpret("/X Do", "<< /XObject << /X 5 0 R >> >>",
+			{form_object(std::string("/BBox [0 0 10 10] ") + entry, "0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+	}
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

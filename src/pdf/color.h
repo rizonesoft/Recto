@@ -270,6 +270,11 @@ public:
 	// A space given as a value (a name or an array, an image's `/ColorSpace`).
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> resolve(const PdfValue& value) noexcept;
 
+	// Resolves names and the `/Default*` device spaces against another `/ColorSpace` dictionary from now on (a Form
+	// XObject's scope, D01 T02 section 46): what `named` and `device` remembered is forgotten, while the parsed tint
+	// transforms and their budgets are kept, so switching scopes resets no bound.
+	void set_resources(const PdfDict* color_space_resources) noexcept;
+
 private:
 	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> resolve_at(
 		const PdfValue& value, size_t depth, bool defaults) noexcept;

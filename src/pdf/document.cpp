@@ -1969,6 +1969,7 @@ PdfResult<std::vector<uint8_t>> Document::decode_stream(
 	size_t max_decoded_bytes) const noexcept
 {
 	try {
+		++decoded_streams_;
 		if (needs_password()) {
 			return make_doc_error(
 				ErrorCode::NeedsPassword,

@@ -1049,6 +1049,14 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::named(std::string_view
 	}
 }
 
+void ColorSpaces::set_resources(const PdfDict* color_space_resources) noexcept
+{
+	if (color_space_resources != resources_) {
+		resources_ = color_space_resources;
+		resolved_.clear();
+	}
+}
+
 PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve(const PdfValue& value) noexcept
 {
 	steps_ = 0;

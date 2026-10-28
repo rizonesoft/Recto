@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <deque>
 #include <map>
 #include <unordered_map>
 #include <vector>
@@ -203,6 +204,7 @@ enum class Op : uint8_t {
 	FillColor,
 	StrokeColor,
 	BeginInlineImage,
+	DrawXObject,
 	// Text (D01 T02 section 42).
 	BeginText,
 	EndText,
@@ -224,7 +226,7 @@ enum class Op : uint8_t {
 };
 
 // Sorted by name (byte order) for the binary search in `op_named`.
-inline constexpr std::array<std::pair<std::string_view, Op>, 60> kOperators = {{
+inline constexpr std::array<std::pair<std::string_view, Op>, 61> kOperators = {{
 	{"\"", Op::NextLineShowSpaced},
 	{"'", Op::NextLineShow},
 	{"B", Op::FillStroke},
@@ -232,6 +234,7 @@ inline constexpr std::array<std::pair<std::string_view, Op>, 60> kOperators = {{
 	{"BI", Op::BeginInlineImage},
 	{"BT", Op::BeginText},
 	{"CS", Op::StrokeSpace},
+	{"Do", Op::DrawXObject},
 	{"ET", Op::EndText},
 	{"F", Op::Fill},
 	{"G", Op::StrokeGray},
@@ -299,10 +302,13 @@ class Interpreter {
 public:
 	Interpreter(const Document& document, const PdfDict& resources, const PdfRect& page_box, const DisplayListLimits& limits)
 		: document_(document)
-		, resources_(resources)
 		, builder_(page_box, limits)
 		, max_depth_(std::min(kMaxGraphicsStateDepth, limits.max_save_depth))
 	{
+		auto page = std::make_unique<ResourceScope>();
+		page->resources = &resources;
+		scope_ = page.get();
+		scopes_.push_back(std::move(page));
 	}
 
 	[[nodiscard]] PdfResult<std::shared_ptr<const DisplayList>> run(std::span<const uint8_t> content) noexcept
@@ -323,12 +329,25 @@ private:
 		return error.code != ErrorCode::DamagedFormat;
 	}
 
+	// Interprets `content` and every Form XObject it draws, on an explicit stack of frames rather than the native one
+	// (a form pushes a frame and its content runs in this loop), so nested forms cost heap, not stack. A frame that
+	// ends gives its form's caller back its state; a fatal error unwinds every frame the same way before it returns.
 	[[nodiscard]] PdfResult<void> interpret(std::span<const uint8_t> content)
 	{
-		Parser parser(content);
-		Lexer& lexer = parser.lexer();
-		std::vector<PdfValue> operands;
-		for (;;) {
+		frames_.push_back(Frame{nullptr, std::make_unique<Parser>(content), {}, nullptr});
+		auto result = run_frames();
+		while (!frames_.empty()) {
+			(void)end_frame();
+		}
+		return result;
+	}
+
+	[[nodiscard]] PdfResult<void> run_frames()
+	{
+		while (!frames_.empty()) {
+			const size_t top = frames_.size() - 1u;
+			Parser& parser = *frames_[top].parser; // owned by the frame, so it stays put while frames are pushed
+			Lexer& lexer = parser.lexer();
 			const size_t before = lexer.position();
 			auto peeked = lexer.peek_token();
 			if (!peeked.has_value()) {
@@ -336,12 +355,13 @@ private:
 					return peeked.error();
 				}
 				// A token the lexer cannot read: the operator it belongs to is skipped, and reading resumes past it.
-				drop_operands(operands);
+				drop_operands(frames_[top].operands);
 				resync(lexer, before);
 				continue;
 			}
 			if (peeked->kind == TokenKind::Eof) {
-				break;
+				RECTO_PDF_RETURN_IF_ERROR(end_frame());
+				continue;
 			}
 			if (peeked->kind == TokenKind::Keyword) {
 				auto op = lexer.next_token();
@@ -349,7 +369,7 @@ private:
 					if (fatal(op.error())) {
 						return op.error();
 					}
-					drop_operands(operands);
+					drop_operands(frames_[top].operands);
 					resync(lexer, before);
 					continue;
 				}
@@ -360,12 +380,13 @@ private:
 						return *resolve_failure_; // a colour space the image named did not resolve, the cause of any refusal
 					}
 					RECTO_PDF_RETURN_IF_ERROR(skipped);
-					operands.clear();
+					frames_[top].operands.clear();
 					skip_next_ = false;
 					continue;
 				}
-				RECTO_PDF_RETURN_IF_ERROR(dispatch(code, operands));
-				operands.clear();
+				// `frames_` is a deque, so the operands stay where they are if `Do` pushes a form's frame.
+				RECTO_PDF_RETURN_IF_ERROR(dispatch(code, frames_[top].operands));
+				frames_[top].operands.clear();
 				continue;
 			}
 			auto operand = parser.parse_direct_object();
@@ -373,17 +394,28 @@ private:
 				if (fatal(operand.error())) {
 					return operand.error();
 				}
-				drop_operands(operands);
+				drop_operands(frames_[top].operands);
 				resync(lexer, before);
 				continue;
 			}
-			if (operands.size() >= kMaxContentOperands) {
-				drop_operands(operands);
+			if (frames_[top].operands.size() >= kMaxContentOperands) {
+				drop_operands(frames_[top].operands);
 				continue;
 			}
-			operands.push_back(std::move(*operand));
+			frames_[top].operands.push_back(std::move(*operand));
 		}
 		return {};
+	}
+
+	// Ends the top frame: a form's gives its caller back everything the form changed.
+	[[nodiscard]] PdfResult<void> end_frame()
+	{
+		std::unique_ptr<FormExit> exit = std::move(frames_.back().form);
+		frames_.pop_back();
+		if (exit == nullptr) {
+			return {};
+		}
+		return leave_form(*exit);
 	}
 
 	// The operator these operands belong to is skipped: an operand was unreadable or past the ceiling.
@@ -426,7 +458,7 @@ private:
 				return count;
 			}
 			if (depth == 0) {
-				if (const auto named = resource("ColorSpace", color_spaces_, *n)) {
+				if (const auto named = resource("ColorSpace", scope_->color_spaces, *n)) {
 					return inline_components(*named, 1);
 				}
 			}
@@ -734,6 +766,13 @@ private:
 		// Graphics state.
 		case Op::Save: {
 			return save();
+		}
+		case Op::DrawXObject: {
+			if (operands.size() != 1u || !operands[0].as_name().has_value()) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "Do takes one XObject name"); // recorded
+				return {};
+			}
+			return draw_xobject(*operands[0].as_name());
 		}
 		case Op::Restore: {
 			return restore();
@@ -1067,8 +1106,8 @@ private:
 			--ignored_saves_;
 			return {};
 		}
-		if (state_stack_.empty()) {
-			return {}; // an unmatched Q in a sloppy file is ignored
+		if (state_stack_.size() <= save_floor_) {
+			return {}; // an unmatched Q in a sloppy file is ignored, and a form's cannot pop its caller's saves
 		}
 		RECTO_PDF_RETURN_IF_ERROR(builder_.restore_state());
 		state_ = std::move(state_stack_.back());
@@ -1139,11 +1178,47 @@ private:
 		std::optional<PdfDict> dict{};
 	};
 
+	// The resources a content stream draws with (ISO 32000-1 7.8.3): the page's at the bottom of `scopes_`, a Form
+	// XObject's while it runs; each keeps its own category caches and font-by-name cache, since one name means
+	// different things in different scopes. Kept for the page by the `/Resources` object, at most kMaxResourceScopes.
+	struct ResourceScope {
+		const PdfDict* resources{nullptr};
+		std::shared_ptr<const PdfValue> owner{}; // what `resources` lives in: a form's `/Resources` object, or the form
+		Category ext_gstates{};
+		Category color_spaces{};
+		Category font_resources{};
+		Category xobjects{};
+		std::unordered_map<std::string, std::shared_ptr<const TextFont>, StringHash, std::equal_to<>> fonts{};
+	};
+
+	// What a form's caller gets back when the form's content ends.
+	struct FormExit {
+		size_t floor{0};
+		size_t caller_floor{0};
+		size_t caller_ignored{0};
+		PdfMatrix text{};
+		PdfMatrix line{};
+		PathBuilder path{};
+		std::optional<PdfPoint> current{};
+		std::optional<PdfPoint> start{};
+		std::optional<FillRule> clip{};
+		bool closed{false};
+		ResourceScope* scope{nullptr};
+		std::unique_ptr<ResourceScope> transient{};
+	};
+	// One content stream being interpreted: the page's, or a form's (its content kept alive here).
+	struct Frame {
+		std::shared_ptr<const std::vector<uint8_t>> content;
+		std::unique_ptr<Parser> parser;
+		std::vector<PdfValue> operands;
+		std::unique_ptr<FormExit> form;
+	};
+
 	[[nodiscard]] const PdfDict* category(std::string_view name, Category& slot)
 	{
 		if (!slot.resolved) {
 			slot.resolved = true;
-			if (const PdfValue* value = resources_.get(name)) {
+			if (const PdfValue* value = scope_->resources->get(name)) {
 				if (auto r = resolved(*value); r.has_value() && r->as_dict() != nullptr) {
 					slot.dict = *r->as_dict();
 				}
@@ -1194,7 +1269,7 @@ private:
 	// section 15's; a dictionary missing from the resources is skipped.
 	void apply_ext_gstate(std::string_view name)
 	{
-		const auto value = resource("ExtGState", ext_gstates_, name);
+		const auto value = resource("ExtGState", scope_->ext_gstates, name);
 		if (!value.has_value() || value->as_dict() == nullptr) {
 			return;
 		}
@@ -1291,7 +1366,7 @@ private:
 	[[nodiscard]] ColorSpaces& spaces()
 	{
 		if (!spaces_.has_value()) {
-			spaces_.emplace(document_, category("ColorSpace", color_spaces_));
+			spaces_.emplace(document_, category("ColorSpace", scope_->color_spaces));
 		}
 		return *spaces_;
 	}
@@ -1431,10 +1506,10 @@ private:
 	// the fallback, its diagnostic recorded.
 	[[nodiscard]] PdfResult<std::shared_ptr<const TextFont>> named_font(std::string_view name)
 	{
-		if (const auto it = fonts_.find(name); it != fonts_.end()) {
+		if (const auto it = scope_->fonts.find(name); it != scope_->fonts.end()) {
 			return it->second;
 		}
-		const PdfDict* fonts = category("Font", font_resources_);
+		const PdfDict* fonts = category("Font", scope_->font_resources);
 		const PdfValue* entry_value = fonts != nullptr ? fonts->get(name) : nullptr;
 		std::shared_ptr<const TextFont> font;
 		if (entry_value == nullptr) {
@@ -1443,8 +1518,8 @@ private:
 		} else {
 			RECTO_PDF_TRY(font, font_value(*entry_value));
 		}
-		if (fonts_.size() < kMaxCachedFonts) {
-			fonts_.emplace(std::string(name), font);
+		if (scope_->fonts.size() < kMaxCachedFonts) {
+			scope_->fonts.emplace(std::string(name), font);
 		}
 		return font;
 	}
@@ -1644,17 +1719,320 @@ private:
 		return drawn;
 	}
 
+	// `Do` (ISO 32000-1 8.8): a Form XObject drawn, an Image XObject left to section 44, a PostScript one never run.
+	[[nodiscard]] PdfResult<void> draw_xobject(std::string_view name)
+	{
+		const PdfDict* xobjects = category("XObject", scope_->xobjects);
+		const PdfValue* entry = xobjects != nullptr ? xobjects->get(name) : nullptr;
+		if (entry == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "Do names an XObject the resources do not hold"); // recorded
+			return {};
+		}
+		std::shared_ptr<const PdfValue> value;
+		uint64_t key = 0;
+		if (const std::optional<IndirectRef> ref = entry->as_ref()) {
+			key = object_key(*ref);
+			auto shared = document_.resolve_object_shared(*ref);
+			if (!shared.has_value()) {
+				if (fatal(shared.error())) {
+					return shared.error();
+				}
+				return {};
+			}
+			value = std::move(*shared);
+		} else {
+			value = std::make_shared<const PdfValue>(*entry);
+		}
+		const PdfStream* stream = value->as_stream();
+		if (stream == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
+			return {};
+		}
+		const std::optional<PdfValue> subtype_value = entry_of(stream->dict, "Subtype");
+		const std::optional<std::string_view> subtype = subtype_value.has_value() ? subtype_value->as_name() : std::nullopt;
+		if (subtype == std::optional<std::string_view>("Form")) {
+			return draw_form(value, key);
+		}
+		if (subtype == std::optional<std::string_view>("Image")) {
+			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "Image XObjects are drawn by D01 T02 section 44"));
+			return {};
+		}
+		if (subtype == std::optional<std::string_view>("PS")) {
+			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "PostScript XObjects are never run (8.8.2)"));
+			return {};
+		}
+		(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject has no known /Subtype"); // recorded
+		return {};
+	}
+
+	// A dictionary entry resolved, or none.
+	[[nodiscard]] std::optional<PdfValue> entry_of(const PdfDict& dict, std::string_view key)
+	{
+		const PdfValue* value = dict.get(key);
+		return value != nullptr ? resolved(*value) : std::nullopt;
+	}
+
+	// A form's `/Matrix` (identity when absent), or none when it is not six finite numbers or is singular.
+	[[nodiscard]] std::optional<PdfMatrix> form_matrix(const PdfDict& dict)
+	{
+		const std::optional<PdfValue> value = entry_of(dict, "Matrix");
+		if (!value.has_value()) {
+			return PdfMatrix::identity();
+		}
+		const PdfArray* array = value->as_array();
+		if (array == nullptr || array->size() != 6u) {
+			return std::nullopt;
+		}
+		double m[6]{};
+		for (size_t i = 0; i < 6u; ++i) {
+			const std::optional<PdfValue> n = resolved((*array)[i]);
+			const std::optional<double> number = n.has_value() ? n->as_number() : std::nullopt;
+			if (!number.has_value() || !std::isfinite(*number)) {
+				return std::nullopt;
+			}
+			m[i] = *number;
+		}
+		const double det = m[0] * m[3] - m[1] * m[2];
+		if (!std::isfinite(det) || det == 0.0) {
+			return std::nullopt;
+		}
+		return PdfMatrix{m[0], m[1], m[2], m[3], m[4], m[5]};
+	}
+
+	// A form's `/BBox` (required, Table 95), or none when it is missing, not four finite numbers, or empty.
+	[[nodiscard]] std::optional<PdfRect> form_bbox(const PdfDict& dict)
+	{
+		const std::optional<PdfValue> value = entry_of(dict, "BBox");
+		const PdfArray* array = value.has_value() ? value->as_array() : nullptr;
+		if (array == nullptr || array->size() != 4u) {
+			return std::nullopt;
+		}
+		double v[4]{};
+		for (size_t i = 0; i < 4u; ++i) {
+			const std::optional<PdfValue> n = resolved((*array)[i]);
+			const std::optional<double> number = n.has_value() ? n->as_number() : std::nullopt;
+			if (!number.has_value() || !std::isfinite(*number)) {
+				return std::nullopt;
+			}
+			v[i] = *number;
+		}
+		const PdfRect box{v[0], v[1], v[2], v[3]}; // ordered by PdfRect
+		if (!(box.x_max > box.x_min) || !(box.y_max > box.y_min)) {
+			return std::nullopt;
+		}
+		return box;
+	}
+
+	// The scope a form draws in: its own `/Resources`, kept per page by that object (or the form's when the dictionary
+	// is direct), else the page's (7.8.3). Past kMaxResourceScopes a scope is built for this one invocation.
+	[[nodiscard]] ResourceScope* form_scope(const std::shared_ptr<const PdfValue>& form, uint64_t form_key,
+		std::unique_ptr<ResourceScope>& transient)
+	{
+		const PdfDict& dict = form->as_stream()->dict;
+		const PdfValue* entry = dict.get("Resources");
+		if (entry == nullptr) {
+			return scopes_.front().get();
+		}
+		const std::optional<IndirectRef> ref = entry->as_ref();
+		const uint64_t key = ref.has_value() ? object_key(*ref) : (form_key | (uint64_t{1} << 63u));
+		if (const auto it = scope_by_key_.find(key); it != scope_by_key_.end()) {
+			return it->second;
+		}
+		// Shared, not copied: the scope keeps alive the object its dictionary lives in.
+		std::shared_ptr<const PdfValue> owner = form;
+		const PdfDict* resources = entry->as_dict();
+		if (ref.has_value()) {
+			auto shared = document_.resolve_object_shared(*ref);
+			if (shared.has_value()) {
+				owner = std::move(*shared);
+				resources = owner->as_dict();
+			} else {
+				if (fatal(shared.error()) && !resolve_failure_.has_value()) {
+					resolve_failure_ = shared.error();
+				}
+				resources = nullptr;
+			}
+		}
+		if (resources == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A form's /Resources is not a dictionary; it draws with the page's");
+			return scopes_.front().get();
+		}
+		auto scope = std::make_unique<ResourceScope>();
+		scope->owner = std::move(owner);
+		scope->resources = resources;
+		ResourceScope* raw = scope.get();
+		if (scopes_.size() < kMaxResourceScopes) {
+			scope_by_key_.emplace(key, raw);
+			scopes_.push_back(std::move(scope));
+		} else {
+			transient = std::move(scope);
+		}
+		return raw;
+	}
+
+	// Makes `scope` the current one, colour space names included.
+	void use_scope(ResourceScope* scope)
+	{
+		scope_ = scope;
+		if (spaces_.has_value()) {
+			spaces_->set_resources(category("ColorSpace", scope_->color_spaces));
+		}
+	}
+
+	// A form's decoded content: kept per form for the page, decoded at most once, each decode capped at what remains
+	// of kMaxFormContentBytes. Null when it cannot be drawn (damaged, or past the budget), its diagnostic recorded and
+	// the refusal remembered; OutOfMemory and other fatal errors are returned.
+	[[nodiscard]] PdfResult<std::shared_ptr<const std::vector<uint8_t>>> form_content(const PdfStream& stream, uint64_t key)
+	{
+		if (key != 0u) {
+			if (const auto it = form_contents_.find(key); it != form_contents_.end()) {
+				return it->second;
+			}
+		}
+		const auto remember = [&](std::shared_ptr<const std::vector<uint8_t>> content) {
+			if (key != 0u) {
+				form_contents_.emplace(key, content);
+			}
+			return content;
+		};
+		if (form_decoded_ >= kMaxFormContentBytes) {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, form_decoded_,
+				kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
+			return remember(nullptr);
+		}
+		auto decoded = document_.decode_stream(stream, kMaxFormContentBytes - form_decoded_);
+		if (!decoded.has_value()) {
+			const ErrorCode code = decoded.error().code;
+			if (code == ErrorCode::OutOfMemory) {
+				return decoded.error();
+			}
+			if (code == ErrorCode::DecompressionLimitExceeded) {
+				form_decoded_ = kMaxFormContentBytes; // what it decoded used the rest of the budget
+				record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, form_decoded_,
+					kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
+			} else if (code != ErrorCode::DamagedFormat) {
+				record_diagnostic(decoded.error());
+			}
+			return remember(nullptr);
+		}
+		form_decoded_ += decoded->size();
+		return remember(std::make_shared<const std::vector<uint8_t>>(std::move(*decoded)));
+	}
+
+	// Draws a Form XObject (8.10): in a saved state under its `/Matrix`, clipped to its `/BBox`, in its scope, its
+	// content charged to the work budget. The form's content runs as a new frame of `interpret`; when it ends,
+	// `leave_form` gives the caller back everything it left (saves, the clip, a path, a pending clip, the text
+	// matrices).
+	[[nodiscard]] PdfResult<void> draw_form(const std::shared_ptr<const PdfValue>& form, uint64_t key)
+	{
+		const PdfStream& stream = *form->as_stream();
+		if (key != 0u && std::find(form_stack_.begin(), form_stack_.end(), key) != form_stack_.end()) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject draws itself; the repeat is not drawn"); // recorded
+			return {};
+		}
+		if (form_stack_.size() >= kMaxFormDepth) {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::FormDepth, form_stack_.size() + 1u,
+				kMaxFormDepth, "Form XObjects nested past the depth limit are not drawn"));
+			return {};
+		}
+		const std::optional<PdfMatrix> matrix = form_matrix(stream.dict);
+		const std::optional<PdfRect> bbox = form_bbox(stream.dict);
+		if (!matrix.has_value() || !bbox.has_value()) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject's /Matrix or /BBox cannot be used; it is not drawn");
+			return {};
+		}
+		if (state_stack_.size() >= max_depth_) {
+			(void)make_pdf_error(ErrorCode::ResourceLimit, "No graphics state save is left for a Form XObject; it is not drawn"); // recorded
+			return {};
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const std::vector<uint8_t>> content, form_content(stream, key));
+		if (content == nullptr) {
+			return {};
+		}
+		RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(content->size()));
+
+		// The caller's state, set aside and given back whatever the form does.
+		RECTO_PDF_RETURN_IF_ERROR(builder_.save_state());
+		state_stack_.push_back(state_);
+		auto exit = std::make_unique<FormExit>();
+		exit->floor = state_stack_.size();
+		exit->caller_floor = std::exchange(save_floor_, exit->floor);
+		exit->caller_ignored = std::exchange(ignored_saves_, size_t{0});
+		exit->text = text_matrix_;
+		exit->line = line_matrix_;
+		exit->path = std::move(path_);
+		path_ = PathBuilder{};
+		exit->current = std::exchange(current_, std::nullopt);
+		exit->start = std::exchange(subpath_start_, std::nullopt);
+		exit->clip = std::exchange(pending_clip_, std::nullopt);
+		exit->closed = std::exchange(closed_, false);
+		exit->scope = scope_;
+		form_stack_.push_back(key);
+
+		auto entered = [&]() -> PdfResult<void> {
+			RECTO_PDF_RETURN_IF_ERROR(builder_.concat_matrix(*matrix));
+			PathBuilder box;
+			box.rect(bbox->x_min, bbox->y_min, bbox->x_max - bbox->x_min, bbox->y_max - bbox->y_min);
+			RECTO_PDF_TRY(const uint32_t id, builder_.add_path(box));
+			return builder_.push_clip_path(id, FillRule::NonZero);
+		}();
+		if (!entered.has_value()) {
+			auto left = leave_form(*exit);
+			if (entered.error().code == ErrorCode::DamagedFormat) {
+				return left; // a matrix or box the builder cannot place: the form is skipped like a malformed operator
+			}
+			return entered;
+		}
+		use_scope(form_scope(form, key, exit->transient));
+		auto parser = std::make_unique<Parser>(std::span<const uint8_t>(*content));
+		frames_.push_back(Frame{std::move(content), std::move(parser), {}, std::move(exit)});
+		return {};
+	}
+
+	// Gives a form's caller back its state (8.10.1: the graphics state as before `Do`), whatever the form left.
+	[[nodiscard]] PdfResult<void> leave_form(FormExit& exit)
+	{
+		use_scope(exit.scope);
+		form_stack_.pop_back();
+		while (state_stack_.size() > exit.floor) {
+			(void)builder_.restore_state();
+			state_stack_.pop_back();
+		}
+		auto restored = builder_.restore_state();
+		state_ = std::move(state_stack_.back());
+		state_stack_.pop_back();
+		save_floor_ = exit.caller_floor;
+		ignored_saves_ = exit.caller_ignored;
+		text_matrix_ = exit.text;
+		line_matrix_ = exit.line;
+		path_ = std::move(exit.path);
+		current_ = exit.current;
+		subpath_start_ = exit.start;
+		pending_clip_ = exit.clip;
+		closed_ = exit.closed;
+		return restored;
+	}
+
 	static constexpr size_t kMaxCachedFonts = 4'096u;
+	static constexpr size_t kMaxFormDepth = 32u;
+	static constexpr size_t kMaxResourceScopes = 256u;
+	static constexpr size_t kMaxFormContentBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxInkMemo = 65'536u;
 
 	const Document& document_;
-	const PdfDict& resources_;
 	DisplayListBuilder builder_;
-	Category ext_gstates_{};
-	Category color_spaces_{};
-	Category font_resources_{};
-	std::unordered_map<std::string, std::shared_ptr<const TextFont>, StringHash, std::equal_to<>> fonts_{};
+	std::vector<std::unique_ptr<ResourceScope>> scopes_{};
+	std::unordered_map<uint64_t, ResourceScope*> scope_by_key_{};
+	ResourceScope* scope_{nullptr};
+	// Form XObjects (D01 T02 section 46): the forms being drawn (by object, for cycles), the decoded content kept per
+	// form for the page (null for one whose decode failed, never decoded again), the bytes decoded so far against
+	// kMaxFormContentBytes, and the state-stack floor a form's own `Q` cannot pop below.
+	std::deque<Frame> frames_{};
+	std::vector<uint64_t> form_stack_{};
+	std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> form_contents_{};
+	size_t form_decoded_{0};
+	size_t save_floor_{0};
 	std::unordered_map<uint64_t, std::shared_ptr<const TextFont>> font_objects_{};
 	std::shared_ptr<const TextFont> fallback_{};
 	// Keyed by the face's control block (a weak reference, so a face freed during the page is never mistaken for a

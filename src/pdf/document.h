@@ -479,6 +479,12 @@ public:
 		const PdfStream& stream,
 		size_t max_decoded_bytes = kMaxDecodedStreamBytes) const noexcept;
 
+	// How many streams `decode_stream` has been asked to decode, for tests of once-per-page decoding.
+	[[nodiscard]] uint64_t decoded_stream_count() const noexcept
+	{
+		return decoded_streams_;
+	}
+
 	[[nodiscard]] const XrefTable& xref() const noexcept
 	{
 		return xref_;
@@ -592,6 +598,7 @@ private:
 	mutable ResolvedObjectCache object_cache_{};
 	mutable uint64_t parsed_objects_{0};
 	mutable uint64_t copied_objects_{0};
+	mutable uint64_t decoded_streams_{0};
 	// The colour transforms built for this document (D01 T02 section 32), made on first use; actor thread only.
 	mutable std::shared_ptr<ColorProfileCache> color_profiles_{};
 	PdfDict catalog_{};
