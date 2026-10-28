@@ -60,7 +60,9 @@ inline constexpr size_t kMaxIndirectDifferences = 1'024u;
 				} else if (references == kMaxIndirectDifferences + 1u) {
 					(void)make_pdf_error(ErrorCode::DamagedFormat, "/Differences holds more indirect entries than its limit");
 				}
-				const bool meaningful = value.has_value() && (value->as_number().has_value() || value->as_name().has_value());
+				const std::optional<std::string_view> name = value.has_value() ? value->as_name() : std::nullopt;
+				const bool meaningful = value.has_value() &&
+					(value->as_number().has_value() || (name.has_value() && name->size() <= kMaxGlyphNameBytes));
 				direct.push_back(meaningful ? std::move(*value) : PdfValue(PdfNull{}));
 			}
 			out.set("Differences", PdfValue(std::move(direct)));

@@ -16,11 +16,23 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace recto::pdf {
 
 namespace {
+
+// Hashes a std::string key by its characters, so a std::string_view finds it without a copy.
+struct StringHash {
+	using is_transparent = void;
+
+	[[nodiscard]] size_t operator()(std::string_view key) const noexcept
+	{
+		return std::hash<std::string_view>{}(key);
+	}
+};
+
 
 [[nodiscard]] float unit(double v) noexcept
 {
@@ -1419,22 +1431,20 @@ private:
 	// the fallback, its diagnostic recorded.
 	[[nodiscard]] PdfResult<std::shared_ptr<const TextFont>> named_font(std::string_view name)
 	{
-		for (const auto& [key, font] : fonts_) {
-			if (key == name) {
-				return font;
-			}
+		if (const auto it = fonts_.find(name); it != fonts_.end()) {
+			return it->second;
 		}
 		const PdfDict* fonts = category("Font", font_resources_);
 		const PdfValue* entry_value = fonts != nullptr ? fonts->get(name) : nullptr;
 		std::shared_ptr<const TextFont> font;
 		if (entry_value == nullptr) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "Tf names a font the resources do not hold"); // recorded
-			RECTO_PDF_TRY(font, TextFont::fallback());
+			RECTO_PDF_TRY(font, fallback());
 		} else {
 			RECTO_PDF_TRY(font, font_value(*entry_value));
 		}
 		if (fonts_.size() < kMaxCachedFonts) {
-			fonts_.emplace_back(std::string(name), font);
+			fonts_.emplace(std::string(name), font);
 		}
 		return font;
 	}
@@ -1444,10 +1454,8 @@ private:
 	{
 		const std::optional<IndirectRef> ref = value.as_ref();
 		if (ref.has_value()) {
-			for (const auto& [key, font] : font_objects_) {
-				if (key == object_key(*ref)) {
-					return font;
-				}
+			if (const auto it = font_objects_.find(object_key(*ref)); it != font_objects_.end()) {
+				return it->second;
 			}
 		}
 		// Each page resolves at most kMaxCachedFonts fonts within kMaxTextFontBytes: past either, a font takes the
@@ -1455,15 +1463,23 @@ private:
 		if (fonts_resolved_ >= kMaxCachedFonts || font_bytes_ >= kMaxTextFontBytes) {
 			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, font_bytes_,
 				kMaxTextFontBytes, "Fonts past the page's limit; drawn with the fallback"));
-			return TextFont::fallback();
+			return fallback();
 		}
 		++fonts_resolved_;
 		RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, TextFont::resolve(document_, value));
 		font_bytes_ += font->memory_bytes();
 		if (ref.has_value()) {
-			font_objects_.emplace_back(object_key(*ref), font);
+			font_objects_.emplace(object_key(*ref), font);
 		}
 		return font;
+	}
+	// The fallback font, built once per page.
+	[[nodiscard]] PdfResult<std::shared_ptr<const TextFont>> fallback()
+	{
+		if (fallback_ == nullptr) {
+			RECTO_PDF_TRY(fallback_, TextFont::fallback());
+		}
+		return fallback_;
 	}
 
 	// `Td`: the line matrix moved by (tx, ty) and the text matrix set to it (9.4.2).
@@ -1484,9 +1500,12 @@ private:
 	// indices and outlines are section 43's; the run's bounds are the font's box at the font size over its glyphs.
 	[[nodiscard]] PdfResult<void> show(std::span<const uint8_t> bytes)
 	{
+		if (bytes.empty()) {
+			return {}; // nothing to draw, and the text matrix stays where it is
+		}
 		std::shared_ptr<const TextFont> font = state_.font;
 		if (font == nullptr) {
-			RECTO_PDF_TRY(font, TextFont::fallback());
+			RECTO_PDF_TRY(font, fallback());
 		}
 		const double size = state_.font_size;
 		const bool vertical = font->vertical();
@@ -1563,8 +1582,9 @@ private:
 	Category ext_gstates_{};
 	Category color_spaces_{};
 	Category font_resources_{};
-	std::vector<std::pair<std::string, std::shared_ptr<const TextFont>>> fonts_{};
-	std::vector<std::pair<uint64_t, std::shared_ptr<const TextFont>>> font_objects_{};
+	std::unordered_map<std::string, std::shared_ptr<const TextFont>, StringHash, std::equal_to<>> fonts_{};
+	std::unordered_map<uint64_t, std::shared_ptr<const TextFont>> font_objects_{};
+	std::shared_ptr<const TextFont> fallback_{};
 	size_t fonts_resolved_{0};
 	size_t font_bytes_{0};
 	PdfMatrix text_matrix_{};

@@ -1141,6 +1141,43 @@ struct LoadedFont::DWriteState {
 	}
 };
 
+size_t LoadedFont::memory_bytes() const noexcept
+{
+	size_t bytes = sizeof(*this) + (program_ != nullptr ? program_->capacity() : 0u);
+	if (glyf_ != nullptr) {
+		bytes += sizeof(GlyfTables);
+	}
+	if (dwrite_ != nullptr) {
+		bytes += sizeof(DWriteState);
+	}
+	if (charstrings_ != nullptr) {
+		const CharstringProgram& c = *charstrings_;
+		const auto nested = [](const std::vector<std::vector<uint8_t>>& v) {
+			size_t n = v.capacity() * sizeof(std::vector<uint8_t>);
+			for (const std::vector<uint8_t>& item : v) {
+				n += item.capacity();
+			}
+			return n;
+		};
+		bytes += sizeof(CharstringProgram) + nested(c.type1_glyphs) + nested(c.type1_subrs) +
+			(c.charstrings.offsets.capacity() + c.global_subrs.offsets.capacity()) * sizeof(uint32_t) +
+			c.fds.capacity() * sizeof(CharstringProgram::Fd) + c.fd_of_glyph.capacity() +
+			c.names.capacity() * sizeof(std::pair<std::string, uint16_t>) + c.cids.capacity() * sizeof(std::pair<uint32_t, uint16_t>);
+		for (const CharstringProgram::Fd& fd : c.fds) {
+			bytes += fd.local_subrs.offsets.capacity() * sizeof(uint32_t);
+		}
+		for (const auto& [name, glyph] : c.names) {
+			bytes += name.capacity();
+		}
+		if (c.built_in.has_value()) {
+			for (const std::string& name : *c.built_in) {
+				bytes += name.capacity();
+			}
+		}
+	}
+	return bytes;
+}
+
 namespace {
 
 // Collects a DirectWrite glyph outline (`GetGlyphRunOutline`, y down in DIPs) as text-space verbs and points (y up).

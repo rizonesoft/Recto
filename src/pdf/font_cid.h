@@ -207,10 +207,11 @@ public:
 		return font_;
 	}
 
-	// The heap its CMap, maps, widths and retained embedded program hold, for a caller's memory budget.
+	// The heap its CMap, maps, widths and retained embedded program (with its parsed tables) hold, for a caller's
+	// memory budget.
 	[[nodiscard]] size_t memory_bytes() const noexcept
 	{
-		const size_t program = font_ != nullptr && font_->program() != nullptr ? font_->program()->capacity() : 0u;
+		const size_t program = font_ != nullptr ? font_->memory_bytes() : 0u;
 		return sizeof(*this) + cmap_.memory_bytes() + map_.memory_bytes() + widths_.memory_bytes() + program;
 	}
 

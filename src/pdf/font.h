@@ -129,6 +129,9 @@ public:
 		return units_per_em_;
 	}
 
+	// The heap this font holds: its program and every table parsed from it, for a caller's memory budget.
+	[[nodiscard]] size_t memory_bytes() const noexcept;
+
 	[[nodiscard]] uint16_t glyph_count() const noexcept
 	{
 		return glyph_count_;

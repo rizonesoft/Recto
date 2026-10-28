@@ -10,6 +10,7 @@
 #include "test_support.h"
 #include "lexer.h"
 
+#include <chrono>
 #include <gtest/gtest.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -2940,6 +2941,30 @@ TEST(PdfInterpreter, TextFontEdges)
 			EXPECT_LT(peak, size_t{8} << 20u) << "the encoding held the strings its references named";
 		}
 	}
+	// 400 references to one 32 KiB name: a name past the 255-byte glyph-name limit is never kept.
+	{
+		std::string differences = "[65 /W";
+		for (int i = 0; i < 400; ++i) {
+			differences += " 7 0 R";
+		}
+		differences += "]";
+		size_t peak = 0;
+		std::shared_ptr<const TextFont> f;
+		std::unique_ptr<ResolvedSpace> holder;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			auto resolved_font = resolve_5({"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences 6 0 R >> >>",
+				differences, "/" + std::string(32'768u, 'n')});
+			holder = std::move(resolved_font.first);
+			f = std::move(resolved_font.second);
+			peak = meter.peak_bytes();
+		}
+		ASSERT_NE(f, nullptr);
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, standard14_glyph_by_name(Standard14Font::Helvetica, "W")->width / 1000.0);
+		if (recto::test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{8} << 20u) << "the encoding held names past the glyph-name limit";
+		}
+	}
 	// An indirect size in /ExtGState /Font is resolved.
 	{
 		const TextPage page = text_page("BT /G1 gs (A) Tj ET", "/ExtGState << /G1 << /Font [5 0 R 7 0 R] >> >>", {"12"});
@@ -3042,6 +3067,63 @@ TEST(PdfInterpreter, TextGlyphLimit)
 	EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
 	if (recto::test::ScopedHeapMeter::available()) {
 		EXPECT_LT(work, size_t{3} << 20u) << "the run's glyphs were built past the list's byte budget";
+	}
+}
+
+TEST(PdfInterpreter, TextFontLookupWork)
+{
+	// The fallback is built once per page: 10,000 strings shown with no font selected allocate about what the same
+	// strings in a selected font do (a fallback rebuilt per string would add over 20 MB), and empty strings record
+	// nothing.
+	{
+		std::string strings;
+		for (int i = 0; i < 10'000; ++i) {
+			strings += "(A) Tj () Tj ";
+		}
+		const auto measured = [&](const std::string& content, const std::string& resources, const std::vector<std::string>& objects) {
+			size_t work = 0;
+			std::optional<Interpreted> page;
+			{
+				const recto::test::ScopedHeapMeter meter;
+				page.emplace(interpret(content, resources, objects));
+				work = meter.allocated_bytes();
+			}
+			EXPECT_NE(page->list, nullptr);
+			if (page->list != nullptr) {
+				EXPECT_EQ(all_of<RecordedGlyphRun>(*page->list).size(), 10'000u);
+			}
+			return work;
+		};
+		const size_t selected = measured("BT /F1 10 Tf " + strings + "ET", "<< /Font << /F1 5 0 R >> >>", {kF1, kF1Descriptor});
+		const size_t none = measured("BT " + strings + "ET", "<< >>", {});
+		if (recto::test::ScopedHeapMeter::available()) {
+			EXPECT_LT(none, selected + (size_t{4} << 20u)) << "the fallback was rebuilt for each string";
+		}
+	}
+	// Selecting a cached font costs the same whichever name it is: 4,096 names over one Helvetica, then 50,000
+	// selections of the last name cached take about as long as 50,000 of the first (a scan of the cache would be
+	// thousands of times the work per selection).
+	{
+		std::string fonts;
+		std::string setup = "BT ";
+		for (int i = 0; i < 4'096; ++i) {
+			fonts += "/H" + std::to_string(i) + " 5 0 R ";
+			setup += "/H" + std::to_string(i) + " 10 Tf ";
+		}
+		const auto timed = [&](std::string_view name) {
+			std::string content = setup;
+			for (int i = 0; i < 50'000; ++i) {
+				content += std::string(name) + " 10 Tf ";
+			}
+			const auto start = std::chrono::steady_clock::now();
+			const auto r = interpret(content + "ET", "<< /Font << " + fonts + ">> >>", {kF1, kF1Descriptor});
+			const auto elapsed = std::chrono::steady_clock::now() - start;
+			EXPECT_NE(r.list, nullptr);
+			return std::chrono::duration<double>(elapsed).count();
+		};
+		const double first = timed("/H0");
+		const double last = timed("/H4095");
+		EXPECT_LT(last, first * 2.0 + 0.05) << "selecting the last cached name scanned the cache: " << last << " s vs " << first << " s";
 	}
 }
 

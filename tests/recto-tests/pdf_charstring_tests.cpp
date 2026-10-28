@@ -666,6 +666,11 @@ TEST(PdfFont, CffOutlines)
 	for (const Reference& ref : kCffReference) {
 		expect_reference(*font, ref, "cff-outlines");
 	}
+	// The font's memory counts the tables parsed from its program, not only the program: at least the charstring
+	// offsets and the glyph names.
+	ASSERT_NE(font->program(), nullptr);
+	EXPECT_GE(font->memory_bytes(), font->program()->capacity() + (font->glyph_count() + 1u) * sizeof(uint32_t) +
+			font->glyph_count() * sizeof(std::pair<std::string, uint16_t>));
 	// `arith`: each line's dx is an operator's result; `random` gives a number in (0, 1], the same on every call.
 	{
 		const std::optional<uint16_t> glyph = font->glyph_for_name("arith");
