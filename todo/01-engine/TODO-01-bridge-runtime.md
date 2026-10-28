@@ -408,6 +408,8 @@ Implement `src/pdf/document.h` and `src/pdf/document.cpp` (`recto::pdf::Document
 **Surface:** no
 **Freeze check:** Confirm the cache is a `mutable` member of `pdf::Document` touched only by the owning `DocumentActor` thread (no static or shared mutable state), returns values that are immutable once cached (`std::shared_ptr<const PdfValue>`), never caches a failed or partially parsed object, and stays within its byte budget under hostile input.
 
+> **Started:** 2026-10-28T04:25:52Z
+
 **Corrected 2026-10-28:** plan review (Astra and Terra): the cache sits at the single hop, so chain, cycle, depth and generation checks run unchanged on a hit; its accounting is a measured `PdfValue::heap_bytes()` checked against the heap meter; eviction never invalidates a held value; allocation failure is proved by injection; the shared path runs through `IndirectObjectResolver`, so fonts, colour spaces and functions stop copying shared values; and the checkpoint names each test. Before, the cache sat at `resolve_object`, trusted its own counter and tested only one damaged object.
 
 **Build order:**
