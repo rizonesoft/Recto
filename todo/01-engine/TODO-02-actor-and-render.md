@@ -90,7 +90,7 @@ track: M1
 | 30 | §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2` | §28, §29 | [x] |
 | 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
 | 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [x] |
-| 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
+| 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [x] |
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [x] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [x] |
@@ -1103,6 +1103,9 @@ Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Index
 > **Corrected 2026-10-27:** (validation before the build) The interpreter and `ColorSpace` held 4 components, so DeviceN (up to 32) had nowhere to live: widened. `§4` draws images through `convert_samples` and depends on this section, so Indexed, Separation and DeviceN rows are built and tested here as `§32` did for its spaces. "1 to 32 bits per sample" became the ISO Table 39 set. Indexed may also sit over Separation and DeviceN (8.6.6.3). The section named no bounds for multilinear interpolation (2^32 corners for a 32-input DeviceN), for stitching trees that share subfunctions, or for calculator programs: added. `/Attributes` needed somewhere to be read into: accessors for `D04 T06`. `/None` must also stop text and stencil masks, which `§4` draws: `ColorSpace::paints()` and a note in `§4`.
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfColor.*` passes under ASan with 0 warnings. **Corrected 2026-10-27:** was the three new tests alone; the whole interpreter and colour suites, since the component widening touches the `§3` and `§32` paths (plan review).
+
+> **Verified:** 2026-10-28 | §33 | 001c43e10f1cec9f8390eeb82e69b699cf996bc5
+> **Review:** `docs/reviews/d01-t02-s33.json`
 
 ## 34. Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)
 

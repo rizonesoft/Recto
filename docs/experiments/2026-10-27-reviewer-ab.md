@@ -51,6 +51,8 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | round 4 (escalated) | `cdf0338` | A | max | 410 | 5/0/0 | 4 | 1 | 0 |
 | D01 T02 §33 | round 4 (escalated) | `cdf0338` | B | medium | 104 | outage: Codex exited 1, no review | - | - | - |
 | D01 T02 §33 | round 4 retry (recorded as Round 5) | `cdf0338` | B | medium | 147 | 1/1/0 | 2 | 0 | 0 |
+| D01 T02 §33 | panel round 5 (Astra Round 6) | `001c43e` | A | high | 39 | 0/0/0 | 0 | 0 | 0 |
+| D01 T02 §33 | panel round 5 (Astra Round 6) | `001c43e` | B | low | 79 | 0/0/2 | 2 | 0 | 0 |
 
 ## Finding verdicts
 
@@ -118,6 +120,8 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 | D01 T02 §33 | round 4 | A | 5 | P1 | invalid | B round 1 4 | Surplus calculator operands: pdfium's `CPDF_PSFunc::v_Call` refuses too few and pops the top n, as Recto does. |
 | D01 T02 §33 | round 5 | B | 1 | P1 | valid | A round 4 2 | `/Process /Components` work. |
 | D01 T02 §33 | round 5 | B | 2 | P2 | valid | A round 4 4 | Spline NaN; Astra tagged it P2, the only non-P1 round finding so far. |
+| D01 T02 §33 | panel round 5 | B | 1 | P3 | valid | none | The `cvr` test gives a real input, so a no-op `cvr` passes. Implemented after the stamp. |
+| D01 T02 §33 | panel round 5 | B | 2 | P3 | valid | none | The shared-table colour test passes vacuously when no path is drawn. Implemented after the stamp. |
 
 ## Results
 
@@ -163,6 +167,14 @@ The 17 known defects are the valid code defects the panel's rounds 1 to 5 found 
 | Muse | 3 | P2 | valid, new | none | A failing piece of a stitching function had its failure values overwritten by the stitching function's. P3 by reach. Fixed in `3bbe0f8`. |
 
 What the trial shows: both found the section's worst defect (the overrun), neither raised a false finding, and between them they found three defects the panel had not, one of them (Gemini's repeated decoding) a real P2. Against the panel's round 1 they found fewer of the known defects (Gemini 2, Muse 1, against Terra 9 and Astra 5). Gemini's reply carried its working notes ahead of the formatted review (318 lines), and Muse repeated each finding under every lens it touched (6 duplicates), both costing the writer reading time. A single pass is not a basis for a panel decision; their cost was not measured.
+
+## Panel log (owner request 2026-10-28)
+
+The panel's data is kept per section from here, so the review effort can be judged on more than `D01 T02 §33`: rounds to the loop's end, each reviewer's seconds and findings, and how many held up. **Owner decision 2026-10-28:** Gemini 4 Argon and Muse Wonder 1.0 are not added; the panel stays Astra and Terra.
+
+| Section | Rounds to the end | Astra seconds (all passes) | Terra seconds (all passes) | Astra findings (valid) | Terra findings (valid) | Ended on |
+| ------- | ----------------- | -------------------------- | -------------------------- | ---------------------- | ---------------------- | -------- |
+| D01 T02 §33 | 5 (plus an outage) | 1,226 | 1,325 | 25 (23) | 38 (34) | `001c43e`: Astra P3 only, Terra clean |
 
 ## Limits
 

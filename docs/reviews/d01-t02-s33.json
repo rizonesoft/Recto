@@ -1,0 +1,153 @@
+{
+  "ref": "D01 T02 \u00a733",
+  "title": "Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4",
+  "implementation_sha": "001c43e10f1cec9f8390eeb82e69b699cf996bc5",
+  "date": "2026-10-28",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s33.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/01-engine/D01-T02-s33.md",
+      "verdict": "stopped-low-severity"
+    },
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s33.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s33.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s33.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s33.terra.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s33.terra.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfColor.*:PdfError.* (x64 Debug, AddressSanitizer) -> [  PASSED  ] 34 tests. 0 Warning(s)",
+    "recto-tests.exe (x64 Debug) -> [  PASSED  ] 345 tests.",
+    "build x64 and ARM64, Debug and Release -> 0 Warning(s), 0 Error(s) each"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s33.md",
+    "verdict": "filed",
+    "candidate": "e4d9920b472391b8fb975b36f62e8c6bda982cb3",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a74",
+      "D01 T02 \u00a741",
+      "D06 T01 \u00a71",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 11,
+  "round_cap": 33,
+  "cap_outcome": "stopped on Astra round 6 (HIGHEST: P3) with Terra round 5 clean on 001c43e; Astra's two P3 test gaps (cvr type check, vacuous shared-table colour test) implemented in the commit after the stamp",
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s33.md",
+    "candidate": "b7f73caab76a2b7a2704e9a5b38b6fc10f260815",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "efforts": {
+      "terra": {
+        "plan": "xhigh",
+        "completion": "xhigh",
+        "rounds": [
+          "max",
+          "xhigh",
+          "high"
+        ],
+        "rotation": "high",
+        "escalation": "max"
+      }
+    }
+  }
+}
