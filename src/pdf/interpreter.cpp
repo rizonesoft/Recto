@@ -1253,26 +1253,54 @@ private:
 		return slot.dict;
 	}
 
-	// `value`, an indirect reference resolved through the document's shared objects, without a copy. A damaged
-	// reference or a null reads as missing; any other failure is kept for `dispatch` as `resolved` keeps it.
+	// `value`, an indirect reference resolved without a copy. A damaged reference or a null reads as missing; any
+	// other failure is kept for `dispatch` as `resolved` keeps it.
 	[[nodiscard]] Held shared(const PdfValue& value)
 	{
 		const std::optional<IndirectRef> ref = value.as_ref();
 		if (!ref.has_value()) {
 			return Held{nullptr, &value};
 		}
-		auto object = document_.resolve_object_shared(*ref);
+		std::shared_ptr<const PdfValue> object = held_object(*ref);
+		const PdfValue* target = object.get();
+		return Held{std::move(object), target};
+	}
+
+	// A resource object for this page: resolved once and held here by object, so every scope naming it shares one
+	// instance whether or not the document's cache admits it (it keeps nothing over a quarter of its budget). What
+	// the page holds is bounded by kMaxHeldResourceBytes; an object past it is refused once, remembered, and never
+	// parsed again. Null when missing, null, damaged or refused.
+	[[nodiscard]] std::shared_ptr<const PdfValue> held_object(IndirectRef ref)
+	{
+		const uint64_t key = object_key(ref);
+		if (const auto it = held_.find(key); it != held_.end()) {
+			return it->second;
+		}
+		auto object = document_.resolve_object_shared(ref);
 		if (!object.has_value()) {
 			if (fatal(object.error()) && !resolve_failure_.has_value()) {
 				resolve_failure_ = object.error();
 			}
-			return Held{};
+			return nullptr; // a damaged reference is not remembered: an object stream may still be readable later
 		}
-		if (*object == nullptr || (*object)->is_null()) {
-			return Held{};
+		std::shared_ptr<const PdfValue> kept = std::move(*object);
+		if (kept != nullptr && kept->is_null()) {
+			kept = nullptr;
 		}
-		const PdfValue* target = object->get();
-		return Held{std::move(*object), target};
+		if (kept != nullptr) {
+			const size_t bytes = kept->heap_bytes();
+			if (bytes > kMaxHeldResourceBytes - held_bytes_) {
+				record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, held_bytes_ + bytes,
+					kMaxHeldResourceBytes, "A resource past the page's held-resource budget is not used"));
+				kept = nullptr;
+			} else {
+				held_bytes_ += bytes;
+			}
+		}
+		if (held_.size() < kMaxHeldResources) {
+			held_.emplace(key, kept);
+		}
+		return kept;
 	}
 
 	// The resource named `name` in `slot`'s category, resolved, or none.
@@ -1898,16 +1926,8 @@ private:
 		std::shared_ptr<const PdfValue> owner = form;
 		const PdfDict* resources = entry->as_dict();
 		if (ref.has_value()) {
-			auto shared = document_.resolve_object_shared(*ref);
-			if (shared.has_value()) {
-				owner = std::move(*shared);
-				resources = owner->as_dict();
-			} else {
-				if (fatal(shared.error()) && !resolve_failure_.has_value()) {
-					resolve_failure_ = shared.error();
-				}
-				resources = nullptr;
-			}
+			owner = held_object(*ref);
+			resources = owner != nullptr ? owner->as_dict() : nullptr;
 		}
 		if (resources == nullptr) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "A form's /Resources is not a dictionary; it draws with the page's");
@@ -2112,6 +2132,8 @@ private:
 	static constexpr size_t kMaxCachedFonts = 4'096u;
 	static constexpr size_t kMaxFormDepth = 32u;
 	static constexpr size_t kMaxResourceScopes = 256u;
+	static constexpr size_t kMaxHeldResourceBytes = size_t{64} << 20u; // resource objects one page holds
+	static constexpr size_t kMaxHeldResources = 65'536u;
 	static constexpr size_t kMaxFormContentBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxInkMemo = 65'536u;
@@ -2125,6 +2147,9 @@ private:
 	// form for the page (null for one whose decode failed, never decoded again), the bytes decoded so far against
 	// kMaxFormContentBytes, and the state-stack floor a form's own `Q` cannot pop below.
 	std::deque<Frame> frames_{};
+	// The resource objects this page holds, by object (null for one missing or refused), and their heap.
+	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> held_{};
+	size_t held_bytes_{0};
 	std::vector<uint64_t> form_stack_{};
 	std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> form_contents_{};
 	size_t form_decoded_{0};

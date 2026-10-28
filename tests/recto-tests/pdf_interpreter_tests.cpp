@@ -4072,6 +4072,70 @@ TEST(PdfInterpreter, FormXObjectResources)
 		}
 		EXPECT_LT(peak, size_t{16} << 20u) << "each scope kept its own copy of the ExtGState dictionary";
 	}
+	// Objects past the document cache's admission size (a quarter of its budget) are still held once per page, and
+	// what a page holds is bounded: 16 forms name one ExtGState object with a 17 MiB string (A), then one form each
+	// names B, C and D of the same size. A, B and C are held (51 MiB); D would pass the 64 MiB budget and is refused,
+	// its form drawing with the default line width, the page going on.
+	{
+		const std::string pad(size_t{17} << 20u, 'x');
+		std::string names;
+		std::string content;
+		std::vector<std::string> objects;
+		const auto add_form = [&](int extgstate) {
+			const int index = static_cast<int>(objects.size());
+			names += "/F" + std::to_string(index) + " " + std::to_string(5 + index) + " 0 R ";
+			content += "/F" + std::to_string(index) + " Do ";
+			objects.push_back(form_object("/BBox [-1000 -1000 1000 1000] /Resources << /ExtGState " + std::to_string(extgstate) +
+				" 0 R >>", "/G gs 0 0 1 1 re S"));
+		};
+		for (int i = 0; i < 16; ++i) {
+			add_form(24); // A
+		}
+		add_form(25); // B
+		add_form(26); // C
+		add_form(27); // D
+		ASSERT_EQ(objects.size(), 19u); // objects 5 to 23
+		objects.push_back("<< /G << /LW 1 /Pad (" + pad + ") >> >>"); // object 24
+		objects.push_back("<< /G << /LW 2 /Pad (" + pad + ") >> >>");
+		objects.push_back("<< /G << /LW 3 /Pad (" + pad + ") >> >>");
+		objects.push_back("<< /G << /LW 4 /Pad (" + pad + ") >> >>");
+		const auto bytes = one_page_pdf(content, "<< /XObject << " + names + ">> >>", objects);
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		clear_diagnostics();
+		const bool metered = recto::test::ScopedHeapMeter::available();
+		std::optional<recto::test::ScopedHeapMeter> meter;
+		if (metered) {
+			meter.emplace();
+		}
+		const auto list = interpret_page(**doc, 0u);
+		const size_t peak = metered ? meter->peak_bytes() : 0u;
+		meter.reset();
+		ASSERT_TRUE(list.has_value());
+		const auto widths = [&] {
+			std::vector<float> out;
+			const auto commands = (*list)->commands();
+			float width = 1.0f;
+			for (const DisplayCommand& command : commands) {
+				if (const auto* style = command.as<SetStrokeStyleCommand>()) {
+					width = style->line_width;
+				} else if (command.as<DrawPathCommand>() != nullptr) {
+					out.push_back(width);
+				}
+			}
+			return out;
+		}();
+		ASSERT_EQ(widths.size(), 19u);
+		EXPECT_FLOAT_EQ(widths[0], 1.0f);
+		EXPECT_FLOAT_EQ(widths[15], 1.0f);
+		EXPECT_FLOAT_EQ(widths[16], 2.0f);
+		EXPECT_FLOAT_EQ(widths[17], 3.0f);
+		EXPECT_NE(widths[18], 4.0f) << "the object past the held-resource budget was used";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		if (metered) {
+			EXPECT_LT(peak, size_t{128} << 20u) << "each scope held its own parse of the uncached object";
+		}
+	}
 	// The tint transform budget is the page's, shared by its forms: four 15 MiB tables on the page, a fifth in a form
 	// is refused (black where its table gives white).
 	{
