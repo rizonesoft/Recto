@@ -1339,6 +1339,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): text state (`
 
 ## 43. Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text
 
+> **Started:** 2026-10-28T08:53:34Z
+
 Filed 2026-10-28 from `§4`'s split (validation before the build): each font kind's glyphs for `§42`'s glyph runs: non-embedded Standard 14 faces fitted to their AFM advances (`§27`), simple-font encodings and TrueType cmaps (`§28`), embedded Type 1, CFF and OpenType programs (`§29`) and composite `/Type0` fonts (`§30`).
 
 **Phase:** 1
