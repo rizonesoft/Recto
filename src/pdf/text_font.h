@@ -44,8 +44,9 @@ public:
 	[[nodiscard]] static PdfResult<std::shared_ptr<const TextFont>> resolve(
 		const Document& document, const PdfValue& font) noexcept;
 
-	// Helvetica's AFM widths and box (a recorded default for a font that cannot be used).
-	[[nodiscard]] static std::shared_ptr<const TextFont> fallback() noexcept;
+	// Helvetica's AFM widths and box (a recorded default for a font that cannot be used), or `OutOfMemory`
+	// when memory runs out building it.
+	[[nodiscard]] static PdfResult<std::shared_ptr<const TextFont>> fallback() noexcept;
 
 	[[nodiscard]] TextFontKind kind() const noexcept
 	{

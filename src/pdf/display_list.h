@@ -783,6 +783,10 @@ public:
 		bool fill,
 		FillRule fill_rule = FillRule::NonZero) noexcept;
 
+	// Glyphs this list may still take before `DisplayListLimits::max_glyphs`, so a caller can stop building a run
+	// that could not be recorded instead of allocating all of it first.
+	[[nodiscard]] size_t glyph_room() const noexcept;
+
 	// Records a positioned glyph run.
 	[[nodiscard]] PdfResult<void> draw_glyph_run(
 		std::span<const PositionedGlyph> glyphs,

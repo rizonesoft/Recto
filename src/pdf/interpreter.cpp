@@ -1428,7 +1428,7 @@ private:
 		std::shared_ptr<const TextFont> font;
 		if (entry_value == nullptr) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "Tf names a font the resources do not hold"); // recorded
-			font = TextFont::fallback();
+			RECTO_PDF_TRY(font, TextFont::fallback());
 		} else {
 			RECTO_PDF_TRY(font, font_value(*entry_value));
 		}
@@ -1474,13 +1474,22 @@ private:
 	// indices and outlines are section 43's; the run's bounds are the font's box at the font size over its glyphs.
 	[[nodiscard]] PdfResult<void> show(std::span<const uint8_t> bytes)
 	{
-		const std::shared_ptr<const TextFont> font = state_.font != nullptr ? state_.font : TextFont::fallback();
+		std::shared_ptr<const TextFont> font = state_.font;
+		if (font == nullptr) {
+			RECTO_PDF_TRY(font, TextFont::fallback());
+		}
 		const double size = state_.font_size;
 		const bool vertical = font->vertical();
 		std::vector<PositionedGlyph> glyphs;
 		double x = 0.0;
 		double y = 0.0;
+		// A run that could not be recorded is refused before it is built, so a long string never allocates past the
+		// list's glyph limit.
+		const size_t room = builder_.glyph_room();
 		for (size_t at = 0; at < bytes.size();) {
+			if (glyphs.size() >= room) {
+				return make_pdf_error(ErrorCode::ResourceLimit, "Text string exceeds the display list's glyph limit");
+			}
 			const TextCode code = font->next(bytes.subspan(at));
 			at += code.length != 0u ? code.length : 1u; // a code no codespace matches skips one byte
 			const double spacing = state_.char_spacing + (code.word_space ? state_.word_spacing : 0.0);

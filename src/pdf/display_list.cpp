@@ -1441,6 +1441,12 @@ DisplayListBuilder::DisplayListBuilder(
 	current_state_.clip_is_empty = page_box_pt_.is_empty();
 }
 
+size_t DisplayListBuilder::glyph_room() const noexcept
+{
+	const size_t max_glyphs = std::min(limits_.max_glyphs, kMaxU32);
+	return glyphs_.size() < max_glyphs ? max_glyphs - glyphs_.size() : 0u;
+}
+
 size_t DisplayListBuilder::current_pool_bytes() const noexcept
 {
 	// Capacities, not sizes: a pool holds its whole reserved buffer. Each term

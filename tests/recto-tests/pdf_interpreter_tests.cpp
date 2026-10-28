@@ -2664,6 +2664,50 @@ TEST(PdfInterpreter, TextFonts)
 		EXPECT_EQ(f->kind(), TextFontKind::Fallback);
 		EXPECT_TRUE(damaged_recorded());
 	}
+	// An unknown /Subtype and a missing one take the fallback with their diagnostics, whatever /Widths they carry.
+	clear_diagnostics();
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type42 /FirstChar 65 /Widths [0] >>"});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Fallback);
+		const Standard14Glyph* a = standard14_glyph_by_code(Standard14Font::Helvetica, 'A');
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, a->width / 1000.0);
+		EXPECT_TRUE(recorded(ErrorCode::UnsupportedFeature));
+	}
+	clear_diagnostics();
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /FirstChar 65 /Widths [0] >>"});
+		ASSERT_NE(f, nullptr);
+		EXPECT_EQ(f->kind(), TextFontKind::Fallback);
+		EXPECT_TRUE(damaged_recorded());
+	}
+	// /Flags that is not a 32-bit integer is ignored with a diagnostic, never converted.
+	for (const std::string flags : {"100000000000000000000.0", "-4", "4.5"}) {
+		SCOPED_TRACE(flags);
+		clear_diagnostics();
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FontDescriptor 6 0 R >>",
+			"<< /Type /FontDescriptor /FontName /Helvetica /Flags " + flags + " >>"});
+		ASSERT_NE(f, nullptr);
+		const Standard14Glyph* a = standard14_glyph_by_name(Standard14Font::Helvetica, "A");
+		EXPECT_DOUBLE_EQ(f->next(bytes("A")).w0, a->width / 1000.0);
+		EXPECT_TRUE(damaged_recorded());
+	}
+	// A Standard 14 font with /Widths and no descriptor still has its AFM box, overhangs included.
+	{
+		const auto [holder, f] = font_of({"<< /Type /Font /Subtype /Type1 /BaseFont /Times-Italic /FirstChar 65 /Widths [611] >>"});
+		ASSERT_NE(f, nullptr);
+		const Standard14Metrics& times = standard14_metrics(Standard14Font::TimesItalic);
+		EXPECT_DOUBLE_EQ(f->bbox().x_min, times.font_box[0] / 1000.0);
+		EXPECT_LT(f->bbox().x_min, 0.0);
+		EXPECT_DOUBLE_EQ(f->bbox().x_max, times.font_box[2] / 1000.0);
+	}
+	// Memory running out while building the fallback is OutOfMemory, every time.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		const recto::test::ScopedAllocationFailure fail(1u, sizeof(TextFont));
+		const auto fallback = TextFont::fallback();
+		ASSERT_FALSE(fallback.has_value());
+		EXPECT_EQ(fallback.error().code, ErrorCode::OutOfMemory);
+	}
 	// Memory running out while reading a font is OutOfMemory, never the fallback.
 	if (recto::test::ScopedAllocationFailure::available()) {
 		auto doc = Document::open_memory(one_page_pdf(std::nullopt, "<< >>", {kF1, kF1Descriptor}));
@@ -2766,13 +2810,16 @@ TEST(PdfInterpreter, TjKerningAndSpacing)
 		EXPECT_DOUBLE_EQ(edges.runs[1].text_matrix.e, -1.0 + 5.0 - 2.0);
 		EXPECT_DOUBLE_EQ(edges.runs[2].text_matrix.e, 2.0 + 6.0 - 3.0);
 	}
-	// ' and ".
+	// ' and ": " sets both spacings before the line move, so its space takes the new word spacing.
 	{
-		const TextPage page = text_page("BT /F1 10 Tf 12 TL (A) ' 5 1 (A) \" ET");
+		const TextPage page = text_page("BT /F1 10 Tf 12 TL (A) ' 5 1 ( A) \" ET");
 		ASSERT_EQ(page.runs.size(), 2u);
 		EXPECT_DOUBLE_EQ(page.runs[0].text_matrix.f, -12.0);
 		EXPECT_DOUBLE_EQ(page.runs[1].text_matrix.f, -24.0);
-		EXPECT_DOUBLE_EQ(glyphs_of(page, page.runs[1])[0].advance_pt, 5.0 + 1.0);
+		const auto g = glyphs_of(page, page.runs[1]);
+		ASSERT_EQ(g.size(), 2u);
+		EXPECT_DOUBLE_EQ(g[0].advance_pt, 0.25 * 10 + 1.0 + 5.0);
+		EXPECT_DOUBLE_EQ(g[1].advance_pt, 5.0 + 1.0);
 	}
 	// A vertical /Type0 line: origins at the position vectors, displacement by w1.
 	{
@@ -2796,6 +2843,17 @@ TEST(PdfInterpreter, TjKerningAndSpacing)
 		expect_point(g[1].origin_pt, -3.0, -10.0 - 8.8, "CID 2 one w1 below");
 		EXPECT_DOUBLE_EQ(vertical.runs[1].text_matrix.f, -20.0) << "the matrix moved by both displacements";
 		EXPECT_DOUBLE_EQ(vertical.runs[1].text_matrix.e, 0.0);
+		// Vertical with Tc, Tw (no effect on a two-byte code), Ts and a TJ number moving down the column.
+		TextPage spaced{interpret("BT /V 10 Tf 2 Tc 3 Tw 1 Ts [<0001> 500 <0001>] TJ ET", "<< /Font << /V 7 0 R >> >>",
+							{kF1, kF1Descriptor, more[0], more[1], more[2]}),
+			{}};
+		ASSERT_NE(spaced.interpreted.list, nullptr);
+		spaced.runs = all_of<RecordedGlyphRun>(*spaced.interpreted.list);
+		ASSERT_EQ(spaced.runs.size(), 2u);
+		const auto s0 = glyphs_of(spaced, spaced.runs[0]);
+		expect_point(s0[0].origin_pt, -3.0, -8.8 + 1.0, "rise added");
+		EXPECT_DOUBLE_EQ(s0[0].advance_pt, -10.0 + 2.0);
+		EXPECT_DOUBLE_EQ(spaced.runs[1].text_matrix.f, -8.0 - 5.0) << "the TJ number moved by -500/1000 * 10";
 	}
 	// A visible run carries bounds that hold every glyph origin.
 	{
@@ -2807,6 +2865,30 @@ TEST(PdfInterpreter, TjKerningAndSpacing)
 			EXPECT_LE(g.origin_pt.x, page.runs[0].bounds_pt.x_max);
 		}
 		EXPECT_DOUBLE_EQ(page.runs[0].bounds_pt.y_min, -2.0); // the box's -200 at size 10
+	}
+}
+
+TEST(PdfInterpreter, TextGlyphLimit)
+{
+	// A string longer than the list's glyph limit is refused before its run is built: the page stops with
+	// ResourceLimit, and building it never allocates past the limit.
+	const std::string content = "BT /F1 10 Tf (" + std::string(100'000u, 'A') + ") Tj ET";
+	const auto bytes = one_page_pdf(content, "<< /Font << /F1 5 0 R >> >>", {kF1, kF1Descriptor});
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value());
+	DisplayListLimits limits;
+	limits.max_glyphs = 8u;
+	size_t work = 0;
+	PdfResult<std::shared_ptr<const DisplayList>> list = make_pdf_error(ErrorCode::Ok);
+	{
+		const recto::test::ScopedHeapMeter meter;
+		list = interpret_page(**doc, 0u, limits);
+		work = meter.allocated_bytes();
+	}
+	ASSERT_FALSE(list.has_value());
+	EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
+	if (recto::test::ScopedHeapMeter::available()) {
+		EXPECT_LT(work, size_t{3} << 20u) << "the run's glyphs were built before the limit was checked";
 	}
 }
 

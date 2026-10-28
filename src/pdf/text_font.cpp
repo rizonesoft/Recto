@@ -155,8 +155,11 @@ struct TextFontBuilder {
 				bool symbolic = *standard == Standard14Font::Symbol || *standard == Standard14Font::ZapfDingbats;
 				if (descriptor != nullptr) {
 					const std::optional<double> flags = finite_number(resolved(document, descriptor->get("Flags"), fatal));
-					if (flags.has_value()) {
-						symbolic = (static_cast<int64_t>(*flags) & 4) != 0;
+					// /Flags is a 32-bit field (Table 121): an integer in that range, else ignored with a diagnostic.
+					if (flags.has_value() && *flags == std::floor(*flags) && *flags >= 0.0 && *flags <= 4294967295.0) {
+						symbolic = (static_cast<uint32_t>(*flags) & 4u) != 0u;
+					} else if (flags.has_value()) {
+						(void)make_pdf_error(ErrorCode::DamagedFormat, "Font descriptor /Flags is not a 32-bit integer");
 					}
 				}
 				const std::optional<PdfValue> encoding_value = resolved(document, dict.get("Encoding"), fatal);
@@ -181,6 +184,13 @@ struct TextFontBuilder {
 					box = helvetica->bbox_;
 				}
 			}
+		}
+		if ((!box.has_value() || !has_extent(*box)) && standard.has_value()) {
+			// A Standard 14 font whose descriptor gives no box, /Widths or not: the AFM's FontBBox.
+			const Standard14Metrics& metrics = standard14_metrics(*standard);
+			box = scaled(PdfRect{static_cast<double>(metrics.font_box[0]), static_cast<double>(metrics.font_box[1]),
+							 static_cast<double>(metrics.font_box[2]), static_cast<double>(metrics.font_box[3])},
+				0.001);
 		}
 		if (box.has_value() && has_extent(*box)) {
 			font->bbox_ = *box;
@@ -262,13 +272,13 @@ struct TextFontBuilder {
 	}
 };
 
-std::shared_ptr<const TextFont> TextFont::fallback() noexcept
+PdfResult<std::shared_ptr<const TextFont>> TextFont::fallback() noexcept
 {
 	try {
-		static const std::shared_ptr<const TextFont> helvetica = TextFontBuilder::helvetica();
-		return helvetica;
+		// Built per call (256 table lookups, only on a fallback path), so memory running out is reported every time.
+		return std::shared_ptr<const TextFont>(TextFontBuilder::helvetica());
 	} catch (const std::bad_alloc&) {
-		return std::make_shared<const TextFont>(); // the default widths of 0 and its default box; allocates less
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory building the fallback font");
 	}
 }
 
@@ -287,7 +297,7 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& doc
 				if (made.error().code == ErrorCode::UnsupportedFeature) {
 					record_diagnostic(made.error()); // the other recoverable codes record themselves
 				}
-				return fallback();
+				return fallback(); // OutOfMemory building it is passed on
 			}
 			return made;
 		};
@@ -304,7 +314,14 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& doc
 		if (subtype == std::optional<std::string_view>("Type3")) {
 			return finish(TextFontBuilder::type3(document, *dict, fatal));
 		}
-		return finish(TextFontBuilder::simple(document, *dict, fatal));
+		if (subtype == std::optional<std::string_view>("Type1") || subtype == std::optional<std::string_view>("MMType1") ||
+			subtype == std::optional<std::string_view>("TrueType")) {
+			return finish(TextFontBuilder::simple(document, *dict, fatal));
+		}
+		// Any other /Subtype, or none, is not a font this reader positions (9.5, Table 110): the fallback, recorded.
+		return finish(subtype.has_value()
+				? make_pdf_error(ErrorCode::UnsupportedFeature, "Font /Subtype is not one this reader reads")
+				: make_pdf_error(ErrorCode::DamagedFormat, "Font has no /Subtype"));
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory reading a font for text");
 	}
