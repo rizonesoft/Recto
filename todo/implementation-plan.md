@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 105 | Checklist items: 648
+Sections: 105 | Checklist items: 650
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -66,7 +66,7 @@ Sections: 105 | Checklist items: 648
 | [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host              | 7     |
 | [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host              | 8     |
 | [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host              | 9     |
-| [ ]    | D01 T01 §11 | Bounded resolved-object cache in `pdf::Document`                                         | windows-host              | 7     |
+| [ ]    | D01 T01 §11 | Bounded resolved-object cache in `pdf::Document`                                         | windows-host              | 9     |
 | [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host              | 5     |
 | [x]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host              | 5     |
 | [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host              | 3     |
@@ -925,4 +925,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 89/854 verified sections, 39 ready to run now.
 
-Checklist: 557/6258 items completed (includes Commit items).
+Checklist: 557/6260 items completed (includes Commit items).
