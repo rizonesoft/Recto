@@ -140,6 +140,30 @@ Final results are written when the third section stamps. Tally for `D01 T02 §33
 
 **Owner decision 2026-10-28:** keep both reviewers on every pass (a panel), the loop ending only when neither finds a P1 or P2 on the same candidate, with two prompt changes: settled items (filed or not taken, with reasons) are given to every reviewer so they do not block the stop, and P1 must be justified with a real path. The panel is wired into `scripts/review-dispatch.py` and the stamp; `D01 T02 §33` resumes its loop under it. The experiment's remaining sections are replaced by a one-section trial of two further reviewers (below).
 
+## Trial: Gemini 4 Argon and Muse Wonder 1.0 (owner request 2026-10-28)
+
+Each reviewed `D01 T02 §33` once, as round 1 with all four round-1 lenses, at the round 1 candidate (`6be1930`) and with the round prompt template of that commit, so the result compares directly with Terra's and Astra's round 1 and with every defect the later rounds proved present at that commit. They ran from a worktree of `6be1930` through the panel dispatcher with `.conclave/experiments/trial-gemini-muse.toml`; their replies are `docs/experiments/trial/D01-T02-s33.gemini.md` and `docs/experiments/trial/D01-T02-s33.muse.md`.
+
+| Reviewer | CLI | Effort | Seconds | Distinct findings | Valid | Invalid | Own duplicates | Known defects found (of 17) | New defects |
+| -------- | --- | ------ | ------- | ----------------- | ----- | ------- | -------------- | --------------------------- | ----------- |
+| GPT-6.1 Terra (round 1) | codex | max | 502 | 11 | 10 | 1 | 1 | 9 | - |
+| GPT-6 Astra (round 1) | codex | high | 390 | 6 | 5 | 1 | 0 | 5 | - |
+| Gemini 4 Argon | agy | medium | 339 | 3 | 3 | 0 | 1 | 2 | 1 (P2) |
+| Muse Wonder 1.0 | muse | high | 359 | 3 | 3 | 0 | 6 | 1 | 2 (P3) |
+
+The 17 known defects are the valid code defects the panel's rounds 1 to 5 found present at `6be1930` (the DeviceN overrun, retained sample buffers, unbudgeted calculators, `/Colorants` fan-out, a NaN index from a huge `/Encode`, function-array clipping, Order 3 below 4 samples, `/All`, the shared-subtree depth bypass, the function cache cap, retained Indexed lookups, `/Colorants` through DeviceN alternates, interpolation overflow, a full lookup-string copy, unbounded colorant names, `/Process /Components` work and spline NaN).
+
+| Reviewer | # | Severity given | Verdict | Matched | Note |
+| -------- | - | -------------- | ------- | ------- | ---- |
+| Gemini | 1 | P1 | valid | Terra round 1 adv 1 | DeviceN overrun (raised again under plan-delivery: an own duplicate). |
+| Gemini | 2 | P2 | valid, new | none | A tint transform that fails, or comes after the table budget is spent, is decoded again by every space naming it: up to 16 MiB of decompression per selection. Missed by Terra and Astra in five rounds. Fixed in `3bbe0f8` (failed functions remembered, a 256 MiB decode budget per page). |
+| Gemini | 3 | P2 | valid | Terra and Astra round 1 | NaN from a span too wide for a double, then an undefined float-to-integer cast. |
+| Muse | 1 | P1 | valid | Terra round 1 adv 1 | DeviceN overrun (raised again under integration and plan-delivery). |
+| Muse | 2 | P2 | valid, new | none | Caches keyed by object number alone: a reference to a generation the file does not hold reused another generation's parsed function. P3 by reach. Fixed in `3bbe0f8`, the `§32` ICC cache included. |
+| Muse | 3 | P2 | valid, new | none | A failing piece of a stitching function had its failure values overwritten by the stitching function's. P3 by reach. Fixed in `3bbe0f8`. |
+
+What the trial shows: both found the section's worst defect (the overrun), neither raised a false finding, and between them they found three defects the panel had not, one of them (Gemini's repeated decoding) a real P2. Against the panel's round 1 they found fewer of the known defects (Gemini 2, Muse 1, against Terra 9 and Astra 5). Gemini's reply carried its working notes ahead of the formatted review (318 lines), and Muse repeated each finding under every lens it touched (6 duplicates), both costing the writer reading time. A single pass is not a basis for a panel decision; their cost was not measured.
+
 ## Limits
 
 - Three sections is a small sample: results show direction, not significance.
