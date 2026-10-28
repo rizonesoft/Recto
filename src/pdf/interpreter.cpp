@@ -1812,22 +1812,17 @@ private:
 		uint64_t key = 0;
 		if (const std::optional<IndirectRef> ref = entry->as_ref()) {
 			key = object_key(*ref);
-			auto shared = document_.resolve_object_shared(*ref);
-			if (!shared.has_value()) {
-				if (fatal(shared.error())) {
-					return shared.error();
-				}
-				return {};
+			RECTO_PDF_TRY(value, xobject_target(*ref));
+			if (value == nullptr) {
+				return {}; // missing, damaged or not a stream: recorded when first met
 			}
-			value = std::move(*shared);
+		} else if (entry->as_stream() == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
+			return {};
 		} else {
 			value = std::make_shared<const PdfValue>(*entry);
 		}
 		const PdfStream* stream = value->as_stream();
-		if (stream == nullptr) {
-			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
-			return {};
-		}
 		const std::optional<PdfValue> subtype_value = entry_of(stream->dict, "Subtype");
 		const std::optional<std::string_view> subtype = subtype_value.has_value() ? subtype_value->as_name() : std::nullopt;
 		if (subtype == std::optional<std::string_view>("Form")) {
@@ -1843,6 +1838,35 @@ private:
 		}
 		(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject has no known /Subtype"); // recorded
 		return {};
+	}
+
+	// The XObject `ref` names, kept for the page by object so a `Do` repeated never parses it again (the document's
+	// cache admits nothing over 16 MiB). A stream's bytes come from the file itself (a stream is never in an object
+	// stream), so keeping every stream a page draws costs at most the file; a target that is not a stream, which may
+	// be a large object unpacked from an object stream, is not kept but remembered as refused. Null when missing,
+	// damaged or not a stream; fatal errors are returned.
+	[[nodiscard]] PdfResult<std::shared_ptr<const PdfValue>> xobject_target(IndirectRef ref)
+	{
+		const uint64_t key = object_key(ref);
+		if (const auto it = xobject_targets_.find(key); it != xobject_targets_.end()) {
+			return it->second;
+		}
+		auto object = document_.resolve_object_shared(ref);
+		if (!object.has_value()) {
+			if (fatal(object.error())) {
+				return std::move(object).error();
+			}
+			return std::shared_ptr<const PdfValue>{}; // a damaged reference: recorded by the document
+		}
+		std::shared_ptr<const PdfValue> target = std::move(*object);
+		if (target == nullptr || target->as_stream() == nullptr) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
+			target = nullptr;
+		}
+		if (xobject_targets_.size() < kMaxHeldResources) {
+			xobject_targets_.emplace(key, target);
+		}
+		return target;
 	}
 
 	// A dictionary entry resolved, or none; an entry whose value resolves to null is absent (ISO 32000-1 7.3.9).
@@ -2150,6 +2174,8 @@ private:
 	// The resource objects this page holds, by object (null for one missing or refused), and their heap.
 	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> held_{};
 	size_t held_bytes_{0};
+	// The XObjects this page draws, by object (null for one refused).
+	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> xobject_targets_{};
 	std::vector<uint64_t> form_stack_{};
 	std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> form_contents_{};
 	size_t form_decoded_{0};

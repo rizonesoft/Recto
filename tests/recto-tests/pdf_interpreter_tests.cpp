@@ -4429,6 +4429,24 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		ASSERT_EQ(draws.size(), 2u) << "the form's damaged tail swallowed the caller's re";
 		expect_rect(draws[1].bounds_pt, 50.0, 50.0, 51.0, 51.0);
 	}
+	// An XObject target over the document cache's admission size is parsed once per page however often `Do` names
+	// it: a non-stream target is remembered as refused, and a form whose dictionary carries 17 MiB is kept and drawn.
+	{
+		const std::string pad(size_t{17} << 20u, 'x');
+		std::string many;
+		for (int i = 0; i < 20; ++i) {
+			many += "/N Do /F Do ";
+		}
+		const auto bytes = one_page_pdf(many + "50 50 1 1 re f", "<< /XObject << /N 5 0 R /F 6 0 R >> >>",
+			{"<< /Pad (" + pad + ") >>", form_object("/BBox [-1000 -1000 1000 1000] /Pad (" + pad + ")", "0 0 1 1 re f")});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		const uint64_t before = (*doc)->parsed_object_count();
+		const auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 21u) << "20 form draws and the page's own";
+		EXPECT_LE((*doc)->parsed_object_count() - before, 4u) << "a repeated Do parsed its target again";
+	}
 	// A form with /Group (section 15) or /OC (section 47) draws as plain content meanwhile.
 	for (const char* entry : {"/Group << /S /Transparency /I true >>", "/OC << /Type /OCG /Name (Layer) >>"}) {
 		SCOPED_TRACE(entry);
