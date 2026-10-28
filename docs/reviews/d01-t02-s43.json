@@ -1,0 +1,104 @@
+{
+  "ref": "D01 T02 \u00a743",
+  "title": "Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text",
+  "implementation_sha": "dc5f6038885555369390169a9a4d8742836a967f",
+  "date": "2026-10-28",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s43.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s43.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s43.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfDisplayList.GlyphWidthScale:PdfInterpreter.*:PdfFont.*:PdfCid*.* (x64 Debug, AddressSanitizer) -> [  PASSED  ] 66 tests. (3 skipped: no heap meter or injection under ASan) 0 Warning(s)",
+    "build.cmd: x64 and ARM64, Debug and Release -> 0 Warning(s), 0 Error(s) each; recto-tests.exe x64 Debug -> [  PASSED  ] 369 tests (373 ran, 4 skipped: PdfFilters.FlateCompressSpeed in Debug and three Ui.App self-tests needing a desktop session); x64 Release -> [  PASSED  ] 370 tests"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s43.md",
+    "verdict": "filed",
+    "candidate": "a4c634c99cd1897df5604e8191fb6a05e72d8bf7",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a76",
+      "D01 T02 \u00a77",
+      "D01 T02 \u00a717",
+      "D01 T02 \u00a748",
+      "D06 T03 \u00a73"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s43.md",
+    "candidate": "835daaf013982d568323edf363be6c42fa3acdf4",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "high",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "high"
+    },
+    "rounds": [
+      {
+        "effort": "xhigh",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "medium",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "high",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
