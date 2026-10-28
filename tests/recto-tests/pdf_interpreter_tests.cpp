@@ -3045,6 +3045,43 @@ TEST(PdfInterpreter, TextGlyphLimit)
 	}
 }
 
+TEST(PdfInterpreter, TextDecodeWork)
+{
+	// Decoding a string is charged to the page's work budget before the builder sees the run, at the font's codespace
+	// range count per byte: ten 1,000-byte strings through a CMap of 100 ranges cost 1,000,000, past a 50,000 budget,
+	// although the builder alone would charge only the 10,000 glyphs.
+	std::string ranges = "100 begincodespacerange\n";
+	for (int i = 0; i < 100; ++i) {
+		char hex[8];
+		std::snprintf(hex, sizeof(hex), "<%02X>", i + 0x20);
+		ranges += std::string(hex) + " " + hex + "\n";
+	}
+	ranges += "endcodespacerange\n1 begincidrange\n<20> <83> 1\nendcidrange\n";
+	const std::string cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Wide def\n" + ranges +
+		"endcmap CMapName currentdict /CMap defineresource pop end end";
+	std::string content = "BT /C 10 Tf ";
+	for (int i = 0; i < 10; ++i) {
+		content += "(" + std::string(1'000u, 'A') + ") Tj ";
+	}
+	content += "ET";
+	const auto pdf = one_page_pdf(content, "<< /Font << /C 5 0 R >> >>",
+		{"<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding 6 0 R /DescendantFonts [7 0 R] >>",
+			stream_object("/Type /CMap /CMapName /Wide", cmap),
+			"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 500 >>"});
+	auto doc = Document::open_memory(pdf);
+	ASSERT_TRUE(doc.has_value());
+	DisplayListLimits limits;
+	limits.max_geometry_work_ops = 50'000u;
+	const auto list = interpret_page(**doc, 0u, limits);
+	ASSERT_FALSE(list.has_value()) << "the decoding work was not charged";
+	EXPECT_EQ(list.error().code, ErrorCode::ResourceLimit);
+	// The same page within a budget that holds the decoding draws all ten runs.
+	limits.max_geometry_work_ops = 2'000'000u;
+	const auto drawn = interpret_page(**doc, 0u, limits);
+	ASSERT_TRUE(drawn.has_value()) << drawn.error().message.view();
+	EXPECT_EQ(all_of<RecordedGlyphRun>(**drawn).size(), 10u);
+}
+
 TEST(PdfInterpreter, TextRenderModes)
 {
 	for (int mode = 0; mode < 8; ++mode) {

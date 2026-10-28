@@ -74,6 +74,12 @@ public:
 		uint32_t cid;
 	};
 
+	// The codespace ranges a code may be checked against, for a caller's work budget.
+	[[nodiscard]] size_t codespace_count() const noexcept
+	{
+		return codespace_.size();
+	}
+
 	// The heap this CMap holds, for a caller's memory budget.
 	[[nodiscard]] size_t memory_bytes() const noexcept
 	{

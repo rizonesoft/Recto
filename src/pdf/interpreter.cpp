@@ -1496,6 +1496,9 @@ private:
 		// A run that could not be recorded is refused before it is built, so a long string never allocates past the
 		// list's glyph or byte limit; every code takes at least a byte, so the reservation is exact and never doubles.
 		const size_t room = builder_.glyph_room();
+		// Decoding is work whether or not the builder keeps the run: each byte may be checked against every codespace
+		// range, charged before it is done so a refused run never escapes the page's work budget.
+		RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(std::min(bytes.size(), room) * font->code_cost()));
 		try {
 			glyphs.reserve(std::min(bytes.size(), room));
 		} catch (const std::bad_alloc&) {

@@ -7,6 +7,7 @@
 #include "font_cid.h"
 #include "object.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -66,6 +67,12 @@ public:
 	[[nodiscard]] bool bbox_known() const noexcept
 	{
 		return bbox_known_;
+	}
+	// The most codespace ranges one code is checked against: 1 for a one-byte kind, the CMap's range count for a
+	// composite font (at least 1), for the interpreter's work budget.
+	[[nodiscard]] size_t code_cost() const noexcept
+	{
+		return type0_ != nullptr ? std::max<size_t>(1u, type0_->cmap().codespace_count()) : 1u;
 	}
 	// The heap this font holds, for the interpreter's per-page font budget.
 	[[nodiscard]] size_t memory_bytes() const noexcept

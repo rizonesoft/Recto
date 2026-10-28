@@ -1441,6 +1441,11 @@ DisplayListBuilder::DisplayListBuilder(
 	current_state_.clip_is_empty = page_box_pt_.is_empty();
 }
 
+PdfResult<void> DisplayListBuilder::charge_work(size_t ops) noexcept
+{
+	return charge_geometry_work(ops);
+}
+
 size_t DisplayListBuilder::glyph_room() const noexcept
 {
 	const size_t max_glyphs = std::min(limits_.max_glyphs, kMaxU32);
