@@ -75,12 +75,12 @@ public:
 	// `encoding` is the font's `/Encoding` value, resolved (a name, a dictionary, or null when absent); `symbolic` the
 	// font descriptor's Symbolic flag; `built_in` the font's own encoding (the standard fonts' AFM codes, an embedded
 	// Type 1 program's, or null for none, as for a TrueType font). A named encoding is its base; a dictionary's
-	// `/BaseEncoding` is the base its `/Differences` apply over, and without one the base is `StandardEncoding` for a
-	// non-symbolic font and the built-in encoding for a symbolic one (Table 114); no `/Encoding` is the built-in
-	// encoding, or `StandardEncoding` for a non-symbolic font without one. An unknown name or a malformed
+	// `/BaseEncoding` is the base its `/Differences` apply over, and without one the base is the built-in encoding of an
+	// `embedded` program, else `StandardEncoding` for a non-symbolic font and the built-in encoding for a symbolic one
+	// (Table 114); no `/Encoding` is the built-in encoding, or `StandardEncoding` for a non-symbolic font without one. An unknown name or a malformed
 	// `/Differences` entry is skipped, as readers do; more than `kMaxDifferencesEntries` entries is `ResourceLimit`.
 	[[nodiscard]] static PdfResult<SimpleEncoding> build(
-		const PdfValue* encoding, bool symbolic, const GlyphNames* built_in) noexcept;
+		const PdfValue* encoding, bool symbolic, const GlyphNames* built_in, bool embedded = false) noexcept;
 
 	[[nodiscard]] std::string_view name(uint8_t code) const noexcept
 	{

@@ -3462,8 +3462,9 @@ TEST(PdfInterpreter, Standard14FittedWidths)
 	// The glyphs whose Windows face advance differs from the AFM's (PdfFont.Standard14Repertoire's list), by
 	// /Differences at codes 1 to 15: each origin at the sum of the AFM advances before it, each glyph fitted by
 	// its AFM width over its face advance.
-	const std::array<std::string_view, 15> names = {"Lcaron", "commaaccent", "dcaron", "divide", "imacron", "lcaron",
-		"lessequal", "greaterequal", "macron", "minus", "notequal", "partialdiff", "summation", "tcaron", "Ydieresis"};
+	const std::array<std::string_view, 20> names = {"Lcaron", "commaaccent", "dcaron", "divide", "imacron", "lcaron",
+		"lessequal", "greaterequal", "macron", "minus", "notequal", "partialdiff", "summation", "tcaron", "Ydieresis",
+		"lozenge", "mu", "periodcentered", "plusminus", "radical"};
 	std::string differences = "[1";
 	std::string shown;
 	for (size_t i = 0; i < names.size(); ++i) {
@@ -3690,6 +3691,16 @@ TEST(PdfInterpreter, EmbeddedType1AndCffText)
 			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 66 /Widths [600 600] /FontDescriptor 6 0 R >>",
 				descriptor_head + "/FontFile 7 0 R >>", stream_object(pfa_lengths_entries(pfa), pfa)});
 		expect_run(page, {*(*type1)->glyph_for_name("A"), *(*type1)->glyph_for_name("box")}, "Type 1");
+	}
+	// A non-symbolic embedded Type 1 whose /Differences has no /BaseEncoding applies them over the program's own
+	// encoding (Table 114), not StandardEncoding: code 66 stays the program's `box`.
+	{
+		const TextPage page = glyph_page("BT /P 10 Tf (BC) Tj ET", "/P 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 66 /LastChar 67 /Widths [600 700] /Encoding << /Differences [67 /curves] >> "
+			 "/FontDescriptor 6 0 R >>",
+				"<< /Type /FontDescriptor /FontName /Fixture /Flags 32 /FontBBox [0 0 1000 1000] /FontFile 7 0 R >>",
+				stream_object(pfa_lengths_entries(pfa), pfa)});
+		expect_run(page, {*(*type1)->glyph_for_name("box"), *(*type1)->glyph_for_name("curves")}, "non-symbolic embedded Type 1");
 	}
 	// No /Widths: the program's advances (A is 600, Helvetica's 667); conflicting /Widths win over the program.
 	{

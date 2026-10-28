@@ -479,7 +479,8 @@ struct TextFontBuilder {
 			encoding_value = direct_encoding(document, *encoding_entry, fatal);
 		}
 		RECTO_PDF_TRY(const SimpleEncoding encoding,
-			SimpleEncoding::build(encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, built_in));
+			SimpleEncoding::build(encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, built_in,
+				program.has_value() && program->names != nullptr));
 		const bool has_widths = widths(document, dict, 0.001, missing, *font, fatal);
 		if (program.has_value()) {
 			// Each code's glyph in the program: a TrueType font through its program's `cmap` (9.6.6.4); a Type 1 font,

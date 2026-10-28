@@ -187,7 +187,8 @@ std::optional<char32_t> drawable_unicode(std::string_view name, bool zapf_dingba
 // SimpleEncoding
 // ---------------------------------------------------------------------------------------------------------------------
 
-PdfResult<SimpleEncoding> SimpleEncoding::build(const PdfValue* encoding, bool symbolic, const GlyphNames* built_in) noexcept
+PdfResult<SimpleEncoding> SimpleEncoding::build(const PdfValue* encoding, bool symbolic, const GlyphNames* built_in,
+	bool embedded) noexcept
 {
 	try {
 		SimpleEncoding result;
@@ -224,6 +225,8 @@ PdfResult<SimpleEncoding> SimpleEncoding::build(const PdfValue* encoding, bool s
 			if (base.has_value()) {
 				fill_base(*base);
 				note_named(*base);
+			} else if (embedded && built_in != nullptr) {
+				result.names_ = *built_in; // Table 114: an embedded program's own encoding is the implicit base
 			} else if (!symbolic) {
 				fill_base(BaseEncoding::Standard); // Table 114: Differences apply to StandardEncoding
 			} else if (built_in != nullptr) {
