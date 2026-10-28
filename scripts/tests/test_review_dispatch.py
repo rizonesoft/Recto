@@ -261,8 +261,8 @@ class Dispatch(Harness):
         # The strict loader names what is wrong: another reviewer CLI, a fallback, a route for another writer.
         module, pin, good = self.module(), self.repo / ".conclave/reviewers.toml", FIXTURE_PIN
         mini = '\n[reviewers.mini]\ncli = "codex"\nmodel = "gpt-6-mini"\neffort = "low"\n'
-        cases = {good.replace('cli = "codex"', 'cli = "bash"'): "reviewer 'sol' needs cli = one of codex, agy, muse",
-                 good.replace('cli = "codex"', 'cli = "claude"'): "reviewer 'sol' needs cli = one of codex, agy, muse",
+        cases = {good.replace('cli = "codex"', 'cli = "bash"'): "reviewer 'sol' needs cli = one of codex",
+                 good.replace('cli = "codex"', 'cli = "claude"'): "reviewer 'sol' needs cli = one of codex",
                  good.replace('claude = ["sol"]', 'claude = ["sol", "sol"]') + mini:
                      "route 'claude' must list 1 to 4 distinct reviewers",
                  good.replace('claude = ["sol"]', 'claude = []'):
@@ -808,7 +808,7 @@ def bad_pins(good):
             good.replace('effort = "xhigh"', 'effort = "ultra"'),
             good.replace('effort = "xhigh"\n', ''),
             good.replace('cli = "codex"', 'cli = "bash"'),
-            # The reviewer CLIs removed on 2026-10-23: Antigravity (Gemini) and Claude Code as a reviewer.
+            # CLIs the dispatcher does not run: Antigravity (Gemini, removed again 2026-10-28) and Claude Code.
             good.replace('cli = "codex"', 'cli = "agy"'),
             good.replace('cli = "codex"', 'cli = "claude"'),
             good.replace('claude = ["sol"]', 'claude = ["opus"]'),
@@ -822,11 +822,6 @@ def bad_pins(good):
             good.replace('claude = ["sol"]', 'claude = []'),
             good.replace('claude = ["sol"]', 'claude = ["sol", "mini", "m2", "m3", "m4"]') + mini
             + mini.replace("mini]", "m2]") + mini.replace("mini]", "m3]") + mini.replace("mini]", "m4]"),
-            # An Antigravity reviewer whose model is of the writer's family, or of no family the dispatcher knows.
-            good.replace('cli = "codex"\nmodel = "gpt-6.1-sol"', 'cli = "agy"\nmodel = "claude-opus-5-5"')
-            .replace('effort = "xhigh"', 'effort = "high"'),
-            good.replace('cli = "codex"\nmodel = "gpt-6.1-sol"', 'cli = "agy"\nmodel = "mystery-1"')
-            .replace('effort = "xhigh"', 'effort = "high"'),
             good + 'codex = ["sol"]\n',
             good + 'gemini = ["sol"]\n')
 
@@ -1219,42 +1214,6 @@ class Panel(Harness):
                 module.check_schedule(schedule, routed)
         self.assertEqual(module.effective(good, "sol"), good, "a reviewer without its own efforts keeps the steps'")
         self.assertEqual([s["effort"] for s in module.effective(good, "mini")["rounds"]], ["max", "xhigh", "high"])
-
-
-class OtherClis(unittest.TestCase):
-    """The Antigravity and Muse CLIs, for trial pins: their families, efforts and read-only command lines."""
-
-    def module(self):
-        spec = importlib.util.spec_from_file_location("dispatch_clis", SCRIPTS / "review-dispatch.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    def test_families_come_from_the_cli_or_the_antigravity_model(self):
-        module = self.module()
-        self.assertEqual(module.family("codex", "gpt-6-astra"), "openai")
-        self.assertEqual(module.family("muse", "muse-wonder-1.0"), "meta")
-        self.assertEqual(module.family("agy", "gemini-4-argon"), "google")
-        self.assertEqual(module.family("agy", "claude-opus-5-5"), "anthropic")
-        self.assertIsNone(module.family("agy", "mystery-1"))
-
-    def test_antigravity_runs_in_plan_mode_with_its_tier_in_the_model(self):
-        module = self.module()
-        argv = module.command({"cli": "agy", "model": "gemini-4-argon", "effort": "medium"}, "C:/agy/agy.exe",
-                              Path("unused.md"), "high", prompt="Review it.")
-        self.assertEqual(argv[:3], ["C:/agy/agy.exe", "--model", "gemini-4-argon-high"])
-        for flag in ("--mode", "plan", "--sandbox", "--output-format", "text"):
-            self.assertIn(flag, argv)
-        self.assertEqual(argv[-1], "-p=Review it.")
-
-    def test_muse_reads_its_prompt_from_a_file_with_writes_disabled(self):
-        module = self.module()
-        argv = module.command({"cli": "muse", "model": "muse-wonder-1.0", "effort": "high"}, "C:/muse/muse-bin.exe",
-                              Path("unused.md"), None, prompt="Review it.", prompt_path=Path("C:/tmp/prompt.md"))
-        self.assertEqual(argv[:6], ["C:/muse/muse-bin.exe", "exec", "--model", "muse-wonder-1.0", "--reasoning-effort", "high"])
-        self.assertIn("--disable-write", argv)
-        self.assertEqual(argv[argv.index("--prompt-file") + 1], str(Path("C:/tmp/prompt.md")))
-        self.assertNotIn("Review it.", argv, "the prompt never goes on Muse's command line")
 
 
 class RepositoryPin(unittest.TestCase):

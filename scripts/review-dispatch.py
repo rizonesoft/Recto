@@ -66,24 +66,15 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / ".conclave" / "reviewers.toml"
-# Opus 5.5 through Claude Code is the only writer (owner decision 2026-10-23). The live route is a panel of Codex
-# reviewers (owner decision 2026-10-28); the Antigravity (`agy`) and Meta Muse (`muse`) CLIs serve trial pins.
+# Opus 5.5 through Claude Code is the only writer (owner decision 2026-10-23); reviewers run through the Codex CLI.
 WRITERS = ("claude",)
-CLIS = ("codex", "agy", "muse")
-# A reviewer is never of the writer's own model family. Codex and Muse name their family; Antigravity serves several
-# families, so its model id does (`family`).
-FAMILY = {"codex": "openai", "muse": "meta"}
-AGY_FAMILIES = {"gemini": "google", "gpt": "openai", "claude": "anthropic"}
+CLIS = ("codex",)
+# A reviewer is never of the writer's own model family.
+FAMILY = {"codex": "openai"}
 WRITER_FAMILY = {"claude": "anthropic"}
-# `max` is Codex's deepest effort (the GPT-6.1 Terra schedule). Antigravity names its tiers in the model id
-# (`gemini-4-argon-medium`), so its effort is one of those tiers.
-EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max"), "agy": ("low", "medium", "high"),
-           "muse": ("low", "medium", "high", "xhigh", "max")}
+EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max")}
 # The reviewers one route may name: each runs every pass (a panel), so more multiplies every section's review cost.
 MAX_PANEL = 4
-# A prompt goes to Antigravity on its command line (it reads no prompt from stdin); Windows caps a command line at
-# 32,767 characters, so a longer prompt is refused rather than cut.
-MAX_ARGV_PROMPT = 30_000
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # A review is prose. Output past this size is a runaway reviewer, not a review.
@@ -100,9 +91,6 @@ class Refused(Exception):
 
 def family(cli, model):
     """The model family a reviewer belongs to, or None when it cannot be told (which is never a different family)."""
-    if cli == "agy":
-        prefix = (model or "").split("-", 1)[0]
-        return AGY_FAMILIES.get(prefix)
     return FAMILY.get(cli)
 
 
@@ -392,29 +380,7 @@ def find_cli(name):
         for candidate in [os.path.join(directory, name + e) for e in extensions] + [os.path.join(directory, name)]:
             if os.path.isfile(candidate):
                 return candidate
-    return installed_muse() if name == "muse" else None
-
-
-MUSE_BINARY = re.compile(r"^muse-bin-([0-9]+(?:\.[0-9]+)*)-R([0-9]+)(?:\.([0-9]+))?\.exe$", re.IGNORECASE)
-
-
-def installed_muse():
-    """Meta's Muse installer puts versioned binaries in %LOCALAPPDATA%\\Programs\\muse beside a PowerShell launcher
-    (muse.cmd) it leaves off PATH: the newest binary, called directly so no shell re-parses the arguments, or None."""
-    base = os.environ.get("LOCALAPPDATA")
-    if os.name != "nt" or not base or not fully_qualified(base):
-        return None
-    folder = Path(base) / "Programs" / "muse"
-    try:
-        found = [(m, p) for p in folder.iterdir() if (m := MUSE_BINARY.match(p.name)) and p.is_file()]
-    except OSError:
-        return None
-    if not found:
-        return None
-    def version(item):
-        m = item[0]
-        return (tuple(int(x) for x in m.group(1).split(".")), int(m.group(2)), int(m.group(3) or 0))
-    return str(max(found, key=version)[1])
+    return None
 
 
 def fully_qualified(directory):
@@ -427,25 +393,13 @@ def fully_qualified(directory):
     return drive.startswith(("\\\\", "//")) or (len(drive) == 2 and rest[:1] in ("\\", "/"))
 
 
-def command(reviewer, executable, output_path, effort=None, prompt=None, prompt_path=None):
+def command(reviewer, executable, output_path, effort=None):
     """The argv for one read-only review. The model comes only from the pin, and the effort from the pin's reviewer
     or, when the pin has a [schedule], from the step it schedules for this pass.
 
     Codex reads the prompt on stdin and writes its final message to `output_path`, in its read-only sandbox, so a
-    Windows .cmd shim never re-parses prose as commands. Antigravity reads no prompt from stdin, so it goes on the
-    command line of agy.exe (a native binary, never a shim; at most MAX_ARGV_PROMPT characters), with the effort as the
-    model id's tier; plan mode keeps it from writing the workspace. Muse reads the prompt from `prompt_path` with
-    workspace writes disabled. Both print the review on stdout."""
+    Windows .cmd shim never re-parses prose as commands."""
     effort = effort or reviewer["effort"]
-    if reviewer["cli"] == "agy":
-        # WORKAROUND: headless Antigravity cannot approve the read-only shell commands a review needs (git show, git
-        # diff) and has no read-only allow flag; plan mode is what refuses workspace writes, and --sandbox restricts the
-        # terminal.
-        return [executable, "--model", f"{reviewer['model']}-{effort}", "--mode", "plan", "--sandbox",
-                "--dangerously-skip-permissions", "--output-format", "text", f"-p={prompt}"]
-    if reviewer["cli"] == "muse":
-        return [executable, "exec", "--model", reviewer["model"], "--reasoning-effort", effort, "--disable-write",
-                "--approval-mode", "never", "--workspace", str(ROOT), "--prompt-file", str(prompt_path)]
     return [executable, "exec", "-m", reviewer["model"], "-c", f"model_reasoning_effort={effort}",
             "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "-o", str(output_path), "-"]
 
@@ -554,22 +508,17 @@ def review(pin, writer, prompt_path, timeout, plan=None, name=None, settled=()):
     executable = find_cli(reviewer["cli"])
     if executable is None:
         return none(f"{reviewer['cli']} is not installed")
-    if reviewer["cli"] == "agy" and len(prompt) > MAX_ARGV_PROMPT:
-        return none(f"the prompt is longer than the {MAX_ARGV_PROMPT} characters agy's command line can carry")
     text = None
     tmp = Path(tempfile.mkdtemp())
     try:
-        stdout_path, message_path, prompt_file = tmp / "stdout.txt", tmp / "last-message.md", tmp / "prompt.md"
-        if reviewer["cli"] == "muse":
-            prompt_file.write_text(prompt, encoding="utf-8")
+        stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
         started = time.monotonic()
-        argv = command(reviewer, executable, message_path, effort, prompt=prompt, prompt_path=prompt_file)
-        _, problem = run(argv, prompt if reviewer["cli"] == "codex" else "", timeout, [stdout_path, message_path])
+        argv = command(reviewer, executable, message_path, effort)
+        _, problem = run(argv, prompt, timeout, [stdout_path, message_path])
         seconds = round(time.monotonic() - started)
         if problem is None:
-            # Codex writes its final message to the -o file and its progress to stdout; the others print the review.
-            source = message_path if reviewer["cli"] == "codex" else stdout_path
-            text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
+            # Codex writes its final message to the -o file and its progress to stdout.
+            text = message_path.read_text(encoding="utf-8", errors="replace") if message_path.is_file() else ""
     finally:
         remove_scratch(tmp)
     if problem is None and not (text or "").strip():
