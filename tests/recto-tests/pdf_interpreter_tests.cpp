@@ -4447,6 +4447,69 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 21u) << "20 form draws and the page's own";
 		EXPECT_LE((*doc)->parsed_object_count() - before, 4u) << "a repeated Do parsed its target again";
 	}
+	// XObject targets share the page's held budget, and a refused target holds nothing: two 12 MiB forms with no
+	// /BBox are refused and released, so five valid 11 MiB forms then fit in 64 MiB, and a sixth does not.
+	{
+		std::string names;
+		std::string content;
+		std::vector<std::string> objects;
+		const auto add = [&](size_t mib, bool with_box) {
+			const int index = static_cast<int>(objects.size());
+			names += "/F" + std::to_string(index) + " " + std::to_string(5 + index) + " 0 R ";
+			content += "/F" + std::to_string(index) + " Do ";
+			objects.push_back(form_object(std::string(with_box ? "/BBox [-1000 -1000 1000 1000] " : "") + "/Pad (" +
+				std::string(mib << 20u, 'x') + ")", "0 0 1 1 re f"));
+		};
+		add(12u, false);
+		add(12u, false);
+		for (int i = 0; i < 6; ++i) {
+			add(11u, true);
+		}
+		clear_diagnostics();
+		const auto r = interpret(content + "50 50 1 1 re f", "<< /XObject << " + names + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 5u + 1u) << "refused targets kept their bytes, or the budget let all six in";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
+	// A target that fails to parse is remembered: twenty `Do`s of it record its damage once, not twenty times.
+	{
+		std::string many;
+		for (int i = 0; i < 20; ++i) {
+			many += "/D Do ";
+		}
+		const auto bytes = one_page_pdf(many + "50 50 1 1 re f", "<< /XObject << /D 5 0 R >> >>", {"] ) >>"});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		ASSERT_FALSE((*doc)->resolve_object(IndirectRef{5u, 0u}).has_value()) << "the fixture's target must fail to parse";
+		clear_diagnostics();
+		const auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 1u);
+		const auto tail = diagnostics_tail(64u);
+		const auto damaged = std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; });
+		EXPECT_LE(damaged, 3) << "the damaged target was parsed again for each Do";
+	}
+	// A form's metadata is read once per page: an indirect /BBox over the document cache's admission size, refused
+	// as not an array, is parsed once however often the form is drawn.
+	{
+		std::string many;
+		for (int i = 0; i < 20; ++i) {
+			many += "/F Do ";
+		}
+		const auto bytes = one_page_pdf(many + "50 50 1 1 re f", "<< /XObject << /F 5 0 R >> >>",
+			{form_object("/BBox 6 0 R", "0 0 1 1 re f"), "(" + std::string(size_t{17} << 20u, 'x') + ")"});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		const uint64_t before = (*doc)->parsed_object_count();
+		clear_diagnostics();
+		const auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value());
+		EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), 1u);
+		EXPECT_LE((*doc)->parsed_object_count() - before, 4u) << "the form's /BBox was resolved again for each Do";
+		const auto tail = diagnostics_tail(64u);
+		EXPECT_EQ(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 1)
+			<< "the form was classified again for each Do";
+	}
 	// A form with /Group (section 15) or /OC (section 47) draws as plain content meanwhile.
 	for (const char* entry : {"/Group << /S /Transparency /I true >>", "/OC << /Type /OCG /Name (Layer) >>"}) {
 		SCOPED_TRACE(entry);

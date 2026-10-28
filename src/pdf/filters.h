@@ -220,6 +220,9 @@ enum class DctOutput : uint8_t {
 // buffers are allocated outside the meter, and they never produce PDF syntax.
 [[nodiscard]] bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept;
 
+// Whether one /Filter name is among those `filters_are_metered_lossless` accepts.
+[[nodiscard]] bool filter_is_metered_lossless(std::string_view filter_name) noexcept;
+
 namespace detail {
 
 // Measures decoding work on this thread: the output capacity every decoder that can expand its input (Flate, LZW,

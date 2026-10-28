@@ -1230,6 +1230,16 @@ private:
 		ResourceScope* scope{nullptr};
 		std::unique_ptr<ResourceScope> transient{};
 	};
+	// What a page knows of an XObject it has met, worked out once from its object (ISO 32000-1 8.8 and Table 95) so a
+	// repeated `Do` resolves nothing: its kind and, for a form, its object, matrix and box. A refusal is remembered.
+	struct XObjectEntry {
+		enum class Kind : uint8_t { Refused, Form, Image, PostScript };
+		Kind kind{Kind::Refused};
+		std::shared_ptr<const PdfValue> object{};
+		PdfMatrix matrix{};
+		PdfRect bbox{};
+	};
+
 	// One content stream being interpreted: the page's, or a form's (its content kept alive here).
 	struct Frame {
 		std::shared_ptr<const std::vector<uint8_t>> content;
@@ -1277,13 +1287,18 @@ private:
 			return it->second;
 		}
 		auto object = document_.resolve_object_shared(ref);
+		std::shared_ptr<const PdfValue> kept;
 		if (!object.has_value()) {
-			if (fatal(object.error()) && !resolve_failure_.has_value()) {
-				resolve_failure_ = object.error();
+			if (fatal(object.error())) {
+				if (!resolve_failure_.has_value()) {
+					resolve_failure_ = object.error();
+				}
+				return nullptr; // the page stops, so nothing is remembered
 			}
-			return nullptr; // a damaged reference is not remembered: an object stream may still be readable later
+			// A damaged object reads the same way every time, so it is remembered and never parsed again.
+		} else {
+			kept = std::move(*object);
 		}
-		std::shared_ptr<const PdfValue> kept = std::move(*object);
 		if (kept != nullptr && kept->is_null()) {
 			kept = nullptr;
 		}
@@ -1301,6 +1316,15 @@ private:
 			held_.emplace(key, kept);
 		}
 		return kept;
+	}
+
+	// Stops holding the object `key` names, its bytes returned to the budget; it stays remembered as refused.
+	void release_held(uint64_t key) noexcept
+	{
+		if (const auto it = held_.find(key); it != held_.end() && it->second != nullptr) {
+			held_bytes_ -= std::min(held_bytes_, it->second->heap_bytes());
+			it->second = nullptr;
+		}
 	}
 
 	// The resource named `name` in `slot`'s category, resolved, or none.
@@ -1808,74 +1832,76 @@ private:
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "Do names an XObject the resources do not hold"); // recorded
 			return {};
 		}
-		std::shared_ptr<const PdfValue> value;
-		uint64_t key = 0;
-		if (const std::optional<IndirectRef> ref = entry->as_ref()) {
-			key = object_key(*ref);
-			RECTO_PDF_TRY(value, xobject_target(*ref));
-			if (value == nullptr) {
-				return {}; // missing, damaged or not a stream: recorded when first met
-			}
-		} else if (entry->as_stream() == nullptr) {
+		const std::optional<IndirectRef> ref = entry->as_ref();
+		if (!ref.has_value()) {
+			// A stream is always an indirect object (7.3.8), so a direct value never names an XObject.
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
 			return {};
-		} else {
-			value = std::make_shared<const PdfValue>(*entry);
 		}
-		const PdfStream* stream = value->as_stream();
-		const std::optional<PdfValue> subtype_value = entry_of(stream->dict, "Subtype");
-		const std::optional<std::string_view> subtype = subtype_value.has_value() ? subtype_value->as_name() : std::nullopt;
-		if (subtype == std::optional<std::string_view>("Form")) {
-			return draw_form(value, key);
+		const XObjectEntry& target = xobject_entry(*ref);
+		if (target.kind == XObjectEntry::Kind::Form) {
+			return draw_form(target, object_key(*ref));
 		}
-		if (subtype == std::optional<std::string_view>("Image")) {
-			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "Image XObjects are drawn by D01 T02 section 44"));
-			return {};
-		}
-		if (subtype == std::optional<std::string_view>("PS")) {
-			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "PostScript XObjects are never run (8.8.2)"));
-			return {};
-		}
-		(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject has no known /Subtype"); // recorded
-		return {};
+		return {}; // refused, or an Image or PostScript XObject: recorded when first met
 	}
 
-	// The XObject `ref` names, kept for the page by object so a `Do` repeated never parses it again (the document's
-	// cache admits nothing over 16 MiB). A stream's bytes come from the file itself (a stream is never in an object
-	// stream), so keeping every stream a page draws costs at most the file; a target that is not a stream, which may
-	// be a large object unpacked from an object stream, is not kept but remembered as refused. Null when missing,
-	// damaged or not a stream; fatal errors are returned.
-	[[nodiscard]] PdfResult<std::shared_ptr<const PdfValue>> xobject_target(IndirectRef ref)
+	// The XObject `ref` names, classified once for the page. Its object is held through `held_object` (once per page,
+	// within the held budget, a failure or refusal remembered); a form whose `/Matrix` or `/BBox` cannot be used, and
+	// a target that is not a stream, are refused once and their object released from the budget.
+	[[nodiscard]] const XObjectEntry& xobject_entry(IndirectRef ref)
 	{
+		static const XObjectEntry kRefused{};
 		const uint64_t key = object_key(ref);
-		if (const auto it = xobject_targets_.find(key); it != xobject_targets_.end()) {
+		if (const auto it = xobject_entries_.find(key); it != xobject_entries_.end()) {
 			return it->second;
 		}
-		auto object = document_.resolve_object_shared(ref);
-		if (!object.has_value()) {
-			if (fatal(object.error())) {
-				return std::move(object).error();
-			}
-			return std::shared_ptr<const PdfValue>{}; // a damaged reference: recorded by the document
-		}
-		std::shared_ptr<const PdfValue> target = std::move(*object);
-		if (target == nullptr || target->as_stream() == nullptr) {
+		XObjectEntry entry;
+		std::shared_ptr<const PdfValue> object = held_object(ref);
+		const PdfStream* stream = object != nullptr ? object->as_stream() : nullptr;
+		if (object != nullptr && stream == nullptr) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
-			target = nullptr;
 		}
-		if (xobject_targets_.size() < kMaxHeldResources) {
-			xobject_targets_.emplace(key, target);
+		if (stream != nullptr) {
+			const Held subtype_value = entry_of(stream->dict, "Subtype");
+			const std::optional<std::string_view> subtype = subtype_value ? subtype_value->as_name() : std::nullopt;
+			if (subtype == std::optional<std::string_view>("Form")) {
+				const std::optional<PdfMatrix> matrix = form_matrix(stream->dict);
+				const std::optional<PdfRect> bbox = form_bbox(stream->dict);
+				if (matrix.has_value() && bbox.has_value()) {
+					entry = XObjectEntry{XObjectEntry::Kind::Form, object, *matrix, *bbox};
+				} else {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject's /Matrix or /BBox cannot be used; it is not drawn"); // recorded
+				}
+			} else if (subtype == std::optional<std::string_view>("Image")) {
+				record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "Image XObjects are drawn by D01 T02 section 44"));
+				entry.kind = XObjectEntry::Kind::Image;
+			} else if (subtype == std::optional<std::string_view>("PS")) {
+				record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "PostScript XObjects are never run (8.8.2)"));
+				entry.kind = XObjectEntry::Kind::PostScript;
+			} else {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject has no known /Subtype"); // recorded
+			}
 		}
-		return target;
+		if (entry.kind != XObjectEntry::Kind::Form) {
+			release_held(key); // nothing will draw it, so it holds nothing
+		}
+		if (xobject_entries_.size() >= kMaxHeldResources) {
+			return entry.kind == XObjectEntry::Kind::Form ? (transient_entry_ = std::move(entry)) : kRefused;
+		}
+		return xobject_entries_.emplace(key, std::move(entry)).first->second;
 	}
 
-	// A dictionary entry resolved, or none; an entry whose value resolves to null is absent (ISO 32000-1 7.3.9).
-	[[nodiscard]] std::optional<PdfValue> entry_of(const PdfDict& dict, std::string_view key)
+	// A dictionary entry, an indirect value held through `held_object`, never copied; an entry whose value is null is
+	// absent (ISO 32000-1 7.3.9).
+	[[nodiscard]] Held entry_of(const PdfDict& dict, std::string_view key)
 	{
 		const PdfValue* value = dict.get(key);
-		std::optional<PdfValue> entry = value != nullptr ? resolved(*value) : std::nullopt;
-		if (entry.has_value() && entry->is_null()) {
-			return std::nullopt;
+		if (value == nullptr) {
+			return Held{};
+		}
+		Held entry = shared(*value);
+		if (entry && entry->is_null()) {
+			return Held{};
 		}
 		return entry;
 	}
@@ -1883,8 +1909,8 @@ private:
 	// A form's `/Matrix` (identity when absent), or none when it is not six finite numbers or is singular.
 	[[nodiscard]] std::optional<PdfMatrix> form_matrix(const PdfDict& dict)
 	{
-		const std::optional<PdfValue> value = entry_of(dict, "Matrix");
-		if (!value.has_value()) {
+		const Held value = entry_of(dict, "Matrix");
+		if (!value) {
 			return PdfMatrix::identity();
 		}
 		const PdfArray* array = value->as_array();
@@ -1893,8 +1919,8 @@ private:
 		}
 		double m[6]{};
 		for (size_t i = 0; i < 6u; ++i) {
-			const std::optional<PdfValue> n = resolved((*array)[i]);
-			const std::optional<double> number = n.has_value() ? n->as_number() : std::nullopt;
+			const Held n = shared((*array)[i]);
+			const std::optional<double> number = n ? n->as_number() : std::nullopt;
 			if (!number.has_value() || !std::isfinite(*number)) {
 				return std::nullopt;
 			}
@@ -1910,15 +1936,15 @@ private:
 	// A form's `/BBox` (required, Table 95), or none when it is missing, not four finite numbers, or empty.
 	[[nodiscard]] std::optional<PdfRect> form_bbox(const PdfDict& dict)
 	{
-		const std::optional<PdfValue> value = entry_of(dict, "BBox");
-		const PdfArray* array = value.has_value() ? value->as_array() : nullptr;
+		const Held value = entry_of(dict, "BBox");
+		const PdfArray* array = value ? value->as_array() : nullptr;
 		if (array == nullptr || array->size() != 4u) {
 			return std::nullopt;
 		}
 		double v[4]{};
 		for (size_t i = 0; i < 4u; ++i) {
-			const std::optional<PdfValue> n = resolved((*array)[i]);
-			const std::optional<double> number = n.has_value() ? n->as_number() : std::nullopt;
+			const Held n = shared((*array)[i]);
+			const std::optional<double> number = n ? n->as_number() : std::nullopt;
 			if (!number.has_value() || !std::isfinite(*number)) {
 				return std::nullopt;
 			}
@@ -1983,25 +2009,21 @@ private:
 	// (`filters_are_metered_lossless`): image filters never produce content, and their buffers are not metered.
 	[[nodiscard]] bool metered_filters(const PdfDict& dict)
 	{
-		const std::optional<PdfValue> filter = entry_of(dict, "Filter");
-		if (!filter.has_value()) {
+		const Held filter = entry_of(dict, "Filter");
+		if (!filter) {
 			return true;
 		}
-		PdfDict probe;
+		const auto metered = [](const Held& stage) {
+			const std::optional<std::string_view> name = stage ? stage->as_name() : std::nullopt;
+			return name.has_value() && filter_is_metered_lossless(*name);
+		};
 		if (const PdfArray* stages = filter->as_array()) {
 			if (stages->size() > kMaxFilterChainDepth) {
 				return false;
 			}
-			PdfArray names;
-			for (const PdfValue& stage : *stages) {
-				std::optional<PdfValue> name = resolved(stage);
-				names.push_back(name.has_value() ? std::move(*name) : PdfValue(PdfNull{}));
-			}
-			probe.set("Filter", PdfValue(std::move(names)));
-		} else {
-			probe.set("Filter", *filter);
+			return std::all_of(stages->begin(), stages->end(), [&](const PdfValue& stage) { return metered(shared(stage)); });
 		}
-		return filters_are_metered_lossless(probe);
+		return metered(filter);
 	}
 
 	// A form's decoded content: kept per form for the page, decoded at most once, each decode capped at what remains
@@ -2061,9 +2083,11 @@ private:
 	// content charged to the work budget. The form's content runs as a new frame of `interpret`; when it ends,
 	// `leave_form` gives the caller back everything it left (saves, the clip, a path, a pending clip, the text
 	// matrices).
-	[[nodiscard]] PdfResult<void> draw_form(const std::shared_ptr<const PdfValue>& form, uint64_t key)
+	[[nodiscard]] PdfResult<void> draw_form(const XObjectEntry& form, uint64_t key)
 	{
-		const PdfStream& stream = *form->as_stream();
+		const PdfStream& stream = *form.object->as_stream();
+		const PdfMatrix* const matrix = &form.matrix;
+		const PdfRect* const bbox = &form.bbox;
 		if (key != 0u && std::find(form_stack_.begin(), form_stack_.end(), key) != form_stack_.end()) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject draws itself; the repeat is not drawn"); // recorded
 			return {};
@@ -2071,12 +2095,6 @@ private:
 		if (form_stack_.size() >= kMaxFormDepth) {
 			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::FormDepth, form_stack_.size() + 1u,
 				kMaxFormDepth, "Form XObjects nested past the depth limit are not drawn"));
-			return {};
-		}
-		const std::optional<PdfMatrix> matrix = form_matrix(stream.dict);
-		const std::optional<PdfRect> bbox = form_bbox(stream.dict);
-		if (!matrix.has_value() || !bbox.has_value()) {
-			(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject's /Matrix or /BBox cannot be used; it is not drawn");
 			return {};
 		}
 		if (state_stack_.size() >= max_depth_) {
@@ -2122,7 +2140,7 @@ private:
 			}
 			return entered;
 		}
-		use_scope(form_scope(form, key, exit->transient));
+		use_scope(form_scope(form.object, key, exit->transient));
 		auto parser = std::make_unique<Parser>(std::span<const uint8_t>(*content));
 		frames_.push_back(Frame{std::move(content), std::move(parser), {}, std::move(exit)});
 		return {};
@@ -2174,8 +2192,9 @@ private:
 	// The resource objects this page holds, by object (null for one missing or refused), and their heap.
 	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> held_{};
 	size_t held_bytes_{0};
-	// The XObjects this page draws, by object (null for one refused).
-	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> xobject_targets_{};
+	// The XObjects this page has met, by object, and the one form met past kMaxHeldResources entries.
+	std::unordered_map<uint64_t, XObjectEntry> xobject_entries_{};
+	XObjectEntry transient_entry_{};
 	std::vector<uint64_t> form_stack_{};
 	std::unordered_map<uint64_t, std::shared_ptr<const std::vector<uint8_t>>> form_contents_{};
 	size_t form_decoded_{0};
