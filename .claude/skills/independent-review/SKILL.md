@@ -1,17 +1,17 @@
 ---
 name: independent-review
-description: Get an independent review of your own work from the reviewer panel pinned in .conclave/reviewers.toml (GPT-6 Astra and GPT-6.1 Terra, a different model family, both on every pass), through scripts/review-dispatch.py, then verify and act on every finding. Use before calling a nontrivial change done, before a commit that ships, or when a TODO section needs its review round.
+description: Get an independent review of your own work from the reviewer pinned in .conclave/reviewers.toml (GPT-6 Astra, a different model family), through scripts/review-dispatch.py, then verify and act on every finding. Use before calling a nontrivial change done, before a commit that ships, or when a TODO section needs its review round.
 ---
 
 # Independent review
 
-Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository, and a panel of GPT-6 Astra and GPT-6.1 Terra, through the Codex CLI in its read-only sandbox, reviews every pass of the same candidate at once (owner decision 2026-10-28). The pin's `[schedule]` sets each pass's lenses for both and each reviewer's effort (Astra: plan and completion `medium`, rounds `high`, `medium`, `low`, then `low` with one lens per round; Terra, through `[schedule.efforts.terra]`: `xhigh`, `xhigh`, `max`, `xhigh`, `high`, then `high`), with the round prompt's rule that a `P1` names a real path and its consequence. `scripts/review-dispatch.py` runs both and writes each reviewer's review to its own findings file (the `--record` file for Astra, `<stem>.terra.md` beside it for Terra), and appends the writer's settled items (`- Filed:`, `- Not taken:`, `- Settled:` lines in those files) to every prompt.
+Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository, and GPT-6 Astra, through the Codex CLI in its read-only sandbox, reviews every pass (owner decision 2026-10-28: the Astra and GPT-6.1 Terra panel was removed and every Astra effort raised one level). The pin's `[schedule]` sets each pass's lenses and effort (plan and completion `high`, rounds `xhigh`, `high`, `medium`, then `medium` with one lens per round, a rotation `P1` escalating to `high`), with the round prompt's rule that a `P1` names a real path and its consequence. `scripts/review-dispatch.py` writes the review to the `--record` findings file and appends the writer's settled items (`- Filed:`, `- Not taken:`, `- Settled:` lines in that file) to every prompt.
 
 | Work written by | Reviewers (every pass) | Fallback |
 | --- | --- | --- |
-| Opus 5.5 (`claude`) | GPT-6 Astra and GPT-6.1 Terra (`codex`, each at its scheduled effort) | none |
+| Opus 5.5 (`claude`) | GPT-6 Astra (`codex`, at its scheduled effort) | none |
 
-The pin refuses any other writer, an unknown reviewer CLI, a reviewer named twice or more than four, and a reviewer of the writer's own model family. A loop ends on the first candidate where neither reviewer finds a `P1` or `P2` (the dispatcher's summary says `panel_clean`); an outage of either is no review, so run the round again.
+The pin refuses any other writer, an unknown reviewer CLI, a reviewer named twice or more than four, and a reviewer of the writer's own model family (a route of several reviewers, a panel, is still accepted, each writing its own findings file). A loop ends on the first round with no `P1` or `P2`; an outage is no review, so run the round again.
 
 ## Steps
 

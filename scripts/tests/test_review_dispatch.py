@@ -1224,26 +1224,23 @@ class RepositoryPin(unittest.TestCase):
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
-    def test_the_repository_pin_is_the_astra_and_terra_panel_reviewing_claude(self):
-        # Owner decisions: Opus 5.5 is the sole writer (2026-10-23), reviewed by a panel of GPT-6 Astra and GPT-6.1 Terra
-        # through Codex on every pass (2026-10-28). Astra keeps the shared schedule: a medium plan review, a medium
-        # completion review, rounds at high, medium and low adversarial effort, then one low-effort lens per round;
-        # Terra runs xhigh, xhigh, max, xhigh, high, high and max escalation.
+    def test_the_repository_pin_is_astra_alone_reviewing_claude(self):
+        # Owner decisions: Opus 5.5 is the sole writer (2026-10-23), reviewed by GPT-6 Astra through Codex on every pass;
+        # the Astra and Terra panel was removed on 2026-10-28 and every Astra effort raised one level: a high plan
+        # review, a high completion review, rounds at xhigh, high and medium adversarial effort, then one medium lens
+        # per round, a rotation P1 escalating to high.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
-        self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "medium"},
-                                            "terra": {"cli": "codex", "model": "gpt-6.1-terra", "effort": "xhigh"}})
-        self.assertEqual(pin["routes"], {"claude": ["astra", "terra"]})
-        self.assertEqual(pin["schedule"]["efforts"], {"terra": {"plan": "xhigh", "completion": "xhigh",
-                                                                "rounds": ["max", "xhigh", "high"], "rotation": "high",
-                                                                "escalation": "max"}})
+        self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "high"}})
+        self.assertEqual(pin["routes"], {"claude": ["astra"]})
         schedule = pin["schedule"]
-        self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})
-        self.assertEqual(schedule["completion"], {"effort": "medium"})
+        self.assertNotIn("efforts", schedule)
+        self.assertEqual(schedule["plan"], {"effort": "high", "lenses": ["plan"]})
+        self.assertEqual(schedule["completion"], {"effort": "high"})
         self.assertEqual([(r["effort"], r["lenses"][0]) for r in schedule["rounds"]],
-                         [("high", "adversarial"), ("medium", "adversarial"), ("low", "adversarial")])
-        self.assertEqual(schedule["rotation"]["effort"], "low")
-        self.assertEqual(schedule["escalation"], {"effort": "medium", "lenses": ["adversarial"]})
+                         [("xhigh", "adversarial"), ("high", "adversarial"), ("medium", "adversarial")])
+        self.assertEqual(schedule["rotation"]["effort"], "medium")
+        self.assertEqual(schedule["escalation"], {"effort": "high", "lenses": ["adversarial"]})
 
     def test_the_pins_severity_stop_is_the_stamps_cutoff(self):
         # The dispatcher reports severity_stop from the pin and `stamp` re-checks it against SEVERITY_CUTOFF_ROUND: the

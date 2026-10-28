@@ -1,13 +1,12 @@
 # Independent reviewers for this repository, read by scripts/review-dispatch.py.
 #
 # Owner decision 2026-10-23: Opus 5.5 (Claude Code, writer `claude`) is the only
-# writer in this repository. Owner decision 2026-10-28: its route is a panel of
-# GPT-6 Astra and GPT-6.1 Terra through the Codex CLI. Both review every pass
-# of the same candidate at once, each into its own findings file, and a loop
-# ends only when neither finds a P1 or P2 on that candidate (the reviewer A/B
-# experiment, docs/experiments/2026-10-27-reviewer-ab.md, found each catching
-# defects the other missed). Neither stands in for the other: a reviewer that
-# is not installed, fails, times out, returns nothing or replies OVERALL:
+# writer in this repository. Owner decision 2026-10-28 (later the same day):
+# the Astra and Terra panel was more review than the work needed, so the route
+# is GPT-6 Astra alone through the Codex CLI, each of its passes one effort
+# level higher than before the panel (the panel's record is
+# docs/experiments/2026-10-27-reviewer-ab.md). There is no fallback: a reviewer
+# that is not installed, fails, times out, returns nothing or replies OVERALL:
 # blocked is recorded with its reason, and is no review, never an approval.
 #
 # Loaded strictly: an unknown key, an unknown CLI, a malformed model, a route
@@ -23,58 +22,43 @@ schema_version = 1
 [reviewers.astra]
 cli = "codex"
 model = "gpt-6-astra"
-effort = "medium"
-
-# GPT-6.1 Terra through the Codex CLI, read-only sandbox (owner decision 2026-10-28), at about a tenth of Astra's cost;
-# [schedule.efforts.terra] below gives it its own effort for each pass.
-[reviewers.terra]
-cli = "codex"
-model = "gpt-6.1-terra"
-effort = "xhigh"
+effort = "high"
 
 [routes]
-claude = ["astra", "terra"]
+claude = ["astra"]
 
-# The review schedule (owner decision 2026-10-23). The dispatcher picks each pass's effort and lenses, so the loop
-# runs the same way every time: a plan review before the build, the completion review after it, three fixed
-# adversarial rounds at falling effort, then one low-effort lens per round in rotation until the loop stops. The
-# first round with no P1 or P2 finding (its worst P3, or none) ends the loop (owner decision 2026-10-24: was from
-# round 4 on; severity_stop_after = 0 opens the stop from round 1); a low-effort round that finds a P1 is followed
-# by one medium-effort adversarial round. The cap stays 33 rounds.
+# The review schedule (owner decision 2026-10-23; every effort raised one level 2026-10-28). The dispatcher picks each
+# pass's effort and lenses, so the loop runs the same way every time: a plan review before the build, the completion
+# review after it, three fixed adversarial rounds at falling effort, then one medium-effort lens per round in
+# rotation until the loop stops. The first round with no P1 or P2 finding (its worst P3, or none) ends the loop
+# (owner decision 2026-10-24: was from round 4 on; severity_stop_after = 0 opens the stop from round 1); a rotation
+# round that finds a P1 is followed by one high-effort adversarial round. The cap stays 33 rounds.
 [schedule]
 severity_stop_after = 0
 
 [schedule.plan]
-effort = "medium"
+effort = "high"
 lenses = ["plan"]
 
 [schedule.completion]
-effort = "medium"
+effort = "high"
 
 [[schedule.rounds]]
-effort = "high"
+effort = "xhigh"
 lenses = ["adversarial", "integration", "source-defect", "plan-delivery"]
 
 [[schedule.rounds]]
-effort = "medium"
+effort = "high"
 lenses = ["adversarial"]
 
 [[schedule.rounds]]
-effort = "low"
+effort = "medium"
 lenses = ["adversarial"]
 
 [schedule.rotation]
-effort = "low"
+effort = "medium"
 lenses = ["consistency", "quality", "design", "optimization", "record"]
 
 [schedule.escalation]
-effort = "medium"
+effort = "high"
 lenses = ["adversarial"]
-# Terra's own effort for each pass (owner decision 2026-10-28): the lenses above are shared, so the panel's passes line
-# up; escalation follows a P1 in a round at Terra's own rotation effort.
-[schedule.efforts.terra]
-plan = "xhigh"
-completion = "xhigh"
-rounds = ["max", "xhigh", "high"]
-rotation = "high"
-escalation = "max"

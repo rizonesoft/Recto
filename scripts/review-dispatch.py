@@ -9,7 +9,7 @@
 
 `--writer` is the agent whose work is under review. Opus 5.5 through Claude Code (`claude`) is the only writer in this
 repository, and its route in the pin names a panel of 1 to MAX_PANEL reviewers, each of a different model family from
-the writer (owner decision 2026-10-28: GPT-6 Astra and GPT-6.1 Terra through the Codex CLI, replacing one reviewer).
+the writer (owner decision 2026-10-28: GPT-6 Astra alone through the Codex CLI, after a day as a panel with GPT-6.1 Terra).
 Every member reviews every pass of the same candidate at once, each with its own scheduled effort, and each member's
 review goes to its own findings file: the `--record` file for the route's first reviewer, `<stem>.<reviewer>.md` beside
 it for each other (`panel_record`). The writer's settled items in those files (`- Filed:`, `- Not taken:` and
