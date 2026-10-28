@@ -1378,7 +1378,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 		return unusable("Indexed colour space lookup is neither a string nor a stream");
 	}
 	if (lookup.size() < needed) {
-		// The defined entries still draw; the missing ones are zero bytes, as MuPDF reads a short table.
+		// The defined entries still draw; the missing ones are zero bytes, as other readers pad a short table.
 		(void)make_pdf_error(ErrorCode::DamagedFormat, "Indexed colour space lookup is short; padded with zeros");
 		lookup.resize(needed, 0u);
 	} else if (lookup.size() > needed) {

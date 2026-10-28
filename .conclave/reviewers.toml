@@ -1,15 +1,20 @@
 # Independent reviewers for this repository, read by scripts/review-dispatch.py.
 #
 # Owner decision 2026-10-23: Opus 5.5 (Claude Code, writer `claude`) is the only
-# writer in this repository, and GPT-6 Astra through the Codex CLI is the only
-# reviewer. One route, one reviewer, no fallback. A reviewer that is not
-# installed, fails, times out, returns nothing or replies OVERALL: blocked is
-# recorded with its reason: there is no review, never an approval.
+# writer in this repository. Owner decision 2026-10-28: its route is a panel of
+# GPT-6 Astra and GPT-6.1 Terra through the Codex CLI. Both review every pass
+# of the same candidate at once, each into its own findings file, and a loop
+# ends only when neither finds a P1 or P2 on that candidate (the reviewer A/B
+# experiment, docs/experiments/2026-10-27-reviewer-ab.md, found each catching
+# defects the other missed). Neither stands in for the other: a reviewer that
+# is not installed, fails, times out, returns nothing or replies OVERALL:
+# blocked is recorded with its reason, and is no review, never an approval.
 #
 # Loaded strictly: an unknown key, an unknown CLI, a malformed model, a route
-# naming an undefined reviewer, a second reviewer in a route, or a reviewer of
-# the writer's own model family refuses every dispatch. The schedule is loaded
-# as strictly: an unknown lens or an effort the CLI does not take refuses too.
+# naming an undefined reviewer or one twice, more than 4 reviewers, or a
+# reviewer of the writer's own model family refuses every dispatch. The
+# schedule is loaded as strictly: an unknown lens, or an effort a reviewer's
+# CLI does not take, refuses too.
 
 schema_version = 1
 
@@ -20,8 +25,15 @@ cli = "codex"
 model = "gpt-6-astra"
 effort = "medium"
 
+# GPT-6.1 Terra through the Codex CLI, read-only sandbox (owner decision 2026-10-28), at about a tenth of Astra's cost;
+# [schedule.efforts.terra] below gives it its own effort for each pass.
+[reviewers.terra]
+cli = "codex"
+model = "gpt-6.1-terra"
+effort = "xhigh"
+
 [routes]
-claude = ["astra"]
+claude = ["astra", "terra"]
 
 # The review schedule (owner decision 2026-10-23). The dispatcher picks each pass's effort and lenses, so the loop
 # runs the same way every time: a plan review before the build, the completion review after it, three fixed
@@ -58,3 +70,11 @@ lenses = ["consistency", "quality", "design", "optimization", "record"]
 [schedule.escalation]
 effort = "medium"
 lenses = ["adversarial"]
+# Terra's own effort for each pass (owner decision 2026-10-28): the lenses above are shared, so the panel's passes line
+# up; escalation follows a P1 in a round at Terra's own rotation effort.
+[schedule.efforts.terra]
+plan = "xhigh"
+completion = "xhigh"
+rounds = ["max", "xhigh", "high"]
+rotation = "high"
+escalation = "max"

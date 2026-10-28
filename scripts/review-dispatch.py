@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one independent review round with the reviewer pinned in .conclave/reviewers.toml.
+"""Run one independent review round with the reviewer panel pinned in .conclave/reviewers.toml.
 
     python3 scripts/review-dispatch.py --writer claude --prompt review-prompt.md --record docs/reviews/x.md
     python3 scripts/review-dispatch.py --kind completion --candidate <40-char SHA> --writer claude \
@@ -8,11 +8,17 @@
     python3 scripts/review-dispatch.py --list-rounds [--json] [--records <dir>]  recorded rounds; runs no reviewer
 
 `--writer` is the agent whose work is under review. Opus 5.5 through Claude Code (`claude`) is the only writer in this
-repository, and its route in the pin names exactly one reviewer of a different model family, run through the Codex CLI
-(owner decision 2026-10-23: one reviewer, no fallback). A reviewer that is not installed, exits non-zero, times out,
-returns nothing, or ends its reply `OVERALL: blocked` (it could not reach the candidate, for example a sandbox that
-cannot read the repository) returned no review, and the reason is recorded: exit 1, which never counts as approval.
-A review that finds problems is still a review (exit 0).
+repository, and its route in the pin names a panel of 1 to MAX_PANEL reviewers, each of a different model family from
+the writer (owner decision 2026-10-28: GPT-6 Astra and GPT-6.1 Terra through the Codex CLI, replacing one reviewer).
+Every member reviews every pass of the same candidate at once, each with its own scheduled effort, and each member's
+review goes to its own findings file: the `--record` file for the route's first reviewer, `<stem>.<reviewer>.md` beside
+it for each other (`panel_record`). The writer's settled items in those files (`- Filed:`, `- Not taken:` and
+`- Settled:` lines) are appended to every prompt, so a repeated one never keeps a loop running. A reviewer that is not
+installed, exits non-zero, times out, returns nothing, or ends its reply `OVERALL: blocked` (it could not reach the
+candidate, for example a sandbox that cannot read the repository) returned no review, and the reason is recorded:
+exit 1, which never counts as approval, and no other member stands in for it. A review that finds problems is still a
+review (exit 0). With more than one member the summary is `{"panel": [...], "panel_clean", "run"}`, `panel_clean`
+true when every member returned a review declaring nothing above P3.
 
 `--check-pin` loads the pin with `load_pin`, the only place the rules live, and reports without running anything:
 with `--json`, `{"ok": true, "schema_version", "reviewers", "routes", "clis": {cli: on PATH}}` and exit 0, or
@@ -60,15 +66,24 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / ".conclave" / "reviewers.toml"
-# Opus 5.5 through Claude Code is the only writer, and the Codex CLI the only reviewer CLI (owner decision 2026-10-23).
+# Opus 5.5 through Claude Code is the only writer (owner decision 2026-10-23). The live route is a panel of Codex
+# reviewers (owner decision 2026-10-28); the Antigravity (`agy`) and Meta Muse (`muse`) CLIs serve trial pins.
 WRITERS = ("claude",)
-CLIS = ("codex",)
-# A reviewer is never of the writer's own model family: its CLI names the family, and so does the writer.
-FAMILY = {"codex": "openai"}
+CLIS = ("codex", "agy", "muse")
+# A reviewer is never of the writer's own model family. Codex and Muse name their family; Antigravity serves several
+# families, so its model id does (`family`).
+FAMILY = {"codex": "openai", "muse": "meta"}
+AGY_FAMILIES = {"gemini": "google", "gpt": "openai", "claude": "anthropic"}
 WRITER_FAMILY = {"claude": "anthropic"}
-# `max` is Codex's deepest effort, for the GPT-6.1 Terra arm of the reviewer A/B experiment (2026-10-27,
-# docs/experiments/2026-10-27-reviewer-ab.md).
-EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max")}
+# `max` is Codex's deepest effort (the GPT-6.1 Terra schedule). Antigravity names its tiers in the model id
+# (`gemini-4-argon-medium`), so its effort is one of those tiers.
+EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max"), "agy": ("low", "medium", "high"),
+           "muse": ("low", "medium", "high", "xhigh", "max")}
+# The reviewers one route may name: each runs every pass (a panel), so more multiplies every section's review cost.
+MAX_PANEL = 4
+# A prompt goes to Antigravity on its command line (it reads no prompt from stdin); Windows caps a command line at
+# 32,767 characters, so a longer prompt is refused rather than cut.
+MAX_ARGV_PROMPT = 30_000
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 # A review is prose. Output past this size is a runaway reviewer, not a review.
@@ -81,6 +96,14 @@ CLEANUP_SECONDS = 10
 
 class Refused(Exception):
     """The pin or the arguments are wrong; nothing ran."""
+
+
+def family(cli, model):
+    """The model family a reviewer belongs to, or None when it cannot be told (which is never a different family)."""
+    if cli == "agy":
+        prefix = (model or "").split("-", 1)[0]
+        return AGY_FAMILIES.get(prefix)
+    return FAMILY.get(cli)
 
 
 def load_pin(path=PIN, data=None):
@@ -133,16 +156,20 @@ def load_pin(path=PIN, data=None):
     if not isinstance(routes, dict) or set(routes) - set(WRITERS):
         raise Refused(f"[routes] may only name the writers {', '.join(WRITERS)}")
     for writer, chain in routes.items():
-        # One reviewer, no fallback (owner decision 2026-10-23).
-        if not isinstance(chain, list) or len(chain) != 1 or not isinstance(chain[0], str):
-            raise Refused(f"route {writer!r} must list exactly one reviewer, with no fallback")
-        if chain[0] not in reviewers:
-            raise Refused(f"route {writer!r} must name a defined reviewer")
-        if FAMILY[reviewers[chain[0]]["cli"]] == WRITER_FAMILY[writer]:
-            raise Refused(f"route {writer!r} names {chain[0]}, of the writer's own family; "
-                          f"a review comes from a different family")
+        # A panel: every reviewer the route names runs every pass, none a fallback for another (owner decision
+        # 2026-10-28, replacing one reviewer from 2026-10-23).
+        if not isinstance(chain, list) or not 1 <= len(chain) <= MAX_PANEL \
+                or not all(isinstance(name, str) for name in chain) or len(set(chain)) != len(chain):
+            raise Refused(f"route {writer!r} must list 1 to {MAX_PANEL} distinct reviewers")
+        for name in chain:
+            if name not in reviewers:
+                raise Refused(f"route {writer!r} must name defined reviewers")
+            if family(reviewers[name]["cli"], reviewers[name]["model"]) in (None, WRITER_FAMILY[writer]):
+                raise Refused(f"route {writer!r} names {name}, not of a known family other than the writer's; "
+                              f"a review comes from a different family")
     if "schedule" in pin:
-        check_schedule(pin["schedule"], {reviewers[chain[0]]["cli"] for chain in routes.values()})
+        routed = {name: reviewers[name]["cli"] for chain in routes.values() for name in chain}
+        check_schedule(pin["schedule"], routed)
     return pin
 
 
@@ -183,12 +210,31 @@ def check_step(where, step, efforts, lenses=True):
                           f"{', '.join(LENSES)}")
 
 
-def check_schedule(schedule, clis):
-    """The review schedule, as strictly as the reviewers: every effort valid for every routed CLI, every lens known."""
-    efforts = [e for e in EFFORTS["codex"] if all(e in EFFORTS[cli] for cli in clis)]
+EFFORT_KEYS = {"plan", "completion", "rounds", "rotation", "escalation"}
+
+
+def check_schedule(schedule, routed):
+    """The review schedule, as strictly as the reviewers: every lens known, and every effort valid for the CLI of each
+    routed reviewer it applies to. `[schedule.efforts.<reviewer>]` gives one reviewer its own effort for each pass (the
+    lenses stay shared, so the panel's passes line up); the steps' own efforts apply to every other reviewer."""
     keys = {"plan", "completion", "rounds", "rotation", "escalation", "severity_stop_after"}
-    if not isinstance(schedule, dict) or set(schedule) != keys:
-        raise Refused(f"[schedule] needs exactly {', '.join(sorted(keys))}")
+    if not isinstance(schedule, dict) or not keys <= set(schedule) <= keys | {"efforts"}:
+        raise Refused(f"[schedule] needs exactly {', '.join(sorted(keys))}, and may add [schedule.efforts]")
+    overrides = schedule.get("efforts", {})
+    if not isinstance(overrides, dict) or set(overrides) - set(routed):
+        raise Refused("[schedule.efforts] may only name routed reviewers")
+    defaulted = {cli for name, cli in routed.items() if name not in overrides}
+    efforts = [e for e in EFFORTS["codex"] if all(e in EFFORTS[cli] for cli in defaulted)] if defaulted \
+        else list(EFFORTS["codex"])
+    for name, own in overrides.items():
+        cli = routed[name]
+        if not isinstance(own, dict) or set(own) != EFFORT_KEYS or not isinstance(own["rounds"], list) \
+                or len(own["rounds"]) != len(schedule.get("rounds") or []):
+            raise Refused(f"[schedule.efforts.{name}] needs exactly {', '.join(sorted(EFFORT_KEYS))}, with one "
+                          f"round effort per [[schedule.rounds]]")
+        for value in [own["plan"], own["completion"], own["rotation"], own["escalation"], *own["rounds"]]:
+            if value not in EFFORTS[cli]:
+                raise Refused(f"[schedule.efforts.{name}] needs efforts from {', '.join(EFFORTS[cli])}")
     check_step("plan", schedule["plan"], efforts)
     check_step("completion", schedule["completion"], efforts, lenses=False)
     check_step("escalation", schedule["escalation"], efforts)
@@ -204,6 +250,8 @@ def check_schedule(schedule, clis):
 
 
 HIGHEST = re.compile(r"^\s*HIGHEST:\s*(P[123])\b", re.IGNORECASE | re.MULTILINE)
+# A reply that declares nothing above P3: `HIGHEST: P3` or `HIGHEST: none` (a clean pass).
+CLEAN = re.compile(r"^\s*HIGHEST:\s*(?:P3|none)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def highest(review):
@@ -219,18 +267,34 @@ def returned_review(entry):
     scripts/lib/todo_graph.py `stamp` uses this same predicate, so the schedule and the receipt count the same rounds."""
     lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
     return bool(entry.get("reviewer")) and entry.get("writer") in WRITER_FAMILY \
-        and FAMILY.get(entry.get("cli")) not in (None, WRITER_FAMILY[entry["writer"]]) \
+        and family(entry.get("cli"), entry.get("model")) not in (None, WRITER_FAMILY[entry["writer"]]) \
         and bool(lines) and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
 
 
-def scheduled(schedule, kind, rounds, surface):
+def effective(schedule, reviewer=None):
+    """The schedule as one reviewer runs it: its `[schedule.efforts]` applied over the shared steps, if it has any."""
+    own = (schedule.get("efforts") or {}).get(reviewer)
+    if own is None:
+        return schedule
+    out = {key: value for key, value in schedule.items() if key != "efforts"}
+    out["plan"] = {**schedule["plan"], "effort": own["plan"]}
+    out["completion"] = {**schedule["completion"], "effort": own["completion"]}
+    out["rotation"] = {**schedule["rotation"], "effort": own["rotation"]}
+    out["escalation"] = {**schedule["escalation"], "effort": own["escalation"]}
+    out["rounds"] = [{**step, "effort": effort} for step, effort in zip(schedule["rounds"], own["rounds"])]
+    return out
+
+
+def scheduled(schedule, kind, rounds, surface, reviewer=None):
     """The effort and lenses for the next pass, from the pin's schedule and the rounds already recorded.
 
     The position counts returned reviews only (`returned_review`): an outage, a self-review and a reply without the
     final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one per round,
     skipping `design` when the section has no surface. After a round at the rotation's effort (the schedule's late,
     cheap rounds: `low` in the live pin) that declared `HIGHEST: P1`, the next round is the `escalation` step instead.
-    scripts/lib/todo_graph.py `stamp` replays this to check every recorded pass, so it is the one copy of the rule."""
+    scripts/lib/todo_graph.py `stamp` replays this to check every recorded pass, so it is the one copy of the rule.
+    `reviewer` names the panel member whose `[schedule.efforts]` apply, if any."""
+    schedule = effective(schedule, reviewer)
     if kind in ("plan", "completion"):
         step = schedule[kind]
         return {"position": None, "effort": step["effort"], "lenses": list(step.get("lenses", [])),
@@ -265,6 +329,46 @@ def lens_block(plan):
     return "\n".join(lines) + "\n"
 
 
+# The writer's decisions a review must not reopen without new evidence (owner decision 2026-10-28): a gap filed to a
+# named section, one not taken with its reason, and any other item the writer settles. They are read from every
+# findings file of the section's panel and given to every reviewer, so a repeated one never keeps a loop running.
+SETTLED = re.compile(r"^- (?:Filed|Not taken|Settled): \S")
+MAX_SETTLED = 200
+
+
+def settled_items(paths):
+    """The settled lines of the section's findings files, each once, in the order first written."""
+    items = []
+    for path in paths:
+        try:
+            text = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in raw_lines(text):
+            line = canonical(line).strip()
+            if SETTLED.match(line) and line not in items:
+                items.append(line)
+    return items[:MAX_SETTLED]
+
+
+def settled_block(items):
+    """The prompt section listing the settled items, appended after the lenses; empty when there are none."""
+    if not items:
+        return ""
+    return ("\n\n## Settled items (from the section's findings files, appended by scripts/review-dispatch.py)\n\n"
+            "The writer has already filed each item below to a named section, or decided not to take it, with the "
+            "reason given. Do not raise one again unless you bring new evidence that its reason is wrong; a finding "
+            "that repeats one counts toward neither this pass's verdict nor its HIGHEST line.\n\n"
+            + "\n".join(items) + "\n")
+
+
+def panel_record(record, route, name):
+    """The findings file of one panel member: the section's file for the route's first reviewer, and beside it
+    `<stem>.<reviewer>.md` for each other, so each file holds one reviewer's loop."""
+    path = Path(record)
+    return path if name == route[0] else path.with_name(f"{path.stem}.{name}{path.suffix}")
+
+
 EXTENSION = re.compile(r"\.[A-Za-z0-9]+")
 
 
@@ -288,7 +392,29 @@ def find_cli(name):
         for candidate in [os.path.join(directory, name + e) for e in extensions] + [os.path.join(directory, name)]:
             if os.path.isfile(candidate):
                 return candidate
-    return None
+    return installed_muse() if name == "muse" else None
+
+
+MUSE_BINARY = re.compile(r"^muse-bin-([0-9]+(?:\.[0-9]+)*)-R([0-9]+)(?:\.([0-9]+))?\.exe$", re.IGNORECASE)
+
+
+def installed_muse():
+    """Meta's Muse installer puts versioned binaries in %LOCALAPPDATA%\\Programs\\muse beside a PowerShell launcher
+    (muse.cmd) it leaves off PATH: the newest binary, called directly so no shell re-parses the arguments, or None."""
+    base = os.environ.get("LOCALAPPDATA")
+    if os.name != "nt" or not base or not fully_qualified(base):
+        return None
+    folder = Path(base) / "Programs" / "muse"
+    try:
+        found = [(m, p) for p in folder.iterdir() if (m := MUSE_BINARY.match(p.name)) and p.is_file()]
+    except OSError:
+        return None
+    if not found:
+        return None
+    def version(item):
+        m = item[0]
+        return (tuple(int(x) for x in m.group(1).split(".")), int(m.group(2)), int(m.group(3) or 0))
+    return str(max(found, key=version)[1])
 
 
 def fully_qualified(directory):
@@ -301,11 +427,26 @@ def fully_qualified(directory):
     return drive.startswith(("\\\\", "//")) or (len(drive) == 2 and rest[:1] in ("\\", "/"))
 
 
-def command(reviewer, executable, output_path, effort=None):
-    """The argv for one read-only Codex review. The prompt goes on stdin, never on the command line, so a Windows
-    .cmd shim never re-parses prose as commands. The model comes only from the pin, and the effort from the pin's
-    reviewer or, when the pin has a [schedule], from the step it schedules for this pass."""
-    return [executable, "exec", "-m", reviewer["model"], "-c", f"model_reasoning_effort={effort or reviewer['effort']}",
+def command(reviewer, executable, output_path, effort=None, prompt=None, prompt_path=None):
+    """The argv for one read-only review. The model comes only from the pin, and the effort from the pin's reviewer
+    or, when the pin has a [schedule], from the step it schedules for this pass.
+
+    Codex reads the prompt on stdin and writes its final message to `output_path`, in its read-only sandbox, so a
+    Windows .cmd shim never re-parses prose as commands. Antigravity reads no prompt from stdin, so it goes on the
+    command line of agy.exe (a native binary, never a shim; at most MAX_ARGV_PROMPT characters), with the effort as the
+    model id's tier; plan mode keeps it from writing the workspace. Muse reads the prompt from `prompt_path` with
+    workspace writes disabled. Both print the review on stdout."""
+    effort = effort or reviewer["effort"]
+    if reviewer["cli"] == "agy":
+        # WORKAROUND: headless Antigravity cannot approve the read-only shell commands a review needs (git show, git
+        # diff) and has no read-only allow flag; plan mode is what refuses workspace writes, and --sandbox restricts the
+        # terminal.
+        return [executable, "--model", f"{reviewer['model']}-{effort}", "--mode", "plan", "--sandbox",
+                "--dangerously-skip-permissions", "--output-format", "text", f"-p={prompt}"]
+    if reviewer["cli"] == "muse":
+        return [executable, "exec", "--model", reviewer["model"], "--reasoning-effort", effort, "--disable-write",
+                "--approval-mode", "never", "--workspace", str(ROOT), "--prompt-file", str(prompt_path)]
+    return [executable, "exec", "-m", reviewer["model"], "-c", f"model_reasoning_effort={effort}",
             "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "-o", str(output_path), "-"]
 
 
@@ -382,10 +523,11 @@ def run(argv, stdin_text, timeout, watched):
     return process.returncode, None
 
 
-def review(pin, writer, prompt_path, timeout, plan=None):
-    """Run the writer's one reviewer. Returns the summary dict: `reviewer` is None when no review came back, and
-    `skipped` then names the reviewer and why (there is no fallback). `plan` is the scheduled step (see `scheduled`):
-    its effort replaces the reviewer's, and its lenses are appended to the prompt and recorded."""
+def review(pin, writer, prompt_path, timeout, plan=None, name=None, settled=()):
+    """Run one reviewer of the writer's panel (`name`, the route's first by default). Returns the summary dict:
+    `reviewer` is None when no review came back, and `skipped` then names the reviewer and why (no other reviewer stands
+    in for it). `plan` is the scheduled step (see `scheduled`): its effort replaces the reviewer's, and its lenses are
+    appended to the prompt and recorded; `settled` items follow them (see `settled_block`)."""
     if writer not in pin["routes"]:
         raise Refused(f"the reviewer pin has no route for writer {writer!r}")
     prompt = Path(prompt_path).read_text(encoding="utf-8")
@@ -393,12 +535,14 @@ def review(pin, writer, prompt_path, timeout, plan=None):
         raise Refused("the review prompt is empty")
     if "\0" in prompt:
         raise Refused("the review prompt contains a NUL byte; no reviewer can be given it")
-    (name,) = pin["routes"][writer]
+    name = name if name is not None else pin["routes"][writer][0]
     reviewer = pin["reviewers"][name]
     effort = plan["effort"] if plan else reviewer.get("effort")
     lenses = plan["lenses"] if plan else []
     if lenses:
         prompt = prompt.rstrip("\n") + lens_block(plan)
+    if settled:
+        prompt = prompt.rstrip("\n") + settled_block(list(settled))
     scheduled_fields = {"effort": effort, "lenses": lenses} if plan else {}
     seconds = None
 
@@ -410,17 +554,22 @@ def review(pin, writer, prompt_path, timeout, plan=None):
     executable = find_cli(reviewer["cli"])
     if executable is None:
         return none(f"{reviewer['cli']} is not installed")
+    if reviewer["cli"] == "agy" and len(prompt) > MAX_ARGV_PROMPT:
+        return none(f"the prompt is longer than the {MAX_ARGV_PROMPT} characters agy's command line can carry")
     text = None
     tmp = Path(tempfile.mkdtemp())
     try:
-        stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
+        stdout_path, message_path, prompt_file = tmp / "stdout.txt", tmp / "last-message.md", tmp / "prompt.md"
+        if reviewer["cli"] == "muse":
+            prompt_file.write_text(prompt, encoding="utf-8")
         started = time.monotonic()
-        _, problem = run(command(reviewer, executable, message_path, effort), prompt, timeout,
-                         [stdout_path, message_path])
+        argv = command(reviewer, executable, message_path, effort, prompt=prompt, prompt_path=prompt_file)
+        _, problem = run(argv, prompt if reviewer["cli"] == "codex" else "", timeout, [stdout_path, message_path])
         seconds = round(time.monotonic() - started)
         if problem is None:
-            # Codex writes its final message to the -o file; stdout carries its progress, not the review.
-            text = message_path.read_text(encoding="utf-8", errors="replace") if message_path.is_file() else ""
+            # Codex writes its final message to the -o file and its progress to stdout; the others print the review.
+            source = message_path if reviewer["cli"] == "codex" else stdout_path
+            text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
     finally:
         remove_scratch(tmp)
     if problem is None and not (text or "").strip():
@@ -619,12 +768,12 @@ def returned_pass(kind, entry):
     self-review or a reply cut short is a recorded attempt that leaves the pass open. scripts/lib/todo_graph.py
     `stamp` counts with this same predicate, so a pass the stamp would refuse never blocks the retry."""
     lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
-    family = bool(entry.get("reviewer")) and entry.get("writer") in WRITER_FAMILY \
-        and FAMILY.get(entry.get("cli")) not in (None, WRITER_FAMILY[entry["writer"]])
+    other = bool(entry.get("reviewer")) and entry.get("writer") in WRITER_FAMILY \
+        and family(entry.get("cli"), entry.get("model")) not in (None, WRITER_FAMILY[entry["writer"]])
     if kind == "plan":
-        return family and len(lines) >= 2 and lines[-2] in ("PLAN: complete", "PLAN: gaps") \
+        return other and len(lines) >= 2 and lines[-2] in ("PLAN: complete", "PLAN: gaps") \
             and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
-    return family and bool(lines) and lines[-1] in ("COMPLETION: complete", "COMPLETION: gaps")
+    return other and bool(lines) and lines[-1] in ("COMPLETION: complete", "COMPLETION: gaps")
 
 
 def read_rounds(text):
@@ -784,7 +933,8 @@ def main(argv=None):
         except Refused as exc:
             print(json.dumps({"ok": False, "error": str(exc)}) if args.json else f"refused: {exc}")
             return 2
-        clis = {cli: find_cli(cli) is not None for cli in CLIS}
+        # The CLIs this pin's reviewers use, each with whether it is installed.
+        clis = {cli: find_cli(cli) is not None for cli in dict.fromkeys(r["cli"] for r in pin["reviewers"].values())}
         print(json.dumps({"ok": True, "schema_version": pin["schema_version"], "reviewers": pin["reviewers"],
                           "routes": pin["routes"], "schedule": pin.get("schedule"), "clis": clis})
               if args.json else "ok")
@@ -816,49 +966,82 @@ def main(argv=None):
         parser.error("--candidate goes with --kind completion or plan; a round names its candidate in its prompt")
     try:
         pin = load_pin(args.pin)
-        plan = None
-        if "schedule" in pin:
-            rounds = []
-            if args.record and args.kind == "round":
-                # The position in the schedule comes from the rounds already recorded; a file that cannot be read
-                # back is refused here, before a review is spent that could not be recorded.
-                existing = existing_findings(Path(args.record), "round")
-                rounds = read_rounds(existing)
-                if rounds is None:
-                    raise Unrecorded(f"{args.record} cannot be read back (a round heading or line is not in the "
-                                     f"format --record writes{unreadable_heading(existing)}; {RESERVED_NAMES}), so "
-                                     f"no round was run")
-            plan = scheduled(pin["schedule"], args.kind, rounds, args.surface)
-        result = review(pin, args.writer, args.prompt, args.timeout, plan)
+        if args.writer not in pin["routes"]:
+            raise Refused(f"the reviewer pin has no route for writer {args.writer!r}")
+        route = pin["routes"][args.writer]
+        members = []  # (reviewer, its findings file or None, its scheduled step or None)
+        for name in route:
+            path = panel_record(args.record, route, name) if args.record else None
+            plan = None
+            if "schedule" in pin:
+                rounds = []
+                if path is not None and args.kind == "round":
+                    # The position in the schedule comes from the rounds this reviewer already recorded; a file that
+                    # cannot be read back is refused here, before a review is spent that could not be recorded.
+                    existing = existing_findings(path, "round")
+                    rounds = read_rounds(existing)
+                    if rounds is None:
+                        raise Unrecorded(f"{path} cannot be read back (a round heading or line is not in the format "
+                                         f"--record writes{unreadable_heading(existing)}; {RESERVED_NAMES}), so no "
+                                         f"round was run")
+                plan = scheduled(pin["schedule"], args.kind, rounds, args.surface, name)
+            members.append((name, path, plan))
+        settled = settled_items([path for _, path, _ in members if path is not None])
+        # Every member reviews the same candidate at once; each runs in its own process group.
+        results = [None] * len(members)
+        failures = [None] * len(members)
+
+        def one(i):
+            try:
+                results[i] = review(pin, args.writer, args.prompt, args.timeout, members[i][2], members[i][0], settled)
+            except (Refused, OSError) as exc:
+                failures[i] = exc
+        threads = [threading.Thread(target=one, args=(i,)) for i in range(len(members))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        for failure in failures:
+            if failure is not None:
+                raise failure
     except (Refused, Unrecorded, OSError) as exc:
         print("review-dispatch refused: " + str(exc), file=sys.stderr)
         return 2
     when = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if one_pass:
-        result.update(kind=args.kind, candidate=args.candidate)
-    if plan and plan["position"]:
-        result.update(position=plan["position"], escalated=plan["escalated"])
-        stop_after = pin["schedule"]["severity_stop_after"]
-        # The severity stop: a returned round past `severity_stop_after` whose worst finding is P3 ends the loop (0:
-        # from round 1, owner decision 2026-10-24; todo_graph.SEVERITY_CUTOFF_ROUND is the same number, and `stamp`
-        # re-checks it).
-        result["severity_stop"] = bool(result["reviewer"]) and plan["position"] > stop_after \
-            and highest(result["review"]) == "P3"
-    if args.record:
-        try:
-            if one_pass:
-                record_completion(Path(args.record), result, when, args.candidate, args.kind)
-                result["recorded"] = True
-            else:
-                result["round"] = record(Path(args.record), result, when)
-        except Unrecorded as exc:
-            # The review still reaches stdout; only the findings file is left as it was.
-            unrecorded = {"recorded": False} if one_pass else {"round": None}
-            print(json.dumps({**result, **unrecorded, "run": when}, indent=2))
-            print("review-dispatch refused: " + str(exc), file=sys.stderr)
-            return 2
-    print(json.dumps({**result, "run": when}, indent=2))
-    return 0 if result["reviewer"] else 1
+    refusals = []
+    for (name, path, plan), result in zip(members, results):
+        if one_pass:
+            result.update(kind=args.kind, candidate=args.candidate)
+        if plan and plan["position"]:
+            result.update(position=plan["position"], escalated=plan["escalated"])
+            stop_after = pin["schedule"]["severity_stop_after"]
+            # The severity stop: a returned round past `severity_stop_after` whose worst finding is P3 ends the loop
+            # (0: from round 1, owner decision 2026-10-24; todo_graph.SEVERITY_CUTOFF_ROUND is the same number, and
+            # `stamp` re-checks it).
+            result["severity_stop"] = bool(result["reviewer"]) and plan["position"] > stop_after \
+                and highest(result["review"]) == "P3"
+        if path is not None:
+            try:
+                if one_pass:
+                    record_completion(path, result, when, args.candidate, args.kind)
+                    result["recorded"] = True
+                else:
+                    result["round"] = record(path, result, when)
+            except Unrecorded as exc:
+                # The review still reaches stdout; only the findings file is left as it was.
+                result.update({"recorded": False} if one_pass else {"round": None})
+                refusals.append(str(exc))
+    if len(members) == 1:
+        print(json.dumps({**results[0], "run": when}, indent=2))
+    else:
+        # The panel's loop ends on a candidate only when every member returned a review with no P1 or P2 on it.
+        done = [bool(r["reviewer"]) and CLEAN.search(r["review"] or "") is not None for r in results]
+        print(json.dumps({"panel": results, "panel_clean": all(done), "run": when}, indent=2))
+    for refusal in refusals:
+        print("review-dispatch refused: " + refusal, file=sys.stderr)
+    if refusals:
+        return 2
+    return 0 if all(r["reviewer"] for r in results) else 1
 
 
 if __name__ == "__main__":

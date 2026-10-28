@@ -37,8 +37,9 @@ FAKE_CLI = textwrap.dedent('''\
     mode = os.environ.get("FAKE_" + name.upper(), "ok")
     if mode == "noread":
         time.sleep(30)
-    stdin = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
-    with open(os.environ["FAKE_LOG"], "a") as log:
+    stdin = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.buffer.read().decode("utf-8", "replace")
+    # One log file per process: panel members run at once, and concurrent appends to one file can interleave.
+    with open(os.environ["FAKE_LOG"] + "." + str(os.getpid()) + "." + str(time.time_ns()), "a") as log:
         log.write(json.dumps({"cli": name, "argv": args, "stdin": stdin, "cwd": os.getcwd()}) + "\\n")
     if mode == "fail":
         sys.exit(3)
@@ -66,7 +67,8 @@ FAKE_CLI = textwrap.dedent('''\
     if mode == "completion":
         text = "## Completeness\\n\\n1. Ctrl+O: missing-in-scope.\\n2. Recent files: missing-out-of-scope.\\n\\n## Round 7: none\\n\\nCOMPLETION: gaps"
     if mode == "say":
-        text = os.environ["FAKE_SAY"]
+        model = args[args.index("-m") + 1] if "-m" in args else ""
+        text = os.environ.get("FAKE_SAY_" + model.replace("-", "_").replace(".", "_").upper(), os.environ["FAKE_SAY"])
     if mode == "completionblocked":
         text = "I could not read the candidate commit.\\n\\nCOMPLETION: blocked"
     open(args[args.index("-o") + 1], "w").write(text)
@@ -127,8 +129,15 @@ class Harness(unittest.TestCase):
         summary = json.loads(result.stdout) if result.stdout.strip().startswith("{") else None
         return result, summary
 
+    def logs(self):
+        return sorted(self.log.parent.glob(self.log.name + ".*"), key=lambda p: (p.stat().st_mtime_ns, p.name))
+
     def calls(self):
-        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+        return [json.loads(line) for path in self.logs() for line in path.read_text().splitlines()]
+
+    def clear_log(self):
+        for path in self.logs():
+            path.unlink()
 
     def module(self):
         spec = importlib.util.spec_from_file_location("dispatch_under_test", self.repo / "scripts/review-dispatch.py")
@@ -158,7 +167,7 @@ class Dispatch(Harness):
         # Owner decision 2026-10-23: when Sol returns no review, nothing else runs and the round is not an approval.
         for mode, reason in (("fail", "exited 3"), ("empty", "returned no review")):
             with self.subTest(mode):
-                self.log.unlink(missing_ok=True)
+                self.clear_log()
                 result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), codex=mode)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIsNone(summary["reviewer"])
@@ -252,12 +261,12 @@ class Dispatch(Harness):
         # The strict loader names what is wrong: another reviewer CLI, a fallback, a route for another writer.
         module, pin, good = self.module(), self.repo / ".conclave/reviewers.toml", FIXTURE_PIN
         mini = '\n[reviewers.mini]\ncli = "codex"\nmodel = "gpt-6-mini"\neffort = "low"\n'
-        cases = {good.replace('cli = "codex"', 'cli = "agy"'): "reviewer 'sol' needs cli = one of codex",
-                 good.replace('cli = "codex"', 'cli = "claude"'): "reviewer 'sol' needs cli = one of codex",
-                 good.replace('claude = ["sol"]', 'claude = ["sol", "mini"]') + mini:
-                     "route 'claude' must list exactly one reviewer, with no fallback",
+        cases = {good.replace('cli = "codex"', 'cli = "bash"'): "reviewer 'sol' needs cli = one of codex, agy, muse",
+                 good.replace('cli = "codex"', 'cli = "claude"'): "reviewer 'sol' needs cli = one of codex, agy, muse",
+                 good.replace('claude = ["sol"]', 'claude = ["sol", "sol"]') + mini:
+                     "route 'claude' must list 1 to 4 distinct reviewers",
                  good.replace('claude = ["sol"]', 'claude = []'):
-                     "route 'claude' must list exactly one reviewer, with no fallback",
+                     "route 'claude' must list 1 to 4 distinct reviewers",
                  good + 'codex = ["sol"]\n': "[routes] may only name the writers claude",
                  good + 'gemini = ["sol"]\n': "[routes] may only name the writers claude",
                  good.replace('effort = "xhigh"', 'effort = "xhigh"\nsandbox = "workspace-write"'):
@@ -277,7 +286,8 @@ class Dispatch(Harness):
             with self.assertRaises(module.Refused) as refused:
                 module.load_pin(self.repo / ".conclave/reviewers.toml")
         self.assertEqual(str(refused.exception),
-                         "route 'claude' names sol, of the writer's own family; a review comes from a different family")
+                         "route 'claude' names sol, not of a known family other than the writer's; a review comes "
+                         "from a different family")
         module.load_pin(self.repo / ".conclave/reviewers.toml")
 
     def test_a_pin_that_cannot_be_read_is_refused_not_a_crash(self):
@@ -806,9 +816,17 @@ def bad_pins(good):
             good + '\n[extra]\nkey = 1\n',
             good.replace('claude = ["sol"]', 'claude = [["sol"]]'),
             good.replace('effort = "xhigh"', 'effort = "xhigh"\nsandbox = "workspace-write"'),
-            # A fallback, an empty route, and routes for the writers removed on 2026-10-23.
-            good.replace('claude = ["sol"]', 'claude = ["sol", "mini"]') + mini,
+            # A reviewer named twice, an empty route, a panel past MAX_PANEL, and routes for the writers removed on
+            # 2026-10-23 (a panel of distinct reviewers is valid since 2026-10-28).
+            good.replace('claude = ["sol"]', 'claude = ["sol", "sol"]'),
             good.replace('claude = ["sol"]', 'claude = []'),
+            good.replace('claude = ["sol"]', 'claude = ["sol", "mini", "m2", "m3", "m4"]') + mini
+            + mini.replace("mini]", "m2]") + mini.replace("mini]", "m3]") + mini.replace("mini]", "m4]"),
+            # An Antigravity reviewer whose model is of the writer's family, or of no family the dispatcher knows.
+            good.replace('cli = "codex"\nmodel = "gpt-6.1-sol"', 'cli = "agy"\nmodel = "claude-opus-5-5"')
+            .replace('effort = "xhigh"', 'effort = "high"'),
+            good.replace('cli = "codex"\nmodel = "gpt-6.1-sol"', 'cli = "agy"\nmodel = "mystery-1"')
+            .replace('effort = "xhigh"', 'effort = "high"'),
             good + 'codex = ["sol"]\n',
             good + 'gemini = ["sol"]\n')
 
@@ -855,7 +873,7 @@ class Schedule(Harness):
         self.findings = self.repo / "findings.md"
 
     def round(self, say="OVERALL: approve", *extra):
-        self.log.unlink(missing_ok=True)
+        self.clear_log()
         result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record",
                                         str(self.findings), *extra, codex="say", say=say)
         self.assertIn(result.returncode, (0, 1), result.stderr)
@@ -886,7 +904,7 @@ class Schedule(Harness):
 
     def test_an_outage_round_does_not_move_the_position(self):
         self.round()
-        self.log.unlink(missing_ok=True)
+        self.clear_log()
         result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record",
                                         str(self.findings), codex="fail")
         self.assertEqual(result.returncode, 1, result.stderr)
@@ -1066,16 +1084,177 @@ class Schedule(Harness):
             "stop past cap": {**good, "severity_stop_after": 34},
             "stop bool": {**good, "severity_stop_after": True},
         }
-        module.check_schedule(good, ["codex"])
+        module.check_schedule(good, {"sol": "codex"})
         for name, schedule in bad.items():
             with self.subTest(name), self.assertRaises(module.Refused):
-                module.check_schedule(schedule, ["codex"])
+                module.check_schedule(schedule, {"sol": "codex"})
         broken = SCHEDULED_PIN.replace('lenses = ["plan"]', 'lenses = ["vibes"]')
         (self.repo / ".conclave/reviewers.toml").write_text(broken, encoding="utf-8")
         result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt))
         self.assertEqual(result.returncode, 2)
         self.assertIn("[schedule] plan", result.stderr)
         self.assertEqual(self.calls(), [])
+
+
+PANEL_PIN = SCHEDULED_PIN.replace('claude = ["sol"]', 'claude = ["sol", "mini"]') + textwrap.dedent('''
+    [reviewers.mini]
+    cli = "codex"
+    model = "gpt-6-mini"
+    effort = "low"
+
+    [schedule.efforts.mini]
+    plan = "xhigh"
+    completion = "xhigh"
+    rounds = ["max", "xhigh", "high"]
+    rotation = "high"
+    escalation = "max"
+''')
+
+
+class Panel(Harness):
+    """A route of two reviewers (owner decision 2026-10-28): both review every pass of the same candidate at once,
+    each at its own scheduled effort, each into its own findings file, with the writer's settled items in every
+    prompt."""
+
+    P3 = "1. P3 calc.py:2 a name.\n\nHIGHEST: P3\nOVERALL: approve"
+    P1 = "1. P1 calc.py:2 subtracts.\n\nHIGHEST: P1\nOVERALL: needs-attention"
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / ".conclave/reviewers.toml").write_text(PANEL_PIN, encoding="utf-8")
+        self.findings = self.repo / "docs/reviews/D00-T01-s1.md"
+        self.sibling = self.repo / "docs/reviews/D00-T01-s1.mini.md"
+
+    def effort_of(self, call):
+        return next(a.split("=", 1)[1] for a in call["argv"] if a.startswith("model_reasoning_effort="))
+
+    def model_of(self, call):
+        return call["argv"][call["argv"].index("-m") + 1]
+
+    def round(self, sol=None, mini=None, mode="say"):
+        self.clear_log()
+        modes = {"codex": mode, "say": sol or self.P3}
+        if mini is not None:
+            modes["say_gpt_6_mini"] = mini
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record",
+                                        str(self.findings), **modes)
+        return result, summary, {self.model_of(c): c for c in self.calls()}
+
+    def test_both_review_every_round_into_their_own_files_at_their_own_efforts(self):
+        result, summary, calls = self.round()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(calls), {"gpt-6.1-sol", "gpt-6-mini"})
+        self.assertEqual((self.effort_of(calls["gpt-6.1-sol"]), self.effort_of(calls["gpt-6-mini"])), ("high", "max"))
+        self.assertEqual([r["reviewer"] for r in summary["panel"]], ["sol", "mini"])
+        self.assertTrue(summary["panel_clean"])
+        module = self.module()
+        (sol,) = module.read_rounds(self.findings.read_text(encoding="utf-8"))
+        (mini,) = module.read_rounds(self.sibling.read_text(encoding="utf-8"))
+        self.assertEqual((sol["reviewer"], sol["effort"], mini["reviewer"], mini["effort"]), ("sol", "high", "mini", "max"))
+        _, summary, calls = self.round()
+        self.assertEqual((self.effort_of(calls["gpt-6.1-sol"]), self.effort_of(calls["gpt-6-mini"])), ("medium", "xhigh"))
+        self.assertEqual([r["position"] for r in summary["panel"]], [2, 2])
+
+    def test_the_panel_is_clean_only_when_every_member_is(self):
+        _, summary, _ = self.round(sol=self.P3, mini=self.P1)
+        self.assertFalse(summary["panel_clean"])
+        _, summary, _ = self.round(sol="Nothing found.\n\nHIGHEST: none\nOVERALL: approve", mini=self.P3)
+        self.assertTrue(summary["panel_clean"])
+
+    def test_each_member_escalates_after_a_p1_at_its_own_rotation_effort(self):
+        for _ in range(3):
+            self.round()
+        _, summary, calls = self.round(sol=self.P1, mini=self.P1)
+        self.assertEqual((self.effort_of(calls["gpt-6.1-sol"]), self.effort_of(calls["gpt-6-mini"])), ("low", "high"))
+        _, summary, calls = self.round()
+        self.assertEqual([r["escalated"] for r in summary["panel"]], [True, True])
+        self.assertEqual((self.effort_of(calls["gpt-6.1-sol"]), self.effort_of(calls["gpt-6-mini"])), ("medium", "max"))
+        self.assertIn("escalated after a high-effort round found a P1", calls["gpt-6-mini"]["stdin"])
+
+    def test_one_members_outage_is_recorded_and_the_other_review_kept(self):
+        self.round()
+        self.clear_log()
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record", str(self.findings),
+                                        codex="fail")
+        self.assertEqual(result.returncode, 1, "an outage is never an approval")
+        self.assertFalse(summary["panel_clean"])
+        module = self.module()
+        self.assertEqual([r["reviewer"] for r in module.read_rounds(self.findings.read_text(encoding="utf-8"))], ["sol", None])
+        self.assertEqual([r["reviewer"] for r in module.read_rounds(self.sibling.read_text(encoding="utf-8"))], ["mini", None])
+
+    def test_settled_items_reach_every_members_prompt(self):
+        self.round()
+        with open(self.findings, "a", encoding="utf-8") as handle:
+            handle.write("\n## Writer note: settled\n\n- Filed: D01 T02 §19 (tint work in the page budget)\n"
+                         "- Not taken: surplus calculator operands (pdfium reads the top n)\n")
+        with open(self.sibling, "a", encoding="utf-8") as handle:
+            handle.write("\n## Writer note: settled\n\n- Filed: D01 T02 §19 (tint work in the page budget)\n"
+                         "- Settled: /All ignores its alternate (8.6.6.4)\n- Implemented: gap 1 in abc1234\n")
+        _, _, calls = self.round()
+        for model, call in calls.items():
+            with self.subTest(model):
+                stdin = call["stdin"]
+                self.assertIn("## Settled items", stdin)
+                self.assertEqual(stdin.count("- Filed: D01 T02 §19 (tint work in the page budget)"), 1, "listed once")
+                self.assertIn("- Not taken: surplus calculator operands", stdin)
+                self.assertIn("- Settled: /All ignores its alternate", stdin)
+                self.assertNotIn("Implemented: gap 1", stdin, "an implemented gap is not a settled item")
+        module = self.module()
+        self.assertEqual(len(module.read_rounds(self.findings.read_text(encoding="utf-8"))), 2, "notes keep the file readable")
+
+    def test_the_efforts_table_is_checked_as_strictly_as_the_schedule(self):
+        module = self.module()
+        good = module.load_pin(str(self.repo / ".conclave/reviewers.toml"))["schedule"]
+        routed = {"sol": "codex", "mini": "codex"}
+        own = good["efforts"]["mini"]
+        bad = {
+            "unrouted reviewer": {**good, "efforts": {"ghost": own}},
+            "missing key": {**good, "efforts": {"mini": {k: v for k, v in own.items() if k != "rotation"}}},
+            "short rounds": {**good, "efforts": {"mini": {**own, "rounds": ["max"]}}},
+            "unknown effort": {**good, "efforts": {"mini": {**own, "plan": "ultra"}}},
+        }
+        module.check_schedule(good, routed)
+        for name, schedule in bad.items():
+            with self.subTest(name), self.assertRaises(module.Refused):
+                module.check_schedule(schedule, routed)
+        self.assertEqual(module.effective(good, "sol"), good, "a reviewer without its own efforts keeps the steps'")
+        self.assertEqual([s["effort"] for s in module.effective(good, "mini")["rounds"]], ["max", "xhigh", "high"])
+
+
+class OtherClis(unittest.TestCase):
+    """The Antigravity and Muse CLIs, for trial pins: their families, efforts and read-only command lines."""
+
+    def module(self):
+        spec = importlib.util.spec_from_file_location("dispatch_clis", SCRIPTS / "review-dispatch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_families_come_from_the_cli_or_the_antigravity_model(self):
+        module = self.module()
+        self.assertEqual(module.family("codex", "gpt-6-astra"), "openai")
+        self.assertEqual(module.family("muse", "muse-wonder-1.0"), "meta")
+        self.assertEqual(module.family("agy", "gemini-4-argon"), "google")
+        self.assertEqual(module.family("agy", "claude-opus-5-5"), "anthropic")
+        self.assertIsNone(module.family("agy", "mystery-1"))
+
+    def test_antigravity_runs_in_plan_mode_with_its_tier_in_the_model(self):
+        module = self.module()
+        argv = module.command({"cli": "agy", "model": "gemini-4-argon", "effort": "medium"}, "C:/agy/agy.exe",
+                              Path("unused.md"), "high", prompt="Review it.")
+        self.assertEqual(argv[:3], ["C:/agy/agy.exe", "--model", "gemini-4-argon-high"])
+        for flag in ("--mode", "plan", "--sandbox", "--output-format", "text"):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-1], "-p=Review it.")
+
+    def test_muse_reads_its_prompt_from_a_file_with_writes_disabled(self):
+        module = self.module()
+        argv = module.command({"cli": "muse", "model": "muse-wonder-1.0", "effort": "high"}, "C:/muse/muse-bin.exe",
+                              Path("unused.md"), None, prompt="Review it.", prompt_path=Path("C:/tmp/prompt.md"))
+        self.assertEqual(argv[:6], ["C:/muse/muse-bin.exe", "exec", "--model", "muse-wonder-1.0", "--reasoning-effort", "high"])
+        self.assertIn("--disable-write", argv)
+        self.assertEqual(argv[argv.index("--prompt-file") + 1], str(Path("C:/tmp/prompt.md")))
+        self.assertNotIn("Review it.", argv, "the prompt never goes on Muse's command line")
 
 
 class RepositoryPin(unittest.TestCase):
@@ -1086,14 +1265,19 @@ class RepositoryPin(unittest.TestCase):
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
-    def test_the_repository_pin_is_astra_reviewing_claude_and_nothing_else(self):
-        # Owner decisions 2026-10-23: Opus 5.5 is the sole writer and GPT-6 Astra through Codex the sole reviewer, on
-        # the dispatcher-owned schedule: a medium plan review, a medium completion review, rounds at high, medium and
-        # low adversarial effort, then one low-effort lens per round.
+    def test_the_repository_pin_is_the_astra_and_terra_panel_reviewing_claude(self):
+        # Owner decisions: Opus 5.5 is the sole writer (2026-10-23), reviewed by a panel of GPT-6 Astra and GPT-6.1 Terra
+        # through Codex on every pass (2026-10-28). Astra keeps the shared schedule: a medium plan review, a medium
+        # completion review, rounds at high, medium and low adversarial effort, then one low-effort lens per round;
+        # Terra runs xhigh, xhigh, max, xhigh, high, high and max escalation.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
-        self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "medium"}})
-        self.assertEqual(pin["routes"], {"claude": ["astra"]})
+        self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "medium"},
+                                            "terra": {"cli": "codex", "model": "gpt-6.1-terra", "effort": "xhigh"}})
+        self.assertEqual(pin["routes"], {"claude": ["astra", "terra"]})
+        self.assertEqual(pin["schedule"]["efforts"], {"terra": {"plan": "xhigh", "completion": "xhigh",
+                                                                "rounds": ["max", "xhigh", "high"], "rotation": "high",
+                                                                "escalation": "max"}})
         schedule = pin["schedule"]
         self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})
         self.assertEqual(schedule["completion"], {"effort": "medium"})

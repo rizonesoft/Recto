@@ -413,17 +413,61 @@ def plan_record(root, report, ref, commits=None, start=None):
             "effort": entry["effort"], "lenses": entry["lenses"] or []}
 
 
-def pin_schedule(root, sha, ref):
-    """The [schedule] of the reviewer pin committed at `sha`, loaded by the dispatcher's own `load_pin`."""
+def pin_at(root, sha, ref):
+    """The reviewer pin committed at `sha`, loaded by the dispatcher's own `load_pin`."""
     shown = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{PIN}"], capture_output=True, timeout=30)
     require(shown.returncode == 0, f"no reviewer pin {PIN} at {sha}: {ref}")
     dispatch = review_dispatch()
     try:
-        pin = dispatch.load_pin(PIN, data=shown.stdout)
+        return dispatch.load_pin(PIN, data=shown.stdout)
     except dispatch.Refused as exc:
         raise Refused(f"the reviewer pin at {sha} does not load: {exc}: {ref}") from None
+
+
+def pin_schedule(root, sha, ref):
+    """The [schedule] of the reviewer pin committed at `sha`."""
+    pin = pin_at(root, sha, ref)
     require("schedule" in pin, f"the reviewer pin at {sha} has no [schedule] to check the reviews against: {ref}")
     return pin["schedule"]
+
+
+def reviewer_of(entry):
+    """The panel member a recorded pass belongs to: its reviewer, or for an outage the reviewer it skipped."""
+    return entry.get("reviewer") or next((s["reviewer"] for s in entry.get("skipped") or []), None)
+
+
+def panel_ok(root, data, ref, stamp_sha):
+    """With a panel in the pin at the stamped commit (owner decision 2026-10-28), every member reviewed the section:
+    its own findings file (`panel_record` beside the section's) is a loop the receipt names, records only its rounds,
+    and returned as many rounds as every other member, so no member's loop ended on a candidate the others never
+    reviewed. The route's first member returned the receipt's plan and completion reviews (checked against their files
+    by `plan_record` and `completion_record`); every other member's file holds its own returned plan and completion
+    reviews."""
+    route = pin_at(root, stamp_sha, ref)["routes"].get("claude", [])
+    if len(route) < 2:
+        return
+    dispatch = review_dispatch()
+    reports = {r["report"] for r in data["reviews"]}
+    returned = {}
+    for name in route:
+        path = dispatch.panel_record(data["plan"]["report"], route, name).as_posix()
+        require(path in reports, f"the panel's {name} has no review loop named in the receipt ({path}): {ref}")
+        text = (Path(root) / path).read_bytes().decode("utf-8")
+        found = dispatch.read_findings(text)
+        require(found is not None, f"{path} is not a findings file the dispatcher can read: {ref}")
+        if name == route[0]:
+            require(data["plan"]["reviewer"] == name and data["completion"]["reviewer"] == name,
+                    f"the receipt's plan and completion reviews are not {name}'s, the panel's first member: {ref}")
+        else:
+            require(any(dispatch.returned_pass("plan", e) and e["reviewer"] == name for e in found["plans"]),
+                    f"{path} holds no plan review returned by {name}: {ref}")
+            require(any(dispatch.returned_pass("completion", e) and e["reviewer"] == name
+                        for e in found["completions"]),
+                    f"{path} holds no completion review returned by {name}: {ref}")
+        require(all(reviewer_of(e) == name for e in found["rounds"]), f"{path} holds rounds of another reviewer: {ref}")
+        returned[name] = sum(1 for e in found["rounds"] if dispatch.returned_review(e))
+    require(len(set(returned.values())) == 1,
+            f"the panel's loops returned {returned} reviews; every member reviews every round: {ref}")
 
 
 def schedule_ok(root, data, ref, surface):
@@ -445,18 +489,30 @@ def schedule_ok(root, data, ref, surface):
     # Every attempt the one-pass files record, outages and self-reviews included, ran at that pass's scheduled step.
     plan_report = data["plan"]["report"]
     for entry in dispatch.read_plans((Path(root) / plan_report).read_bytes().decode("utf-8")):
-        check(f"the plan review in {plan_report}", entry, dispatch.scheduled(schedule, "plan", [], surface))
+        check(f"the plan review in {plan_report}", entry,
+              dispatch.scheduled(schedule, "plan", [], surface, reviewer_of(entry)))
     completion = data["completion"]["report"]
     completions = dispatch.read_completions((Path(root) / completion).read_bytes().decode("utf-8"))
     require(sum(1 for e in completions if dispatch.returned_pass("completion", e)
                 and e["candidate"] == data["completion"]["candidate"]) == 1,
             f"{completion} must hold exactly one returned completion review: {ref}")
     for entry in completions:
-        check(f"the completion review in {completion}", entry, dispatch.scheduled(schedule, "completion", [], surface))
+        check(f"the completion review in {completion}", entry,
+              dispatch.scheduled(schedule, "completion", [], surface, reviewer_of(entry)))
+    # Each panel member's file is replayed with that member's efforts: its plan and completion attempts and its rounds.
     for report in dict.fromkeys(r["report"] for r in data["reviews"]):
-        recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
+        text = (Path(root) / report).read_bytes().decode("utf-8")
+        if report not in (plan_report, completion):
+            for entry in dispatch.read_plans(text):
+                check(f"the plan review in {report}", entry,
+                      dispatch.scheduled(schedule, "plan", [], surface, reviewer_of(entry)))
+            for entry in dispatch.read_completions(text):
+                check(f"the completion review in {report}", entry,
+                      dispatch.scheduled(schedule, "completion", [], surface, reviewer_of(entry)))
+        recorded = dispatch.read_rounds(text)
         for i, entry in enumerate(recorded):
-            check(f"{report} round {entry['number']}", entry, dispatch.scheduled(schedule, "round", recorded[:i], surface))
+            check(f"{report} round {entry['number']}", entry,
+                  dispatch.scheduled(schedule, "round", recorded[:i], surface, reviewer_of(entry)))
 
 
 def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=None, surface=None):
@@ -521,7 +577,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
                     e = reviewed.get(r["round"])
                     last = ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1] if e else ""
                     require(e is not None and e["writer"] in dispatch.WRITER_FAMILY
-                            and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
+                            and dispatch.family(e["cli"], e["model"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
                             and last == ("OVERALL: approve" if r["verdict"] == "clean" else "OVERALL: needs-attention"),
                             f"round {r['round']} is not a review returned by another model family with a verdict "
                             f"matching {r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in "
@@ -595,6 +651,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
             require(pin_schedule(root, stamp_sha, ref) == data["schedule"],
                     f"receipt schedule is not the [schedule] in {PIN} at the stamped commit: {ref}")
             schedule_ok(root, data, ref, surface)
+            panel_ok(root, data, ref, stamp_sha)
     elif not building:
         frozen = root is not None and (legacy_receipts(root).get(ref) == receipt_digest(data)
                                        or receipts_before_plan(root).get(ref) == receipt_digest(data))

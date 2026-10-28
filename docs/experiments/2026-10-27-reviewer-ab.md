@@ -32,7 +32,7 @@ Lenses, prompts, the stop rule (`severity_stop_after = 0`) and the read-only san
 
 | Section | Arm A record | Arm B record |
 | ------- | ------------ | ------------ |
-| D01 T02 §33 | `docs/experiments/reviewer-ab/D01-T02-s33.md` | `docs/reviews/01-engine/D01-T02-s33.md` |
+| D01 T02 §33 | `docs/reviews/01-engine/D01-T02-s33.terra.md` (moved from `docs/experiments/reviewer-ab/` when the panel went live) | `docs/reviews/01-engine/D01-T02-s33.md` |
 
 ## Pass log
 

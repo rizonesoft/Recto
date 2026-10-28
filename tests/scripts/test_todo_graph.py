@@ -61,6 +61,16 @@ rounds = [{ effort = "high", lenses = ["adversarial", "integration", "source-def
 rotation = { effort = "low", lenses = ["consistency", "quality", "design", "optimization", "record"] }
 escalation = { effort = "medium", lenses = ["adversarial"] }
 """
+# The panel (owner decision 2026-10-28): a second reviewer on every pass, with its own efforts over the shared lenses.
+PANEL_PIN = SCHEDULE_PIN.replace('claude = ["astra"]', 'claude = ["astra", "terra"]').replace(
+    "[routes]", '[reviewers.terra]\ncli = "codex"\nmodel = "t"\neffort = "xhigh"\n\n[routes]') + """
+[schedule.efforts.terra]
+plan = "xhigh"
+completion = "xhigh"
+rounds = ["max", "xhigh", "high"]
+rotation = "high"
+escalation = "max"
+"""
 STARTED = "> **Started:** 2026-10-23T00:00Z\n\n"
 
 
@@ -1562,6 +1572,66 @@ class Stamp(Tree):
         path = self.root / self.PLAN
         path.write_bytes(path.read_bytes().replace(b"- Effort: medium", b"- Effort: high"))
         self.refuses("receipt plan does not match its findings file")
+
+    TERRA = "docs/reviews/00-workspace/D00-T01-s1.terra.md"
+
+    def panel(self, terra_steps=("P2", "clean"), astra_steps=("P2", "clean"), terra_effort=None):
+        """Pin the panel and record both members' loops as the dispatcher would: Astra's in the section's file, Terra's
+        beside it with its own plan and completion reviews, each round at that member's scheduled pass."""
+        (self.root / tg.PIN).write_text(PANEL_PIN, encoding="utf-8")
+        self.sha = self.commit("panel")
+        self.write_completion(reviewer="astra")
+        self.loop(list(astra_steps))
+        dispatch = tg.review_dispatch()
+        schedule = tg.pin_schedule(self.root, self.sha, "test")
+        path = self.root / self.TERRA
+        path.unlink(missing_ok=True)
+        self.write_plan(reviewer="terra", effort="xhigh", path=self.TERRA)
+        result = {"writer": "claude", "reviewer": "terra", "model": "t", "cli": "codex", "effort": "xhigh",
+                  "skipped": [], "review": "1. Open file: present.\n\nCOMPLETION: complete"}
+        dispatch.record_completion(path, result, "2026-10-23T00:00:00Z", self.sha)
+        for step in terra_steps:
+            existing = path.read_bytes().decode("utf-8")
+            plan = dispatch.scheduled(schedule, "round", dispatch.read_rounds(existing), False, "terra")
+            review = "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve" if step == "clean" \
+                else f"1. [{step}] gap.\n\nHIGHEST: {step}\n\nOVERALL: needs-attention"
+            dispatch.record(path, {"writer": "claude", "reviewer": "terra", "model": "t", "cli": "codex",
+                                   "effort": terra_effort or plan["effort"], "lenses": plan["lenses"], "skipped": [],
+                                   "review": review}, "2026-10-23T00:00:00Z")
+        self.reviews += [{"round": len(terra_steps), "report": self.TERRA, "verdict": "clean"}]
+
+    def test_a_panel_stamps_when_every_member_reviewed_every_round(self):
+        self.panel()
+        self.tick_work()
+        receipt = self.root / self.stamp("D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-28")
+        self.assertTrue(tg.graph(self.root)["D00 T01 §1"].done)
+        self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["schedule"]["efforts"]["terra"]["rounds"],
+                         ["max", "xhigh", "high"])
+
+    def test_a_panel_member_left_out_of_the_receipt_refuses(self):
+        self.panel()
+        self.reviews = [r for r in self.reviews if r["report"] != self.TERRA]
+        self.stamp_refuses("the panel's terra has no review loop named in the receipt")
+
+    def test_a_panel_member_that_reviewed_fewer_rounds_refuses(self):
+        self.panel(terra_steps=("clean",), astra_steps=("P2", "clean"))
+        self.stamp_refuses("every member reviews every round")
+
+    def test_a_panel_members_rounds_replay_at_its_own_efforts(self):
+        # Terra's round 1 recorded at Astra's high instead of its own max is caught by the schedule replay.
+        self.panel(terra_effort="high")
+        self.stamp_refuses("round 1 ran at high")
+
+    def test_a_panel_whose_completion_review_is_not_its_first_members_refuses(self):
+        self.panel()
+        self.write_completion(reviewer="sol")
+        self.stamp_refuses("the receipt's plan and completion reviews are not astra's")
+
+    def test_a_panel_member_without_its_own_plan_review_refuses(self):
+        self.panel()
+        path = self.root / self.TERRA
+        path.write_bytes(self.only(path.read_bytes().decode("utf-8"), plans=False).encode("utf-8"))
+        self.stamp_refuses("holds no plan review returned by terra")
 
     def test_a_loop_that_follows_the_whole_schedule_stamps(self):
         self.live(surface=True)
