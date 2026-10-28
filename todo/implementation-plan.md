@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 104 | Checklist items: 639
+Sections: 104 | Checklist items: 641
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -97,7 +97,7 @@ Sections: 104 | Checklist items: 639
 | [x]    | D01 T02 §30 | CID fonts: `/Type0`, `/DescendantFonts`, `/CIDToGIDMap`, `/W`, `/DW` and `/W2`           | windows-host              | 6     |
 | [x]    | D01 T02 §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | windows-host              | 7     |
 | [x]    | D01 T02 §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4                  | windows-host              | 7     |
-| [ ]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 3     |
+| [ ]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 5     |
 | [ ]    | D01 T02 §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text           | windows-host              | 4     |
 | [ ]    | D01 T02 §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap         | windows-host              | 2     |
 | [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 2     |
@@ -924,4 +924,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 88/853 verified sections, 38 ready to run now.
 
-Checklist: 552/6249 items completed (includes Commit items).
+Checklist: 552/6251 items completed (includes Commit items).
