@@ -1409,6 +1409,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): inline images
 
 ## 46. Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap
 
+> **Started:** 2026-10-28T12:11:13Z
+
 Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/Subtype /Form`: the form interpreted in a saved graphics state under its `/Matrix`, clipped to its `/BBox`, with its own `/Resources` or its parent's, at most 32 levels deep (ISO 32000-1 section 8.10).
 
 **Phase:** 1
