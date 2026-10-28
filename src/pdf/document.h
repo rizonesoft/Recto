@@ -207,6 +207,23 @@ public:
 	static constexpr size_t kMaxCachedStreamBytes = size_t{64} << 10u;
 	static constexpr size_t kSightingGeneration = 8'192u;
 	static constexpr size_t kSightingSlots = 2u * kSightingGeneration; // per table: open addressing at most half full
+	// A sighting probes at most this many slots; past it a key is taken as unseen and not recorded, so keys crafted to
+	// collide cost bounded work. The hash is keyed by a per-cache seed, so collisions cannot be precomputed.
+	static constexpr size_t kMaxSightingProbes = 32u;
+
+	ResolvedObjectCache() noexcept;
+	explicit ResolvedObjectCache(uint64_t seed) noexcept
+		: seed_(seed)
+	{
+	}
+
+	// The sighting hash of `key` under `seed` (splitmix64 of their mix), public so a test can craft collisions.
+	[[nodiscard]] static uint64_t sighting_hash(uint64_t key, uint64_t seed) noexcept;
+	// Slots examined by every sighting so far.
+	[[nodiscard]] uint64_t probe_steps() const noexcept
+	{
+		return probe_steps_;
+	}
 
 	// The value cached under `key` (object number and generation, `(obj << 16) | gen`), now the most recently used
 	// (a window entry moves to the main cache); null when none is. Never allocates.
@@ -225,11 +242,14 @@ public:
 	{
 		return slots_.size();
 	}
-	// Every byte the cache holds: its entries and its sighting tables, all within `kMaxObjectCacheBytes`.
+	// Every byte the cache holds: its entries, its sighting tables and its containers' own storage (the map's buckets
+	// as allocated now, never shrunk by eviction, and the lists' and map's sentinels), all within `kMaxObjectCacheBytes`.
 	[[nodiscard]] size_t bytes() const noexcept
 	{
-		return main_bytes_ + window_bytes_ + sightings_bytes();
+		return main_bytes_ + window_bytes_ + sightings_bytes() + container_bytes();
 	}
+	// The containers' share of `bytes()`.
+	[[nodiscard]] size_t container_bytes() const noexcept;
 	// The sighting tables' share of `bytes()`.
 	[[nodiscard]] size_t sightings_bytes() const noexcept
 	{
@@ -262,6 +282,8 @@ private:
 	std::unordered_map<uint64_t, Slot> slots_{};
 	size_t main_bytes_{0};
 	size_t window_bytes_{0};
+	uint64_t seed_{0};
+	uint64_t probe_steps_{0};
 	std::vector<uint64_t> sightings_[2]{}; // current and previous generation; 0 is an empty slot
 	size_t current_{0};
 	size_t sightings_count_{0}; // in the current generation
@@ -536,6 +558,10 @@ private:
 	[[nodiscard]] PdfResult<SharedHop> resolve_single_indirect_hop(
 		IndirectRef current,
 		const std::vector<IndirectRef>& visited_refs) const;
+
+	// `value` resolved without a copy: the cached value for a reference (kept alive by `holder`), else `value` itself;
+	// null when the reference does not resolve.
+	[[nodiscard]] const PdfValue* resolve_in_place(const PdfValue& value, std::shared_ptr<const PdfValue>& holder) const noexcept;
 
 	// Walks `ref`'s chain (cycle and depth checks before every hop, cached or not) to its shared terminal value.
 	[[nodiscard]] PdfResult<std::shared_ptr<const PdfValue>> resolve_shared_with_visited(

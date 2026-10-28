@@ -18,6 +18,8 @@
 #include "parser.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <array>
 #include <cctype>
 #include <charconv>
@@ -1655,13 +1657,44 @@ std::shared_ptr<const PdfValue> ResolvedObjectCache::find(uint64_t key) noexcept
 	return value;
 }
 
+ResolvedObjectCache::ResolvedObjectCache() noexcept
+{
+	// An unpredictable seed for the sighting hash: this object's address (randomised by ASLR), the clock, and a count
+	// of caches made, so a file cannot be crafted against it.
+	static std::atomic<uint64_t> made{0};
+	seed_ = sighting_hash(reinterpret_cast<uintptr_t>(this) ^
+			static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
+		made.fetch_add(1u, std::memory_order_relaxed));
+}
+
+uint64_t ResolvedObjectCache::sighting_hash(uint64_t key, uint64_t seed) noexcept
+{
+	uint64_t h = key + seed + 0x9E3779B97F4A7C15ull; // splitmix64
+	h = (h ^ (h >> 30u)) * 0xBF58476D1CE4E5B9ull;
+	h = (h ^ (h >> 27u)) * 0x94D049BB133111EBull;
+	return h ^ (h >> 31u);
+}
+
 size_t ResolvedObjectCache::entry_bytes(const PdfValue& value) noexcept
 {
 	// The shared value and its control block (one make_shared allocation, counted at twice the value for the block's
-	// counts and alignment), the list node (two links and the entry), and the map node (two links and the slot) with
-	// its share of the buckets.
+	// counts and alignment), the list node (two links and the entry), and the map node (two links and the slot); the
+	// map's buckets are charged as allocated, in container_bytes().
 	return value.heap_bytes() + 2u * sizeof(PdfValue) + sizeof(Entry) + 2u * sizeof(void*) +
-		sizeof(std::pair<const uint64_t, Slot>) + 4u * sizeof(void*);
+		sizeof(std::pair<const uint64_t, Slot>) + 2u * sizeof(void*);
+}
+
+size_t ResolvedObjectCache::container_bytes() const noexcept
+{
+	// MSVC's unordered_map keeps a vector of two iterators per bucket and a list with a sentinel node; each list has a
+	// sentinel too; a Debug build adds a proxy per container (two for the map).
+#if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL != 0
+	constexpr size_t proxy = sizeof(std::_Container_proxy);
+#else
+	constexpr size_t proxy = 0u;
+#endif
+	return slots_.bucket_count() * 2u * sizeof(void*) + (sizeof(std::pair<const uint64_t, Slot>) + 2u * sizeof(void*)) +
+		2u * (sizeof(Entry) + 2u * sizeof(void*)) + 6u * proxy;
 }
 
 bool ResolvedObjectCache::seen_before(uint64_t key)
@@ -1675,32 +1708,37 @@ bool ResolvedObjectCache::seen_before(uint64_t key)
 		sightings_[0] = std::move(current);
 		sightings_[1] = std::move(previous);
 	}
-	uint64_t h = key + 0x9E3779B97F4A7C15ull; // splitmix64
-	h = (h ^ (h >> 30u)) * 0xBF58476D1CE4E5B9ull;
-	h = (h ^ (h >> 27u)) * 0x94D049BB133111EBull;
-	h ^= h >> 31u;
-	const auto probe = [&](const std::vector<uint64_t>& table) {
+	const uint64_t h = sighting_hash(key, seed_);
+	// The slot holding `key`, else the empty slot it would take; none past kMaxSightingProbes slots.
+	const auto probe = [&](const std::vector<uint64_t>& table) -> std::optional<size_t> {
 		size_t at = static_cast<size_t>(h) & (kSightingSlots - 1u);
-		while (table[at] != 0u && table[at] != key) {
+		for (size_t step = 0; step < kMaxSightingProbes; ++step) {
+			++probe_steps_;
+			if (table[at] == 0u || table[at] == key) {
+				return at;
+			}
 			at = (at + 1u) & (kSightingSlots - 1u);
 		}
-		return at;
+		return std::nullopt;
 	};
 	std::vector<uint64_t>& current = sightings_[current_];
 	const std::vector<uint64_t>& previous = sightings_[current_ ^ 1u];
-	const size_t slot = probe(current);
-	if (current[slot] == key) {
+	const std::optional<size_t> slot = probe(current);
+	if (slot.has_value() && current[*slot] == key) {
 		return true;
 	}
-	const bool seen = previous[probe(previous)] == key;
+	const std::optional<size_t> before = probe(previous);
+	const bool seen = before.has_value() && previous[*before] == key;
 	if (sightings_count_ >= kSightingGeneration) {
 		// A new generation: the previous table is cleared and becomes the current one, at most half full by then.
 		current_ ^= 1u;
 		std::fill(sightings_[current_].begin(), sightings_[current_].end(), 0u);
 		sightings_count_ = 0;
-		sightings_[current_][probe(sightings_[current_])] = key;
-	} else {
-		current[slot] = key;
+		if (const std::optional<size_t> fresh = probe(sightings_[current_])) {
+			sightings_[current_][*fresh] = key;
+		}
+	} else if (slot.has_value()) {
+		current[*slot] = key; // past the probe limit a key is not recorded
 	}
 	++sightings_count_;
 	return seen;
@@ -1871,6 +1909,19 @@ PdfResult<std::shared_ptr<const PdfValue>> Document::resolve_object_shared(Indir
 			ref.obj_num,
 			ref.gen_num);
 	}
+}
+
+const PdfValue* Document::resolve_in_place(const PdfValue& value, std::shared_ptr<const PdfValue>& holder) const noexcept
+{
+	if (!value.is_ref()) {
+		return &value;
+	}
+	auto shared = resolve_object_shared(*value.as_ref());
+	if (!shared.has_value()) {
+		return nullptr;
+	}
+	holder = std::move(*shared);
+	return holder.get();
 }
 
 PdfResult<PdfValue> Document::resolve_value(const PdfValue& value) const noexcept
@@ -4289,8 +4340,9 @@ PdfResult<void> Document::load_document_structure()
 		if (fd_val == nullptr || fd_val->is_null()) {
 			return false;
 		}
-		auto fd_res = resolve_value(*fd_val);
-		if (!fd_res.has_value()) {
+		std::shared_ptr<const PdfValue> fd_holder;
+		const PdfValue* fd_res = resolve_in_place(*fd_val, fd_holder);
+		if (fd_res == nullptr) {
 			return false;
 		}
 		const PdfDict* fd_dict = fd_res->as_dict();
@@ -4396,12 +4448,15 @@ PdfResult<void> Document::load_document_structure()
 		// Check `/DescendantFonts` for `/Subtype /Type0` composite fonts:
 		if (const PdfValue* desc_val = font_dict.get("DescendantFonts");
 			desc_val != nullptr && !desc_val->is_null()) {
-			auto desc_res = resolve_value(*desc_val);
-			if (desc_res.has_value()) {
+			// Read in place: a descendant shared by many fonts is not copied for each (D01 T01 section 11).
+			std::shared_ptr<const PdfValue> desc_holder;
+			const PdfValue* desc_res = resolve_in_place(*desc_val, desc_holder);
+			if (desc_res != nullptr) {
 				if (const PdfArray* desc_arr = desc_res->as_array();
 					desc_arr != nullptr && !desc_arr->empty()) {
-					auto cid_res = resolve_value((*desc_arr)[0]);
-					if (cid_res.has_value()) {
+					std::shared_ptr<const PdfValue> cid_holder;
+					const PdfValue* cid_res = resolve_in_place((*desc_arr)[0], cid_holder);
+					if (cid_res != nullptr) {
 						if (const PdfDict* cid_dict = cid_res->as_dict()) {
 							if (has_embedded_font_file(*cid_dict)) {
 								summary.is_embedded = true;

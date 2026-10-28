@@ -167,6 +167,21 @@ TEST(PdfObject, HeapBytes)
 		return PdfValue(std::move(dict));
 	});
 	check("1 MiB string", [] { return PdfValue(PdfString(std::vector<uint8_t>(size_t{1} << 20u, 'x'))); });
+	// heap_bytes() allocates nothing (it runs inside noexcept accounting), and the small-string capacity it assumes is
+	// the library's.
+	{
+		const PdfValue named(PdfName("AShortName"));
+		size_t allocated = 0;
+		size_t counted = 0;
+		{
+			const recto::test::ScopedHeapMeter meter;
+			counted = named.heap_bytes();
+			allocated = meter.allocated_bytes();
+		}
+		EXPECT_EQ(allocated, 0u) << "heap_bytes allocated";
+		EXPECT_GT(counted + 1u, 0u);
+		EXPECT_EQ(std::string{}.capacity(), 15u) << "the small-string capacity heap_bytes assumes is not the library's";
+	}
 	check("stream", [] {
 		PdfDict dict;
 		dict.set("Length", PdfValue(int64_t{65'536}));

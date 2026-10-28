@@ -3162,11 +3162,10 @@ TEST(PdfInterpreter, SharedObjectsParseOnce)
 	const auto one_font = page_of(1);
 	auto one = Document::open_memory(one_font);
 	ASSERT_TRUE(one.has_value());
-	const uint64_t one_parsed = (*one)->parsed_object_count();
-	const uint64_t one_copied = (*one)->copied_object_count();
+	const uint64_t one_copied_before = (*one)->copied_object_count();
 	ASSERT_TRUE(interpret_page(**one, 0u).has_value());
-	const uint64_t one_parses = (*one)->parsed_object_count() - one_parsed;
-	const uint64_t one_copies = (*one)->copied_object_count() - one_copied;
+	const uint64_t one_parses = (*one)->parsed_object_count(); // from open, so nothing is left out
+	const uint64_t one_copies = (*one)->copied_object_count();
 	const auto bytes = page_of(50);
 	auto doc = Document::open_memory(bytes);
 	ASSERT_TRUE(doc.has_value());
@@ -3194,11 +3193,56 @@ TEST(PdfInterpreter, SharedObjectsParseOnce)
 		static_cast<unsigned long long>(parses), allocated, sizeof(PdfValue));
 	// Fifty fonts, their descendant, the page's resources: each parsed at most twice.
 	EXPECT_LE(parses, 2u * (50u + 8u)) << "a shared object was parsed again for each use";
-	// Per object: forty-nine more fonts add one parse each (their own dictionaries) and no copy, so the shared
-	// descendant is neither parsed nor copied per font.
-	const uint64_t copies = (*doc)->copied_object_count() - copied_before;
-	EXPECT_LE(parses, one_parses + 49u + 2u) << "the descendant was parsed again per font";
-	EXPECT_EQ(copies, one_copies) << "an object was copied per font";
+	// Per object, counted from open: forty-nine more fonts add at most two parses each (their own dictionaries: first
+	// sight and admission); interpreting copies nothing per font; the shared descendant is then cached, so resolving
+	// it, or interpreting the page again, parses nothing.
+	EXPECT_LE((*doc)->parsed_object_count(), one_parses + 2u * 49u) << "the descendant was parsed again per font";
+	EXPECT_EQ((*doc)->copied_object_count() - copied_before, one_copies - one_copied_before) << "interpreting copied an object per font";
+	const uint64_t settled = (*doc)->parsed_object_count();
+	ASSERT_TRUE((*doc)->resolve_object_shared(IndirectRef{7u, 0u}).has_value());
+	EXPECT_EQ((*doc)->parsed_object_count(), settled) << "the shared descendant was not kept";
+	ASSERT_TRUE(interpret_page(**doc, 0u).has_value());
+	EXPECT_EQ((*doc)->parsed_object_count(), settled) << "interpreting the page again parsed an object";
+}
+
+// Opening and interpreting a page of fifty /Type0 fonts over one descendant that carries 65,536 unused numbers
+// allocates about what one font does: neither the document's font list nor the interpreter copies the descendant per
+// font (D01 T01 section 11).
+TEST(PdfInterpreter, SharedDescendantNotCopied)
+{
+	if (!recto::test::ScopedHeapMeter::available()) {
+		GTEST_SKIP() << "the heap meter is unavailable in this build";
+	}
+	std::string pad = "[";
+	for (int i = 0; i < 65'536; ++i) {
+		pad += "1 ";
+	}
+	pad += "]";
+	const std::vector<std::string> objects{kF1, kF1Descriptor,
+		"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 500 /Pad " +
+			pad + " >>"};
+	const auto measured = [&](int count) {
+		std::vector<std::string> with = objects;
+		std::string fonts;
+		std::string content = "BT ";
+		for (int i = 0; i < count; ++i) {
+			with.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) + " /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
+			fonts += "/C" + std::to_string(i) + " " + std::to_string(8 + i) + " 0 R ";
+			content += "/C" + std::to_string(i) + " 10 Tf <0001> Tj ";
+		}
+		const auto bytes = one_page_pdf(content + "ET", "<< /Font << " + fonts + ">> >>", with);
+		const recto::test::ScopedHeapMeter meter;
+		auto doc = Document::open_memory(bytes);
+		EXPECT_TRUE(doc.has_value());
+		if (doc.has_value()) {
+			EXPECT_TRUE(interpret_page(**doc, 0u).has_value());
+		}
+		return meter.allocated_bytes();
+	};
+	const size_t one = measured(1);
+	const size_t fifty = measured(50);
+	const size_t one_copy = 65'536u * sizeof(PdfValue);
+	EXPECT_LT(fifty, one + 49u * one_copy / 4u) << "the descendant was copied per font: " << one << " then " << fifty << " bytes";
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

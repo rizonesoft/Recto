@@ -691,10 +691,14 @@ inline constexpr size_t kContainerProxyBytes = sizeof(std::_Container_proxy);
 inline constexpr size_t kContainerProxyBytes = 0u;
 #endif
 
+// The capacity MSVC's std::string holds in its own buffer (`_BUF_SIZE` 16, less the terminator), named instead of read
+// from a temporary string: a Debug build allocates a proxy for every string, which noexcept accounting must not do.
+inline constexpr size_t kSmallStringCapacity = 15u;
+
 // A string's heap: its proxy, and its capacity and terminator once it outgrows the small-string buffer.
 [[nodiscard]] size_t string_heap(const std::string& s) noexcept
 {
-	return kContainerProxyBytes + (s.capacity() > std::string{}.capacity() ? s.capacity() + 1u : 0u);
+	return kContainerProxyBytes + (s.capacity() > kSmallStringCapacity ? s.capacity() + 1u : 0u);
 }
 
 } // namespace

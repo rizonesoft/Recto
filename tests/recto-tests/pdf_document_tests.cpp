@@ -882,7 +882,8 @@ TEST(PdfDocument, ObjectCacheBudget)
 				held += ResolvedObjectCache::entry_bytes(*v);
 			}
 		}
-		EXPECT_EQ(cache.bytes(), held + cache.sightings_bytes()) << "the reported bytes are not the entries and the tables";
+		EXPECT_EQ(cache.bytes(), held + cache.sightings_bytes() + cache.container_bytes())
+			<< "the reported bytes are not the entries, the tables and the containers";
 		EXPECT_GT(cache.sightings_bytes(), 0u);
 		EXPECT_LT(cache.main_size(), 200u);
 		if (recto::test::ScopedHeapMeter::available()) {
@@ -919,6 +920,47 @@ TEST(PdfDocument, ObjectCacheBudget)
 		}
 		EXPECT_EQ(cache.size(), ResolvedObjectCache::kMaxObjectCacheEntries) << "the tiers together passed the entry limit";
 		EXPECT_EQ(cache.main_size(), ResolvedObjectCache::kMaxObjectCacheEntries - ResolvedObjectCache::kMaxWindowEntries);
+	}
+	// Many small entries, then large ones: the map's buckets stay as large as they grew, and the cache still holds no
+	// more than its budget, measured.
+	{
+		ResolvedObjectCache cache;
+		const recto::test::ScopedHeapMeter meter;
+		const auto one = std::make_shared<const PdfValue>(int64_t{1});
+		for (uint64_t key = 1; key <= ResolvedObjectCache::kMaxObjectCacheEntries + 1u; ++key) {
+			admit(cache, key << 8u, one);
+		}
+		const auto large = string_value(size_t{1} << 20u);
+		for (uint64_t key = 1; key <= 63u; ++key) {
+			admit(cache, (uint64_t{1} << 40u) + key, large);
+		}
+		EXPECT_LE(cache.bytes(), ResolvedObjectCache::kMaxObjectCacheBytes);
+		EXPECT_GT(cache.container_bytes(), size_t{1} << 20u) << "the grown buckets are not charged";
+		if (recto::test::ScopedHeapMeter::available()) {
+			// The shared values are counted per entry; `one` and `large` are one allocation each, held here too.
+			const auto live = static_cast<size_t>(meter.live_bytes());
+			EXPECT_LE(live, ResolvedObjectCache::kMaxObjectCacheBytes + (size_t{1} << 20u)) << "the cache holds past its budget";
+		}
+	}
+	// Keys crafted to collide under a known seed cost at most kMaxSightingProbes slots each; under the cache's own
+	// seed the same keys spread out.
+	{
+		std::vector<uint64_t> colliding;
+		for (uint64_t number = 1; colliding.size() < 600u; ++number) {
+			const uint64_t key = number << 16u;
+			if ((ResolvedObjectCache::sighting_hash(key, 0u) & (ResolvedObjectCache::kSightingSlots - 1u)) == 0u) {
+				colliding.push_back(key);
+			}
+		}
+		ResolvedObjectCache known(0u);
+		ResolvedObjectCache seeded;
+		for (const uint64_t key : colliding) {
+			ASSERT_TRUE(known.insert(key, std::make_shared<const PdfValue>(int64_t{1})).has_value());
+			ASSERT_TRUE(seeded.insert(key, std::make_shared<const PdfValue>(int64_t{1})).has_value());
+		}
+		EXPECT_LE(known.probe_steps(), colliding.size() * 2u * ResolvedObjectCache::kMaxSightingProbes)
+			<< "colliding keys probed without bound";
+		EXPECT_LE(seeded.probe_steps(), colliding.size() * 8u) << "the cache's own seed let crafted keys collide";
 	}
 	// A one-pass traversal of 20,000 objects keeps no more than the window: no first sighting passes for a second.
 	// A key seen again within two generations (8,192 to 16,384 sightings) is admitted.
