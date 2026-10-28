@@ -3746,6 +3746,50 @@ TEST(PdfInterpreter, EmbeddedType1AndCffText)
 				descriptor_head + "/FontFile2 8 0 R >>", stream_object("", ttf)});
 		expect_run(page, {1u}, "CIDFontType2");
 	}
+	// A /Type1 font over an OpenType CFF program draws by glyph name under the Type 1 encoding rules (9.9), not
+	// through the program's cmap: code 66 named by /Differences after a glyph of the CFF charset, code 65 by the
+	// program's built-in encoding.
+	{
+		const auto table = opentype_cff_table(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(otf.data()), otf.size()));
+		ASSERT_TRUE(table.has_value());
+		const auto names = load_charstring_font(std::make_shared<const std::vector<uint8_t>>(table->begin(), table->end()),
+			CharstringFormat::Type1C);
+		ASSERT_TRUE(names.has_value());
+		const GlyphNames* built_in = (*names)->built_in_encoding();
+		ASSERT_NE(built_in, nullptr);
+		// The program's cmap is replaced by one that sends `A` to glyph 0, so only the name route finds A's glyph: code 65
+		// by the built-in encoding, code 66 by /Differences.
+		ASSERT_EQ((*built_in)[65], "A");
+		const uint16_t a_glyph = (*names)->glyph_for_name("A").value_or(0u);
+		ASSERT_NE(a_glyph, 0u);
+		const std::string misleading = with_cmap(otf, 3u, 1u, cmap_format4({{uint16_t{0x41}, uint16_t{0}}}));
+		const TextPage page = glyph_page("BT /O 10 Tf (AB) Tj ET", "/O 5 0 R",
+			{"<< /Type /Font /Subtype /Type1 /BaseFont /Fixture /FirstChar 65 /LastChar 66 /Widths [600 600] /Encoding << /Differences [66 /A] >> "
+			 "/FontDescriptor 6 0 R >>",
+				descriptor_head + "/FontFile3 7 0 R >>", stream_object("/Subtype /OpenType", misleading)});
+		expect_run(page, {a_glyph, a_glyph}, "Type 1 over OpenType CFF");
+	}
+	// A /Type0 whose embedded program is damaged keeps its CMap and widths: two-byte codes stay two CIDs at their
+	// /W advances, drawn advance-only, the damage recorded, and the next string where the file put it.
+	for (const auto& [descendant, file] : {std::pair{std::string("CIDFontType2"), std::string("/FontFile2 8 0 R")},
+			 std::pair{std::string("CIDFontType0"), std::string("/FontFile3 8 0 R")}}) {
+		SCOPED_TRACE(descendant);
+		clear_diagnostics();
+		const TextPage page = glyph_page("BT /K 10 Tf <00410042> Tj <0041> Tj ET", "/K 5 0 R",
+			{"<< /Type /Font /Subtype /Type0 /BaseFont /Fixture /Encoding /Identity-H /DescendantFonts [6 0 R] >>",
+				"<< /Type /Font /Subtype /" + descendant +
+					" /BaseFont /Fixture /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R "
+					"/W [65 [500 700]] /DW 1000 >>",
+				descriptor_head + file + " >>", stream_object(descendant == "CIDFontType0" ? "/Subtype /CIDFontType0C" : "", "notafont")});
+		ASSERT_EQ(page.runs.size(), 2u);
+		const auto g = glyphs_of(page, page.runs[0]);
+		ASSERT_EQ(g.size(), 2u) << "the two-byte codes were split";
+		EXPECT_TRUE(g[0].is_blank && g[1].is_blank);
+		EXPECT_EQ(handle_of(page.runs[0]), nullptr);
+		EXPECT_NEAR(g[1].origin_pt.x, 5.0, 1e-9);
+		EXPECT_NEAR(page.runs[1].text_matrix.e, 12.0, 1e-9) << "the next string did not start after 5 + 7";
+		EXPECT_TRUE(damaged_recorded());
+	}
 	// A damaged Type 1 program: the serif flag picks Times, the damage is recorded.
 	{
 		clear_diagnostics();

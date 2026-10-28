@@ -416,7 +416,7 @@ struct TextFontBuilder {
 					: (italic ? Standard14Font::HelveticaOblique : Standard14Font::Helvetica);
 	}
 
-	static PdfResult<std::shared_ptr<const TextFont>> simple(const Document& document, const PdfDict& dict,
+	static PdfResult<std::shared_ptr<const TextFont>> simple(const Document& document, const PdfDict& dict, bool truetype,
 		std::optional<PdfError>& fatal)
 	{
 		auto font = std::make_shared<TextFont>();
@@ -482,12 +482,10 @@ struct TextFontBuilder {
 			SimpleEncoding::build(encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, built_in));
 		const bool has_widths = widths(document, dict, 0.001, missing, *font, fatal);
 		if (program.has_value()) {
-			// Each code's glyph in the program: through its `cmap` when it has one (9.6.6.4), else by glyph name.
-			const auto has_cmap = [&] {
-				return program->tables.has_value() && (program->tables->has(3u, 1u) || program->tables->has(3u, 10u) ||
-					program->tables->has(3u, 0u) || program->tables->has(1u, 0u));
-			};
-			const bool by_cmap = has_cmap() || (program->tables.has_value() && program->names == nullptr);
+			// Each code's glyph in the program: a TrueType font through its program's `cmap` (9.6.6.4); a Type 1 font,
+			// including one embedding an OpenType CFF program, by glyph name under the Type 1 encoding rules (9.9),
+			// its `cmap` only when the program names no glyphs.
+			const bool by_cmap = program->tables.has_value() && (truetype || program->names == nullptr);
 			font->owned_face_bytes_ = program->face->memory_bytes() +
 				(program->names != nullptr && program->names != program->face ? program->names->memory_bytes() : 0u);
 			for (size_t code = 0; code < 256u; ++code) {
@@ -603,12 +601,16 @@ struct TextFontBuilder {
 	{
 		const IndirectObjectResolver resolver = [&document](IndirectRef ref) { return document.resolve_object(ref); };
 		const SharedObjectResolver shared = [&document](IndirectRef ref) { return document.resolve_object_shared(ref); };
-		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver, &shared));
+		std::optional<PdfError> program_error;
+		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver, &shared, &program_error));
 		auto font = std::make_shared<TextFont>();
 		font->kind_ = TextFontKind::Composite;
 		font->vertical_ = type0->cmap().vertical();
 		if (type0->font() != nullptr) {
 			font->faces_.push_back(type0->font()); // counted in the composite font's memory
+		} else if (program_error.has_value()) {
+			// Only the program failed: the codes, CIDs and widths still position the text, drawn advance-only.
+			record_diagnostic(*program_error);
 		} else {
 			// A CIDFont that embeds no program: positioned, drawn once section 17 substitutes it.
 			record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "CIDFont embeds no program; its text is positioned but not drawn"));
@@ -677,7 +679,7 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& doc
 		}
 		if (subtype == std::optional<std::string_view>("Type1") || subtype == std::optional<std::string_view>("MMType1") ||
 			subtype == std::optional<std::string_view>("TrueType")) {
-			return finish(TextFontBuilder::simple(document, *dict, fatal));
+			return finish(TextFontBuilder::simple(document, *dict, subtype == std::optional<std::string_view>("TrueType"), fatal));
 		}
 		// Any other /Subtype, or none, is not a font this reader positions (9.5, Table 110): the fallback, recorded.
 		return finish(subtype.has_value()

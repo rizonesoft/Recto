@@ -848,7 +848,8 @@ struct Type0Loader {
 } // namespace
 
 PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
-	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared) noexcept
+	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared,
+	std::optional<PdfError>* program_error) noexcept
 {
 	try {
 		Type0Loader loader{resolver, shared, {}};
@@ -912,10 +913,18 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 		Held descriptor_holder;
 		RECTO_PDF_TRY(const PdfValue* descriptor, loader.value(descendant.get("FontDescriptor"), descriptor_holder));
 		if (descriptor != nullptr && descriptor->is_dict()) {
-			RECTO_PDF_TRY_REF(program, loader.program_with_charset(*descriptor->as_dict(), kind));
-			font = program.font;
-			if (program.charset.has_value()) {
-				map = std::move(*program.charset);
+			auto program = loader.program_with_charset(*descriptor->as_dict(), kind);
+			const bool usable_without = program_error != nullptr && !program.has_value() &&
+				(program.error().code == ErrorCode::DamagedFormat || program.error().code == ErrorCode::UnsupportedFeature ||
+					program.error().code == ErrorCode::ResourceLimit);
+			if (usable_without) {
+				*program_error = program.error(); // the font keeps its CMap and widths, with no face
+			} else {
+				RECTO_PDF_RETURN_IF_ERROR(program);
+				font = program->font;
+				if (program->charset.has_value()) {
+					map = std::move(*program->charset);
+				}
 			}
 		}
 		return std::shared_ptr<const Type0Font>(

@@ -230,7 +230,11 @@ private:
 // `/CIDToGIDMap`, and its descriptor's `/FontFile2` or `/FontFile3` program, every indirect object through `resolver`
 // and every stream through `decode_stream`. With `shared`, indirect objects are read from the document's cached values
 // without a copy (D01 T01 section 11); `resolver` still serves the stream decoders.
-[[nodiscard]] PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
-	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared = nullptr) noexcept;
+// With `program_error`, a program the loaders refuse as damaged, unsupported or past a bound does not refuse the font:
+// the error is stored there and the font loads with its CMap and widths and no program (D01 T02 section 43 draws its
+// text advance-only); without it the font is refused with the loader's error.
+[[nodiscard]] PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(const PdfDict& type0,
+	const IndirectObjectResolver& resolver, const SharedObjectResolver* shared = nullptr,
+	std::optional<PdfError>* program_error = nullptr) noexcept;
 
 } // namespace recto::pdf
