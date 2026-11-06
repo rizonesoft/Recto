@@ -27,38 +27,30 @@ effort = "high"
 [routes]
 claude = ["astra"]
 
-# The review schedule (owner decision 2026-10-23; every effort raised one level 2026-10-28). The dispatcher picks each
-# pass's effort and lenses, so the loop runs the same way every time: a plan review before the build, the completion
-# review after it, three fixed adversarial rounds at falling effort, then one medium-effort lens per round in
-# rotation until the loop stops. The first round with no P1 or P2 finding (its worst P3, or none) ends the loop
-# (owner decision 2026-10-24: was from round 4 on; severity_stop_after = 0 opens the stop from round 1); a rotation
-# round that finds a P1 is followed by one high-effort adversarial round. The cap stays 33 rounds.
+# The review schedule (owner decision 2026-10-23; simplified with these efforts by the owner on 2026-11-06). The
+# dispatcher picks each pass's effort and lenses, so the loop runs the same way every time: a medium plan review before
+# the build, a low completion review after it, a medium round 1 across its lenses (design on Surface: yes sections
+# only), then low adversarial rounds. The first round with no P1 or P2 finding (its worst P3, or none) ends the loop
+# (owner decision 2026-10-24: was from round 4 on; severity_stop_after = 0 opens the stop from round 1); a low round
+# that finds a P1 is followed by one medium-effort adversarial round. The cap stays 33 rounds.
 [schedule]
 severity_stop_after = 0
 
 [schedule.plan]
-effort = "high"
+effort = "medium"
 lenses = ["plan"]
 
 [schedule.completion]
-effort = "high"
-
-[[schedule.rounds]]
-effort = "xhigh"
-lenses = ["adversarial", "integration", "source-defect", "plan-delivery"]
-
-[[schedule.rounds]]
-effort = "high"
-lenses = ["adversarial"]
+effort = "low"
 
 [[schedule.rounds]]
 effort = "medium"
-lenses = ["adversarial"]
+lenses = ["adversarial", "integration", "source-defect", "plan-delivery", "design"]
 
 [schedule.rotation]
-effort = "medium"
-lenses = ["consistency", "quality", "design", "optimization", "record"]
+effort = "low"
+lenses = ["adversarial"]
 
 [schedule.escalation]
-effort = "high"
+effort = "medium"
 lenses = ["adversarial"]

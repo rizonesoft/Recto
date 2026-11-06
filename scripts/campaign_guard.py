@@ -12,13 +12,15 @@
     python scripts/campaign_guard.py reconcile --session S --jobs J1,J2
     python scripts/campaign_guard.py health --session S --jobs J1,J2
     python scripts/campaign_guard.py expiry --session S [--now ISO]
+    python scripts/campaign_guard.py reviewing                      (prints the running review, if one is in flight)
 
 A campaign run has three parts. The guard file (`build/claude-campaign-guard.json`) names the session that owns the
 run, its phase, run file, heartbeat job and run id; it is written and deleted only through this module, under an
 interprocess lock. The Stop hook (`stop-hook`, wired in `.claude/settings.json`) blocks that session's end of turn
 while the run is open and lets go when the run file carries this run's `## Closeout run=<id>` heading or column-0
-`PARKED <UTC> run=<id>` line, when `query ready` has nothing runnable, or when the stall breaker trips after 3 blocks
-with no change to the tree. The heartbeat is a `CronCreate` job inside the session (process-plan holds its prompt)
+`PARKED <UTC> run=<id>` line, when `build/review-in-flight.json` names a live review dispatcher (the wait is the work,
+and never counts toward the breaker), when `query ready` has nothing runnable, or when the stall breaker trips after 3
+blocks with no change to the tree. The heartbeat is a `CronCreate` job inside the session (process-plan holds its prompt)
 that resumes an idle run. There is no keep-alive outside the session: a session that died is resumed by the operator,
 and the new session takes the guard with `acquire --handover`.
 
@@ -30,6 +32,8 @@ it runs the same on Windows and WSL, and without Isotone's CI repair ledger.
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
 import datetime
 import hashlib
 import json
@@ -53,6 +57,10 @@ SCOPES = ("plan", "phase")
 # non-blocking error, so the hook keeps its own deadline well inside it and still has time to record a failure.
 HOOK_BUDGET_SECONDS = 40.0
 UTC_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+# The Win32 values `_alive` needs (OpenProcess, GetExitCodeProcess).
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+ERROR_ACCESS_DENIED = 5
+STILL_ACTIVE = 259
 
 
 class GuardError(ValueError):
@@ -744,6 +752,45 @@ def _same_run(still: dict | None, guard: dict) -> bool:
             and str(still.get("run_id", "")) == str(guard.get("run_id", "")))
 
 
+def _alive(pid: int) -> bool:
+    if os.name == "nt":
+        # os.kill(pid, 0) would terminate the process on Windows, so ask the kernel instead.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD)
+        kernel32.GetExitCodeProcess.argtypes = (ctypes.wintypes.HANDLE, ctypes.POINTER(ctypes.wintypes.DWORD))
+        kernel32.CloseHandle.argtypes = (ctypes.wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ctypes.get_last_error() == ERROR_ACCESS_DENIED
+        try:
+            code = ctypes.wintypes.DWORD()
+            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def review_in_flight(root: str) -> str | None:
+    """The reviewer scripts/review-dispatch.py is running now, from build/review-in-flight.json, or None: the file
+    must name a live process and a deadline not yet passed (a crashed dispatcher's leftover file never holds a run)."""
+    try:
+        with open(os.path.join(root, "build", "review-in-flight.json"), encoding="utf-8") as fh:
+            doc = json.load(fh)
+        pid, deadline = int(doc["pid"]), float(doc["deadline"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if pid <= 0 or time.time() > deadline or not _alive(pid):
+        return None
+    return f"{doc.get('reviewer', 'reviewer')}, dispatcher pid {pid}"
+
+
 def stop_decision(root: str, session: str) -> dict | None:
     """The hook's decision for one Stop event: None allows the stop, a dict is the `block` payload to print."""
     guard = read_guard(root)
@@ -761,6 +808,12 @@ def stop_decision(root: str, session: str) -> dict | None:
     for line in run_text.splitlines():
         if re.match(r"(## Closeout\b|PARKED\b)", line) and (not run_id or marker_run(line) == run_id):
             return None
+    reviewing = review_in_flight(root)
+    if reviewing:
+        # Waiting for a review is the work: the tree must not change under the reviewer, so the turn may end and the
+        # review's notification (or the heartbeat) resumes the row. Not a block, so it never counts toward the breaker.
+        print(f"campaign-stop: a review is running ({reviewing}); waiting for it, not stalled", file=sys.stderr)
+        return None
     deadline = time.monotonic() + _env_int("CAMPAIGN_HOOK_BUDGET_SECONDS", int(HOOK_BUDGET_SECONDS))
     phase_only = guard.get("scope") == "phase"
     ready, next_row = ready_rows(root, timeout=_remaining(deadline) / 2,
@@ -908,6 +961,11 @@ def main(argv: list[str]) -> int:
             return 0
         if argv[0] == "pending-cancel" and not opts:
             line = pending_cancel(root)
+            if line:
+                print(line)
+            return 0
+        if argv[0] == "reviewing" and not opts:
+            line = review_in_flight(root)
             if line:
                 print(line)
             return 0

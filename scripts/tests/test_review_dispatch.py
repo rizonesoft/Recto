@@ -40,7 +40,8 @@ FAKE_CLI = textwrap.dedent('''\
     stdin = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.buffer.read().decode("utf-8", "replace")
     # One log file per process: panel members run at once, and concurrent appends to one file can interleave.
     with open(os.environ["FAKE_LOG"] + "." + str(os.getpid()) + "." + str(time.time_ns()), "a") as log:
-        log.write(json.dumps({"cli": name, "argv": args, "stdin": stdin, "cwd": os.getcwd()}) + "\\n")
+        log.write(json.dumps({"cli": name, "argv": args, "stdin": stdin, "cwd": os.getcwd(),
+                              "in_flight": os.path.exists(os.path.join(os.getcwd(), "build", "review-in-flight.json"))}) + "\\n")
     if mode == "fail":
         sys.exit(3)
     if mode == "sleep":
@@ -897,6 +898,21 @@ class Schedule(Harness):
         lenses = [self.round("OVERALL: approve", "--surface")[0]["lenses"] for _ in range(6)]
         self.assertEqual(lenses[3:], [["consistency"], ["design"], ["record"]])
 
+    def test_the_review_is_marked_in_flight_only_while_it_runs(self):
+        _, (call,) = self.round()
+        self.assertTrue(call["in_flight"], "the Stop hook can see the reviewer running")
+        self.assertFalse((self.repo / "build" / "review-in-flight.json").exists(), "and the mark is gone afterwards")
+
+    def test_design_in_a_fixed_round_runs_only_on_a_surface_section(self):
+        # Owner decision 2026-11-06: the design lens sits in round 1 of the live pin, so a section with no surface must
+        # get the round without it, and `stamp`'s replay through `scheduled` must expect the same lenses.
+        schedule = {"rounds": [{"effort": "medium", "lenses": ["adversarial", "design"]}],
+                    "rotation": {"effort": "low", "lenses": ["adversarial"]},
+                    "escalation": {"effort": "medium", "lenses": ["adversarial"]}}
+        module = self.module()
+        self.assertEqual(module.scheduled(schedule, "round", [], True)["lenses"], ["adversarial", "design"])
+        self.assertEqual(module.scheduled(schedule, "round", [], False)["lenses"], ["adversarial"])
+
     def test_an_outage_round_does_not_move_the_position(self):
         self.round()
         self.clear_log()
@@ -1226,21 +1242,21 @@ class RepositoryPin(unittest.TestCase):
 
     def test_the_repository_pin_is_astra_alone_reviewing_claude(self):
         # Owner decisions: Opus 5.5 is the sole writer (2026-10-23), reviewed by GPT-6 Astra through Codex on every pass;
-        # the Astra and Terra panel was removed on 2026-10-28 and every Astra effort raised one level: a high plan
-        # review, a high completion review, rounds at xhigh, high and medium adversarial effort, then one medium lens
-        # per round, a rotation P1 escalating to high.
+        # the Astra and Terra panel was removed on 2026-10-28. The shape as of the owner decision of 2026-11-06: a medium
+        # plan review, a low completion review, a medium round 1 across five lenses (design on surface sections only),
+        # then low adversarial rounds until one has no P1 or P2, a P1 on a low round making the next one medium.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
         self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "high"}})
         self.assertEqual(pin["routes"], {"claude": ["astra"]})
         schedule = pin["schedule"]
         self.assertNotIn("efforts", schedule)
-        self.assertEqual(schedule["plan"], {"effort": "high", "lenses": ["plan"]})
-        self.assertEqual(schedule["completion"], {"effort": "high"})
-        self.assertEqual([(r["effort"], r["lenses"][0]) for r in schedule["rounds"]],
-                         [("xhigh", "adversarial"), ("high", "adversarial"), ("medium", "adversarial")])
-        self.assertEqual(schedule["rotation"]["effort"], "medium")
-        self.assertEqual(schedule["escalation"], {"effort": "high", "lenses": ["adversarial"]})
+        self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})
+        self.assertEqual(schedule["completion"], {"effort": "low"})
+        self.assertEqual([(r["effort"], r["lenses"]) for r in schedule["rounds"]],
+                         [("medium", ["adversarial", "integration", "source-defect", "plan-delivery", "design"])])
+        self.assertEqual(schedule["rotation"], {"effort": "low", "lenses": ["adversarial"]})
+        self.assertEqual(schedule["escalation"], {"effort": "medium", "lenses": ["adversarial"]})
 
     def test_the_pins_severity_stop_is_the_stamps_cutoff(self):
         # The dispatcher reports severity_stop from the pin and `stamp` re-checks it against SEVERITY_CUTOFF_ROUND: the

@@ -113,6 +113,36 @@ class StopHook(Workspace):
         self.assertIn(f"## Closeout run={self.run_id()}", decision["reason"])
         self.assertEqual(self.state()["blocks"], 1)
 
+    def in_flight(self, pid, deadline):
+        self.write("build/review-in-flight.json", json.dumps({"pid": pid, "reviewer": "astra", "deadline": deadline}))
+
+    def test_a_review_in_flight_lets_the_turn_end_without_a_push(self):
+        self.acquire()
+        self.in_flight(os.getpid(), time.time() + 600)
+        self.assertIsNone(self.hook(), "waiting for a running review is not a stop to push past")
+        self.assertEqual(self.state().get("blocks", 0), 0, "and it never counts toward the stall breaker")
+        self.assertIn("astra", guard.review_in_flight(self.root), "the heartbeat reads the same answer")
+
+    def test_a_dead_expired_or_malformed_review_does_not_hold_the_run(self):
+        self.acquire()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        for pid, deadline in ((gone.pid, time.time() + 600), (os.getpid(), time.time() - 1), (0, time.time() + 600)):
+            with self.subTest(pid=pid, deadline=deadline):
+                self.in_flight(pid, deadline)
+                self.assertIsNone(guard.review_in_flight(self.root))
+                self.assertEqual(self.hook()["decision"], "block")
+        self.write("build/review-in-flight.json", "not json")
+        self.assertIsNone(guard.review_in_flight(self.root))
+
+    def test_the_reviewing_command_prints_only_while_a_review_runs(self):
+        def reviewing():
+            return subprocess.run([sys.executable, GUARD_PY, "reviewing", "--root", self.root], capture_output=True,
+                                  text=True, timeout=60)
+        self.assertEqual((reviewing().returncode, reviewing().stdout), (0, ""))
+        self.in_flight(os.getpid(), time.time() + 600)
+        self.assertIn("astra", reviewing().stdout)
+
     def test_a_text_summary_graph_is_read_too(self):
         self.acquire()
         self.ready(2, "text")

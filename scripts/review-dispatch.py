@@ -42,8 +42,8 @@ it asks whether building the section exactly as planned produces a 100% complete
 When the pin has a `[schedule]`, the dispatcher owns each pass's effort and lenses (owner decision 2026-10-23): the
 plan and completion passes take their scheduled effort, and a round's place in `[[schedule.rounds]]` comes from the
 rounds that returned a review already recorded in the `--record` file. Rounds past that list rotate one lens per round
-through `[schedule.rotation]` (the design lens only with `--surface`), and a round at the rotation's effort whose review
-reads `HIGHEST: P1` is followed by the `[schedule.escalation]` step. The scheduled lenses are appended to the prompt and
+through `[schedule.rotation]` (the design lens, in a fixed round or the rotation, only with `--surface`), and a round at
+the rotation's effort whose review reads `HIGHEST: P1` is followed by the `[schedule.escalation]` step. The scheduled lenses are appended to the prompt and
 recorded on an `- Lenses:` line, and the reviewer's wall-clock time on a `- Seconds:` line (and as `seconds` in the
 summary). The JSON summary carries `position`, `escalated` and `severity_stop` (true when a
 returned round past `severity_stop_after` reads `HIGHEST: P3`: the loop may stop there; with 0, from round 1).
@@ -277,9 +277,10 @@ def scheduled(schedule, kind, rounds, surface, reviewer=None):
     """The effort and lenses for the next pass, from the pin's schedule and the rounds already recorded.
 
     The position counts returned reviews only (`returned_review`): an outage, a self-review and a reply without the
-    final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one per round,
-    skipping `design` when the section has no surface. After a round at the rotation's effort (the schedule's late,
-    cheap rounds: `low` in the live pin) that declared `HIGHEST: P1`, the next round is the `escalation` step instead.
+    final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one per round, and
+    `design` is left out of a fixed round or the rotation when the section has no surface. After a round at the
+    rotation's effort (the schedule's late, cheap rounds: `low` in the live pin) that declared `HIGHEST: P1`, the next
+    round is the `escalation` step instead.
     scripts/lib/todo_graph.py `stamp` replays this to check every recorded pass, so it is the one copy of the rule.
     `reviewer` names the panel member whose `[schedule.efforts]` apply, if any."""
     schedule = effective(schedule, reviewer)
@@ -294,7 +295,9 @@ def scheduled(schedule, kind, rounds, surface, reviewer=None):
             and highest(last.get("review")) == "P1":
         step, escalated = schedule["escalation"], True
     elif position <= len(schedule["rounds"]):
-        step, escalated = schedule["rounds"][position - 1], False
+        fixed = schedule["rounds"][position - 1]
+        lenses = [n for n in fixed["lenses"] if surface or n != "design"] or fixed["lenses"]
+        step, escalated = {"effort": fixed["effort"], "lenses": lenses}, False
     else:
         rotation = [n for n in schedule["rotation"]["lenses"] if surface or n != "design"] \
             or schedule["rotation"]["lenses"]
@@ -514,7 +517,8 @@ def review(pin, writer, prompt_path, timeout, plan=None, name=None, settled=()):
         stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
         started = time.monotonic()
         argv = command(reviewer, executable, message_path, effort)
-        _, problem = run(argv, prompt, timeout, [stdout_path, message_path])
+        with in_flight(name, timeout):
+            _, problem = run(argv, prompt, timeout, [stdout_path, message_path])
         seconds = round(time.monotonic() - started)
         if problem is None:
             # Codex writes its final message to the -o file and its progress to stdout.
@@ -530,6 +534,35 @@ def review(pin, writer, prompt_path, timeout, plan=None, name=None, settled=()):
     return {"writer": writer, "reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
             "effort": effort, "seconds": seconds, "skipped": [], "review": text.strip(),
             **({"lenses": lenses} if plan else {})}
+
+
+IN_FLIGHT = ROOT / "build" / "review-in-flight.json"
+
+
+class in_flight:
+    """While a reviewer runs, build/review-in-flight.json names this dispatcher (pid and a deadline past its timeout),
+    so scripts/campaign_guard.py's Stop hook lets the campaign session end its turn to wait for the review instead of
+    pushing it on to work that would change the tree under the reviewer. Removed when the reviewer is done."""
+
+    def __init__(self, reviewer, timeout):
+        self.doc = {"pid": os.getpid(), "reviewer": reviewer,
+                    "started": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "deadline": time.time() + timeout + 60}
+
+    def __enter__(self):
+        try:
+            atomic_write(IN_FLIGHT, json.dumps(self.doc) + "\n")
+        except OSError:
+            pass  # only a convenience for the Stop hook: a review never fails for it
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if json.loads(IN_FLIGHT.read_text(encoding="utf-8")).get("pid") == self.doc["pid"]:
+                IN_FLIGHT.unlink()
+        except (OSError, ValueError):
+            pass  # a leftover mark holds nothing: the Stop hook checks the pid and the deadline
+        return False
 
 
 def blocked(text):
@@ -862,7 +895,7 @@ def main(argv=None):
     parser.add_argument("--candidate", help="With --kind completion or plan: the full 40-character commit under "
                                             "review (for a plan review, the commit holding the section as reviewed)")
     parser.add_argument("--surface", action="store_true",
-                        help="The section has Surface: yes, so the schedule's rotation includes the design lens")
+                        help="The section has Surface: yes, so the schedule's rounds include the design lens")
     parser.add_argument("--timeout", type=int, default=1800,
                         help="Seconds before the reviewer is stopped and the round records no review")
     parser.add_argument("--pin", default=str(PIN), help=argparse.SUPPRESS)
