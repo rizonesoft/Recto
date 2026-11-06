@@ -53,3 +53,20 @@ OVERALL: needs-attention
 ## Writer note: settled
 
 - Settled: `scripts/dispatch_hook.py` reads shell text, so it is an early warning for the launch forms a session really uses, not a proof. Another spelling that slips past it is not a `P1` or `P2`: the review still runs and records normally, and the only consequence is a later finish notification or a foreground wait the shell tool itself moves to the background. `review-todo-section` names this pattern: stop patching spellings of a home-made scanner.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-11-06T12:39:06Z
+- Effort: medium
+- Lenses: adversarial
+- Seconds: 76
+- Lines: 6
+- Digest: 4f55e5b523241248
+
+### adversarial: approve
+
+No new actionable findings within this pass’s scope. The settled scanner limitations are not reopened.
+
+HIGHEST: none
+OVERALL: approve
