@@ -1,0 +1,88 @@
+{
+  "ref": "D01 T02 \u00a747",
+  "title": "Optional-content marked content recorded for layer visibility",
+  "implementation_sha": "3c39f66b04685e906e9f7626657227122f81440e",
+  "date": "2026-11-07",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s47.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s47.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "x64 Debug AddressSanitizer: recto-tests.exe --gtest_filter=PdfInterpreter.* (includes PdfInterpreter.OptionalContent*:PdfInterpreter.FormXObjectRefusals) -> [  PASSED  ] 44 tests, 2 skipped (allocation hooks), 0 Warning(s)",
+    "x64 Debug: recto-tests.exe --gtest_filter=PdfInterpreter.OptionalContent*:PdfInterpreter.FormXObjectRefusals -> [  PASSED  ] 8 tests, the allocation sweep included",
+    "Mutations: removing the hidden check from Interpreter::paint fails PdfInterpreter.OptionalContentBlocks; a null visibility as an empty one fails PdfInterpreter.OptionalContentVisibilityStates; an excluded group as on fails PdfInterpreter.OptionalContentIntent; 15 of 15 killed",
+    "build.cmd -> 0 Warning(s), 0 Error(s) on all four builds; [  PASSED  ] 384 tests (x64 Debug), [  PASSED  ] 385 tests (x64 Release)"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s47.md",
+    "verdict": "filed",
+    "candidate": "cee94838fcb781c5c8333268c2951cdf5fb8d321",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D02 T03 \u00a77",
+      "D01 T02 \u00a716",
+      "D01 T02 \u00a744",
+      "D01 T02 \u00a745",
+      "D01 T02 \u00a77",
+      "D01 T02 \u00a714",
+      "D02 T03 \u00a725"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s47.md",
+    "candidate": "7dae052ff7aee894838294453dcf10a07a852206",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

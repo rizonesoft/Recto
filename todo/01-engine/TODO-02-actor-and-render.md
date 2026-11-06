@@ -104,7 +104,7 @@ track: M1
 | 44 | §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks | §3, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
 | 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
 | 46 | §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap | §3 | [x] |
-| 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [ ] |
+| 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [x] |
 | 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
@@ -1442,7 +1442,7 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 - [x] Commit: `pdf: Form XObjects with matrix, clip, resources and a depth cap`
 
 > **Deferred:** a form's `/Group` composited as a transparency group -> XREF: D01 T02 §15
-> **Deferred:** a form's own `/OC` hiding it -> XREF: D01 T02 §47
+> **Resolved:** a form's own `/OC` hiding it -> XREF: D01 T02 §47 (2026-11-06: closed by D01 T02 §47, whose `Interpreter::draw_xobject` skips a form whose `/OC` is off before it is charged or decoded)
 > **Deferred:** Image XObjects drawn from inside forms -> XREF: D01 T02 §44
 > **Deferred:** the drawn prefix kept when a form fan-out exhausts the work budget -> XREF: D01 T02 §19
 > **Deferred:** cancellation polled in the interpreter's frame loop -> XREF: D01 T02 §7
@@ -1480,9 +1480,12 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): marked conten
 - [x] Apply the effects of hidden content in `Interpreter::paint` and `Interpreter::show`: a path paints nothing and its `W` clip still applies, text advances the text matrix and records nothing unless its render mode clips, and then records a `Clip` run, and every graphics state operator keeps working, so what persists past `EMC` is the same whether the block is hidden or not. Done when: `PdfInterpreter.OptionalContentHiddenEffects` draws text and a rectangle after a hidden block and reads the same positions, clip commands, CTM and colours as the same page with the group on, the only difference being the hidden paints. Source: ISO 32000-1 8.11.3.2. Cheaper substitute that fails the checkpoint: skipping every operator in a hidden block.
 - [x] Hide a Form XObject whose own `/OC` entry is off, and any XObject drawn inside a hidden block (ISO 32000-1 8.11.3.3): `Interpreter::draw_xobject` in `src/pdf/interpreter.cpp` decides from the classified entry, before any kind is drawn, so `§44`'s images share it, and before the form is charged or decoded, and `D01 T02 §46`'s plain-content fallback is removed (filed by the `D01 T02 §46` completion review). Done when: `PdfInterpreter.OptionalContentForms` draws a form whose `/OC` names an OCG that is on, skips one whose OCG is off and one drawn inside a hidden block without decoding either's stream (`detail::ScopedDecodeWorkMeter` reads 0 bytes), and `PdfInterpreter.FormXObjectRefusals` drops its `/OC` case, whose direct `/OCG` moves to `PdfInterpreter.OptionalContentForms` and is drawn as no effect.
 - [x] Name this section's hidden-content rule in the open sections that add painting operators: `§44` (an Image XObject with `/OC`), `§45` (inline images) and `§16` (`sh`). Done when: each section's checklist has an item whose `Done when:` names a hidden-block test.
-- [ ] Commit: `pdf: optional-content marked content for layer visibility`
+- [x] Commit: `pdf: optional-content marked content for layer visibility`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.OptionalContent*:PdfInterpreter.FormXObjectRefusals` passes under ASan with 0 warnings; removing the hidden check from `Interpreter::paint` fails `PdfInterpreter.OptionalContentBlocks`, treating a null visibility as an empty one fails `PdfInterpreter.OptionalContentVisibilityStates`, and treating an excluded group as on fails `PdfInterpreter.OptionalContentIntent`.
+
+> **Verified:** 2026-11-07 | §47 | 3c39f66b04685e906e9f7626657227122f81440e
+> **Review:** `docs/reviews/d01-t02-s47.json`
 
 ## 48. One built CIDFont per shared `/Type0` descendant object
 
