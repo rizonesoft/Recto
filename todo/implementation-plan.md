@@ -165,7 +165,7 @@ Sections: 106 | Checklist items: 679
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1314
+Sections: 148 | Checklist items: 1315
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -282,7 +282,7 @@ Sections: 148 | Checklist items: 1314
 | [ ]    | D06 T04 §1  | Board check script and single-board render option                                        | windows-host                  | 11    |
 | [ ]    | D06 T04 §2  | Outline editor, Layers, Attachments and Info editing panel board                         | windows-host                  | 7     |
 | [ ]    | D02 T03 §6  | Interactive Bookmark Editor and heading-based outline auto-generation                    | windows-host, display-session | 9     |
-| [ ]    | D02 T03 §7  | Optional Content Groups (`OCG` / Layers) engine and live Layers panel                    | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §7  | Optional Content Groups (`OCG` / Layers) engine and live Layers panel                    | windows-host, display-session | 10    |
 | [ ]    | D01 T02 §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`       | windows-host                  | 14    |
 | [ ]    | D02 T03 §8  | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel  | windows-host, display-session | 9     |
 | [ ]    | D02 T03 §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor     | windows-host, display-session | 8     |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 92/855 verified sections, 37 ready to run now.
 
-Checklist: 586/6290 items completed (includes Commit items).
+Checklist: 586/6291 items completed (includes Commit items).
