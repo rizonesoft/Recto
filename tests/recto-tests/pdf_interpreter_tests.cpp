@@ -3941,6 +3941,18 @@ TEST(PdfInterpreter, FormXObjectBasics)
 		expect_point(points[0], 0.0, 0.0, "the /BBox's origin");
 		expect_point(points[1], 100.0, 50.0, "the /BBox's size");
 	}
+	// A form that ends with two saves still open, a clip inside them: leaving the form unwinds them, so the caller's
+	// next drawing is neither clipped by the form's clip nor drawn under its CTM.
+	{
+		const auto r = interpret("/F0 Do 50 50 1 1 re f", "<< /XObject << /F0 5 0 R >> >>",
+			{form_object("/BBox [-1000 -1000 1000 1000]", "q 2 0 0 2 0 0 cm q 0 0 5 5 re W n 0 0 1 1 re f")});
+		ASSERT_NE(r.list, nullptr);
+		const auto draws = draw_bounds(*r.list);
+		ASSERT_EQ(draws.size(), 2u);
+		expect_rect(draws[0].bounds_pt, 0.0, 0.0, 2.0, 2.0);
+		ASSERT_TRUE(draws[1].has_bounds) << "the form's open clip leaked to the caller";
+		expect_rect(draws[1].bounds_pt, 50.0, 50.0, 51.0, 51.0);
+	}
 	// A /Matrix that resolves to null is absent (7.3.9), so the form draws under the identity.
 	{
 		const auto r = interpret("/F0 Do", "<< /XObject << /F0 5 0 R >> >>",
