@@ -4656,7 +4656,7 @@ TEST(PdfInterpreter, OptionalContentMembership)
 	// 5 is off, 6 is on; 7 is what the page's block names; 8 is not a group.
 	const std::string resources = "<< /Properties << /L 7 0 R >> >>";
 	const auto draws = [&](const std::string& member) {
-		return draws_under(kOcBlock, resources, {std::string(kOcg), std::string(kOcg), member, "<< /Type /Font >>"}, &kFiveIsOff);
+		return draws_under(kOcBlock, resources, {std::string(kOcg), std::string(kOcg), member, "<< /Type /Font >>", "null"}, &kFiveIsOff);
 	};
 	struct Case {
 		std::string member;
@@ -4717,6 +4717,15 @@ TEST(PdfInterpreter, OptionalContentMembership)
 		{ocmd("/OCGs [5 0 R] /VE [/Xor 5 0 R]"), 0u},
 		{ocmd("/OCGs [6 0 R] /VE [/Xor 5 0 R]"), 1u},
 		{ocmd("/OCGs [5 0 R] /VE [/Not 5 0 R 5 0 R]"), 0u},
+		// A null /VE, direct or through a reference, is absent, so /OCGs and /P decide.
+		{ocmd("/OCGs [5 0 R] /VE 9 0 R"), 0u},
+		{ocmd("/OCGs [6 0 R] /VE 9 0 R"), 1u},
+		{ocmd("/OCGs [5 0 R] /VE null"), 0u},
+		{ocmd("/OCGs [5 0 R] /VE 99 0 R"), 0u},
+		// A lone group is not an expression, on or off: /OCGs and /P decide, and with neither the content draws.
+		{ocmd("/VE 5 0 R"), 1u},
+		{ocmd("/OCGs [6 0 R] /VE 5 0 R"), 1u},
+		{ocmd("/OCGs [5 0 R] /VE 6 0 R"), 0u},
 		// An unknown /Type and a direct /OCG have no effect.
 		{"<< /Type /Layer /OCGs [5 0 R] >>", 1u},
 		{"[5 0 R]", 1u},

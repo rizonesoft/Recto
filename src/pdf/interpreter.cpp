@@ -2080,9 +2080,13 @@ private:
 	// it, by `/OCGs` and `/P`.
 	[[nodiscard]] PdfResult<OcAnswer> membership_answer(const PdfDict& dict)
 	{
-		if (const PdfValue* expression = dict.get("VE")) {
+		// A null `/VE`, direct or indirect, is absent (7.3.9), and only an array is an expression, not a lone group.
+		if (const Held expression = entry_of(dict, "VE"); expression) {
 			size_t nodes = 0;
-			RECTO_PDF_TRY(const std::optional<OcAnswer> answer, expression_answer(*expression, 0u, nodes));
+			std::optional<OcAnswer> answer;
+			if (expression->as_array() != nullptr) {
+				RECTO_PDF_TRY(answer, expression_answer(*expression, 0u, nodes));
+			}
 			RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(nodes));
 			if (answer.has_value()) {
 				return *answer;
