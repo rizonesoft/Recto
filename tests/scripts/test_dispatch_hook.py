@@ -69,6 +69,16 @@ class DispatchHook(unittest.TestCase):
             self.assertIn("a review takes minutes", result.stderr)
             self.assertEqual(run(call("PowerShell", command, background=True)).returncode, 0, command)
 
+    def test_a_quoted_interpreter_is_a_run(self):
+        # Review round 2: PowerShell's call operator takes a quoted executable, often an absolute path.
+        script = REVIEW.split("python ")[1]
+        for command in (f'& "python" {script}', f"& 'python.exe' {script}",
+                        f'& "C:\\Program Files\\Python314\\python.exe" {script}'):
+            result = run(call("PowerShell", command))
+            self.assertEqual(result.returncode, 2, command)
+            self.assertIn("a review takes minutes", result.stderr)
+            self.assertEqual(run(call("PowerShell", command, background=True)).returncode, 0, command)
+
     def test_every_spelling_of_a_run_is_caught(self):
         script = REVIEW.split("python ")[1]
         for tool, command in (("Bash", f"./{script}"), ("Bash", f"cd /r; {script}"), ("Bash", f"exec {script}"),

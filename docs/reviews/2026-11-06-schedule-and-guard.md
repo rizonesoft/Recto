@@ -28,3 +28,28 @@
 
 HIGHEST: P1  
 OVERALL: needs-attention
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-11-06T12:36:55Z
+- Effort: low
+- Lenses: adversarial
+- Seconds: 47
+- Lines: 10
+- Digest: 09a1b3fc31752fbb
+
+### adversarial: needs-attention
+
+1. **P1: Quoted PowerShell interpreter commands bypass the launch check.** `scripts/dispatch_hook.py:47` allows the call when `REVIEW` misses a quoted executable. Reproduce by submitting this PowerShell command without `run_in_background`:
+   ```powershell
+   & "python" scripts/review-dispatch.py --writer claude --prompt R:/scratch/p.md
+   ```
+   With an existing review prompt, this launches a foreground review. Calling `verdict()` with that payload returned `None`; the equivalent unquoted command was refused. A quoted absolute Python path also bypasses the check. These are ordinary PowerShell invocation forms, so the check passes a real launch it must refuse. Handle quoted interpreter tokens before deciding that the command runs no review.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Writer note: settled
+
+- Settled: `scripts/dispatch_hook.py` reads shell text, so it is an early warning for the launch forms a session really uses, not a proof. Another spelling that slips past it is not a `P1` or `P2`: the review still runs and records normally, and the only consequence is a later finish notification or a foreground wait the shell tool itself moves to the background. `review-todo-section` names this pattern: stop patching spellings of a home-made scanner.
