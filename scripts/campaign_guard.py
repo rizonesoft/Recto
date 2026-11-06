@@ -18,8 +18,8 @@ A campaign run has three parts. The guard file (`build/claude-campaign-guard.jso
 run, its phase, run file, heartbeat job and run id; it is written and deleted only through this module, under an
 interprocess lock. The Stop hook (`stop-hook`, wired in `.claude/settings.json`) blocks that session's end of turn
 while the run is open and lets go when the run file carries this run's `## Closeout run=<id>` heading or column-0
-`PARKED <UTC> run=<id>` line, when `build/review-in-flight.json` names a live review dispatcher (the wait is the work,
-and never counts toward the breaker), when `query ready` has nothing runnable, or when the stall breaker trips after 3
+`PARKED <UTC> run=<id>` line, when `build/review-in-flight/` names a live review dispatcher (the wait is the work, and
+never counts toward the breaker), when `query ready` has nothing runnable, or when the stall breaker trips after 3
 blocks with no change to the tree. The heartbeat is a `CronCreate` job inside the session (process-plan holds its prompt)
 that resumes an idle run. There is no keep-alive outside the session: a session that died is resumed by the operator,
 and the new session takes the guard with `acquire --handover`.
@@ -778,17 +778,23 @@ def _alive(pid: int) -> bool:
 
 
 def review_in_flight(root: str) -> str | None:
-    """The reviewer scripts/review-dispatch.py is running now, from build/review-in-flight.json, or None: the file
-    must name a live process and a deadline not yet passed (a crashed dispatcher's leftover file never holds a run)."""
+    """A reviewer scripts/review-dispatch.py is running now, from the marks under build/review-in-flight/, or None: a
+    mark must name a live process and a deadline not yet passed (a crashed dispatcher's leftover never holds a run)."""
+    folder = os.path.join(root, "build", "review-in-flight")
     try:
-        with open(os.path.join(root, "build", "review-in-flight.json"), encoding="utf-8") as fh:
-            doc = json.load(fh)
-        pid, deadline = int(doc["pid"]), float(doc["deadline"])
-    except (OSError, ValueError, KeyError, TypeError):
+        names = sorted(os.listdir(folder))
+    except OSError:
         return None
-    if pid <= 0 or time.time() > deadline or not _alive(pid):
-        return None
-    return f"{doc.get('reviewer', 'reviewer')}, dispatcher pid {pid}"
+    for name in names:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as fh:
+                doc = json.load(fh)
+            pid, deadline = int(doc["pid"]), float(doc["deadline"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if pid > 0 and time.time() <= deadline and _alive(pid):
+            return f"{doc.get('reviewer', 'reviewer')}, dispatcher pid {pid}"
+    return None
 
 
 def stop_decision(root: str, session: str) -> dict | None:

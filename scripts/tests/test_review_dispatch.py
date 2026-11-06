@@ -41,7 +41,8 @@ FAKE_CLI = textwrap.dedent('''\
     # One log file per process: panel members run at once, and concurrent appends to one file can interleave.
     with open(os.environ["FAKE_LOG"] + "." + str(os.getpid()) + "." + str(time.time_ns()), "a") as log:
         log.write(json.dumps({"cli": name, "argv": args, "stdin": stdin, "cwd": os.getcwd(),
-                              "in_flight": os.path.exists(os.path.join(os.getcwd(), "build", "review-in-flight.json"))}) + "\\n")
+                              "in_flight": bool(os.path.isdir(os.path.join(os.getcwd(), "build", "review-in-flight"))
+                                                and os.listdir(os.path.join(os.getcwd(), "build", "review-in-flight")))}) + "\\n")
     if mode == "fail":
         sys.exit(3)
     if mode == "sleep":
@@ -901,7 +902,19 @@ class Schedule(Harness):
     def test_the_review_is_marked_in_flight_only_while_it_runs(self):
         _, (call,) = self.round()
         self.assertTrue(call["in_flight"], "the Stop hook can see the reviewer running")
-        self.assertFalse((self.repo / "build" / "review-in-flight.json").exists(), "and the mark is gone afterwards")
+        self.assertEqual(list((self.repo / "build" / "review-in-flight").iterdir()), [], "and the mark is gone afterwards")
+
+    def test_overlapping_reviews_each_keep_their_own_mark(self):
+        # Review round 1: the second review to finish must still be visible after the first one's mark is removed.
+        module = self.module()
+        module.IN_FLIGHT = self.repo / "build" / "review-in-flight"
+        first, second = module.in_flight("first", 60), module.in_flight("second", 60)
+        first.__enter__()
+        second.__enter__()
+        second.__exit__(None, None, None)
+        self.assertEqual([p.name for p in module.IN_FLIGHT.iterdir()], [first.path.name])
+        first.__exit__(None, None, None)
+        self.assertEqual(list(module.IN_FLIGHT.iterdir()), [])
 
     def test_design_in_a_fixed_round_runs_only_on_a_surface_section(self):
         # Owner decision 2026-11-06: the design lens sits in round 1 of the live pin, so a section with no surface must

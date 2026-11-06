@@ -114,7 +114,18 @@ class StopHook(Workspace):
         self.assertEqual(self.state()["blocks"], 1)
 
     def in_flight(self, pid, deadline):
-        self.write("build/review-in-flight.json", json.dumps({"pid": pid, "reviewer": "astra", "deadline": deadline}))
+        self.write(f"build/review-in-flight/{pid}-astra.json",
+                   json.dumps({"pid": pid, "reviewer": "astra", "deadline": deadline}))
+
+    def test_a_live_review_holds_beside_a_dead_mark(self):
+        # Review round 1: dispatchers that overlap each keep their own mark, so one finishing never hides the other.
+        self.acquire()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        self.in_flight(gone.pid, time.time() + 600)
+        self.in_flight(os.getpid(), time.time() + 600)
+        self.assertIn(str(os.getpid()), guard.review_in_flight(self.root))
+        self.assertIsNone(self.hook())
 
     def test_a_review_in_flight_lets_the_turn_end_without_a_push(self):
         self.acquire()
@@ -132,7 +143,7 @@ class StopHook(Workspace):
                 self.in_flight(pid, deadline)
                 self.assertIsNone(guard.review_in_flight(self.root))
                 self.assertEqual(self.hook()["decision"], "block")
-        self.write("build/review-in-flight.json", "not json")
+        self.write("build/review-in-flight/bad.json", "not json")
         self.assertIsNone(guard.review_in_flight(self.root))
 
     def test_the_reviewing_command_prints_only_while_a_review_runs(self):

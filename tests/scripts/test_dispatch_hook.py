@@ -52,6 +52,23 @@ class DispatchHook(unittest.TestCase):
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("a review takes minutes", result.stderr)
 
+    def test_start_process_with_split_arguments_is_refused(self):
+        # Review round 1: PowerShell's own launch form names the interpreter and the script as separate arguments.
+        command = ("Start-Process -WindowStyle Hidden -FilePath python -ArgumentList "
+                   "@('scripts/review-dispatch.py', '--writer', 'claude', '--prompt', 'R:/scratch/p.md')")
+        for background in (True, False, None):
+            result = run(call("PowerShell", command, background=background))
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("not detached", result.stderr)
+
+    def test_the_py_launcher_is_a_run(self):
+        script = REVIEW.split("python ")[1]
+        for command in (f"py {script}", f"py -3.14 {script}", f"py.exe -3 -u {script}"):
+            result = run(call("PowerShell", command))
+            self.assertEqual(result.returncode, 2, command)
+            self.assertIn("a review takes minutes", result.stderr)
+            self.assertEqual(run(call("PowerShell", command, background=True)).returncode, 0, command)
+
     def test_every_spelling_of_a_run_is_caught(self):
         script = REVIEW.split("python ")[1]
         for tool, command in (("Bash", f"./{script}"), ("Bash", f"cd /r; {script}"), ("Bash", f"exec {script}"),

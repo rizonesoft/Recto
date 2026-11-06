@@ -536,31 +536,32 @@ def review(pin, writer, prompt_path, timeout, plan=None, name=None, settled=()):
             **({"lenses": lenses} if plan else {})}
 
 
-IN_FLIGHT = ROOT / "build" / "review-in-flight.json"
+IN_FLIGHT = ROOT / "build" / "review-in-flight"
 
 
 class in_flight:
-    """While a reviewer runs, build/review-in-flight.json names this dispatcher (pid and a deadline past its timeout),
-    so scripts/campaign_guard.py's Stop hook lets the campaign session end its turn to wait for the review instead of
-    pushing it on to work that would change the tree under the reviewer. Removed when the reviewer is done."""
+    """While a reviewer runs, a file of its own under build/review-in-flight/ names this dispatcher (pid and a deadline
+    past its timeout), so scripts/campaign_guard.py's Stop hook lets the campaign session end its turn to wait for the
+    review instead of pushing it on to work that would change the tree under the reviewer. Each review keeps its own
+    file, so one finishing never hides another still running. Removed when the reviewer is done."""
 
     def __init__(self, reviewer, timeout):
+        self.path = IN_FLIGHT / f"{os.getpid()}-{reviewer}.json"
         self.doc = {"pid": os.getpid(), "reviewer": reviewer,
                     "started": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "deadline": time.time() + timeout + 60}
 
     def __enter__(self):
         try:
-            atomic_write(IN_FLIGHT, json.dumps(self.doc) + "\n")
+            atomic_write(self.path, json.dumps(self.doc) + "\n")
         except OSError:
             pass  # only a convenience for the Stop hook: a review never fails for it
         return self
 
     def __exit__(self, *exc):
         try:
-            if json.loads(IN_FLIGHT.read_text(encoding="utf-8")).get("pid") == self.doc["pid"]:
-                IN_FLIGHT.unlink()
-        except (OSError, ValueError):
+            self.path.unlink(missing_ok=True)
+        except OSError:
             pass  # a leftover mark holds nothing: the Stop hook checks the pid and the deadline
         return False
 
