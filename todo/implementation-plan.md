@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 106 | Checklist items: 672
+Sections: 106 | Checklist items: 679
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -101,15 +101,15 @@ Sections: 106 | Checklist items: 672
 | [x]    | D01 T02 §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances             | windows-host              | 5     |
 | [x]    | D01 T02 §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text           | windows-host              | 7     |
 | [x]    | D01 T02 §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap         | windows-host              | 7     |
-| [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 3     |
+| [ ]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 7     |
 | [ ]    | D01 T02 §48 | One built CIDFont per shared `/Type0` descendant object                                  | windows-host              | 6     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
-| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 3     |
-| [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 2     |
+| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 4     |
+| [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 3     |
 | [ ]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 2     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
 | [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 10    |
@@ -118,7 +118,7 @@ Sections: 106 | Checklist items: 672
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 10    |
-| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 9     |
+| [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 10    |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 11    |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 92/855 verified sections, 37 ready to run now.
 
-Checklist: 580/6283 items completed (includes Commit items).
+Checklist: 580/6290 items completed (includes Commit items).
