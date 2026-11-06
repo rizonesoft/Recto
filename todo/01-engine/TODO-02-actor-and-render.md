@@ -1454,6 +1454,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 
 ## 47. Optional-content marked content recorded for layer visibility
 
+> **Started:** 2026-11-06T21:58Z
+
 Filed 2026-10-28 from `§4`'s split (validation before the build): marked content (`BMC`, `BDC`, `EMC`) with `/OC` property references recorded so `D02 T03 §7` toggles optional-content groups without re-parsing (ISO 32000-1 sections 8.11 and 14.6).
 
 **Corrected 2026-11-06:** validation before the build. The section said blocks are "recorded" so layers toggle "without re-parsing", and that forms are checked against "the current visibility", which nothing defined: the tree has no optional-content state, and `D02 T03 §7` and `§14` compile a new `DisplayList` for each `ocg_generation`, clearing the cache. So visibility is applied at record time from an input this section adds, and a toggle recompiles the page from the open `Document` without re-parsing the file. This section owns that input, the interpreter's evaluation of OCGs and membership dictionaries, and the ISO 32000-1 8.11.3 effects of hidden content. `D02 T03 §7` owns reading `/OCProperties` and building the input; until it ships nothing passes one, so every group draws, as the deferral below records.
