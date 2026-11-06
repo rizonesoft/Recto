@@ -223,18 +223,27 @@ enum class Op : uint8_t {
 	ShowTextArray,
 	NextLineShow,
 	NextLineShowSpaced,
+	BeginMarked,
+	BeginMarkedProperties,
+	EndMarked,
 };
 
+// What an `/OC` value says of its content (ISO 32000-1 8.11.2): only `Off` hides it.
+enum class OcAnswer : uint8_t { NoEffect, On, Off };
+
 // Sorted by name (byte order) for the binary search in `op_named`.
-inline constexpr std::array<std::pair<std::string_view, Op>, 61> kOperators = {{
+inline constexpr std::array<std::pair<std::string_view, Op>, 64> kOperators = {{
 	{"\"", Op::NextLineShowSpaced},
 	{"'", Op::NextLineShow},
 	{"B", Op::FillStroke},
 	{"B*", Op::FillStrokeEvenOdd},
+	{"BDC", Op::BeginMarkedProperties},
 	{"BI", Op::BeginInlineImage},
+	{"BMC", Op::BeginMarked},
 	{"BT", Op::BeginText},
 	{"CS", Op::StrokeSpace},
 	{"Do", Op::DrawXObject},
+	{"EMC", Op::EndMarked},
 	{"ET", Op::EndText},
 	{"F", Op::Fill},
 	{"G", Op::StrokeGray},
@@ -300,11 +309,17 @@ static_assert(std::ranges::is_sorted(kOperators, {}, &std::pair<std::string_view
 
 class Interpreter {
 public:
-	Interpreter(const Document& document, const PdfDict& resources, const PdfRect& page_box, const DisplayListLimits& limits)
+	Interpreter(const Document& document, const PdfDict& resources, const PdfRect& page_box, const DisplayListLimits& limits,
+		const OptionalContentVisibility* visibility)
 		: document_(document)
 		, builder_(page_box, limits)
+		, uses_groups_(visibility != nullptr)
 		, max_depth_(std::min(kMaxGraphicsStateDepth, limits.max_save_depth))
 	{
+		if (visibility != nullptr) {
+			off_groups_ = sorted_keys(visibility->off);
+			excluded_groups_ = sorted_keys(visibility->excluded);
+		}
 		auto page = std::make_unique<ResourceScope>();
 		page->resources = &resources;
 		scope_ = page.get();
@@ -711,8 +726,16 @@ private:
 
 	[[nodiscard]] PdfResult<void> dispatch(Op op, const std::vector<PdfValue>& operands) noexcept
 	{
+		if (op == Op::EndMarked) {
+			skip_next_ = false;
+			end_marked(); // whatever its operands: marked-content nesting stays balanced through damage
+			return {};
+		}
 		if (skip_next_) {
 			skip_next_ = false;
+			if (op == Op::BeginMarked || op == Op::BeginMarkedProperties) {
+				++marked_depth_; // a skipped begin still has its EMC to come
+			}
 			return {};
 		}
 		try {
@@ -763,6 +786,14 @@ private:
 			return {}; // given operands it does not take: skipped, as every operator with the wrong operands is
 		}
 		switch (op) {
+		// Marked content (14.6), for optional content (8.11.3.2).
+		case Op::BeginMarked: {
+			++marked_depth_;
+			return {};
+		}
+		case Op::BeginMarkedProperties: {
+			return begin_marked_properties(operands);
+		}
 		// Graphics state.
 		case Op::Save: {
 			return save();
@@ -1211,6 +1242,7 @@ private:
 		Category color_spaces{};
 		Category font_resources{};
 		Category xobjects{};
+		Category properties{};
 		std::unordered_map<std::string, std::shared_ptr<const TextFont>, StringHash, std::equal_to<>> fonts{};
 	};
 
@@ -1219,6 +1251,7 @@ private:
 		size_t floor{0};
 		size_t caller_floor{0};
 		size_t caller_ignored{0};
+		size_t marked_depth{0};
 		bool caller_skip{false};
 		PdfMatrix text{};
 		PdfMatrix line{};
@@ -1238,6 +1271,7 @@ private:
 		std::shared_ptr<const PdfValue> object{};
 		PdfMatrix matrix{};
 		PdfRect bbox{};
+		bool hidden{false}; // its `/OC` entry is off (8.11.3.3)
 	};
 
 	// One content stream being interpreted: the page's, or a form's (its content kept alive here).
@@ -1572,9 +1606,10 @@ private:
 		}
 		const std::optional<FillRule> clip = pending_clip_;
 		pending_clip_.reset();
-		// A side whose colour marks nothing (a `/None` colorant, ISO 32000-1 8.6.6.4) is not painted.
-		fill = fill && state_.fill.paints();
-		stroke = stroke && state_.stroke.paints();
+		// A side whose colour marks nothing (a `/None` colorant, ISO 32000-1 8.6.6.4) is not painted, and hidden
+		// optional content paints nothing while its clip still applies (8.11.3.2).
+		fill = fill && state_.fill.paints() && !hidden();
+		stroke = stroke && state_.stroke.paints() && !hidden();
 		// A path that is neither painted nor clipped (`n` with no `W`) records nothing.
 		const bool records = !path_.empty() && (fill || stroke || clip.has_value());
 		auto done = records ? record_paint(fill, stroke, rule, clip) : PdfResult<void>{};
@@ -1686,6 +1721,9 @@ private:
 		if (font == nullptr) {
 			RECTO_PDF_TRY(font, fallback());
 		}
+		if (hidden() && state_.text_mode < TextRenderMode::FillAndClip) {
+			return advance_hidden_text(*font, bytes);
+		}
 		const double size = state_.font_size;
 		const bool vertical = font->vertical();
 		std::vector<PositionedGlyph> glyphs;
@@ -1740,7 +1778,9 @@ private:
 		}
 		const PdfMatrix run_matrix =
 			concat_matrix(PdfMatrix{state_.horizontal_scaling, 0.0, 0.0, 1.0, 0.0, 0.0}, text_matrix_);
-		const TextRenderMode mode = painting_mode(state_.text_mode, state_.fill.paints(), state_.stroke.paints());
+		// Hidden text in a clipping mode paints nothing and still adds to the clip (8.11.3.2).
+		const TextRenderMode mode =
+			painting_mode(state_.text_mode, state_.fill.paints() && !hidden(), state_.stroke.paints() && !hidden());
 		// A font whose box promises nothing takes one a thousand ems wide, which holds any glyph a file draws.
 		const PdfRect box = font->bbox_known() ? font->bbox() : PdfRect{-1000.0, -1000.0, 1000.0, 1000.0};
 		const double bx0 = std::min(box.x_min * size, box.x_max * size);
@@ -1788,6 +1828,23 @@ private:
 		return drawn;
 	}
 
+	// A hidden string that does not clip records nothing, and its text matrix advances as if it were drawn (8.11.3.2).
+	[[nodiscard]] PdfResult<void> advance_hidden_text(const TextFont& font, std::span<const uint8_t> bytes)
+	{
+		RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(bytes.size() * font.code_cost()));
+		const double size = state_.font_size;
+		const bool vertical = font.vertical();
+		double along = 0.0;
+		for (size_t at = 0; at < bytes.size();) {
+			const TextCode code = font.next(bytes.subspan(at));
+			at += code.length != 0u ? code.length : 1u;
+			const double spacing = state_.char_spacing + (code.word_space ? state_.word_spacing : 0.0);
+			along += (vertical ? code.w1 : code.w0) * size + spacing;
+		}
+		advance_text(vertical ? 0.0 : along * state_.horizontal_scaling, vertical ? along : 0.0);
+		return {};
+	}
+
 	// `code`'s glyph, with a composite font's ink read from its face once per face and glyph on the page (at most
 	// kMaxInkMemo of them kept; past that each is read as it is shown).
 	[[nodiscard]] PdfResult<TextGlyph> glyph_of(const TextFont& font, const TextCode& code)
@@ -1826,6 +1883,9 @@ private:
 	// `Do` (ISO 32000-1 8.8): a Form XObject drawn, an Image XObject left to section 44, a PostScript one never run.
 	[[nodiscard]] PdfResult<void> draw_xobject(std::string_view name)
 	{
+		if (hidden()) {
+			return {}; // inside a hidden block, whatever it is, unread (8.11.3.3)
+		}
 		const PdfDict* xobjects = category("XObject", scope_->xobjects);
 		const PdfValue* entry = xobjects != nullptr ? xobjects->get(name) : nullptr;
 		if (entry == nullptr) {
@@ -1839,6 +1899,9 @@ private:
 			return {};
 		}
 		const XObjectEntry& target = xobject_entry(*ref);
+		if (target.hidden) {
+			return {}; // before a form is charged or decoded, and before any kind is drawn
+		}
 		if (target.kind == XObjectEntry::Kind::Form) {
 			return draw_form(target, object_key(*ref));
 		}
@@ -1881,6 +1944,9 @@ private:
 			} else {
 				(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject has no known /Subtype"); // recorded
 			}
+			if (entry.kind == XObjectEntry::Kind::Form || entry.kind == XObjectEntry::Kind::Image) {
+				entry.hidden = hidden_by_entry(stream->dict);
+			}
 		}
 		if (entry.kind != XObjectEntry::Kind::Form) {
 			release_held(key); // nothing will draw it, so it holds nothing
@@ -1889,6 +1955,243 @@ private:
 			return entry.kind == XObjectEntry::Kind::Form ? (transient_entry_ = std::move(entry)) : kRefused;
 		}
 		return xobject_entries_.emplace(key, std::move(entry)).first->second;
+	}
+
+	// Whether content is hidden now (ISO 32000-1 8.11.3.2): `hidden_at_` is the marked-content level of the outermost
+	// hidden block, 0 for none.
+	[[nodiscard]] bool hidden() const noexcept
+	{
+		return hidden_at_ != 0u;
+	}
+
+	// `/Tag /Properties BDC`: a level whatever its operands, hiding its block when `/OC` names a property list that is
+	// off. A block inside a hidden one is not evaluated: it cannot change what is hidden.
+	[[nodiscard]] PdfResult<void> begin_marked_properties(const std::vector<PdfValue>& operands)
+	{
+		OcAnswer answer = OcAnswer::NoEffect;
+		if (uses_groups_ && !hidden() && operands.size() == 2u && operands[0].as_name() == std::optional<std::string_view>("OC")) {
+			const std::optional<std::string_view> name = operands[1].as_name();
+			const PdfDict* properties = name.has_value() ? category("Properties", scope_->properties) : nullptr;
+			const PdfValue* value = properties != nullptr ? properties->get(*name) : nullptr;
+			if (value != nullptr) {
+				RECTO_PDF_TRY(answer, evaluate_oc(*value));
+			} else {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "/OC BDC names no property list in the resources"); // recorded
+			}
+		}
+		++marked_depth_;
+		if (answer == OcAnswer::Off) {
+			hidden_at_ = marked_depth_;
+		}
+		return {};
+	}
+
+	// `EMC`: closes the innermost level; one with none open is ignored. A form's extra `EMC`s cannot affect its caller:
+	// a form runs only outside hidden content, and `leave_form` gives its caller back its own depth.
+	void end_marked() noexcept
+	{
+		if (marked_depth_ == 0u) {
+			return;
+		}
+		if (marked_depth_ == hidden_at_) {
+			hidden_at_ = 0u;
+		}
+		--marked_depth_;
+	}
+
+	// Whether an XObject's `/OC` entry hides it. A failure that stops the page is kept for `dispatch`.
+	[[nodiscard]] bool hidden_by_entry(const PdfDict& dict)
+	{
+		const PdfValue* value = uses_groups_ ? dict.get("OC") : nullptr;
+		if (value == nullptr) {
+			return false;
+		}
+		auto answer = evaluate_oc(*value);
+		if (!answer.has_value()) {
+			if (!resolve_failure_.has_value()) {
+				resolve_failure_ = answer.error();
+			}
+			return false;
+		}
+		return *answer == OcAnswer::Off;
+	}
+
+	[[nodiscard]] static std::vector<uint64_t> sorted_keys(std::span<const IndirectRef> refs)
+	{
+		std::vector<uint64_t> keys;
+		keys.reserve(refs.size());
+		for (const IndirectRef& ref : refs) {
+			keys.push_back(object_key(ref));
+		}
+		std::sort(keys.begin(), keys.end());
+		return keys;
+	}
+
+	// A group's state (8.11.2.3: exclusion wins, since an excluded group has no effect whatever its state).
+	[[nodiscard]] OcAnswer group_answer(IndirectRef ref) const noexcept
+	{
+		const uint64_t key = object_key(ref);
+		if (std::binary_search(excluded_groups_.begin(), excluded_groups_.end(), key)) {
+			return OcAnswer::NoEffect;
+		}
+		return std::binary_search(off_groups_.begin(), off_groups_.end(), key) ? OcAnswer::Off : OcAnswer::On;
+	}
+
+	[[nodiscard]] bool is_group(const PdfDict& dict)
+	{
+		const Held type = entry_of(dict, "Type");
+		return type && type->as_name() == std::optional<std::string_view>("OCG");
+	}
+
+	// An `/OC` value's answer, kept once per page per object: an `/OCG` by its object, an `/OCMD` by its members, and
+	// anything else (a direct `/OCG`, which has no identity, or a damaged value) no effect. Work not answered from the
+	// memo is charged; a refusal, and a fatal failure kept in `resolve_failure_`, stop the page.
+	[[nodiscard]] PdfResult<OcAnswer> evaluate_oc(const PdfValue& value)
+	{
+		const std::optional<IndirectRef> ref = value.as_ref();
+		if (ref.has_value()) {
+			if (const auto it = oc_answers_.find(object_key(*ref)); it != oc_answers_.end()) {
+				return it->second;
+			}
+		}
+		RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(1u));
+		OcAnswer answer = OcAnswer::NoEffect;
+		const Held target = shared(value);
+		if (const PdfDict* dict = target ? target->as_dict() : nullptr) {
+			const Held type = entry_of(*dict, "Type");
+			const std::optional<std::string_view> kind = type ? type->as_name() : std::nullopt;
+			if (kind == std::optional<std::string_view>("OCG")) {
+				if (ref.has_value()) {
+					answer = group_answer(*ref);
+				}
+			} else if (kind == std::optional<std::string_view>("OCMD")) {
+				RECTO_PDF_TRY(answer, membership_answer(*dict));
+			} else {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An /OC value is neither an /OCG nor an /OCMD; it has no effect"); // recorded
+			}
+		}
+		if (ref.has_value() && oc_answers_.size() < kMaxHeldResources) {
+			oc_answers_.emplace(object_key(*ref), answer);
+		}
+		return answer;
+	}
+
+	// An `/OCMD` (Table 99): by `/VE` when it can be evaluated, else, as NOTE 2 gives them to readers that cannot use
+	// it, by `/OCGs` and `/P`.
+	[[nodiscard]] PdfResult<OcAnswer> membership_answer(const PdfDict& dict)
+	{
+		if (const PdfValue* expression = dict.get("VE")) {
+			size_t nodes = 0;
+			RECTO_PDF_TRY(const std::optional<OcAnswer> answer, expression_answer(*expression, 0u, nodes));
+			RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(nodes));
+			if (answer.has_value()) {
+				return *answer;
+			}
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An /OCMD's /VE cannot be evaluated; /OCGs and /P decide"); // recorded
+		}
+		const PdfValue* groups = dict.get("OCGs");
+		if (groups == nullptr) {
+			return OcAnswer::NoEffect;
+		}
+		size_t on = 0;
+		size_t off = 0;
+		const auto count = [&](const PdfValue& member) {
+			const std::optional<IndirectRef> ref = member.as_ref();
+			if (!ref.has_value()) {
+				return; // null, or a direct dictionary, which has no identity
+			}
+			const Held group = shared(member);
+			const PdfDict* entry = group ? group->as_dict() : nullptr;
+			if (entry == nullptr || !is_group(*entry)) {
+				return;
+			}
+			const OcAnswer state = group_answer(*ref);
+			on += state == OcAnswer::On ? 1u : 0u;
+			off += state == OcAnswer::Off ? 1u : 0u;
+		};
+		// An array comes from an indirect reference too; a reference to a group is the single dictionary form.
+		const Held list = shared(*groups);
+		if (const PdfArray* members = list ? list->as_array() : nullptr) {
+			if (members->size() > kMaxOcGroupsListed) {
+				(void)make_pdf_error(ErrorCode::ResourceLimit, "An /OCMD lists more /OCGs than its limit; it has no effect"); // recorded
+				return OcAnswer::NoEffect;
+			}
+			RECTO_PDF_RETURN_IF_ERROR(builder_.charge_work(members->size()));
+			for (const PdfValue& member : *members) {
+				count(member);
+			}
+		} else {
+			count(*groups);
+		}
+		if (on == 0u && off == 0u) {
+			return OcAnswer::NoEffect; // Table 99: with no group left it has no effect
+		}
+		const Held policy_value = entry_of(dict, "P");
+		const std::string_view policy = policy_value ? policy_value->as_name().value_or("AnyOn") : std::string_view("AnyOn");
+		bool visible = on != 0u; // AnyOn, the default
+		if (policy == "AllOn") {
+			visible = off == 0u;
+		} else if (policy == "AnyOff") {
+			visible = off != 0u;
+		} else if (policy == "AllOff") {
+			visible = on == 0u;
+		}
+		return visible ? OcAnswer::On : OcAnswer::Off;
+	}
+
+	// A visibility expression (8.11.2.2), none when it cannot be evaluated: a value that is neither a group nor an
+	// array, an unknown operator, the wrong operand count, or past its bounds, which also end a self-reference. An
+	// operand with no effect drops out of `And` and `Or` and makes `Not` no effect, so an excluded group never decides.
+	[[nodiscard]] PdfResult<std::optional<OcAnswer>> expression_answer(const PdfValue& value, size_t depth, size_t& nodes)
+	{
+		using Answer = std::optional<OcAnswer>;
+		if (depth >= kMaxOcExpressionDepth || nodes >= kMaxOcExpressionNodes) {
+			return Answer{};
+		}
+		++nodes;
+		const Held node = shared(value);
+		if (!node || node->is_null()) {
+			return Answer{OcAnswer::NoEffect}; // null or deleted: ignored, as in `/OCGs`
+		}
+		if (const PdfDict* dict = node->as_dict()) {
+			if (!is_group(*dict)) {
+				return Answer{};
+			}
+			const std::optional<IndirectRef> ref = value.as_ref();
+			return Answer{ref.has_value() ? group_answer(*ref) : OcAnswer::NoEffect};
+		}
+		const PdfArray* expression = node->as_array();
+		if (expression == nullptr || expression->size() < 2u) {
+			return Answer{};
+		}
+		const Held first = shared(*expression->begin());
+		const std::optional<std::string_view> name = first ? first->as_name() : std::nullopt;
+		const bool is_not = name == std::optional<std::string_view>("Not");
+		const bool is_and = name == std::optional<std::string_view>("And");
+		if (!is_not && !is_and && name != std::optional<std::string_view>("Or")) {
+			return Answer{};
+		}
+		if (is_not && expression->size() != 2u) {
+			return Answer{};
+		}
+		bool any_on = false;
+		bool any_off = false;
+		for (auto it = std::next(expression->begin()); it != expression->end(); ++it) {
+			RECTO_PDF_TRY(const Answer operand, expression_answer(*it, depth + 1u, nodes));
+			if (!operand.has_value()) {
+				return Answer{};
+			}
+			any_on = any_on || *operand == OcAnswer::On;
+			any_off = any_off || *operand == OcAnswer::Off;
+		}
+		if (!any_on && !any_off) {
+			return Answer{OcAnswer::NoEffect};
+		}
+		if (is_not) {
+			return Answer{any_on ? OcAnswer::Off : OcAnswer::On};
+		}
+		const bool truth = is_and ? !any_off : any_on;
+		return Answer{truth ? OcAnswer::On : OcAnswer::Off};
 	}
 
 	// A dictionary entry, an indirect value held through `held_object`, never copied; an entry whose value is null is
@@ -2115,6 +2418,7 @@ private:
 		exit->caller_floor = std::exchange(save_floor_, exit->floor);
 		exit->caller_ignored = std::exchange(ignored_saves_, size_t{0});
 		exit->caller_skip = std::exchange(skip_next_, false);
+		exit->marked_depth = marked_depth_;
 		exit->text = text_matrix_;
 		exit->line = line_matrix_;
 		exit->path = std::move(path_);
@@ -2161,6 +2465,9 @@ private:
 		save_floor_ = exit.caller_floor;
 		ignored_saves_ = exit.caller_ignored;
 		skip_next_ = exit.caller_skip; // an operator the form's damaged tail would skip is the form's, not the caller's
+		// A form is drawn only outside hidden content, so a block it left open ends with it and nothing else hides.
+		marked_depth_ = exit.marked_depth;
+		hidden_at_ = 0u;
 		text_matrix_ = exit.text;
 		line_matrix_ = exit.line;
 		path_ = std::move(exit.path);
@@ -2179,9 +2486,20 @@ private:
 	static constexpr size_t kMaxFormContentBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxInkMemo = 65'536u;
+	static constexpr size_t kMaxOcExpressionDepth = 32u;
+	static constexpr size_t kMaxOcExpressionNodes = 4'096u;
+	static constexpr size_t kMaxOcGroupsListed = 65'536u;
 
 	const Document& document_;
 	DisplayListBuilder builder_;
+	// Optional content (D01 T02 section 47): whether groups are used at all, their states, each object's answer for
+	// the page, and marked-content nesting.
+	bool uses_groups_;
+	std::vector<uint64_t> off_groups_{};
+	std::vector<uint64_t> excluded_groups_{};
+	std::unordered_map<uint64_t, OcAnswer> oc_answers_{};
+	size_t marked_depth_{0};
+	size_t hidden_at_{0};
 	std::vector<std::unique_ptr<ResourceScope>> scopes_{};
 	std::unordered_map<uint64_t, ResourceScope*> scope_by_key_{};
 	ResourceScope* scope_{nullptr};
@@ -2247,10 +2565,11 @@ PdfResult<std::shared_ptr<const DisplayList>> interpret_content(
 	std::span<const uint8_t> content,
 	const PdfDict& resources,
 	const PdfRect& page_box,
-	const DisplayListLimits& limits) noexcept
+	const DisplayListLimits& limits,
+	const OptionalContentVisibility* visibility) noexcept
 {
 	try {
-		Interpreter interpreter(document, resources, page_box, limits);
+		Interpreter interpreter(document, resources, page_box, limits, visibility);
 		return interpreter.run(content);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory interpreting a content stream");
@@ -2260,7 +2579,8 @@ PdfResult<std::shared_ptr<const DisplayList>> interpret_content(
 PdfResult<std::shared_ptr<const DisplayList>> interpret_page(
 	const Document& document,
 	size_t page_index,
-	const DisplayListLimits& limits) noexcept
+	const DisplayListLimits& limits,
+	const OptionalContentVisibility* visibility) noexcept
 {
 	if (page_index >= document.page_count()) {
 		// A caller's mistake, not a damaged file: recorded here, as InvalidArgument refusals are (error.h).
@@ -2272,7 +2592,7 @@ PdfResult<std::shared_ptr<const DisplayList>> interpret_page(
 	RECTO_PDF_TRY(const PageDescription page, document.page_description(page_index));
 	RECTO_PDF_TRY(const std::vector<uint8_t> content, document.decoded_page_contents(page_index));
 	RECTO_PDF_TRY(const PdfDict resources, document.page_resources(page_index));
-	return interpret_content(document, content, resources, page.crop_box, limits);
+	return interpret_content(document, content, resources, page.crop_box, limits, visibility);
 }
 
 } // namespace recto::pdf

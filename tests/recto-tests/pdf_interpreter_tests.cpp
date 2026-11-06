@@ -4522,14 +4522,432 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		EXPECT_EQ(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 1)
 			<< "the form was classified again for each Do";
 	}
-	// A form with /Group (section 15) or /OC (section 47) draws as plain content meanwhile.
-	for (const char* entry : {"/Group << /S /Transparency /I true >>", "/OC << /Type /OCG /Name (Layer) >>"}) {
-		SCOPED_TRACE(entry);
+	// A form with /Group (section 15) draws as plain content meanwhile.
+	{
 		const auto r = interpret("/X Do", "<< /XObject << /X 5 0 R >> >>",
-			{form_object(std::string("/BBox [0 0 10 10] ") + entry, "0 0 1 1 re f")});
+			{form_object("/BBox [0 0 10 10] /Group << /S /Transparency /I true >>", "0 0 1 1 re f")});
 		ASSERT_NE(r.list, nullptr);
 		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Optional content (D01 T02 section 47).
+// ---------------------------------------------------------------------------------------------------------------------
+
+// A page interpreted under `visibility` (null: no group is used).
+Interpreted interpret_visible(std::string_view content, std::string_view resources, const std::vector<std::string>& objects,
+	const OptionalContentVisibility* visibility, const DisplayListLimits& limits = {})
+{
+	Interpreted out{one_page_pdf(content, resources, objects), nullptr, nullptr};
+	auto doc = Document::open_memory(out.bytes);
+	EXPECT_TRUE(doc.has_value());
+	if (!doc.has_value()) {
+		return out;
+	}
+	out.document = std::move(*doc);
+	auto list = interpret_page(*out.document, 0u, limits, visibility);
+	EXPECT_TRUE(list.has_value()) << (list.has_value() ? "" : list.error().message.view());
+	if (list.has_value()) {
+		out.list = std::move(*list);
+	}
+	return out;
+}
+
+size_t draws_under(std::string_view content, std::string_view resources, const std::vector<std::string>& objects,
+	const OptionalContentVisibility* visibility)
+{
+	const auto r = interpret_visible(content, resources, objects, visibility);
+	return r.list != nullptr ? all_of<DrawPathCommand>(*r.list).size() : size_t{9999};
+}
+
+constexpr std::string_view kOcg = "<< /Type /OCG /Name (Layer) >>";
+constexpr std::string_view kOcBlock = "/OC /L BDC 0 0 1 1 re f EMC";
+// Object numbers from 5, as `one_page_pdf` gives them: 5 and 6 are groups in the membership tests, 5 off and 6 on.
+const std::array<IndirectRef, 1> kFiveOff{IndirectRef{5u, 0u}};
+const OptionalContentVisibility kFiveIsOff{kFiveOff, {}};
+
+TEST(PdfInterpreter, OptionalContentBlocks)
+{
+	const std::string resources = "<< /Properties << /L 5 0 R >> >>";
+	const std::vector<std::string> objects{std::string(kOcg)};
+	// By object number and generation: the same number under another generation stays visible.
+	const std::array<IndirectRef, 1> other_generation{IndirectRef{5u, 1u}};
+	const OptionalContentVisibility other{other_generation, {}};
+	EXPECT_EQ(draws_under(kOcBlock, resources, objects, &kFiveIsOff), 0u);
+	EXPECT_EQ(draws_under(kOcBlock, resources, objects, &other), 1u);
+	struct Case {
+		const char* content;
+		size_t draws;
+	};
+	for (const Case& c : {
+			 Case{"0 0 1 1 re f /OC /L BDC 1 1 1 1 re f EMC 2 2 1 1 re f", 2u},
+			 // Nesting: a block inside a hidden one does not end it at its own EMC.
+			 Case{"/OC /L BDC /Span BMC 0 0 1 1 re f EMC 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 Case{"/OC /L BDC /Span << >> BDC 0 0 1 1 re f EMC 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 Case{"/Span BMC /OC /L BDC 0 0 1 1 re f EMC 0 0 1 1 re f EMC", 1u},
+			 // A malformed BDC inside a hidden block still opens a level.
+			 Case{"/OC /L BDC BDC 0 0 1 1 re f EMC 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 Case{"/OC /L BDC /OC BDC 0 0 1 1 re f EMC 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 // An unmatched EMC is ignored, and independent of q and Q.
+			 Case{"EMC EMC /OC /L BDC 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 Case{"q /OC /L BDC Q 0 0 1 1 re f EMC 0 0 1 1 re f", 1u},
+			 // A name the resources do not hold has no effect.
+			 Case{"/OC /Missing BDC 0 0 1 1 re f EMC", 1u},
+			 // Another tag is not optional content.
+			 Case{"/Artifact /L BDC 0 0 1 1 re f EMC", 1u},
+		 }) {
+		SCOPED_TRACE(c.content);
+		EXPECT_EQ(draws_under(c.content, resources, objects, &kFiveIsOff), c.draws);
+	}
+	// A BDC whose operator is skipped (an unreadable operand) still opens a level.
+	EXPECT_EQ(draws_under("/OC /L BDC <zz> BDC 0 0 1 1 re f EMC 0 0 1 1 re f EMC 0 0 1 1 re f", resources, objects, &kFiveIsOff), 1u);
+	// A form's extra EMCs close nothing of its caller's, and its own hidden block still ends at its own EMC.
+	{
+		const std::string with_form = "<< /Properties << /L 5 0 R >> /XObject << /X 6 0 R >> >>";
+		const std::vector<std::string> form{std::string(kOcg),
+			form_object("/BBox [0 0 100 100] /Resources << /Properties << /L 5 0 R >> >>",
+				"/OC /L BDC EMC EMC EMC 5 5 1 1 re f /OC /L BDC 0 0 1 1 re f EMC 6 6 1 1 re f")};
+		const auto r = interpret_visible("/Span BMC /X Do EMC 0 0 1 1 re f EMC 0 0 1 1 re f", with_form, form, &kFiveIsOff);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 4u);
+	}
+	// A form's unclosed hidden block does not hide what its caller draws after it, and the caller's next block still
+	// ends at its own EMC. (A form inside a caller's hidden block is not run at all: `OptionalContentForms`.)
+	{
+		const std::string with_form = "<< /Properties << /L 5 0 R >> /XObject << /X 6 0 R >> >>";
+		const std::vector<std::string> form{std::string(kOcg),
+			form_object("/BBox [0 0 100 100] /Resources << /Properties << /L 5 0 R >> >>", "1 1 1 1 re f /OC /L BDC 0 0 1 1 re f")};
+		const auto r = interpret_visible("/X Do 2 2 1 1 re f /OC /L BDC 3 3 1 1 re f EMC 4 4 1 1 re f", with_form, form, &kFiveIsOff);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 3u);
+	}
+}
+
+TEST(PdfInterpreter, OptionalContentVisibilityStates)
+{
+	// Null uses no group; an empty value has every group on, so inverse policies hide. Through both entry points.
+	const std::string resources = "<< /Properties << /L 6 0 R >> >>";
+	const OptionalContentVisibility none{};
+	for (const char* member : {"<< /Type /OCMD /OCGs 5 0 R /P /AnyOff >>", "<< /Type /OCMD /OCGs [5 0 R] /P /AllOff >>",
+			 "<< /Type /OCMD /VE [/Not 5 0 R] >>"}) {
+		SCOPED_TRACE(member);
+		const std::vector<std::string> objects{std::string(kOcg), member};
+		EXPECT_EQ(draws_under(kOcBlock, resources, objects, nullptr), 1u);
+		EXPECT_EQ(draws_under(kOcBlock, resources, objects, &none), 0u);
+		const std::vector<uint8_t> bytes = one_page_pdf(kOcBlock, resources, objects);
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		auto page_resources = (*doc)->page_resources(0u);
+		ASSERT_TRUE(page_resources.has_value());
+		const auto content = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(kOcBlock.data()), kOcBlock.size());
+		const PdfRect box{0.0, 0.0, 200.0, 200.0};
+		const auto free_list = interpret_content(**doc, content, *page_resources, box);
+		ASSERT_TRUE(free_list.has_value());
+		EXPECT_EQ(all_of<DrawPathCommand>(**free_list).size(), 1u);
+		const auto hidden_list = interpret_content(**doc, content, *page_resources, box, {}, &none);
+		ASSERT_TRUE(hidden_list.has_value());
+		EXPECT_TRUE(all_of<DrawPathCommand>(**hidden_list).empty());
+	}
+}
+
+TEST(PdfInterpreter, OptionalContentMembership)
+{
+	// 5 is off, 6 is on; 7 is what the page's block names; 8 is not a group.
+	const std::string resources = "<< /Properties << /L 7 0 R >> >>";
+	const auto draws = [&](const std::string& member) {
+		return draws_under(kOcBlock, resources, {std::string(kOcg), std::string(kOcg), member, "<< /Type /Font >>"}, &kFiveIsOff);
+	};
+	struct Case {
+		std::string member;
+		size_t drawn;
+	};
+	const auto ocmd = [](std::string_view entries) { return "<< /Type /OCMD " + std::string(entries) + " >>"; };
+	const std::vector<Case> cases{
+		// Each policy over all-on, all-off and mixed.
+		{ocmd("/OCGs [6 0 R 6 0 R] /P /AllOn"), 1u},
+		{ocmd("/OCGs [5 0 R 5 0 R] /P /AllOn"), 0u},
+		{ocmd("/OCGs [5 0 R 6 0 R] /P /AllOn"), 0u},
+		{ocmd("/OCGs [6 0 R 6 0 R] /P /AnyOn"), 1u},
+		{ocmd("/OCGs [5 0 R 5 0 R] /P /AnyOn"), 0u},
+		{ocmd("/OCGs [5 0 R 6 0 R] /P /AnyOn"), 1u},
+		{ocmd("/OCGs [6 0 R 6 0 R] /P /AnyOff"), 0u},
+		{ocmd("/OCGs [5 0 R 5 0 R] /P /AnyOff"), 1u},
+		{ocmd("/OCGs [5 0 R 6 0 R] /P /AnyOff"), 1u},
+		{ocmd("/OCGs [6 0 R 6 0 R] /P /AllOff"), 0u},
+		{ocmd("/OCGs [5 0 R 5 0 R] /P /AllOff"), 1u},
+		{ocmd("/OCGs [5 0 R 6 0 R] /P /AllOff"), 0u},
+		// An absent and an unknown /P are AnyOn.
+		{ocmd("/OCGs [5 0 R]"), 0u},
+		{ocmd("/OCGs [5 0 R 6 0 R]"), 1u},
+		{ocmd("/OCGs [5 0 R] /P /Sometimes"), 0u},
+		{ocmd("/OCGs [5 0 R 6 0 R] /P /Sometimes"), 1u},
+		// /OCGs as one dictionary and as a one-entry array.
+		{ocmd("/OCGs 5 0 R"), 0u},
+		{ocmd("/OCGs 6 0 R"), 1u},
+		{ocmd("/OCGs [5 0 R]"), 0u},
+		{ocmd("/OCGs [6 0 R]"), 1u},
+		// Null, deleted and non-group entries are ignored in each policy.
+		{ocmd("/OCGs [null 99 0 R 8 0 R 5 0 R] /P /AnyOn"), 0u},
+		{ocmd("/OCGs [null 99 0 R 8 0 R 5 0 R] /P /AllOff"), 1u},
+		{ocmd("/OCGs [null 99 0 R 8 0 R 6 0 R] /P /AllOn"), 1u},
+		{ocmd("/OCGs [null 99 0 R 8 0 R 6 0 R] /P /AnyOff"), 0u},
+		// With no group left, or none listed, it has no effect under any policy.
+		{ocmd("/OCGs [null 99 0 R 8 0 R] /P /AllOn"), 1u},
+		{ocmd("/OCGs [] /P /AnyOff"), 1u},
+		{ocmd("/P /AllOff"), 1u},
+		// And, Or and Not each both ways, and nested.
+		{ocmd("/VE [/And 6 0 R 6 0 R]"), 1u},
+		{ocmd("/VE [/And 6 0 R 5 0 R]"), 0u},
+		{ocmd("/VE [/Or 5 0 R 6 0 R]"), 1u},
+		{ocmd("/VE [/Or 5 0 R 5 0 R]"), 0u},
+		{ocmd("/VE [/Not 5 0 R]"), 1u},
+		{ocmd("/VE [/Not 6 0 R]"), 0u},
+		{ocmd("/VE [/And [/Or 5 0 R 6 0 R] [/Not 5 0 R]]"), 1u},
+		{ocmd("/VE [/And [/Or 5 0 R 6 0 R] [/Not 6 0 R]]"), 0u},
+		// /VE overrides /P, whichever way /OCGs would go.
+		{ocmd("/OCGs [6 0 R] /P /AllOn /VE [/Not 6 0 R]"), 0u},
+		{ocmd("/OCGs [5 0 R] /VE [/Not 5 0 R]"), 1u},
+		// A malformed /VE, a self-reference and one past the bounds take /OCGs and /P; with neither the content draws.
+		{ocmd("/VE 5"), 1u},
+		{ocmd("/VE [/Xor 5 0 R 5 0 R]"), 1u},
+		{ocmd("/VE [/Not 5 0 R 5 0 R]"), 1u},
+		{ocmd("/VE [/And]"), 1u},
+		{ocmd("/VE [/Or 8 0 R]"), 1u},
+		{ocmd("/OCGs [5 0 R] /VE [/Xor 5 0 R]"), 0u},
+		{ocmd("/OCGs [6 0 R] /VE [/Xor 5 0 R]"), 1u},
+		{ocmd("/OCGs [5 0 R] /VE [/Not 5 0 R 5 0 R]"), 0u},
+		// An unknown /Type and a direct /OCG have no effect.
+		{"<< /Type /Layer /OCGs [5 0 R] >>", 1u},
+		{"[5 0 R]", 1u},
+		{"null", 1u},
+	};
+	for (const Case& c : cases) {
+		SCOPED_TRACE(c.member);
+		EXPECT_EQ(draws(c.member), c.drawn);
+	}
+	// A /VE naming itself ends at its bound with the content drawn, and takes /OCGs and /P when it has them.
+	const std::vector<std::string> common{std::string(kOcg), std::string(kOcg)};
+	const auto with_expression = [&](const std::string& expression, const std::string& rest) {
+		std::vector<std::string> objects = common;
+		objects.push_back("<< /Type /OCMD /VE 8 0 R " + rest + " >>");
+		objects.push_back(expression);
+		return draws_under(kOcBlock, resources, objects, &kFiveIsOff);
+	};
+	EXPECT_EQ(with_expression("[/Not 8 0 R]", ""), 1u);
+	EXPECT_EQ(with_expression("[/And 8 0 R 8 0 R]", ""), 1u);
+	EXPECT_EQ(with_expression("[/Not 8 0 R]", "/OCGs [5 0 R]"), 0u);
+	// Past the node bound: 4,096 nodes is reached by this flat expression, every operand a group that is off.
+	std::string flat = "[/Or";
+	for (int i = 0; i < 4'200; ++i) {
+		flat += " 5 0 R";
+	}
+	flat += "]";
+	EXPECT_EQ(with_expression(flat, ""), 1u) << "an /Or of only off groups would hide it if the bound did not end it";
+	EXPECT_EQ(with_expression(flat, "/OCGs [5 0 R]"), 0u);
+	// A direct /OCG in /Properties has no identity, and has no effect.
+	EXPECT_EQ(draws_under(kOcBlock, "<< /Properties << /L << /Type /OCG /Name (D) >> >> >>", {}, &kFiveIsOff), 1u);
+	// A direct /OCMD in /Properties is evaluated by its members.
+	EXPECT_EQ(draws_under(kOcBlock, "<< /Properties << /L << /Type /OCMD /OCGs 5 0 R >> >> >>", {std::string(kOcg)}, &kFiveIsOff), 0u);
+}
+
+TEST(PdfInterpreter, OptionalContentIntent)
+{
+	// 5 is excluded and also off; 6 is off; 7 is the member.
+	const std::array<IndirectRef, 2> off{IndirectRef{5u, 0u}, IndirectRef{6u, 0u}};
+	const std::array<IndirectRef, 1> excluded{IndirectRef{5u, 0u}};
+	const OptionalContentVisibility visibility{off, excluded};
+	const std::string resources = "<< /Properties << /L 7 0 R >> >>";
+	const auto draws = [&](const std::string& member) {
+		return draws_under(kOcBlock, resources, {std::string(kOcg), std::string(kOcg), member}, &visibility);
+	};
+	EXPECT_EQ(draws_under(kOcBlock, "<< /Properties << /L 5 0 R >> >>", {std::string(kOcg)}, &visibility), 1u);
+	for (const char* policy : {"AllOn", "AnyOn", "AnyOff", "AllOff"}) {
+		SCOPED_TRACE(policy);
+		EXPECT_EQ(draws(std::string("<< /Type /OCMD /OCGs [5 0 R] /P /") + policy + " >>"), 1u);
+	}
+	// Ignored among other groups: an excluded group does not satisfy AnyOff nor spoil AllOff on its own.
+	EXPECT_EQ(draws("<< /Type /OCMD /OCGs [5 0 R 6 0 R] /P /AnyOn >>"), 0u);
+	EXPECT_EQ(draws("<< /Type /OCMD /OCGs [5 0 R 6 0 R] /P /AllOff >>"), 1u);
+	EXPECT_EQ(draws("<< /Type /OCMD /VE [/Not 5 0 R] >>"), 1u);
+	EXPECT_EQ(draws("<< /Type /OCMD /VE [/And 5 0 R] >>"), 1u);
+	EXPECT_EQ(draws("<< /Type /OCMD /VE [/And 5 0 R 6 0 R] >>"), 0u);
+	EXPECT_EQ(draws("<< /Type /OCMD /VE [/Or 5 0 R 6 0 R] >>"), 0u);
+}
+
+TEST(PdfInterpreter, OptionalContentLimits)
+{
+	const std::array<IndirectRef, 1> off{IndirectRef{5u, 0u}};
+	const OptionalContentVisibility visibility{off, {}};
+	const std::string resources = "<< /Properties << /L 6 0 R >> >>";
+	const auto listing = [](size_t count) {
+		std::string list = "<< /Type /OCMD /OCGs [";
+		for (size_t i = 0; i < count; ++i) {
+			list += "5 0 R ";
+		}
+		return list + "] >>";
+	};
+	// A work budget too small for a large /OCGs: refused, never a drawn or hidden page.
+	{
+		const std::vector<uint8_t> bytes = one_page_pdf(kOcBlock, resources, {std::string(kOcg), listing(2'000u)});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		DisplayListLimits limits;
+		limits.max_geometry_work_ops = 1'000u;
+		const auto refused = interpret_page(**doc, 0u, limits, &visibility);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::ResourceLimit);
+		// The same object draws its answer under the default budget: every group is off, so it hides.
+		const auto hidden_page = interpret_page(**doc, 0u, {}, &visibility);
+		ASSERT_TRUE(hidden_page.has_value());
+		EXPECT_TRUE(all_of<DrawPathCommand>(**hidden_page).empty());
+	}
+	// Past the listed limit: no effect with its diagnostic, where walking it would hide.
+	{
+		clear_diagnostics();
+		EXPECT_EQ(draws_under(kOcBlock, resources, {std::string(kOcg), listing(65'537u)}, &visibility), 1u);
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_TRUE(std::any_of(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::ResourceLimit; }));
+		EXPECT_EQ(draws_under(kOcBlock, resources, {std::string(kOcg), listing(65'536u)}, &visibility), 0u);
+	}
+	// Each object's answer is worked out once for the page: a thousand blocks over one 500-entry list charge it once.
+	{
+		std::string many;
+		for (int i = 0; i < 1'000; ++i) {
+			many += "/OC /L BDC EMC ";
+		}
+		const std::vector<uint8_t> bytes = one_page_pdf(many, resources, {std::string(kOcg), listing(500u)});
+		auto doc = Document::open_memory(bytes);
+		ASSERT_TRUE(doc.has_value());
+		DisplayListLimits limits;
+		limits.max_geometry_work_ops = 1'000u;
+		EXPECT_TRUE(interpret_page(**doc, 0u, limits, &visibility).has_value());
+	}
+	// Out of memory keeping an answer is an error, not an answer. Injection is available in x64 Debug.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		// Every allocation in turn: each returns OutOfMemory or the hidden page, so no failure can reveal the block.
+		const std::vector<uint8_t> bytes = one_page_pdf(kOcBlock, resources, {std::string(kOcg), listing(2u)});
+		size_t refusals = 0;
+		for (uint32_t nth = 1u; nth <= 400u; ++nth) {
+			SCOPED_TRACE(nth);
+			auto doc = Document::open_memory(bytes);
+			ASSERT_TRUE(doc.has_value());
+			std::optional<PdfResult<std::shared_ptr<const DisplayList>>> page;
+			{
+				// 32 bytes: an answer's map node, and above the Debug STL's proxies, which cannot fail.
+				const recto::test::ScopedAllocationFailure fail(nth, 32u);
+				page.emplace(interpret_page(**doc, 0u, {}, &visibility));
+			}
+			if (!page->has_value()) {
+				EXPECT_EQ(page->error().code, ErrorCode::OutOfMemory);
+				++refusals;
+			} else {
+				EXPECT_TRUE(all_of<DrawPathCommand>(***page).empty()) << "an allocation failure revealed the hidden block";
+			}
+		}
+		EXPECT_GT(refusals, 0u);
+	}
+}
+
+TEST(PdfInterpreter, OptionalContentHiddenEffects)
+{
+	// The same page with the group off and on: what follows the block reads the same positions, clips, CTM and colours;
+	// the only difference is the hidden paints.
+	const std::string resources =
+		"<< /Properties << /L 5 0 R >> /Font << /F1 6 0 R >> >>";
+	const std::vector<std::string> objects{std::string(kOcg), "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"};
+	const std::string content =
+		"BT /F1 12 Tf 10 100 Td /OC /L BDC (Hidden) Tj 1 0 0 rg 2 w 0 0 50 50 re W n 10 10 5 5 re f 2 0 0 2 0 0 cm EMC "
+		"(After) Tj ET 20 20 5 5 re f";
+	const OptionalContentVisibility none{};
+	const auto hidden_page = interpret_visible(content, resources, objects, &kFiveIsOff);
+	const auto shown_page = interpret_visible(content, resources, objects, &none);
+	ASSERT_NE(hidden_page.list, nullptr);
+	ASSERT_NE(shown_page.list, nullptr);
+	const auto hidden_runs = all_of<DrawGlyphRunCommand>(*hidden_page.list);
+	const auto shown_runs = all_of<DrawGlyphRunCommand>(*shown_page.list);
+	ASSERT_EQ(hidden_runs.size(), 1u);
+	ASSERT_EQ(shown_runs.size(), 2u);
+	EXPECT_DOUBLE_EQ(hidden_runs[0].text_matrix.e, shown_runs[1].text_matrix.e) << "hidden text did not advance as drawn text";
+	EXPECT_DOUBLE_EQ(hidden_runs[0].text_matrix.f, shown_runs[1].text_matrix.f);
+	EXPECT_GT(hidden_runs[0].text_matrix.e, 10.0);
+	EXPECT_DOUBLE_EQ(hidden_runs[0].ctm.a, shown_runs[1].ctm.a) << "a cm in a hidden block did not persist";
+	EXPECT_EQ(hidden_runs[0].fill_color, shown_runs[1].fill_color) << "a colour set in a hidden block did not persist";
+	EXPECT_EQ(all_of<PushClipPathCommand>(*hidden_page.list).size(), all_of<PushClipPathCommand>(*shown_page.list).size());
+	const auto hidden_draws = draw_bounds(*hidden_page.list);
+	const auto shown_draws = draw_bounds(*shown_page.list);
+	ASSERT_EQ(hidden_draws.size(), 1u);
+	ASSERT_EQ(shown_draws.size(), 2u);
+	EXPECT_EQ(hidden_draws[0].has_bounds, shown_draws[1].has_bounds);
+	if (hidden_draws[0].has_bounds && shown_draws[1].has_bounds) {
+		expect_rect(hidden_draws[0].bounds_pt, shown_draws[1].bounds_pt.x_min, shown_draws[1].bounds_pt.y_min,
+			shown_draws[1].bounds_pt.x_max, shown_draws[1].bounds_pt.y_max);
+	}
+	const auto concat_count = [](const DisplayList& list) { return all_of<ConcatMatrixCommand>(list).size(); };
+	EXPECT_EQ(concat_count(*hidden_page.list), concat_count(*shown_page.list));
+	// Hidden text in a clipping mode paints nothing and records its Clip run.
+	{
+		const auto r = interpret_visible("BT /F1 12 Tf 7 Tr /OC /L BDC (Clip) Tj EMC ET BT 2 Tr 1 Tr 0 Tr /OC /L BDC (Gone) Tj EMC ET",
+			resources, objects, &kFiveIsOff);
+		ASSERT_NE(r.list, nullptr);
+		const auto runs = all_of<DrawGlyphRunCommand>(*r.list);
+		ASSERT_EQ(runs.size(), 1u);
+		EXPECT_EQ(runs[0].render_mode, TextRenderMode::Clip);
+		const auto filled = interpret_visible("BT /F1 12 Tf 4 Tr /OC /L BDC (Clip) Tj EMC ET", resources, objects, &kFiveIsOff);
+		ASSERT_NE(filled.list, nullptr);
+		const auto filled_runs = all_of<DrawGlyphRunCommand>(*filled.list);
+		ASSERT_EQ(filled_runs.size(), 1u);
+		EXPECT_EQ(filled_runs[0].render_mode, TextRenderMode::Clip);
+	}
+	// A hidden path with no W records nothing at all, and a hidden W n clips.
+	{
+		const auto r = interpret_visible("/OC /L BDC 0 0 10 10 re f 0 0 10 10 re S EMC", resources, objects, &kFiveIsOff);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(all_of<DrawPathCommand>(*r.list).empty());
+		EXPECT_TRUE(all_of<PushClipPathCommand>(*r.list).empty());
+		const auto clipped = interpret_visible("/OC /L BDC 0 0 10 10 re W f EMC 50 50 1 1 re f", resources, objects, &kFiveIsOff);
+		ASSERT_NE(clipped.list, nullptr);
+		const auto draws = draw_bounds(*clipped.list);
+		ASSERT_EQ(draws.size(), 1u);
+		EXPECT_FALSE(draws[0].has_bounds) << "a hidden W did not clip what followed";
+	}
+}
+
+TEST(PdfInterpreter, OptionalContentForms)
+{
+	// Flate-coded, so the decode meter sees the form's stream (the page's own content has no filter).
+	const auto form_with = [](std::string_view entry) {
+		return form_object("/BBox [0 0 100 100] /Filter /FlateDecode " + std::string(entry), stored_zlib("0 0 1 1 re f"));
+	};
+	const std::string resources = "<< /Properties << /L 5 0 R >> /XObject << /X 6 0 R >> >>";
+	const std::array<IndirectRef, 1> other{IndirectRef{7u, 0u}};
+	const OptionalContentVisibility on{other, {}};
+	const std::vector<std::string> objects{std::string(kOcg), form_with("/OC 5 0 R")};
+	const auto decoded_for = [&](std::string_view content, const std::vector<std::string>& page_objects, const OptionalContentVisibility* visibility) {
+		detail::ScopedDecodeWorkMeter work;
+		const auto r = interpret_visible(content, resources, page_objects, visibility);
+		EXPECT_NE(r.list, nullptr);
+		return std::make_pair(r.list != nullptr ? all_of<DrawPathCommand>(*r.list).size() : size_t{9999}, work.bytes());
+	};
+	const auto drawn = decoded_for("/X Do", objects, &on);
+	EXPECT_EQ(drawn.first, 1u);
+	EXPECT_GT(drawn.second, 0u) << "the meter cannot see this form, so the 0 below proves nothing";
+	const auto off_entry = decoded_for("/X Do", objects, &kFiveIsOff);
+	EXPECT_EQ(off_entry.first, 0u);
+	EXPECT_EQ(off_entry.second, 0u) << "a form whose /OC is off was decoded";
+	// Inside a hidden block, a form with no /OC at all is neither drawn nor decoded.
+	const std::vector<std::string> plain{std::string(kOcg), form_with("")};
+	const auto in_block = decoded_for("/OC /L BDC /X Do EMC", plain, &kFiveIsOff);
+	EXPECT_EQ(in_block.first, 0u);
+	EXPECT_EQ(in_block.second, 0u) << "a form in a hidden block was decoded";
+	EXPECT_EQ(decoded_for("/X Do", plain, &kFiveIsOff).first, 1u);
+	// A direct /OCG has no identity, and the form draws; and a null visibility draws an off form.
+	const std::vector<std::string> direct{std::string(kOcg), form_with("/OC << /Type /OCG /Name (Layer) >>")};
+	EXPECT_EQ(draws_under("/X Do", resources, direct, &kFiveIsOff), 1u);
+	EXPECT_EQ(draws_under("/X Do", resources, objects, nullptr), 1u);
+	// An /OCMD names a form's membership too, and a repeated Do answers from the classified entry.
+	const std::vector<std::string> member{std::string(kOcg), form_with("/OC 7 0 R"), "<< /Type /OCMD /OCGs 5 0 R /P /AllOff >>"};
+	EXPECT_EQ(draws_under("/X Do /X Do", resources, member, &kFiveIsOff), 2u);
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

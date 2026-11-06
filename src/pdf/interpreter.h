@@ -31,6 +31,18 @@ inline constexpr size_t kMaxGraphicsStateDepth = 64u;
 // the operator that follows is skipped (section 19 sets the real ceilings).
 inline constexpr size_t kMaxContentOperands = 8'192u;
 
+// The optional-content groups' states for one interpretation (ISO 32000-1
+// 8.11.2), a view the caller holds for the call. A group in `off` is off, and
+// any other group is on. A group in `excluded` has no effect on visibility
+// (its intent does not match the configuration's, 8.11.2.3), whether or not it
+// is in `off`. A null visibility means no group is used at all, as a
+// configuration whose `/Intent` is an empty array says: nothing hides, where an
+// empty one has every group on, so `/AnyOff`, `/AllOff` and `/Not` content hides.
+struct OptionalContentVisibility {
+	std::span<const IndirectRef> off{};
+	std::span<const IndirectRef> excluded{};
+};
+
 // Interprets page `page_index` (0-based) of `document` into a display list for
 // its crop box in default user space. A page with no or empty `/Contents`
 // gives an empty list; an index past the last page is `InvalidArgument`
@@ -39,7 +51,8 @@ inline constexpr size_t kMaxContentOperands = 8'192u;
 [[nodiscard]] PdfResult<std::shared_ptr<const DisplayList>> interpret_page(
 	const Document& document,
 	size_t page_index,
-	const DisplayListLimits& limits = {}) noexcept;
+	const DisplayListLimits& limits = {},
+	const OptionalContentVisibility* visibility = nullptr) noexcept;
 
 // Interprets `content` with `resources` (a resolved resource dictionary, its
 // entries resolved through `document`) into a display list for `page_box`.
@@ -48,6 +61,7 @@ inline constexpr size_t kMaxContentOperands = 8'192u;
 	std::span<const uint8_t> content,
 	const PdfDict& resources,
 	const PdfRect& page_box,
-	const DisplayListLimits& limits = {}) noexcept;
+	const DisplayListLimits& limits = {},
+	const OptionalContentVisibility* visibility = nullptr) noexcept;
 
 } // namespace recto::pdf
