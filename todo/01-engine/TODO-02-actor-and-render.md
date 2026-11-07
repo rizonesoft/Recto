@@ -61,7 +61,7 @@ track: M1
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [x] |
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
 | 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
-| 4 | §4 | Content-stream interpreter complete over the render corpus | §2, §3, §27, §28, §29, §30, §32, §33, §42, §43, §44, §45, §46, §47, D06 T05 §32, D06 T05 §33 | [ ] |
+| 4 | §4 | Content-stream interpreter complete over the render corpus | §2, §3, §27, §28, §29, §30, §32, §33, §42, §43, §44, §45, §46, §47, D06 T05 §32, D06 T05 §33 | [x] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [x] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
@@ -241,9 +241,12 @@ The content-stream interpreter of `src/pdf/interpreter.cpp` interprets every pag
 
 - [x] Interpret every page of `tests/corpus/render/` (`simple-1p.pdf`, `compressed-xref-2p.pdf`, `incremental-2rev.pdf`, `rotated-pages.pdf`, `images-and-vectors.pdf`, and unlocked `encrypted-*.pdf`) into `DisplayList`s with zero errors under ASan. Done when: `PdfInterpreter.CorpusRenderSweep` walks the folder, fails on a file its table does not name, and reads each file's page count and, per page, its glyph runs, images and path draws as the corpus builder wrote them, so an empty list fails it; and in `images-and-vectors.pdf` reads what its builder wrote for each value: the `/GS1` alpha, the clip, each image's size and a cell of it, the `/SMask` at its cell, and the Form XObject's placement. **Corrected 2026-11-07:** plan review; a count alone passed a list that lost them.
 - [x] Interpret every page of each `tests/corpus/broken/` file that opens. Done when: `PdfInterpreter.CorpusBrokenSweep` walks the folder with a table of each file's exact outcome (the open error `PdfDocument.BrokenCorpusSweep` pins, or that it opens), and `corrupt-xref-recoverable.pdf` draws its one page's text. **Corrected 2026-11-07:** plan review; was any list or typed error.
-- [ ] Commit: `pdf: interpret every page of the render corpus`
+- [x] Commit: `pdf: interpret every page of the render corpus`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfDocument.BrokenCorpusSweep` passes under ASan across all corpus render and broken files, and a page drawing nothing fails `PdfInterpreter.CorpusRenderSweep`.
+
+> **Verified:** 2026-11-07 | §4 | c6106ee144f1b494d13a3a6f89ca81029d537d5d
+> **Review:** `docs/reviews/d01-t02-s4.json`
 
 ## 5. Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)
 

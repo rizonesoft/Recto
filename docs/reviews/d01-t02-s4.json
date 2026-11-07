@@ -1,0 +1,83 @@
+{
+  "ref": "D01 T02 \u00a74",
+  "title": "Content-stream interpreter complete over the render corpus",
+  "implementation_sha": "c6106ee144f1b494d13a3a6f89ca81029d537d5d",
+  "date": "2026-11-07",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s4.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s4.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfDocument.BrokenCorpusSweep under ASan -> [  PASSED  ] 60 tests. [  SKIPPED ] 2 tests (heap meter and allocation failure injection unavailable in this build)",
+    "a page drawing nothing fails PdfInterpreter.CorpusRenderSweep -> mutation const bool records = false; failed it",
+    "Freeze check: decoded bitmaps are std::shared_ptr<const DecodedBitmap> (display_list.h:463,467); PdfInterpreter.FormXObjectCycle pins 32 levels drawn and the 33rd refused with FormDepth -> passed",
+    ".\\build.cmd -> [  PASSED  ] 403 tests. Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s4.md",
+    "verdict": "filed",
+    "candidate": "2c528d23fa05c1cd752ab8807e5dc0e8180cb9d1",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a76",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s4.md",
+    "candidate": "516139bb0a6e8f2d460a4bc13b31f24bf78babc5",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
