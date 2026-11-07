@@ -748,6 +748,8 @@ enum class RefusalReason : uint16_t {
 	ColorSpaceSteps,     // colour spaces visited to resolve one value past the limit
 	// Appended (D01 T02 section 46): Form XObjects.
 	FormDepth, // Form XObjects nested past the depth limit
+	// Appended (D01 T02 section 6): replay.
+	DashSegments, // a dash pattern would cut one stroke past the limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -837,6 +839,8 @@ enum class RefusalReason : uint16_t {
 		return "ColorSpaceSteps";
 	case RefusalReason::FormDepth:
 		return "FormDepth";
+	case RefusalReason::DashSegments:
+		return "DashSegments";
 	}
 	return "UnknownReason";
 }
@@ -965,6 +969,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::ColorSpaceSteps:
 		return "A colour space names more nested spaces than its limit (observed and bound count spaces visited); "
 			   "the spaces past the limit are not used, and the file may be damaged";
+	case RefusalReason::DashSegments:
+		return "A dash pattern would cut one stroke into more pieces than the limit (observed and bound count pieces); "
+			   "the stroke is drawn solid, and the file may be damaged";
 	case RefusalReason::FormDepth:
 		return "Form XObjects are nested deeper than the limit (observed and bound count levels); the forms past it "
 			   "are not drawn, and the file may be damaged";

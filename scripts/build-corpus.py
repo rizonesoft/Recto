@@ -1796,12 +1796,13 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
         if stream_entries.get(b"/Subtype") == b"/Image":
             validate_image_stream(rel_path, num, stream_entries, data[stream_start:end_pos])
             continue
-        # A plain Flate content stream (no predictor parameters, not an image, object or xref stream) is checked as
-        # page content.
+        # A plain Flate content stream (no predictor parameters, not an image, font program, object or xref stream) is
+        # checked as page content.
         if (
             stream_entries.get(b"/Filter") == b"/FlateDecode"
             and b"/DecodeParms" not in stream_entries
-            and stream_entries.get(b"/Subtype") != b"/Image"
+            and stream_entries.get(b"/Subtype") not in (b"/Image", b"/CIDFontType0C")
+            and b"/Length1" not in stream_entries
             and stream_entries.get(b"/Type") not in (b"/ObjStm", b"/XRef")
         ):
             dec = inflate(data[stream_start:end_pos], rel_path)
@@ -5555,6 +5556,74 @@ def validate_font_structure(rel_path: str, data: bytes) -> None:
         raise ValueError(f"{rel_path}: head checksum adjustment does not balance the file")
 
 
+_TYPE0_SYSTEM_INFO = "/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >>"
+_TYPE0_DESCRIPTOR = (
+    "<< /Type /FontDescriptor /FontName /RectoFixture /Flags 4 /FontBBox [-200 -300 1200 1000] /ItalicAngle 0 "
+    "/Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 {key} 8 0 R >>"
+)
+
+
+def build_type0_cid0() -> bytes:
+    """`/CIDFontType0` over the CID-keyed CFF fixture, Identity-H: CIDs 100 to 102 and 500, each its own advance."""
+    rel = "text/type0-cid0.pdf"
+    content = (
+        b"BT /F1 36 Tf 20 130 Td <0064 0065 0066 01F4> Tj ET\n"
+        b"BT /F1 12 Tf 20 90 Td <0064 0065 0066 01F4> Tj ET\n"
+    )
+    pdf_font = make_stream_obj("/Subtype /CIDFontType0C", build_cff_cid(), compress=True)
+    descendant = (
+        f"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /RectoFixture {_TYPE0_SYSTEM_INFO} "
+        "/FontDescriptor 7 0 R /DW 1000 /W [100 [700 800] 102 102 900 500 [600]] >>"
+    )
+    return _type0_with_descriptor(rel, "Identity-H", descendant, pdf_font, "/FontFile3", content)
+
+
+def build_type0_cid2() -> bytes:
+    """`/CIDFontType2` over the TrueType fixture, Identity-H with an identity `/CIDToGIDMap`, as Office writes it."""
+    rel = "text/type0-cid2.pdf"
+    content = (
+        b"BT /F1 36 Tf 20 130 Td <0001 0003 0004 0005> Tj ET\n"
+        b"BT /F1 12 Tf 20 90 Td <0001 0003 0004 0005> Tj ET\n"
+    )
+    font = build_truetype_font(long_loca=False, stripped=False)
+    pdf_font = make_stream_obj(f"/Length1 {len(font)}", font, compress=True)
+    descendant = (
+        f"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /RectoFixture {_TYPE0_SYSTEM_INFO} "
+        "/FontDescriptor 7 0 R /CIDToGIDMap /Identity /DW 1000 /W [1 [700] 3 5 800] >>"
+    )
+    return _type0_with_descriptor(rel, "Identity-H", descendant, pdf_font, "/FontFile2", content)
+
+
+def build_type0_vertical() -> bytes:
+    """A vertical Identity-V line: `/DW2` gives each glyph's default, `/W2` glyph 3 its own advance and position vector."""
+    rel = "text/type0-vertical.pdf"
+    content = b"BT /F1 24 Tf 100 180 Td <0001 0003 0004 0005> Tj ET\n"
+    font = build_truetype_font(long_loca=False, stripped=False)
+    pdf_font = make_stream_obj(f"/Length1 {len(font)}", font, compress=True)
+    descendant = (
+        f"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /RectoFixture {_TYPE0_SYSTEM_INFO} "
+        "/FontDescriptor 7 0 R /CIDToGIDMap /Identity /DW 1000 /DW2 [880 -1000] /W2 [3 [-1500 300 880]] >>"
+    )
+    return _type0_with_descriptor(rel, "Identity-V", descendant, pdf_font, "/FontFile2", content)
+
+
+def _type0_with_descriptor(rel: str, encoding: str, descendant: str, font_stream: bytes, key: str, content: bytes) -> bytes:
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 320 200] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    )
+    pdf.set_obj(4, make_stream_obj("", content, compress=True))
+    pdf.set_obj(5, f"<< /Type /Font /Subtype /Type0 /BaseFont /RectoFixture /Encoding /{encoding} /DescendantFonts [6 0 R] >>")
+    pdf.set_obj(6, descendant)
+    pdf.set_obj(7, _TYPE0_DESCRIPTOR.replace("{key}", key))
+    pdf.set_obj(8, font_stream)
+    return pdf.build(root_obj=1)
+
+
 CORPUS_PURPOSES: dict[str, str] = {
     "images/dct-3c-no-marker.jpg": "Baseline JPEG, 3 components, two flat non-neutral blocks, no JFIF or Adobe marker (/ColorTransform decides)",
     "images/dct-3c-adobe-rgb.jpg": "Baseline JPEG, 3 components, the same blocks, Adobe APP14 transform 0 (stored as RGB)",
@@ -5578,6 +5647,9 @@ CORPUS_PURPOSES: dict[str, str] = {
     "render/encrypted-aes-256.pdf": "PDF 2.0 Standard Security Handler V=5 R=6 256-bit AES-CBC (Algorithm 2.B + /Perms) PDF",
     "text/two-column-links-outline.pdf": "Two-column article layout with hyphenation, /Outlines tree, and /URI + /Dest links",
     "text/scanned.pdf": "Image-only scanned 300 DPI page without /Font resources for OCR pipeline testing",
+    "text/type0-cid0.pdf": "A /Type0 /CIDFontType0 font over the CID-keyed CFF fixture, Identity-H, with /W",
+    "text/type0-cid2.pdf": "A /Type0 /CIDFontType2 font over the TrueType fixture, Identity-H, identity /CIDToGIDMap, with /W",
+    "text/type0-vertical.pdf": "A vertical Identity-V line placed by /DW2 and /W2",
     "convert/tables-and-forms.pdf": "Ruled 4-row, 3-column table with a merged header row, a borderless 3x3 table, and AcroForm /Tx, /Btn, and /Ch fields",
     "convert/sample.docx": "Minimal ECMA-376 WordprocessingML document with two plain paragraphs",
     "convert/sample.xlsx": "Minimal ECMA-376 SpreadsheetML workbook with inline-string and numeric cells",
@@ -5645,6 +5717,9 @@ def expected_corpus_files() -> dict[str, bytes]:
         "render/encrypted-aes-256.pdf": build_encrypted_aes_256(),
         "text/two-column-links-outline.pdf": build_two_column_links_outline(),
         "text/scanned.pdf": build_scanned(),
+        "text/type0-cid0.pdf": build_type0_cid0(),
+        "text/type0-cid2.pdf": build_type0_cid2(),
+        "text/type0-vertical.pdf": build_type0_vertical(),
         "convert/tables-and-forms.pdf": build_tables_and_forms(),
         "convert/sample.docx": build_sample_docx(),
         "convert/sample.xlsx": build_sample_xlsx(),

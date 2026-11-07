@@ -79,3 +79,6 @@ Every file under `tests/corpus/` (excluding `README.md` and `PROVENANCE.md`) is 
 | seeds/seed-xref-objstm.pdf | 750dffb605b178ab800dbe13939c409beec2a35a4b28a5d3b9974a4b7357c8e1 | CC0-1.0 | scripts/build-corpus.py | Compact (< 4 KB) libFuzzer seed for /XRef stream and /ObjStm object streams |
 | text/scanned.pdf | 49f9e240626d94c622cd2cf1781a21052521418c6d649cafabfb4efa55bf6257 | CC0-1.0 | scripts/build-corpus.py | Image-only scanned 300 DPI page without /Font resources for OCR pipeline testing |
 | text/two-column-links-outline.pdf | 3b4ff80ab928b340ca074e44fb038a9a1113dd7490d7e557b2ceb1c02548c297 | CC0-1.0 | scripts/build-corpus.py | Two-column article layout with hyphenation, /Outlines tree, and /URI + /Dest links |
+| text/type0-cid0.pdf | 65cefb4a6ff8c3299d5d322ed2f743e5bfcf409a537504fc3cdc469ad1d6771c | CC0-1.0 | scripts/build-corpus.py | A /Type0 /CIDFontType0 font over the CID-keyed CFF fixture, Identity-H, with /W |
+| text/type0-cid2.pdf | 03e70d19903962aa3b7e5cc1eb9ba84b22faaeaadfa3226c56fe5003709550d1 | CC0-1.0 | scripts/build-corpus.py | A /Type0 /CIDFontType2 font over the TrueType fixture, Identity-H, identity /CIDToGIDMap, with /W |
+| text/type0-vertical.pdf | b2117b7e6444c77671cb2c780db0681e81530661548b14a170092e24313d9889 | CC0-1.0 | scripts/build-corpus.py | A vertical Identity-V line placed by /DW2 and /W2 |
