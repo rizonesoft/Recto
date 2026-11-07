@@ -1414,6 +1414,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 
 ## 45. Inline images decoded on the interpreter's verified framing
 
+> **Started:** 2026-11-07T03:57Z
+
 Filed 2026-10-28 from `§4`'s split (validation before the build): inline images (`BI ... ID ... EI`) decoded through `§44`'s image path on the framing `§3` already verifies (ISO 32000-1 section 8.9.7).
 
 **Corrected 2026-11-07:** validation before the build. `§44`'s path works from an image object, so this section gives it a stream built from the inline dictionary: abbreviated keys, colour space names and filter names expanded, `/I` read as `/Interpolate` in a dictionary (and as `/Indexed` in a colour space array), and masks and `/SMask` absent, since Table 93 has none. Defaults this section takes: a `JBIG2Decode` or `JPXDecode` inline image, which 8.9.7 forbids, is framed and not drawn, recorded; an inline image whose operator is skipped by damage before it is framed and not drawn. An image inside a form drawn many times is decoded once: its source is kept by its data's address in the form's content, which the page keeps for its life. `§3`'s page refusals for an image whose end cannot be found stay exactly as they are.
