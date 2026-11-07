@@ -85,6 +85,7 @@ enum class CancelSite : uint8_t {
 	InterpreterOperator,
 	ImageConvert,
 	Inflate,
+	FilterLoop,
 	CMapEntry,
 	WidthEntry,
 	CffParse,

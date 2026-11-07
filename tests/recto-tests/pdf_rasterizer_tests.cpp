@@ -1922,6 +1922,7 @@ TEST(PdfRasterizer, Type0Text)
 
 using detail::CancelSite;
 using recto::test::expect_cancelled_at;
+using recto::test::expect_cancelled_while_running;
 
 static_assert(std::is_same_v<recto::core::CancelToken, recto::pdf::CancelToken>);
 static_assert(std::is_same_v<recto::core::CancelSource, recto::pdf::CancelSource>);
@@ -2192,6 +2193,74 @@ TEST(PdfRasterizer, EndDrawBoundedAfterCancel)
 	const double ms = expect_cancelled_at(CancelSite::RasterCommand, 700u, [&](const CancelToken& token) { return bench.run(list, token); });
 	std::printf("[          ] a cancel with EndDraw took %.3f ms\n", ms);
 	bench.expect_untouched();
+}
+
+TEST(PdfRasterizer, CancelWhileRunning)
+{
+	// The cancel lands in the work, from another thread, so each time holds the wait for the next poll.
+	const auto font = truetype("truetype-full-short-loca.ttf");
+	ASSERT_NE(font, nullptr);
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		std::vector<PositionedGlyph> run;
+		run.reserve(400'000u);
+		for (size_t i = 0; i < 400'000u; ++i) {
+			PositionedGlyph placed;
+			placed.glyph_index = 1u;
+			placed.origin_pt = PdfPoint{static_cast<double>(i % 500u), static_cast<double>((i / 500u) % 500u)};
+			placed.advance_pt = 1.0;
+			placed.ink_bounds_pt = PdfRect{0.0, 0.0, 8.0, 8.0};
+			run.push_back(placed);
+		}
+		ASSERT_TRUE(builder.draw_glyph_run(run, 8.0, TextRenderMode::Fill, kBlack, kBlack, PdfMatrix::identity(), std::nullopt, std::shared_ptr<const void>(font)).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_while_running(CancelSite::RasterGlyph, "a 400,000-glyph run", [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_next_exact(list);
+	}
+	{
+		std::vector<uint8_t> pixels(size_t{8192u} * 8192u * 4u, 90u);
+		for (size_t i = 3u; i < pixels.size(); i += 4u) {
+			pixels[i] = 255u;
+		}
+		const auto image = bitmap_of(8192u, 8192u, std::move(pixels));
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{256.0, 0.0, 0.0, 256.0, 0.0, 0.0}).has_value());
+		ASSERT_TRUE(builder.draw_image(image, PdfMatrix::identity(), false).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_while_running(CancelSite::ImageReduce, "an 8,192 by 8,192 image's reduction", [&](const CancelToken& token) { return bench.run(list, token); });
+	}
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		for (int i = 0; i < 50'000; ++i) {
+			fill_rect(builder, 0.0, 0.0, 512.0, 512.0, ColorRgba{0.5f, 0.5f, 0.5f});
+		}
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_while_running(CancelSite::RasterCommand, "50,000 full-tile fills, a batch at a time", [&](const CancelToken& token) { return bench.run(list, token); });
+	}
+	{
+		PathBuilder curves;
+		curves.move_to(0.0, 0.0);
+		for (int i = 0; i < 400'000; ++i) {
+			const double x = (i % 500) + 0.5;
+			const double y = ((i / 500) % 500) + 0.5;
+			curves.cubic_bezier_to(PdfPoint{x + 1.0, y}, PdfPoint{x, y + 1.0}, PdfPoint{x + 1.0, y + 1.0});
+		}
+		curves.close_subpath();
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		const auto id = builder.add_path(curves);
+		ASSERT_TRUE(id.has_value());
+		ASSERT_TRUE(builder.draw_path(*id, kBlack, kBlack, false, true).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_while_running(CancelSite::GeometryVerb, "building one path of 400,000 curves", [&](const CancelToken& token) { return bench.run(list, token); });
+		// What cannot be interrupted, for the record: the whole of that one fill, geometry and `FillGeometry` both.
+		const auto started = std::chrono::steady_clock::now();
+		(void)render(list, bench.spec, *bench.worker_owned);
+		std::printf("[          ] that path, uncancelled: %.3f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+	}
 }
 
 } // namespace

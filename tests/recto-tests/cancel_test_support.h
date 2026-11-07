@@ -6,8 +6,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <thread>
 
 namespace recto::test {
 
@@ -60,6 +63,58 @@ double expect_cancelled_at(recto::pdf::detail::CancelSite site, uint32_t nth, Wo
 	if (at.hits >= nth) {
 		EXPECT_LT(ms, kCancelLatencyLimitMs) << "a cancel took " << ms << " ms to return";
 	}
+	return ms;
+}
+
+// Runs `work(token)` and cancels from another thread once it has reached `site` and a millisecond more, so the cancel
+// lands in the work and the time includes the wait for the next poll, which `expect_cancelled_at` cannot see. Returns the
+// latency, and the work must not finish first.
+template <typename Work>
+double expect_cancelled_while_running(recto::pdf::detail::CancelSite site, const char* what, Work&& work)
+{
+	auto source = recto::pdf::CancelSource::create();
+	EXPECT_TRUE(source.has_value());
+	if (!source.has_value()) {
+		return 0.0;
+	}
+	struct State {
+		recto::pdf::detail::CancelSite site;
+		std::atomic<bool> started{false};
+	} state{site};
+	const recto::pdf::detail::ScopedCancelPollHookForTesting hook(
+		[](recto::pdf::detail::CancelSite at, void* context) noexcept {
+			auto& s = *static_cast<State*>(context);
+			if (at == s.site) {
+				s.started.store(true);
+			}
+		},
+		&state);
+	std::chrono::steady_clock::time_point cancelled_at{};
+	std::thread canceller([&] {
+		while (!state.started.load()) {
+			std::this_thread::yield();
+		}
+		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+		while (std::chrono::steady_clock::now() < until) {
+		}
+		cancelled_at = std::chrono::steady_clock::now();
+		source->cancel();
+	});
+	auto result = work(source->token());
+	const auto returned = std::chrono::steady_clock::now();
+	const bool started = state.started.load();
+	if (!started) {
+		state.started.store(true); // let the canceller finish
+	}
+	canceller.join();
+	EXPECT_TRUE(started) << what << ": the poll this test targets was never reached";
+	EXPECT_FALSE(result.has_value()) << what << ": the work finished before the cancel; the fixture is too small";
+	if (!result.has_value()) {
+		EXPECT_EQ(result.error().code, recto::pdf::ErrorCode::Cancelled) << what;
+	}
+	const double ms = std::chrono::duration<double, std::milli>(returned - cancelled_at).count();
+	std::printf("[          ] %s: cancelled while running, returned in %.3f ms\n", what, ms);
+	EXPECT_LT(ms, kCancelLatencyLimitMs) << what;
 	return ms;
 }
 

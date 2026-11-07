@@ -187,6 +187,9 @@ void ensure_bounded_capacity(
 		s1 %= kModAdler;
 		s2 %= kModAdler;
 		idx += chunk;
+		if ((idx & 0xFFFFu) < chunk && detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+			return 0u; // the caller polls before it reads a mismatch as damage
+		}
 	}
 	return (s2 << 16u) | s1;
 }
@@ -896,6 +899,9 @@ PdfResult<std::vector<uint8_t>> apply_predictor(
 			const size_t total_samples = columns * colors;
 
 			for (size_t r = 0; r < num_rows; ++r) {
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
 				uint8_t* row = out.data() + r * row_bytes;
 				if (params.bits_per_component == 8) {
 					for (size_t s = colors; s < total_samples; ++s) {
@@ -960,6 +966,9 @@ PdfResult<std::vector<uint8_t>> apply_predictor(
 
 			std::vector<uint8_t> out(num_rows * row_bytes, 0);
 			for (size_t r = 0; r < num_rows; ++r) {
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
 				const uint8_t* src_row = input.data() + r * encoded_row_stride;
 				const uint8_t filter_tag = src_row[0];
 				const uint8_t* raw = src_row + 1;
@@ -1058,7 +1067,11 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				(static_cast<uint32_t>(after_deflate[1]) << 16u) |
 				(static_cast<uint32_t>(after_deflate[2]) << 8u) |
 				static_cast<uint32_t>(after_deflate[3]);
-			if (expected_adler != compute_adler32(body)) {
+			const uint32_t computed_adler = compute_adler32(body);
+			if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+				return detail::cancelled_error();
+			}
+			if (expected_adler != computed_adler) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
@@ -1170,7 +1183,11 @@ PdfResult<std::vector<uint8_t>> inflate_zlib_strict(std::span<const uint8_t> inp
 		const std::span<const uint8_t> trailer = input.subspan(2u + consumed);
 		const uint32_t adler = (static_cast<uint32_t>(trailer[0]) << 24u) | (static_cast<uint32_t>(trailer[1]) << 16u) |
 			(static_cast<uint32_t>(trailer[2]) << 8u) | static_cast<uint32_t>(trailer[3]);
-		if (adler != compute_adler32(body)) {
+		const uint32_t computed_adler = compute_adler32(body);
+		if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+			return detail::cancelled_error();
+		}
+		if (adler != computed_adler) {
 			return make_pdf_error(ErrorCode::DamagedFormat, "zlib trailer is not the Adler-32 of the inflated data");
 		}
 		return body;
@@ -1268,7 +1285,14 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 
 		bool saw_eod = false;
 		uint32_t code = 0;
+		size_t since_poll = 0u;
 		while (read_code_msb(code_bits, code)) {
+			if (++since_poll >= 65536u) {
+				since_poll = 0u;
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
+			}
 			if (code == 256u) {
 				reset_table();
 				continue;
@@ -1367,7 +1391,14 @@ PdfResult<std::vector<uint8_t>> decode_ascii_hex(
 		int high_nibble = -1;
 		bool saw_eod = false;
 
+		size_t since_poll = 0u;
 		for (size_t i = 0; i < input.size(); ++i) {
+			if (++since_poll >= 65536u) {
+				since_poll = 0u;
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
+			}
 			const uint8_t b = input[i];
 			if (is_pdf_whitespace(b)) {
 				continue;
@@ -1445,7 +1476,14 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 		size_t tuple_len = 0;
 		bool saw_eod = false;
 
+		size_t since_poll = 0u;
 		for (size_t i = 0; i < input.size(); ++i) {
+			if (++since_poll >= 65536u) {
+				since_poll = 0u;
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
+			}
 			const uint8_t b = input[i];
 			if (is_pdf_whitespace(b)) {
 				continue;
@@ -1586,7 +1624,14 @@ PdfResult<std::vector<uint8_t>> decode_run_length(
 
 		size_t pos = 0;
 		bool saw_eod = false;
+		size_t since_poll = 0u;
 		while (pos < input.size()) {
+			if (++since_poll >= 65536u) {
+				since_poll = 0u;
+				if (detail::poll_cancel(detail::CancelSite::FilterLoop)) {
+					return detail::cancelled_error();
+				}
+			}
 			const uint8_t length_byte = input[pos++];
 			if (length_byte == 128u) {
 				saw_eod = true;

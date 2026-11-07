@@ -8520,5 +8520,138 @@ TEST(PdfFilters, CancelDuringDecode)
 	});
 }
 
+// A flat 8-bit grayscale baseline JPEG of any size: one 1-bit Huffman code each for DC 0 and end-of-block, so every block is
+// two zero bits, and the decode's cost is its IDCT and its rows.
+[[nodiscard]] std::vector<uint8_t> flat_jpeg(uint32_t width, uint32_t height)
+{
+	std::vector<uint8_t> out = {0xFFu, 0xD8u};
+	const auto segment = [&](uint8_t marker, std::initializer_list<uint8_t> body) {
+		out.push_back(0xFFu);
+		out.push_back(marker);
+		append_u16_be(out, static_cast<uint16_t>(body.size() + 2u));
+		out.insert(out.end(), body);
+	};
+	std::vector<uint8_t> quant(65u, 1u);
+	quant[0] = 0u;
+	out.insert(out.end(), {0xFFu, 0xDBu, 0x00u, 0x43u});
+	out.insert(out.end(), quant.begin(), quant.end());
+	segment(0xC0u, {8u, static_cast<uint8_t>(height >> 8u), static_cast<uint8_t>(height), static_cast<uint8_t>(width >> 8u), static_cast<uint8_t>(width), 1u, 1u, 0x11u, 0u});
+	segment(0xC4u, {0x00u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u});
+	segment(0xC4u, {0x10u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u});
+	segment(0xDAu, {1u, 1u, 0x00u, 0u, 63u, 0u});
+	const size_t blocks = size_t{(width + 7u) / 8u} * ((height + 7u) / 8u);
+	out.insert(out.end(), blocks / 4u + 1u, 0u);
+	out.push_back(0xFFu);
+	out.push_back(0xD9u);
+	return out;
+}
+
+// The remaining input-sized loops, and a cancel that lands while each is running (D01 T02 section 7).
+TEST(PdfFilters, CancelWhileRunning)
+{
+	using detail::CancelSite;
+	using detail::ScopedCancelScope;
+	const auto stream_with = [](std::string_view filter, std::vector<uint8_t> data) {
+		PdfDict dictionary;
+		dictionary.set("Filter", PdfValue(PdfName(filter)));
+		return PdfStream{std::move(dictionary), std::move(data)};
+	};
+	constexpr size_t kLimit = size_t{256} << 20u;
+	const auto decodes = [&](const PdfStream& stream) {
+		return [&, stream_ptr = &stream](const CancelToken& token) {
+			const ScopedCancelScope scope(token);
+			return decode_stream(*stream_ptr, kLimit);
+		};
+	};
+	// A cancel at the poll, on a short stream of each: a poll is there, and the same bytes decode whole after it.
+	{
+		const std::vector<uint8_t> hex(64u << 20u, 'A');
+		const PdfStream stream = stream_with("ASCIIHexDecode", hex);
+		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "ASCIIHexDecode", decodes(stream));
+	}
+	{
+		const std::vector<uint8_t> ascii85(32u << 20u, 'z');
+		const PdfStream stream = stream_with("ASCII85Decode", ascii85);
+		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "ASCII85Decode", decodes(stream));
+	}
+	{
+		std::vector<uint8_t> runs;
+		runs.reserve(64u << 20u);
+		for (size_t i = 0; i < (32u << 20u); ++i) {
+			runs.push_back(0u);
+			runs.push_back('x');
+		}
+		const PdfStream stream = stream_with("RunLengthDecode", std::move(runs));
+		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "RunLengthDecode", decodes(stream));
+	}
+	{
+		// LZW: a clear code, then literals, 9 bits each, clearing before the table grows.
+		std::vector<uint8_t> lzw;
+		uint32_t accumulator = 0u;
+		uint32_t bits = 0u;
+		const auto code = [&](uint32_t value) {
+			accumulator = (accumulator << 9u) | value;
+			bits += 9u;
+			while (bits >= 8u) {
+				lzw.push_back(static_cast<uint8_t>((accumulator >> (bits - 8u)) & 0xFFu));
+				bits -= 8u;
+			}
+		};
+		for (int block = 0; block < 200'000; ++block) {
+			code(256u);
+			for (int i = 0; i < 200; ++i) {
+				code('x');
+			}
+		}
+		code(257u);
+		if (bits != 0u) {
+			lzw.push_back(static_cast<uint8_t>((accumulator << (8u - bits)) & 0xFFu));
+		}
+		const PdfStream stream = stream_with("LZWDecode", std::move(lzw));
+		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "LZWDecode", decodes(stream));
+	}
+	{
+		// Flate with random bytes, the costly case: many literal codes.
+		std::vector<uint8_t> noise(64u << 20u);
+		uint32_t state = 12345u;
+		for (uint8_t& byte : noise) {
+			state = state * 1664525u + 1013904223u;
+			byte = static_cast<uint8_t>(state >> 24u);
+		}
+		auto packed = flate_compress(noise);
+		ASSERT_TRUE(packed.has_value());
+		const PdfStream stream = stream_with("FlateDecode", *packed);
+		(void)recto::test::expect_cancelled_while_running(CancelSite::Inflate, "FlateDecode", decodes(stream));
+		// The checksum at the end of it, reached by cancelling there: a cancel, not a mismatch.
+		(void)recto::test::expect_cancelled_at(CancelSite::FilterLoop, 3u, decodes(stream));
+		EXPECT_TRUE(decode_stream(stream, kLimit).has_value()) << "the same stream, uncancelled";
+	}
+	{
+		// PNG predictor rows.
+		std::vector<uint8_t> rows(size_t{1025u} * 4096u, 0u);
+		auto packed = flate_compress(rows);
+		ASSERT_TRUE(packed.has_value());
+		PdfDict parms;
+		parms.set("Predictor", PdfValue(int64_t{12}));
+		parms.set("Columns", PdfValue(int64_t{1024}));
+		PdfDict dictionary;
+		dictionary.set("Filter", PdfValue(PdfName("FlateDecode")));
+		dictionary.set("DecodeParms", PdfValue(std::move(parms)));
+		const PdfStream stream{std::move(dictionary), std::move(*packed)};
+		(void)recto::test::expect_cancelled_at(CancelSite::FilterLoop, 3u, decodes(stream));
+	}
+	// JPEG: strips, each a WIC call, a cancel waiting for at most one.
+	{
+		const std::vector<uint8_t> jpeg = flat_jpeg(4096u, 4096u);
+		const auto whole = decode_dct_image(jpeg);
+		ASSERT_TRUE(whole.has_value()) << whole.error().message.view();
+		const double ms =recto::test::expect_cancelled_while_running(CancelSite::DctStrip, "a baseline 4,096 by 4,096 JPEG", [&](const CancelToken& token) {
+			const ScopedCancelScope scope(token);
+			return decode_dct_image(jpeg);
+		});
+		(void)ms;
+	}
+}
+
 } // namespace
 } // namespace recto::pdf
