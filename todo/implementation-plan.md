@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 106 | Checklist items: 686
+Sections: 106 | Checklist items: 695
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -111,7 +111,7 @@ Sections: 106 | Checklist items: 686
 | [x]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 9     |
 | [x]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 4     |
 | [x]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 3     |
-| [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
+| [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 20    |
 | [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 10    |
 | [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 7     |
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
@@ -139,7 +139,7 @@ Sections: 106 | Checklist items: 686
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host              | 8     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host              | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host              | 7     |
-| [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host              | 8     |
+| [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host              | 9     |
 | [x]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host              | 6     |
 | [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host              | 6     |
 | [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host              | 6     |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 97/855 verified sections, 37 ready to run now.
 
-Checklist: 609/6300 items completed (includes Commit items).
+Checklist: 609/6309 items completed (includes Commit items).

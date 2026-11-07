@@ -318,6 +318,7 @@ Common rendering failures are a nearest-neighbour image shrink that makes every 
 - [ ] Add Type 3 text under `2 Tr`, Lab with a non-default `/WhitePoint`, `/DefaultRGB`, Indexed `hival` and 16-bit images. Done when: each matches the reference within tolerance.
 - [ ] Add A4 at 72 dpi asserting a `596 x 842` raster (ceiling, not floor). Done when: the raster size matches.
 - [ ] Add non-embedded CJK CID fonts (Adobe-GB1, Adobe-CNS1, Adobe-Japan1, Adobe-Korea1) and non-embedded ArialMT with Cyrillic, asserting system-font substitution draws every glyph. Done when: no `.notdef` box appears in the render.
+- [ ] Add a CJK `/CIDFontType0` file and an Office `/CIDFontType2` file from real producers, each redistributable or synthesised from redistributable fonts through the producer, with reviewed goldens at 100% and 200% (`D01 T02 §6` proved these font kinds on files `scripts/build-corpus.py` writes). Done when: both fixtures are in the fidelity gate with every glyph present and at its advance. -> XREF: D01 T02 §6
 - [ ] Commit: `test(quality): add user-reported render fidelity classes to the golden harness`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.RenderFidelity` passes on x64, and forcing nearest-neighbour minification makes the scan case fail.
