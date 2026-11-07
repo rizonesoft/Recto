@@ -165,7 +165,7 @@ Sections: 106 | Checklist items: 679
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1315
+Sections: 148 | Checklist items: 1316
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -311,7 +311,7 @@ Sections: 148 | Checklist items: 1315
 | [ ]    | D02 T01 §22 | Cold-launch path: Home interactive within the 400 ms budget                              | windows-host, display-session | 8     |
 | [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 4     |
 | [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 9     |
-| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 13    |
+| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 14    |
 | [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks           | windows-host, display-session | 14    |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 93/855 verified sections, 36 ready to run now.
 
-Checklist: 592/6291 items completed (includes Commit items).
+Checklist: 592/6292 items completed (includes Commit items).
