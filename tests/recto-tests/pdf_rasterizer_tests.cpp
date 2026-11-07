@@ -6,6 +6,9 @@
 #include "../../src/pdf/interpreter.h"
 #include "../../src/pdf/rasterizer.h"
 
+#include "../../src/core/cancel_token.h"
+
+#include "cancel_test_support.h"
 #include "test_support.h"
 
 #include <gtest/gtest.h>
@@ -22,6 +25,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -1910,6 +1914,284 @@ TEST(PdfRasterizer, Type0Text)
 		expect_golden(std::string(name) + "-100", render_page(pages[0], 1.0));
 		expect_golden(std::string(name) + "-200", image);
 	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Cancellation (D01 T02 section 7).
+// ---------------------------------------------------------------------------------------------------------------------
+
+using detail::CancelSite;
+using recto::test::expect_cancelled_at;
+
+static_assert(std::is_same_v<recto::core::CancelToken, recto::pdf::CancelToken>);
+static_assert(std::is_same_v<recto::core::CancelSource, recto::pdf::CancelSource>);
+
+// A tile with its buffer, and the worker's next tile proven against a fresh worker.
+struct CancelBench {
+	std::unique_ptr<Rasterizer> worker_owned;
+	std::vector<uint8_t> buffer;
+	TileSpec spec;
+
+	explicit CancelBench(uint32_t width = 512u, uint32_t height = 512u)
+	{
+		auto made = Rasterizer::create();
+		EXPECT_TRUE(made.has_value());
+		worker_owned = std::move(*made);
+		spec.tile_width_px = width;
+		spec.tile_height_px = height;
+		buffer.assign(size_t{width} * height * 4u, 0x5Au);
+	}
+
+	PdfResult<void> run(const std::shared_ptr<const DisplayList>& list, const CancelToken& token)
+	{
+		return worker_owned->render_tile(list, spec, buffer, size_t{spec.tile_width_px} * 4u, token);
+	}
+
+	void expect_untouched() const
+	{
+		EXPECT_TRUE(std::all_of(buffer.begin(), buffer.end(), [](uint8_t b) { return b == 0x5Au; })) << "a cancelled tile wrote its buffer";
+	}
+
+	// The next tile on this worker is what a new worker draws.
+	void expect_next_exact(const std::shared_ptr<const DisplayList>& list)
+	{
+		const Image next = render(list, spec, *worker_owned);
+		auto other = Rasterizer::create();
+		ASSERT_TRUE(other.has_value());
+		const Image fresh = render(list, spec, **other);
+		recto::test::expect_rgba_equal(next.bytes, fresh.bytes, next.width, next.height);
+	}
+};
+
+TEST(PdfRasterizer, PreCancelledTile)
+{
+	auto source = CancelSource::create();
+	ASSERT_TRUE(source.has_value());
+	const CancelToken never;
+	EXPECT_FALSE(never.is_cancelled());
+	const CancelToken token = source->token();
+	const CancelToken copy = token; // O(1), one flag
+	EXPECT_FALSE(copy.is_cancelled());
+	source->cancel();
+	EXPECT_TRUE(copy.is_cancelled());
+	CancelBench bench;
+	DisplayListBuilder builder(kPage100);
+	const auto list = finished(builder);
+	constexpr int kRuns = 1000;
+	const auto started = std::chrono::steady_clock::now();
+	for (int i = 0; i < kRuns; ++i) {
+		const auto done = bench.run(list, token);
+		ASSERT_FALSE(done.has_value());
+		ASSERT_EQ(done.error().code, ErrorCode::Cancelled);
+	}
+	const double each_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / kRuns;
+	EXPECT_LT(each_us, 10.0);
+	EXPECT_EQ(bench.worker_owned->stats().target_creations, 0u) << "Direct2D was touched";
+	bench.expect_untouched();
+}
+
+TEST(PdfRasterizer, MidReplayCancelUnder10Ms)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+	for (int i = 0; i < 50'000; ++i) {
+		fill_rect(builder, i % 500, (i / 500) % 500, 2.0, 2.0, kBlack);
+	}
+	const auto list = finished(builder);
+	CancelBench bench;
+	auto source = CancelSource::create();
+	ASSERT_TRUE(source.has_value());
+	// The worker stops at the poll after command 256 until another thread has cancelled, so the loop is proven active and
+	// the time from `cancel()` to the return has no scheduling in it.
+	struct Shared {
+		std::atomic<bool> reached{false};
+		std::atomic<bool> cancelled{false};
+		uint32_t polls{0u};
+	} shared;
+	const detail::ScopedCancelPollHookForTesting hook(
+		[](CancelSite site, void* context) noexcept {
+			auto& state = *static_cast<Shared*>(context);
+			if (site == CancelSite::RasterCommand && ++state.polls == 4u) { // 64 commands a poll: command 256
+				state.reached.store(true);
+				while (!state.cancelled.load()) {
+					std::this_thread::yield();
+				}
+			}
+		},
+		&shared);
+	std::chrono::steady_clock::time_point cancelled_at;
+	std::thread canceller([&] {
+		while (!shared.reached.load()) {
+			std::this_thread::yield();
+		}
+		cancelled_at = std::chrono::steady_clock::now();
+		source->cancel();
+		shared.cancelled.store(true);
+	});
+	const auto done = bench.run(list, source->token());
+	const auto returned = std::chrono::steady_clock::now();
+	canceller.join();
+	ASSERT_FALSE(done.has_value());
+	EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
+	EXPECT_EQ(shared.polls, 4u) << "no later command was polled";
+	const double latency_ms = std::chrono::duration<double, std::milli>(returned - cancelled_at).count();
+	EXPECT_LT(latency_ms, 10.0);
+	bench.expect_untouched();
+}
+
+TEST(PdfRasterizer, CancelInsideOneCommand)
+{
+	// One command, long by itself: every poll below is inside it.
+	const auto font = truetype("truetype-full-short-loca.ttf");
+	ASSERT_NE(font, nullptr);
+	{
+		SCOPED_TRACE("a 100,000-glyph run");
+		const std::vector<uint16_t> glyphs(100'000u, uint16_t{1});
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		std::vector<PositionedGlyph> run;
+		run.reserve(glyphs.size());
+		for (size_t i = 0; i < glyphs.size(); ++i) {
+			PositionedGlyph placed;
+			placed.glyph_index = 1u;
+			placed.origin_pt = PdfPoint{static_cast<double>(i % 500u), static_cast<double>((i / 500u) % 500u)};
+			placed.advance_pt = 1.0;
+			placed.ink_bounds_pt = PdfRect{0.0, 0.0, 8.0, 8.0};
+			run.push_back(placed);
+		}
+		ASSERT_TRUE(builder.draw_glyph_run(run, 8.0, TextRenderMode::Fill, kBlack, kBlack, PdfMatrix::identity(), std::nullopt, std::shared_ptr<const void>(font)).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_at(CancelSite::RasterGlyph, 3u, [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_untouched();
+		EXPECT_LT(bench.worker_owned->stats().draws_replayed, 400u) << "the run went on past its poll";
+		bench.expect_next_exact(list);
+	}
+	{
+		SCOPED_TRACE("a 4,096 by 4,096 image's reduction");
+		std::vector<uint8_t> pixels(size_t{4096u} * 4096u * 4u, 90u);
+		for (size_t i = 3u; i < pixels.size(); i += 4u) {
+			pixels[i] = 255u;
+		}
+		const auto image = bitmap_of(4096u, 4096u, std::move(pixels));
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{256.0, 0.0, 0.0, 256.0, 0.0, 0.0}).has_value());
+		ASSERT_TRUE(builder.draw_image(image, PdfMatrix::identity(), false).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_at(CancelSite::ImageReduce, 20u, [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_untouched();
+		EXPECT_EQ(bench.worker_owned->stats().image_cache_bytes, 0u) << "a partial reduction was cached";
+		// Whole afterwards, so nothing partial was kept.
+		const Image next = render(list, bench.spec, *bench.worker_owned);
+		EXPECT_EQ(next.at(100u, 400u).g, 90);
+		EXPECT_EQ(next.at(250u, 300u).g, 90);
+		bench.expect_next_exact(list);
+	}
+	{
+		SCOPED_TRACE("a dash cut at its ceiling");
+		DisplayListBuilder builder(kPage100);
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}).has_value());
+		const std::array<float, 2> dash{0.001f, 0.001f};
+		ASSERT_TRUE(builder.set_stroke_style(0.0f, LineCap::Butt, LineJoin::Miter, 10.0f, dash).has_value());
+		stroke_line(builder, {PdfPoint{0.0, 10.0}, PdfPoint{10000.0, 10.0}});
+		const auto list = finished(builder);
+		CancelBench bench(100u, 100u);
+		(void)expect_cancelled_at(CancelSite::DashPiece, 3u, [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_untouched();
+		bench.expect_next_exact(list);
+	}
+	const auto curves = [] {
+		PathBuilder path;
+		path.move_to(0.0, 0.0);
+		for (int i = 0; i < 200'000; ++i) {
+			const double x = (i % 500) + 0.5;
+			const double y = ((i / 500) % 500) + 0.5;
+			path.cubic_bezier_to(PdfPoint{x + 1.0, y}, PdfPoint{x, y + 1.0}, PdfPoint{x + 1.0, y + 1.0});
+		}
+		path.close_subpath();
+		return path;
+	}();
+	{
+		SCOPED_TRACE("one filled path of 200,000 curves");
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		const auto id = builder.add_path(curves);
+		ASSERT_TRUE(id.has_value());
+		ASSERT_TRUE(builder.draw_path(*id, kBlack, kBlack, false, true).has_value());
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_at(CancelSite::GeometryVerb, 3u, [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_untouched();
+	}
+	{
+		SCOPED_TRACE("a nonrectangular clip of the same");
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+		const auto id = builder.add_path(curves);
+		ASSERT_TRUE(id.has_value());
+		ASSERT_TRUE(builder.push_clip_path(*id).has_value());
+		fill_rect(builder, 0.0, 0.0, 512.0, 512.0, kBlack);
+		const auto list = finished(builder);
+		CancelBench bench;
+		(void)expect_cancelled_at(CancelSite::GeometryVerb, 3u, [&](const CancelToken& token) { return bench.run(list, token); });
+		bench.expect_untouched();
+		DisplayListBuilder plain(PdfRect{0.0, 0.0, 512.0, 512.0});
+		fill_rect(plain, 10.0, 10.0, 100.0, 100.0, kBlack);
+		bench.expect_next_exact(finished(plain));
+	}
+}
+
+TEST(PdfRasterizer, RenderTargetReusableAfterCancel)
+{
+	// A cancel with an arbitrary clip and a rectangular one pushed: both unwound, the same target ready.
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+	PathBuilder triangle;
+	triangle.move_to(0.0, 0.0);
+	triangle.line_to(500.0, 0.0);
+	triangle.line_to(0.0, 500.0);
+	triangle.close_subpath();
+	const auto id = builder.add_path(triangle);
+	ASSERT_TRUE(id.has_value());
+	ASSERT_TRUE(builder.push_clip_path(*id).has_value());
+	PathBuilder box;
+	box.rect(5.0, 5.0, 400.0, 400.0);
+	const auto box_id = builder.add_path(box);
+	ASSERT_TRUE(box_id.has_value());
+	ASSERT_TRUE(builder.push_clip_path(*box_id).has_value());
+	for (int i = 0; i < 300; ++i) {
+		fill_rect(builder, i, i, 3.0, 3.0, kBlack);
+	}
+	const auto list = finished(builder);
+	CancelBench bench;
+	(void)expect_cancelled_at(CancelSite::RasterCommand, 2u, [&](const CancelToken& token) { return bench.run(list, token); });
+	bench.expect_untouched();
+	const uint64_t targets = bench.worker_owned->stats().target_creations;
+	bench.expect_next_exact(list);
+	EXPECT_EQ(bench.worker_owned->stats().target_creations, targets) << "the cancel lost the target";
+}
+
+TEST(PdfRasterizer, CancelAfterLastPoll)
+{
+	DisplayListBuilder builder(kPage100);
+	fill_rect(builder, 10.0, 10.0, 50.0, 50.0, kBlack);
+	const auto list = finished(builder);
+	CancelBench bench(100u, 100u);
+	(void)expect_cancelled_at(CancelSite::RasterFinish, 1u, [&](const CancelToken& token) { return bench.run(list, token); });
+	bench.expect_untouched();
+	bench.expect_next_exact(list);
+}
+
+TEST(PdfRasterizer, EndDrawBoundedAfterCancel)
+{
+	// 50,000 fills of the whole tile, the heaviest cheap command: `EndDraw` is part of a cancel's time, and the software
+	// target has drawn as it went, so it finds little left to do.
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
+	for (int i = 0; i < 50'000; ++i) {
+		fill_rect(builder, 0.0, 0.0, 512.0, 512.0, ColorRgba{0.5f, 0.5f, 0.5f});
+	}
+	const auto list = finished(builder);
+	CancelBench bench;
+	// Deep in the list, 44,800 commands in, where anything not handed over would all be waiting for `EndDraw`.
+	const double ms = expect_cancelled_at(CancelSite::RasterCommand, 700u, [&](const CancelToken& token) { return bench.run(list, token); });
+	std::printf("[          ] a cancel with EndDraw took %.3f ms\n", ms);
+	bench.expect_untouched();
 }
 
 } // namespace

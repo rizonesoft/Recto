@@ -77,6 +77,7 @@
     <ClInclude Include="font_encoding.h" />
     <ClInclude Include="glyph_names.inc" />
     <ClInclude Include="standard14_metrics.inc" />
+    <ClInclude Include="cancel_token.h" />
     <ClInclude Include="interpreter.h" />
     <ClInclude Include="rasterizer.h" />
     <ClInclude Include="serialize.h" />

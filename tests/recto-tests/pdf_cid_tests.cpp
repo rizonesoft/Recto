@@ -7,10 +7,12 @@
 #include "font_cid.h"
 #include "object.h"
 
+#include "cancel_test_support.h"
 #include "test_support.h"
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <map>
@@ -926,6 +928,71 @@ TEST(PdfFont, Type0Assembly)
 	refused(dict({{"Encoding", ref(30u)}, {"DescendantFonts", array({ref(3u)})}}), e, ErrorCode::ResourceLimit,
 		"a chain of 9 CMaps");
 	EXPECT_TRUE(load_type0_font(dict({{"Encoding", ref(31u)}, {"DescendantFonts", array({ref(3u)})}}), e.resolver).has_value());
+}
+
+// A cancel inside a font load at its bounds, timed from the cancel and not from the load's end (D01 T02 section 7).
+TEST(PdfInterpreter, CancelDuringFontLoad)
+{
+	using detail::CancelSite;
+	using detail::ScopedCancelScope;
+	// A 4 MiB embedded CMap of 100,000 mappings.
+	std::string text = "1 begincodespacerange <0000> <FFFF> endcodespacerange ";
+	for (int block = 0; block < 1'000; ++block) {
+		text += "100 begincidchar ";
+		for (int i = 0; i < 100; ++i) {
+			char entry[32];
+			std::snprintf(entry, sizeof(entry), "<%04X> %d ", (block * 100 + i) % 65536, i);
+			text += entry;
+		}
+		text += "endcidchar ";
+	}
+	const std::vector<uint8_t> cmap = bytes_of(text);
+	std::printf("[          ] CMapEntry 1 %.3f ms\n", recto::test::expect_cancelled_at(CancelSite::CMapEntry, 95u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return CidCMap::parse(cmap);
+	}));
+	EXPECT_TRUE(CidCMap::parse(cmap).has_value()) << "the same stream, uncancelled";
+	// Tokens outside any block poll too: a stream of nothing else is as long to read.
+	std::string names = "1 begincodespacerange <0000> <FFFF> endcodespacerange ";
+	for (int i = 0; i < 100'000; ++i) {
+		names += "/x ";
+	}
+	const std::vector<uint8_t> unblocked = bytes_of(names);
+	std::printf("[          ] CMapEntry 2 %.3f ms\n", recto::test::expect_cancelled_at(CancelSite::CMapEntry, 5u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return CidCMap::parse(unblocked);
+	}));
+	// A /W of 65,536 elements.
+	PdfArray elements;
+	elements.reserve(65'536u);
+	for (uint32_t i = 0; i < 21'845u; ++i) {
+		elements.push_back(number(i));
+		elements.push_back(number(i));
+		elements.push_back(number(500));
+	}
+	const PdfValue w{PdfArray(elements)};
+	const IndirectObjectResolver none = [](IndirectRef) -> PdfResult<PdfValue> { return make_pdf_error(ErrorCode::DamagedFormat, "unused"); };
+	std::printf("[          ] WidthEntry 3 %.3f ms\n", recto::test::expect_cancelled_at(CancelSite::WidthEntry, 5u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return CidWidths::build(nullptr, &w, nullptr, nullptr, &none);
+	}));
+	EXPECT_TRUE(CidWidths::build(nullptr, &w, nullptr, nullptr, &none).has_value());
+	// Inflating a large font stream: the load's longest step.
+	const std::string large(32u << 20u, 'x');
+	auto packed = flate_compress(bytes_of(large));
+	ASSERT_TRUE(packed.has_value());
+	PdfDict dictionary;
+	dictionary.set("Filter", name("FlateDecode"));
+	const PdfValue value = stream(std::move(dictionary), std::move(*packed));
+	const PdfStream* const compressed = value.as_stream();
+	ASSERT_NE(compressed, nullptr);
+	std::printf("[          ] Inflate 4 %.3f ms\n", recto::test::expect_cancelled_at(CancelSite::Inflate, 2u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return decode_stream(*compressed, size_t{64} << 20u);
+	}));
+	const auto whole = decode_stream(*compressed, size_t{64} << 20u);
+	ASSERT_TRUE(whole.has_value());
+	EXPECT_EQ(whole->size(), large.size());
 }
 
 } // namespace

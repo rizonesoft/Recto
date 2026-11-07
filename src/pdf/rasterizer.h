@@ -11,6 +11,7 @@
 // and composited as a patch no larger than the tile, so no decoded image is ever uploaded whole.
 #pragma once
 
+#include "cancel_token.h"
 #include "display_list.h"
 #include "error.h"
 #include "object.h"
@@ -100,9 +101,10 @@ public:
 
 	// Replays `list` into `output`, premultiplied BGRA with `stride` bytes per row; bytes past `width * 4` in a row are
 	// left alone. `InvalidArgument` for a spec or buffer that cannot be drawn, with `output` untouched; a Direct2D or WIC
-	// failure is a typed error, also with `output` untouched, and the next tile starts from a new target.
+	// failure is a typed error, also with `output` untouched, and the next tile starts from a new target. A cancelled tile
+	// returns `Cancelled` with `output` untouched, its clips unwound and the target ready for the next tile.
 	[[nodiscard]] PdfResult<void> render_tile(const std::shared_ptr<const DisplayList>& list, const TileSpec& spec,
-		std::span<uint8_t> output, size_t stride) noexcept;
+		std::span<uint8_t> output, size_t stride, const CancelToken& cancel = {}) noexcept;
 
 	[[nodiscard]] const RasterStats& stats() const noexcept;
 

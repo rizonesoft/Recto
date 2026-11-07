@@ -55,6 +55,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="cancel_test_support.h" />
     <ClInclude Include="test_support.h" />
     <ClInclude Include="ui_render_harness.h" />
     <ClInclude Include="ui_test.h" />

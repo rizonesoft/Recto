@@ -369,6 +369,11 @@ private:
 	[[nodiscard]] PdfResult<void> run_frames()
 	{
 		while (!frames_.empty()) {
+			// A cancel lands between operators, in a form as on the page, and a recovery path below it that took a cancelled
+			// decode for a damaged one has already gone on to this line.
+			if (detail::poll_cancel(detail::CancelSite::InterpreterOperator)) {
+				return detail::cancelled_error();
+			}
 			const size_t top = frames_.size() - 1u;
 			Parser& parser = *frames_[top].parser; // owned by the frame, so it stays put while frames are pushed
 			Lexer& lexer = parser.lexer();
@@ -2233,7 +2238,9 @@ private:
 				refused();
 			} else {
 				charge(work.bytes());
-				record_diagnostic(decoded.error()); // a filter's error does not record itself
+				if (code != ErrorCode::Cancelled) {
+					record_diagnostic(decoded.error()); // a filter's error does not record itself
+				}
 			}
 			return std::optional<ImageStream>{};
 		}
@@ -2812,6 +2819,9 @@ private:
 				bits = 16u;
 				row_decode = {};
 			}
+			if (detail::poll_cancel(detail::CancelSite::ImageConvert)) {
+				return detail::cancelled_error();
+			}
 			auto converted = space.convert_samples(source, width, bits, row_decode, intent, document_);
 			if (!converted.has_value()) {
 				if (converted.error().code == ErrorCode::OutOfMemory) {
@@ -3322,7 +3332,9 @@ private:
 					kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
 			} else {
 				charge(work.bytes());
-				record_diagnostic(decoded.error()); // a filter's error does not record itself
+				if (code != ErrorCode::Cancelled) {
+					record_diagnostic(decoded.error()); // a filter's error does not record itself
+				}
 			}
 			return remember(nullptr);
 		}
@@ -3552,8 +3564,13 @@ PdfResult<std::shared_ptr<const DisplayList>> interpret_page(
 	const Document& document,
 	size_t page_index,
 	const DisplayListLimits& limits,
-	const OptionalContentVisibility* visibility) noexcept
+	const OptionalContentVisibility* visibility,
+	const CancelToken& cancel) noexcept
 {
+	if (cancel.is_cancelled()) {
+		return detail::cancelled_error();
+	}
+	const detail::ScopedCancelScope scope(cancel);
 	if (page_index >= document.page_count()) {
 		// A caller's mistake, not a damaged file: recorded here, as InvalidArgument refusals are (error.h).
 		PdfError err = make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::PageIndex, page_index,

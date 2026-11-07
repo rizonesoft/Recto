@@ -11,6 +11,7 @@
 // graphics state stack and `DisplayListBuilder`.
 #pragma once
 
+#include "cancel_token.h"
 #include "display_list.h"
 #include "document.h"
 #include "error.h"
@@ -52,7 +53,8 @@ struct OptionalContentVisibility {
 	const Document& document,
 	size_t page_index,
 	const DisplayListLimits& limits = {},
-	const OptionalContentVisibility* visibility = nullptr) noexcept;
+	const OptionalContentVisibility* visibility = nullptr,
+	const CancelToken& cancel = {}) noexcept;
 
 // Interprets `content` with `resources` (a resolved resource dictionary, its
 // entries resolved through `document`) into a display list for `page_box`.

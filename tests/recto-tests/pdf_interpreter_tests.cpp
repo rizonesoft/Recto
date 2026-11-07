@@ -22,6 +22,8 @@
 #endif
 #include <windows.h>
 
+#include "cancel_test_support.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -6310,6 +6312,80 @@ TEST(PdfInterpreter, TextRenderModes)
 }
 
 #undef RECTO_PARSED
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Cancelling a compile (D01 T02 section 7).
+// ---------------------------------------------------------------------------------------------------------------------
+
+TEST(PdfInterpreter, CancelCompilation)
+{
+	const std::vector<uint8_t> pdf = one_page_pdf("0 0 10 10 re f 20 20 10 10 re f");
+	auto doc = Document::open_memory(pdf);
+	ASSERT_TRUE(doc.has_value());
+	// Already cancelled: nothing is read.
+	auto source = CancelSource::create();
+	ASSERT_TRUE(source.has_value());
+	source->cancel();
+	const auto before = interpret_page(**doc, 0u, {}, nullptr, source->token());
+	ASSERT_FALSE(before.has_value());
+	EXPECT_EQ(before.error().code, ErrorCode::Cancelled);
+	// Between operators.
+	(void)recto::test::expect_cancelled_at(detail::CancelSite::InterpreterOperator, 2u,
+		[&](const CancelToken& token) { return interpret_page(**doc, 0u, {}, nullptr, token); });
+	// The scope closed: the same thread compiles on.
+	EXPECT_EQ(detail::g_cancel_scope, nullptr);
+	EXPECT_TRUE(interpret_page(**doc, 0u).has_value());
+}
+
+TEST(PdfInterpreter, CancelInImageDecode)
+{
+	// An image's recovery path records a damaged decode and goes on; a cancelled one is not damage, and the compile stops.
+	const std::string samples(16u << 20u, 'x');
+	auto packed = flate_compress(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(samples.data()), samples.size()));
+	ASSERT_TRUE(packed.has_value());
+	const std::string image = stream_object("/Type /XObject /Subtype /Image /Width 4096 /Height 4096 /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode",
+		std::string_view(reinterpret_cast<const char*>(packed->data()), packed->size()));
+	const std::vector<uint8_t> pdf = one_page_pdf("q 100 0 0 100 0 0 cm /I Do Q 0 0 10 10 re f", "<< /XObject << /I 5 0 R >> >>", {image});
+	auto doc = Document::open_memory(pdf);
+	ASSERT_TRUE(doc.has_value());
+	clear_diagnostics();
+	(void)recto::test::expect_cancelled_at(detail::CancelSite::Inflate, 1u,
+		[&](const CancelToken& token) { return interpret_page(**doc, 0u, {}, nullptr, token); });
+	EXPECT_FALSE(recorded(ErrorCode::DamagedFormat));
+	const auto tail = diagnostics_tail(16u);
+	const auto reported = std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::Cancelled; });
+	EXPECT_LE(reported, 2) << "each cancel is said once where it happened, not again as a filter's failure";
+	const auto whole = interpret_page(**doc, 0u);
+	ASSERT_TRUE(whole.has_value());
+	EXPECT_EQ(all_of<DrawImageCommand>(**whole).size(), 1u) << "nothing of the cancelled decode was kept";
+}
+
+TEST(PdfInterpreter, CancelInForms)
+{
+	// Ten forms, each drawing the next ten times: a billion paints if it ran, and it lands in the forms.
+	std::vector<std::string> forms;
+	for (int level = 0; level < 10; ++level) {
+		std::string content;
+		if (level == 9) {
+			content = "0 0 1 1 re f";
+		} else {
+			for (int k = 0; k < 10; ++k) {
+				content += "/F Do ";
+			}
+		}
+		const std::string resources = level == 9 ? "" : " /Resources << /XObject << /F " + std::to_string(6 + level) + " 0 R >> >>";
+		forms.push_back(stream_object("/Type /XObject /Subtype /Form /BBox [0 0 100 100]" + resources, content));
+	}
+	const std::vector<uint8_t> pdf = one_page_pdf("/F Do", "<< /XObject << /F 5 0 R >> >>", forms);
+	auto doc = Document::open_memory(pdf);
+	ASSERT_TRUE(doc.has_value());
+	clear_diagnostics();
+	const double ms = recto::test::expect_cancelled_at(detail::CancelSite::InterpreterOperator, 5'000u,
+		[&](const CancelToken& token) { return interpret_page(**doc, 0u, {}, nullptr, token); });
+	std::printf("[          ] a cancel inside the forms took %.3f ms\n", ms);
+	EXPECT_EQ(detail::g_cancel_scope, nullptr);
+	EXPECT_FALSE(recorded(ErrorCode::DamagedFormat)) << "a cancel was reported as damage";
+}
 
 } // namespace
 } // namespace recto::pdf

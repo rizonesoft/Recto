@@ -3,6 +3,8 @@
 // TrueType `glyf` reader for the ones it refuses.
 #include "font.h"
 
+#include "cancel_token.h"
+
 #include "font_charstrings.h"
 
 #include "filters.h"
@@ -889,6 +891,9 @@ struct ComponentRecord {
 			return glyf_error(ErrorCode::DamagedFormat, "Composite glyph names a glyph past the font's glyph count");
 		}
 		// Counted before the component is expanded, so a compact font cannot spend more than the budget.
+		if (detail::poll_cancel(detail::CancelSite::GlyfExpand)) {
+			return detail::cancelled_error();
+		}
 		if (++budget.visits > kMaxComponentVisits) {
 			PdfError error = glyf_error(ErrorCode::ResourceLimit, "Composite glyph visits more components than its limit");
 			error.refusal_reason = RefusalReason::ComponentVisits;

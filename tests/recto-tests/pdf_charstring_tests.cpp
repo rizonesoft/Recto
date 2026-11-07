@@ -9,12 +9,15 @@
 #include "font_encoding.h"
 #include "object.h"
 
+#include "cancel_test_support.h"
+#include "rasterizer.h"
 #include "test_support.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1399,6 +1402,74 @@ TEST(PdfFont, Type1BuiltInEncoding)
 	ASSERT_TRUE(from_cff.has_value());
 	EXPECT_EQ(from_cff->name(200), "A");
 	EXPECT_EQ(cff->glyph_for_name(from_cff->name(200)), cff->glyph_for_name("A"));
+}
+
+// A name-keyed CFF program of these glyphs and subroutines.
+std::vector<uint8_t> cancel_cff(std::vector<std::vector<uint8_t>> glyphs, std::vector<std::vector<uint8_t>> subrs = {})
+{
+	CffBuild b;
+	b.charset_bytes = {0u};
+	for (size_t g = 1; g < glyphs.size(); ++g) {
+		put_u16(b.charset_bytes, static_cast<uint32_t>(400u + (g % 60'000u)));
+	}
+	b.glyphs = std::move(glyphs);
+	b.fds[0].subrs = std::move(subrs);
+	return build_cff(b).bytes;
+}
+
+// A cancel inside the heaviest single glyph call §29's bounds allow (D01 T02 section 7).
+TEST(PdfRasterizer, CancelDuringHeaviestGlyph)
+{
+	const std::vector<uint8_t> end = charstring("endchar", true);
+	// Subroutine 1: 10,000 times `0 drop` (30,000 bytes), called 3 times 3 ways: within 1,000,000 executed bytes.
+	const std::vector<std::vector<uint8_t>> work = {
+		join({repeat("-106 callsubr", 3u, true), charstring("return", true)}),
+		join({repeat("0 drop", 10'000u, true), charstring("return", true)})};
+	const std::vector<uint8_t> by_bytes = cancel_cff({end, charstring("-107 callsubr -107 callsubr -107 callsubr endchar", true)}, work);
+	// 100,000 path operators: 99 calls of a subroutine drawing 1,000 lines.
+	const std::vector<uint8_t> by_paths = cancel_cff({end, join({charstring("0 0 rmoveto", true), repeat("-107 callsubr", 99u, true), end})},
+		{join({repeat("0 0 rlineto", 1'000u, true), charstring("return", true)})});
+	for (const auto* program : {&by_bytes, &by_paths}) {
+		auto font = load_charstring_font(std::make_shared<const std::vector<uint8_t>>(*program), CharstringFormat::Type1C);
+		ASSERT_TRUE(font.has_value());
+		// How long it takes uncancelled, for the record.
+		const auto started = std::chrono::steady_clock::now();
+		ASSERT_TRUE((*font)->outline(1u).has_value());
+		std::printf("[          ] the whole glyph took %.3f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+		// In a tile: the polls are the glyph's own.
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 100.0, 100.0});
+		PositionedGlyph glyph;
+		glyph.glyph_index = 1u;
+		glyph.origin_pt = PdfPoint{10.0, 10.0};
+		glyph.advance_pt = 10.0;
+		const std::array<PositionedGlyph, 1> run{glyph};
+		ASSERT_TRUE(builder.draw_glyph_run(run, 10.0, TextRenderMode::Fill, ColorRgba::black(), ColorRgba::black(), PdfMatrix::identity(),
+			PdfRect{0.0, 0.0, 100.0, 100.0}, std::shared_ptr<const void>(*font)).has_value());
+		auto list = builder.finish();
+		ASSERT_TRUE(list.has_value());
+		auto worker = Rasterizer::create();
+		ASSERT_TRUE(worker.has_value());
+		std::vector<uint8_t> tile(100u * 100u * 4u);
+		TileSpec spec;
+		spec.tile_width_px = 100u;
+		spec.tile_height_px = 100u;
+		(void)recto::test::expect_cancelled_at(detail::CancelSite::Charstring, 2u,
+			[&](const CancelToken& token) { return (*worker)->render_tile(*list, spec, tile, 400u, token); });
+	}
+}
+
+// A cancel inside a large CFF program's parse (D01 T02 section 7).
+TEST(PdfInterpreter, CancelDuringCffParse)
+{
+	const std::vector<uint8_t> end = charstring("endchar", true);
+	const std::vector<std::vector<uint8_t>> glyphs(65'535u, end);
+	const std::vector<uint8_t> program = cancel_cff(glyphs);
+	const auto shared = std::make_shared<const std::vector<uint8_t>>(program);
+	(void)recto::test::expect_cancelled_at(detail::CancelSite::CffParse, 1u, [&](const CancelToken& token) {
+		const detail::ScopedCancelScope scope(token);
+		return load_charstring_font(shared, CharstringFormat::Type1C);
+	});
+	EXPECT_TRUE(load_charstring_font(shared, CharstringFormat::Type1C).has_value()) << "the same program, uncancelled";
 }
 
 } // namespace

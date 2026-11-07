@@ -6,6 +6,7 @@
 #include "recto_pdf.h"
 #include "document.h"
 #include "interpreter.h"
+#include "cancel_test_support.h"
 #include "test_support.h"
 
 #ifndef NOMINMAX
@@ -8467,6 +8468,56 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		const auto bitmap = draw(entry);
 		EXPECT_EQ(alpha(bitmap, 0u), 255u);
 	}
+}
+
+// A cancel during each stage of each image decoder, the same bytes then decoding whole (D01 T02 section 7).
+TEST(PdfFilters, CancelDuringDecode)
+{
+	using detail::CancelSite;
+	using detail::ScopedCancelScope;
+	// One wavelet level, tier-2 packets and tier-1 code-blocks, each of which the decoder polls.
+	const std::array<uint8_t, 12> rgb{10u, 20u, 30u, 40u, 50u, 60u, 70u, 80u, 90u, 100u, 110u, 120u};
+	const std::vector<uint8_t> jpx = make_genuine_jp2_2x2_rgb(std::span<const uint8_t, 12>(rgb));
+	const auto jpx_whole = decode_jpx_image(jpx);
+	ASSERT_TRUE(jpx_whole.has_value());
+	for (const CancelSite site : {CancelSite::JpxPacket, CancelSite::JpxCodeBlock, CancelSite::JpxWavelet}) {
+		(void)recto::test::expect_cancelled_at(site, 1u, [&](const CancelToken& token) {
+			const ScopedCancelScope scope(token);
+			return decode_jpx_image(jpx);
+		});
+		const auto again = decode_jpx_image(jpx);
+		ASSERT_TRUE(again.has_value());
+		EXPECT_EQ(again->pixels, jpx_whole->pixels) << "nothing was cached by the cancelled decode";
+	}
+	const auto jpeg = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-jfif.jpg"));
+	const auto jpeg_whole = decode_dct_image(jpeg);
+	ASSERT_TRUE(jpeg_whole.has_value());
+	(void)recto::test::expect_cancelled_at(CancelSite::DctStrip, 1u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return decode_dct_image(jpeg);
+	});
+	const auto jpeg_again = decode_dct_image(jpeg);
+	ASSERT_TRUE(jpeg_again.has_value());
+	EXPECT_EQ(jpeg_again->bgra_pixels, jpeg_whole->bgra_pixels);
+	// JBIG2: a generic region, a poll per row.
+	std::vector<uint8_t> jbig2;
+	append_jbig2_segment(jbig2, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 4u, 0u));
+	std::vector<uint8_t> region;
+	append_u32_be(region, 8u);
+	append_u32_be(region, 4u);
+	append_u32_be(region, 0u);
+	append_u32_be(region, 0u);
+	region.push_back(0u);
+	region.push_back(0u); // arithmetic, template 0
+	const int8_t adaptive[8] = {3, -1, -3, -1, 2, -2, -2, -2};
+	region.insert(region.end(), reinterpret_cast<const uint8_t*>(adaptive), reinterpret_cast<const uint8_t*>(adaptive) + 8);
+	region.insert(region.end(), 16u, 0xFFu);
+	append_jbig2_segment(jbig2, 1u, 39u, {}, 1u, region);
+	append_jbig2_segment(jbig2, 2u, 49u, {}, 1u, {});
+	(void)recto::test::expect_cancelled_at(CancelSite::Jbig2Row, 2u, [&](const CancelToken& token) {
+		const ScopedCancelScope scope(token);
+		return decode_jbig2(jbig2);
+	});
 }
 
 } // namespace

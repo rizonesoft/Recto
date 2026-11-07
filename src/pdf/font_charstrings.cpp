@@ -5,6 +5,8 @@
 // calls.
 #include "font_charstrings.h"
 
+#include "cancel_token.h"
+
 #include <algorithm>
 #include <charconv>
 #include <climits>
@@ -123,7 +125,12 @@ struct Builder {
 	}
 	[[nodiscard]] PdfResult<void> spend(size_t bytes) noexcept
 	{
+		const size_t before = work;
 		work += bytes;
+		// A heavy glyph can take longer than a cancel may wait (D01 T02 section 7).
+		if ((before >> 12u) != (work >> 12u) && detail::poll_cancel(detail::CancelSite::Charstring)) {
+			return detail::cancelled_error();
+		}
 		if (work > kMaxGlyphCharstringWork) {
 			return limited("Glyph executes more charstring bytes than its limit", RefusalReason::CharstringWork, work,
 				kMaxGlyphCharstringWork);
@@ -1007,6 +1014,9 @@ struct CffReader {
 	index.offsets.reserve(size_t{count} + 1u);
 	uint32_t previous = 1u;
 	for (size_t i = 0; i <= count; ++i) {
+		if ((i & 0xFFFFu) == 0xFFFFu && detail::poll_cancel(detail::CancelSite::CffParse)) {
+			return detail::cancelled_error();
+		}
 		const uint32_t off = cff.uint(offsets_at + i * off_size, off_size);
 		if ((i == 0u && off != 1u) || off < previous || off - 1u > cff.bytes.size() - (data + 1u)) {
 			return damaged("CFF INDEX offsets are out of order or past the program");

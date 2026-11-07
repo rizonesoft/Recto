@@ -1,6 +1,8 @@
 // Composite fonts (ISO 32000-1 section 9.7; Adobe Technical Note 5014; D01 T02 section 30).
 #include "font_cid.h"
 
+#include "cancel_token.h"
+
 #include "cmap_lexer.h"
 #include "function.h"
 
@@ -230,7 +232,14 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 			return {};
 		};
 		CMapLexer::Token previous;
+		uint32_t tokens_since_poll = 0u;
 		for (;;) {
+			if (++tokens_since_poll >= 1024u) {
+				tokens_since_poll = 0u;
+				if (detail::poll_cancel(detail::CancelSite::CMapEntry)) {
+					return detail::cancelled_error();
+				}
+			}
 			RECTO_PDF_TRY(CMapLexer::Token token, lexer.next());
 			if (token.kind == CMapLexer::Kind::End) {
 				break;
@@ -277,6 +286,12 @@ PdfResult<CidCMap> CidCMap::parse(std::span<const uint8_t> stream, const CidCMap
 				: range ? (notdef ? "endnotdefrange" : "endcidrange")
 						: (notdef ? "endnotdefchar" : "endcidchar");
 			for (;;) {
+				if (++tokens_since_poll >= 1024u) {
+					tokens_since_poll = 0u;
+					if (detail::poll_cancel(detail::CancelSite::CMapEntry)) {
+						return detail::cancelled_error();
+					}
+				}
 				RECTO_PDF_TRY(CMapLexer::Token first, lexer.next());
 				if (first.kind == CMapLexer::Kind::Keyword && first.text == end) {
 					break;
@@ -537,7 +552,14 @@ template <typename OnRun>
 		return true;
 	};
 	size_t i = 0;
+	size_t since_poll = 0u;
 	while (i < array.size()) {
+		if (++since_poll >= 1024u) {
+			since_poll = 0u;
+			if (detail::poll_cancel(detail::CancelSite::WidthEntry)) {
+				return detail::cancelled_error();
+			}
+		}
 		Held first_holder;
 		RECTO_PDF_TRY(const PdfValue* first_value, deref(&array[i], first_holder, resolver, shared));
 		const std::optional<uint32_t> first = cid_value(first_value);

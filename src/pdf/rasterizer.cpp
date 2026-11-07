@@ -297,6 +297,8 @@ struct Rasterizer::State {
 	std::map<GlyphKey, bool> glyph_checks;
 	std::map<GlyphKey, std::optional<GlyphOutline>> glyph_outlines;
 	HRESULT failure{S_OK};
+	bool cancelled{false};
+	uint32_t commands_since_poll{0u};
 
 	~State() noexcept
 	{
@@ -354,6 +356,15 @@ struct Rasterizer::State {
 		return S_OK;
 	}
 
+	// Whether this tile is cancelled, from now on.
+	bool poll(detail::CancelSite site) noexcept
+	{
+		if (!cancelled && detail::poll_cancel(site)) {
+			cancelled = true;
+		}
+		return cancelled;
+	}
+
 	void fail(HRESULT hr) noexcept
 	{
 		if (SUCCEEDED(failure)) {
@@ -393,6 +404,14 @@ struct Rasterizer::State {
 		PdfPoint start{};
 		PdfPoint current{};
 		size_t at = 0u;
+		uint32_t since_poll = 0u;
+		const auto polled = [&] {
+			if (++since_poll >= 1024u) {
+				since_poll = 0u;
+				return poll(detail::CancelSite::GeometryVerb);
+			}
+			return false;
+		};
 		const auto begin = [&](PdfPoint p) {
 			const auto mapped = map(p);
 			if (!mapped.has_value()) {
@@ -412,6 +431,10 @@ struct Rasterizer::State {
 		};
 		bool usable = true;
 		for (const PathVerb verb : verbs) {
+			if (polled()) {
+				usable = false;
+				break;
+			}
 			switch (verb) {
 			case PathVerb::MoveTo:
 				close(D2D1_FIGURE_END_OPEN);
@@ -452,6 +475,10 @@ struct Rasterizer::State {
 				const PdfPoint p3 = points[at + 2u];
 				const uint32_t pieces = cubic_pieces(p0, p1, p2, p3, px_scale);
 				for (uint32_t i = 1u; usable && i <= pieces; ++i) {
+					if (polled()) {
+						usable = false;
+						break;
+					}
 					const double t = static_cast<double>(i) / static_cast<double>(pieces);
 					const double u = 1.0 - t;
 					const double b0 = u * u * u;
@@ -672,12 +699,15 @@ struct Rasterizer::State {
 				const double t = length > 0.0 ? along / length : 0.0;
 				return PdfPoint{a.x + dx * t, a.y + dy * t};
 			};
-			while (!too_many) {
+			while (!too_many && !cancelled) {
 				if (on && !drawing) {
 					out_verbs.push_back(PathVerb::MoveTo);
 					out_points.push_back(here(at));
 					drawing = true;
 					too_many = ++pieces > kMaxDashSegments;
+					if ((pieces & 1023u) == 0u) {
+						(void)poll(detail::CancelSite::DashPiece);
+					}
 				}
 				const double remaining = length - at;
 				if (remaining < left) {
@@ -763,9 +793,12 @@ struct Rasterizer::State {
 				}
 				break;
 			}
-			if (too_many) {
+			if (too_many || cancelled) {
 				break;
 			}
+		}
+		if (cancelled) {
+			return;
 		}
 		SetStrokeStyleCommand solid = stroke;
 		solid.dash_count = 0u;
@@ -1032,7 +1065,7 @@ struct Rasterizer::State {
 	// Cells `[x0, x1) x [y0, y1)` of `source` reduced by whole factors, each the mean of the source cells it covers (their
 	// colours are premultiplied, so a mean is right). The grid starts at the image's corner, so every tile reads the same
 	// value for a reduced cell. Row-padded sources are read through their stride.
-	[[nodiscard]] static std::vector<uint8_t> reduced_cells(
+	[[nodiscard]] std::vector<uint8_t> reduced_cells(
 		const DecodedBitmap& source, uint32_t reduce_x, uint32_t reduce_y, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 	{
 		const size_t width = x1 - x0;
@@ -1041,6 +1074,9 @@ struct Rasterizer::State {
 		uint8_t* to = out.data();
 		const uint8_t* const pixels = source.pixels.data();
 		for (uint32_t y = y0; y < y1; ++y) {
+			if (poll(detail::CancelSite::ImageReduce)) {
+				return {}; // the caller caches nothing
+			}
 			const uint64_t row_begin = uint64_t{y} * reduce_y;
 			const uint64_t row_end = std::min<uint64_t>(row_begin + reduce_y, source.height);
 			for (uint32_t x = x0; x < x1; ++x) {
@@ -1083,7 +1119,11 @@ struct Rasterizer::State {
 				++entry;
 			}
 		}
-		auto pixels = std::make_shared<const std::vector<uint8_t>>(reduced_cells(*source, reduce_x, reduce_y, 0u, 0u, width, height));
+		auto cells = reduced_cells(*source, reduce_x, reduce_y, 0u, 0u, width, height);
+		if (cancelled) {
+			return nullptr;
+		}
+		auto pixels = std::make_shared<const std::vector<uint8_t>>(std::move(cells));
 		images.push_front(CachedImage{key, source, pixels});
 		image_index[key] = images.begin();
 		image_bytes += pixels->size();
@@ -1176,6 +1216,9 @@ struct Rasterizer::State {
 			out.stride = source->stride;
 		} else {
 			out.reduced = reduced_image(source, reduce_x, reduce_y, reduced_width, reduced_height);
+			if (out.reduced == nullptr) {
+				return std::nullopt;
+			}
 			out.pixels = out.reduced->data();
 			out.stride = size_t{reduced_width} * 4u;
 		}
@@ -1279,6 +1322,9 @@ struct Rasterizer::State {
 			return static_cast<uint8_t>(std::clamp(std::round(value), 0.0, 255.0));
 		};
 		for (uint32_t y = 0; y < patch_h; ++y) {
+			if (poll(detail::CancelSite::ImageRow)) {
+				return;
+			}
 			for (uint32_t x = 0; x < patch_w; ++x) {
 				const double px = left + x;
 				const double py = top + y;
@@ -1387,6 +1433,9 @@ struct Rasterizer::State {
 				return;
 			}
 			for (const PositionedGlyph& glyph : *glyphs) {
+				if (cancelled) {
+					return;
+				}
 				const PdfMatrix placed = concat_matrix(translate(glyph.origin_pt.x, glyph.origin_pt.y), text_full);
 				replay(*run.type3_sub_list, placed, depth + 1u);
 			}
@@ -1426,7 +1475,14 @@ struct Rasterizer::State {
 		}
 		const double em = std::abs(run.font_size);
 		const double sign = run.font_size < 0.0 ? -1.0 : 1.0;
+		uint32_t glyphs_since_poll = 0u;
 		for (const PositionedGlyph& glyph : *glyphs) {
+			if (++glyphs_since_poll >= 64u) {
+				glyphs_since_poll = 0u;
+				if (poll(detail::CancelSite::RasterGlyph)) {
+					break;
+				}
+			}
 			if (glyph.is_blank) {
 				continue;
 			}
@@ -1482,7 +1538,13 @@ struct Rasterizer::State {
 		state.clip_count = entry_clips;
 		const auto commands = list.commands();
 		const auto bounds = list.command_bounds();
-		for (size_t i = 0; i < commands.size() && SUCCEEDED(failure); ++i) {
+		for (size_t i = 0; i < commands.size() && SUCCEEDED(failure) && !cancelled; ++i) {
+			if (++commands_since_poll >= 64u) {
+				commands_since_poll = 0u;
+				if (poll(detail::CancelSite::RasterCommand)) {
+					break;
+				}
+			}
 			const DisplayCommand& command = commands[i];
 			const bool can_paint =
 				i < bounds.size() && bounds[i].has_bounds && touches_tile(transform_rect(base, bounds[i].bounds_pt));
@@ -1604,12 +1666,16 @@ PdfResult<std::unique_ptr<Rasterizer>> Rasterizer::create() noexcept
 }
 
 PdfResult<void> Rasterizer::render_tile(const std::shared_ptr<const DisplayList>& list, const TileSpec& spec,
-	std::span<uint8_t> output, size_t stride) noexcept
+	std::span<uint8_t> output, size_t stride, const CancelToken& cancel) noexcept
 {
 	State& s = *state_;
 	if (s.owner != std::this_thread::get_id()) {
 		return make_pdf_error(ErrorCode::InternalError, "A Rasterizer was used off the thread that made it");
 	}
+	if (cancel.is_cancelled()) {
+		return detail::cancelled_error(); // a queued tile cancelled before it began touches nothing
+	}
+	const detail::ScopedCancelScope scope(cancel);
 	const auto invalid = [](const char* message) -> PdfResult<void> { return make_pdf_error(ErrorCode::InvalidArgument, message); };
 	if (list == nullptr) {
 		return invalid("A tile needs a display list");
@@ -1636,6 +1702,8 @@ PdfResult<void> Rasterizer::render_tile(const std::shared_ptr<const DisplayList>
 		return invalid("A tile's background is not a colour");
 	}
 	s.stats.draws_replayed = 0u;
+	s.cancelled = false;
+	s.commands_since_poll = 0u;
 	try {
 		HRESULT hr = s.ensure_target(spec.tile_width_px, spec.tile_height_px);
 		if (FAILED(hr)) {
@@ -1673,7 +1741,11 @@ PdfResult<void> Rasterizer::render_tile(const std::shared_ptr<const DisplayList>
 		}
 		if (FAILED(hr)) {
 			s.drop_target();
-			return raster_failure(hr, "Direct2D could not draw a tile");
+			return s.cancelled ? PdfResult<void>(detail::cancelled_error()) : PdfResult<void>(raster_failure(hr, "Direct2D could not draw a tile"));
+		}
+		// Nothing below is published if a cancel has landed, however late.
+		if (s.poll(detail::CancelSite::RasterFinish)) {
+			return detail::cancelled_error();
 		}
 		const WICRect whole{0, 0, static_cast<INT>(spec.tile_width_px), static_cast<INT>(spec.tile_height_px)};
 		ComPtr<IWICBitmapLock> lock;

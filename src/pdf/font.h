@@ -157,6 +157,7 @@ public:
 
 	// The glyph's outline in text space, computed from the font program on each
 	// call within the per-call ceilings above (`ResourceLimit` past them).
+	// Inside a `detail::ScopedCancelScope`, a heavy glyph may return `Cancelled`; it holds no state either way.
 	[[nodiscard]] PdfResult<GlyphOutline> outline(uint16_t glyph) const noexcept;
 
 	// The advance, ink box and outline together, from one expansion of the

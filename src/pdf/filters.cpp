@@ -6,6 +6,8 @@
 // ceiling (ISO 32000-1 section 7.4; D01 T01 sections 7 and 8).
 #include "filters.h"
 
+#include "cancel_token.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -361,7 +363,18 @@ struct HuffmanTree {
 		0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6,
 		6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
 
+	// At each block as well as within one: a stream of many small blocks never fills the count below.
+	if (detail::poll_cancel(detail::CancelSite::Inflate)) {
+		return detail::cancelled_error();
+	}
+	uint32_t symbols_since_poll = 0u;
 	while (true) {
+		if (++symbols_since_poll >= 65'536u) {
+			symbols_since_poll = 0u;
+			if (detail::poll_cancel(detail::CancelSite::Inflate)) {
+				return detail::cancelled_error();
+			}
+		}
 		uint16_t sym = 0;
 		if (!lit_len_tree.decode(br, sym)) {
 			return make_filter_error(
@@ -485,6 +498,9 @@ struct HuffmanTree {
 
 		if (btype == 0u) {
 			// Stored (uncompressed) block
+			if (detail::poll_cancel(detail::CancelSite::Inflate)) {
+				return detail::cancelled_error();
+			}
 			br.align_to_byte();
 			uint32_t len = 0;
 			uint32_t nlen = 0;
@@ -3051,6 +3067,9 @@ private:
 		reserve_ccitt_transitions(ref_changes, cur_changes, static_cast<int32_t>(width));
 		bool saw_eofb = false;
 		for (uint32_t y = 0; y < height; ++y) {
+			if (detail::poll_cancel(detail::CancelSite::Jbig2Row)) {
+				return detail::cancelled_error();
+			}
 			const int status = decode_ccitt_2d_row(
 				reader,
 				static_cast<int32_t>(width),
@@ -3148,6 +3167,9 @@ private:
 	uint8_t ltp = 0u;
 
 	for (uint32_t y = 0; y < height; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::Jbig2Row)) {
+			return detail::cancelled_error();
+		}
 		if (tpgdon) {
 			const uint8_t sltp = mq->decode((*cx_vec)[kSltpContext[gb_template & 3u]]);
 			ltp ^= sltp;
@@ -3317,6 +3339,9 @@ private:
 	};
 
 	for (uint32_t y = 0; y < height; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::Jbig2Row)) {
+			return detail::cancelled_error();
+		}
 		if (tpgron) {
 			const uint8_t sltp = mq->decode((*cx_vec)[kSltpRefContext[gr_template & 1u]]);
 			ltp ^= sltp;
@@ -7399,10 +7424,28 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			}
 		};
 		const auto copy_frame = [&](IWICBitmapSource* source, UINT stride, std::string_view step) -> PdfResult<void> {
-			hr = wic_step(detail::WicStage::CopyPixels,
-				[&] { return source->CopyPixels(nullptr, stride, static_cast<UINT>(samples.size()), samples.data()); });
+			// In strips, so a poll falls between them. WIC decodes a progressive JPEG's scans inside its first call, which no
+			// poll can reach: a cancel lands when that call returns (D01 T02 section 7).
+			constexpr UINT kStripRows = 64u;
+			UINT columns = 0u;
+			UINT rows = 0u;
+			hr = source->GetSize(&columns, &rows);
 			if (FAILED(hr)) {
 				return wic_failure(hr, step, DecoderStep::WicCopyPixels);
+			}
+			for (UINT row = 0u; row < rows; row += kStripRows) {
+				if (detail::poll_cancel(detail::CancelSite::DctStrip)) {
+					return detail::cancelled_error();
+				}
+				const UINT strip = std::min(kStripRows, rows - row);
+				const WICRect rect{0, static_cast<INT>(row), static_cast<INT>(columns), static_cast<INT>(strip)};
+				const size_t offset = size_t{row} * stride;
+				hr = wic_step(detail::WicStage::CopyPixels, [&] {
+					return source->CopyPixels(&rect, stride, static_cast<UINT>(size_t{strip} * stride), samples.data() + offset);
+				});
+				if (FAILED(hr)) {
+					return wic_failure(hr, step, DecoderStep::WicCopyPixels);
+				}
 			}
 			return {};
 		};
@@ -8517,6 +8560,9 @@ void idwt_53_2d(
 			std::span<int32_t>(dst_buf.data(), h),
 			odd_y);
 		for (uint32_t y = 0; y < h; ++y) {
+			if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+				return; // the caller's next poll returns Cancelled
+			}
 			out[static_cast<size_t>(y) * w + x] = dst_buf[y];
 		}
 	}
@@ -8653,6 +8699,9 @@ void idwt_97_2d_float(
 			std::span<float>(dst_buf.data(), h),
 			odd_y);
 		for (uint32_t y = 0; y < h; ++y) {
+			if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+				return; // the caller's next poll returns Cancelled
+			}
 			out[static_cast<size_t>(y) * w + x] = dst_buf[y];
 		}
 	}
@@ -10211,6 +10260,9 @@ struct Jp2Palette {
 			size_t stream_pos = 0u;
 			uint32_t packet_seq = 0u;
 			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c, uint32_t k) -> PdfResult<void> {
+				if (detail::poll_cancel(detail::CancelSite::JpxPacket)) {
+					return detail::cancelled_error();
+				}
 				const uint8_t packet_cb_style = comp_cod[c].cb_style;
 				if (stream_pos >= tile_bitstream.size()) {
 					return make_filter_error(
@@ -10619,6 +10671,9 @@ struct Jp2Palette {
 							1.0f + static_cast<float>(sb.mu) / 2048.0f,
 							rb - static_cast<int32_t>(sb.eps));
 						for (const auto& cb : sb.cbs) {
+							if (detail::poll_cancel(detail::CancelSite::JpxCodeBlock)) {
+								return detail::cancelled_error();
+							}
 							const uint64_t this_ordinal = cb_ordinal++;
 							const std::span<const uint8_t> cb_bytes =
 								cb.compressed.empty() ? cb.single_segment : std::span<const uint8_t>(cb.compressed);
@@ -10684,6 +10739,9 @@ struct Jp2Palette {
 						const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
 						const bool odd_x = (comps[c].res_bounds[r].x0 & 1u) != 0u;
 						const bool odd_y = (comps[c].res_bounds[r].y0 & 1u) != 0u;
+						if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+							return detail::cancelled_error();
+						}
 						std::vector<int32_t> next_ll;
 						idwt_53_2d(
 							rs.res_w,
@@ -10711,6 +10769,9 @@ struct Jp2Palette {
 						const bool odd_x = (comps[c].res_bounds[r].x0 & 1u) != 0u;
 						const bool odd_y = (comps[c].res_bounds[r].y0 & 1u) != 0u;
 						std::vector<float> next_ll;
+						if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+							return detail::cancelled_error();
+						}
 						idwt_97_2d_float(
 							rs.res_w,
 							rs.res_h,
