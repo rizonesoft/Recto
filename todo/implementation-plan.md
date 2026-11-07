@@ -102,7 +102,7 @@ Sections: 106 | Checklist items: 679
 | [x]    | D01 T02 §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text           | windows-host              | 7     |
 | [x]    | D01 T02 §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap         | windows-host              | 7     |
 | [x]    | D01 T02 §47 | Optional-content marked content recorded for layer visibility                            | windows-host              | 7     |
-| [ ]    | D01 T02 §48 | One built CIDFont per shared `/Type0` descendant object                                  | windows-host              | 6     |
+| [x]    | D01 T02 §48 | One built CIDFont per shared `/Type0` descendant object                                  | windows-host              | 6     |
 | [x]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host              | 7     |
 | [x]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host              | 5     |
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
@@ -924,6 +924,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 93/855 verified sections, 36 ready to run now.
+Progress: 94/855 verified sections, 35 ready to run now.
 
-Checklist: 592/6292 items completed (includes Commit items).
+Checklist: 593/6292 items completed (includes Commit items).

@@ -105,7 +105,7 @@ track: M1
 | 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
 | 46 | §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap | §3 | [x] |
 | 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [x] |
-| 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [ ] |
+| 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [x] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1511,9 +1511,12 @@ Filed 2026-10-28 from `D01 T01 §11`'s measurement: with the resolved-object cac
 - [x] A descendant or CMap that fails to build is not memoized as a success, and a recoverable failure (`DamagedFormat`, `UnsupportedFeature`, `ResourceLimit`) is not built again: each font naming it takes the fallback with its diagnostic recorded, as `§42` specifies, and a program that alone failed keeps its diagnostic for every font over it, with its codes and advances. `OutOfMemory` and other fatal errors are returned and never kept. Done when: `PdfFont.SharedDescendant` resolves two fonts each over a damaged descendant, a damaged CMap stream and a descendant whose program alone is damaged, checking one decode, a diagnostic for each font, the fallback for the first two and for the third both fonts' codes and advances preserved with no face; and `recto::test::ScopedAllocationFailure` during a build returns `OutOfMemory` from that load and leaves a later load over the same memo succeeding.
 - [x] Share built encoding CMaps by stream object the same way (`Type0Font` holds its CMap through a `std::shared_ptr<const CidCMap>`; a CMap inherited through `/UseCMap` is part of the one that names it, not memoized alone, so the `kMaxUseCMapLevels` count stays per font), and read a shared stream's filter parameters through `SharedObjectResolver` (`decode_stream` in `src/pdf/filters.cpp` takes one alongside `IndirectObjectResolver`, used for `/Filter`, `/DecodeParms`, the stage parameters and `/F`, `/FFilter`, `/FDecodeParms`, while `/JBIG2Globals` keeps its stream path), so fonts naming one CMap stream decode it once and copy no `/DecodeParms` (found by `D01 T01 §11` round 1). Done when: `PdfFont.SharedDescendant` loads fifty `/Type0` fonts over one CMap stream whose `/DecodeParms` is indirect and checks one decode and no call to the copying resolver, and `PdfFilters.SharedResolverParms` decodes the same bytes through each resolver alone and refuses the same malformed values through both.
 - [x] Measure the fifty-font fixture of `PdfInterpreter.SharedObjectsParseOnce` in x64 Debug and Release. Done when: the Debug time falls at least tenfold from 18.6 s and the commit body quotes both timings.
-- [ ] Commit: `pdf: one built CIDFont per shared Type 0 descendant`
+- [x] Commit: `pdf: one built CIDFont per shared Type 0 descendant`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.SharedDescendant:PdfInterpreter.SharedDescendantBudget:PdfInterpreter.SharedObjectsParseOnce:PdfFilters.SharedResolverParms:PdfInterpreter.*:PdfFont.*` passes under ASan with 0 warnings, and building the descendant on every load fails `PdfFont.SharedDescendant`.
+
+> **Verified:** 2026-11-07 | §48 | 8e9b0af37ee3932aa428e521ce6785a4f9dbe525
+> **Review:** `docs/reviews/d01-t02-s48.json`
 
 ## Verification
 
