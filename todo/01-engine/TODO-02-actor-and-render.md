@@ -101,7 +101,7 @@ track: M1
 | 41 | §41 | Cubic interpolation for multi-input `/Order 3` sampled functions | §33 | [ ] |
 | 42 | §42 | Text state, positioning and text-showing operators with ISO 32000-1 advances | §2, §3, §27, §28, §29, §30, §33 | [x] |
 | 43 | §43 | Glyphs for Standard 14, simple, embedded Type 1, CFF, TrueType and Type 0 text | §42 | [x] |
-| 44 | §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks | §3, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
+| 44 | §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks | §3, §32, §33, D06 T05 §32, D06 T05 §33 | [x] |
 | 45 | §45 | Inline images decoded on the interpreter's verified framing | §44 | [ ] |
 | 46 | §46 | Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap | §3 | [x] |
 | 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [x] |
@@ -1405,9 +1405,12 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 - [x] Recover and bound: a stream short of its rows draws the rows it has, the rest transparent, with `DamagedFormat` recorded; a filter failure or an unusable size, `/BitsPerComponent` or colour space draws nothing, recorded, the page continuing and the failure remembered; `/ColorSpace` defaults as the correction above says; `OutOfMemory` and fatal resolve errors stop the page. A page draws each image object from one decode, holding at most 512 MiB of bitmaps and decoding at most that, every byte the decoders produce charged whether or not the image is drawn (`detail::ScopedDecodeWorkMeter`, as `form_content` does); an image past either is refused with `RefusalReason::WorkingBytes`. Image objects and their masks are read outside the held-resource budget. Done when: `PdfInterpreter.ImageRecovery` reads a half-length stream's first rows and transparent rest, each refusal with the next drawing still recorded, and the defaults; `PdfInterpreter.ImageBudget` shows one image drawn twice decoded once and sharing one `DecodedBitmap`, distinct images past the budget refused and recorded, distinct damaged images charged, and a 70 MiB raw image drawn; and `recto::test::ScopedAllocationFailure` returns `OutOfMemory`, never a drawn page with a hole.
 - [x] Draw Image XObjects named inside a Form XObject's own `/Resources` (`Interpreter::draw_xobject` in `src/pdf/interpreter.cpp`, reached through `D01 T02 §46`'s form scope), replacing the form's `UnsupportedFeature` diagnostic for images (filed by the `D01 T02 §46` completion review). Done when: a `PdfInterpreter` test draws an image whose name the page does not define from inside a form under the form's matrix and `/BBox` clip, and `PdfInterpreter.FormXObjectRefusals` no longer expects the image refused.
 - [x] Draw nothing for an Image XObject whose `/OC` is off or that is drawn inside a hidden block, through `§47`'s check in `Interpreter::draw_xobject`, without decoding its samples (ISO 32000-1 8.11.3.3). Done when: `PdfInterpreter.OptionalContentImages` records no `DrawImage` for either case and one when the group is on, with `detail::ScopedDecodeWorkMeter` reading 0 bytes for the hidden ones. Filed by `§47`.
-- [ ] Commit: `pdf: image XObjects with masks and soft masks`
+- [x] Commit: `pdf: image XObjects with masks and soft masks`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.ImageStream:PdfInterpreter.Image*:PdfInterpreter.NoneColorant:PdfInterpreter.OptionalContentImages:PdfInterpreter.FormXObjectRefusals` passes under ASan with 0 warnings, and applying `/Decode` a second time to a DCT image fails `PdfInterpreter.ImageXObjects`.
+
+> **Verified:** 2026-11-07 | §44 | 332ad665d56167d6d24de7c6d464855474d0cd4f
+> **Review:** `docs/reviews/d01-t02-s44.json`
 
 ## 45. Inline images decoded on the interpreter's verified framing
 
@@ -1457,7 +1460,7 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 
 > **Deferred:** a form's `/Group` composited as a transparency group -> XREF: D01 T02 §15
 > **Resolved:** a form's own `/OC` hiding it -> XREF: D01 T02 §47 (2026-11-06: closed by D01 T02 §47, whose `Interpreter::draw_xobject` skips a form whose `/OC` is off before it is charged or decoded)
-> **Deferred:** Image XObjects drawn from inside forms -> XREF: D01 T02 §44
+> **Resolved:** Image XObjects drawn from inside forms -> XREF: D01 T02 §44 (2026-11-07: closed by D01 T02 §44, whose `PdfInterpreter.ImageXObjects` draws an image named in a form's own `/Resources` under its matrix and `/BBox` clip)
 > **Deferred:** the drawn prefix kept when a form fan-out exhausts the work budget -> XREF: D01 T02 §19
 > **Deferred:** cancellation polled in the interpreter's frame loop -> XREF: D01 T02 §7
 

@@ -108,7 +108,7 @@ Sections: 106 | Checklist items: 684
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
-| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 9     |
+| [x]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 9     |
 | [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 3     |
 | [ ]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 2     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
@@ -924,6 +924,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 94/855 verified sections, 35 ready to run now.
+Progress: 95/855 verified sections, 35 ready to run now.
 
-Checklist: 601/6298 items completed (includes Commit items).
+Checklist: 602/6298 items completed (includes Commit items).
