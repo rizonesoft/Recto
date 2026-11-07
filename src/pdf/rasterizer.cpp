@@ -33,7 +33,6 @@
 #include <numbers>
 #include <optional>
 #include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -42,6 +41,8 @@ namespace recto::pdf {
 namespace {
 
 using Microsoft::WRL::ComPtr;
+
+thread_local size_t g_image_cache_bytes = kRasterImageCacheBytes;
 
 [[nodiscard]] PdfError raster_failure(HRESULT hr, const char* what) noexcept
 {
@@ -201,6 +202,21 @@ struct GlyphKey {
 
 } // namespace
 
+namespace detail {
+
+ScopedRasterImageCacheForTesting::ScopedRasterImageCacheForTesting(size_t bytes) noexcept
+	: previous_(g_image_cache_bytes)
+{
+	g_image_cache_bytes = bytes;
+}
+
+ScopedRasterImageCacheForTesting::~ScopedRasterImageCacheForTesting() noexcept
+{
+	g_image_cache_bytes = previous_;
+}
+
+} // namespace detail
+
 PdfMatrix page_to_tile_matrix(const PdfRect& page_box_pt, const TileSpec& spec) noexcept
 {
 	PdfMatrix m = page_to_full(page_box_pt, spec.dpi_scale, spec.rotation_deg);
@@ -235,15 +251,29 @@ struct Rasterizer::State {
 	uint32_t target_width{0};
 	uint32_t target_height{0};
 	std::vector<ComPtr<ID2D1Layer>> layers;
+	std::vector<ComPtr<ID2D1BitmapRenderTarget>> clip_masks; // one at each depth of arbitrary clips, the tile's size
 	size_t layers_in_use{0u};
 
+	struct ImageKey {
+		const DecodedBitmap* source{nullptr};
+		uint32_t reduce_x{1u};
+		uint32_t reduce_y{1u};
+
+		bool operator<(const ImageKey& other) const noexcept
+		{
+			if (source != other.source) {
+				return source < other.source;
+			}
+			return reduce_x != other.reduce_x ? reduce_x < other.reduce_x : reduce_y < other.reduce_y;
+		}
+	};
 	struct CachedImage {
+		ImageKey key;
 		std::shared_ptr<const DecodedBitmap> source; // keeps the key's address from being reused
-		ComPtr<ID2D1Bitmap> bitmap;
-		size_t bytes{0u};
+		std::shared_ptr<const std::vector<uint8_t>> pixels; // premultiplied BGRA, the reduced width's rows with no padding
 	};
 	std::list<CachedImage> images; // most recently used first
-	std::unordered_map<const DecodedBitmap*, std::list<CachedImage>::iterator> image_index;
+	std::map<ImageKey, std::list<CachedImage>::iterator> image_index;
 	size_t image_bytes{0u};
 
 	RasterStats stats;
@@ -262,6 +292,7 @@ struct Rasterizer::State {
 	{
 		image_index.clear();
 		images.clear();
+		clip_masks.clear();
 		layers.clear();
 		target.Reset();
 		target_bitmap.Reset();
@@ -276,9 +307,7 @@ struct Rasterizer::State {
 
 	void drop_target() noexcept
 	{
-		image_index.clear();
-		images.clear();
-		image_bytes = 0u;
+		clip_masks.clear();
 		layers.clear();
 		layers_in_use = 0u;
 		target.Reset();
@@ -593,9 +622,11 @@ struct Rasterizer::State {
 		PdfMatrix l = PdfMatrix::identity();
 		double width_units = 1.0;
 		double dash_scale = 1.0; // pen-space units per user-space dash unit
-		if (round_pen || singular) {
-			const double scale = singular ? max_scale : std::sqrt(xx);
-			// A zero width is the thinnest line the device draws, one pixel (8.4.3.2).
+		// A zero width is the thinnest line the device draws, one pixel whatever the CTM (8.4.3.2), so it is drawn in device
+		// space with no pen to shape it; its dashes take the CTM's mean scale.
+		const bool hairline = !(line_width > 0.0);
+		if (round_pen || singular || hairline) {
+			const double scale = singular ? max_scale : round_pen ? std::sqrt(xx) : std::sqrt(std::abs(det));
 			width_units = line_width > 0.0 ? std::min(line_width * scale, kMaxDeviceCoordinate) : 1.0;
 			if (!(width_units > 0.0)) {
 				width_units = 1.0;
@@ -603,7 +634,7 @@ struct Rasterizer::State {
 			dash_scale = scale > 0.0 ? scale : 1.0;
 		} else {
 			l = PdfMatrix{pen.a, pen.b, pen.c, pen.d, 0.0, 0.0};
-			width_units = line_width > 0.0 ? line_width : 1.0 / std::sqrt(std::abs(det));
+			width_units = line_width;
 		}
 		const double l_det = l.a * l.d - l.b * l.c;
 		const PdfMatrix inverse{l.d / l_det, -l.b / l_det, -l.c / l_det, l.a / l_det, 0.0, 0.0};
@@ -762,54 +793,205 @@ struct Rasterizer::State {
 			return;
 		}
 		target->SetTransform(D2D1::Matrix3x2F::Identity());
-		target->PushLayer(D2D1::LayerParameters(content, geometry.Get()), layer);
+		// The layer's own geometric mask rounds by tile, up to 16 levels along a curve. Its coverage is drawn instead by the
+		// same fill every path takes, and the layer only multiplies by it, pixel for pixel.
+		const size_t depth = layers_in_use - 1u;
+		if (depth == clip_masks.size()) {
+			ComPtr<ID2D1BitmapRenderTarget> made;
+			const HRESULT created = target->CreateCompatibleRenderTarget(made.GetAddressOf());
+			if (FAILED(created)) {
+				fail(created);
+				--layers_in_use;
+				push_rect_clip(kNothing, D2D1_ANTIALIAS_MODE_ALIASED);
+				return;
+			}
+			made->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+			clip_masks.push_back(std::move(made));
+		}
+		ID2D1BitmapRenderTarget* const mask_target = clip_masks[depth].Get();
+		ComPtr<ID2D1SolidColorBrush> mask_paint;
+		ComPtr<ID2D1Bitmap> mask_bitmap;
+		ComPtr<ID2D1BitmapBrush> mask_brush;
+		HRESULT hr = mask_target->CreateSolidColorBrush(D2D1_COLOR_F{1.0f, 1.0f, 1.0f, 1.0f}, mask_paint.GetAddressOf());
+		if (SUCCEEDED(hr)) {
+			mask_target->BeginDraw();
+			mask_target->Clear(D2D1_COLOR_F{0.0f, 0.0f, 0.0f, 0.0f});
+			mask_target->FillGeometry(geometry.Get(), mask_paint.Get());
+			hr = mask_target->EndDraw();
+		}
+		if (SUCCEEDED(hr)) {
+			hr = mask_target->GetBitmap(mask_bitmap.GetAddressOf());
+		}
+		if (SUCCEEDED(hr)) {
+			hr = target->CreateBitmapBrush(mask_bitmap.Get(),
+				D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
+				mask_brush.GetAddressOf());
+		}
+		if (FAILED(hr)) {
+			fail(hr);
+			--layers_in_use;
+			push_rect_clip(kNothing, D2D1_ANTIALIAS_MODE_ALIASED);
+			return;
+		}
+		const D2D1_RECT_F whole_pixels{std::floor(content.left), std::floor(content.top), std::ceil(content.right), std::ceil(content.bottom)};
+		D2D1_LAYER_PARAMETERS parameters = D2D1::LayerParameters(whole_pixels);
+		parameters.opacityBrush = mask_brush.Get();
+		target->PushLayer(parameters, layer);
 		clips.push_back(ClipEntry{ClipEntry::Kind::Layer});
 	}
 
-	// The worker's upload of a decoded image, kept between tiles within `kRasterImageCacheBytes`.
-	[[nodiscard]] ComPtr<ID2D1Bitmap> uploaded(const std::shared_ptr<const DecodedBitmap>& source)
+	// Cells `[x0, x1) x [y0, y1)` of `source` reduced by whole factors, each the mean of the source cells it covers (their
+	// colours are premultiplied, so a mean is right). The grid starts at the image's corner, so every tile reads the same
+	// value for a reduced cell. Row-padded sources are read through their stride.
+	[[nodiscard]] static std::vector<uint8_t> reduced_cells(
+		const DecodedBitmap& source, uint32_t reduce_x, uint32_t reduce_y, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
 	{
-		const auto found = image_index.find(source.get());
-		if (found != image_index.end()) {
-			images.splice(images.begin(), images, found->second);
-			return found->second->bitmap;
+		const size_t width = x1 - x0;
+		const size_t height = y1 - y0;
+		std::vector<uint8_t> out(width * height * 4u);
+		uint8_t* to = out.data();
+		const uint8_t* const pixels = source.pixels.data();
+		for (uint32_t y = y0; y < y1; ++y) {
+			const uint64_t row_begin = uint64_t{y} * reduce_y;
+			const uint64_t row_end = std::min<uint64_t>(row_begin + reduce_y, source.height);
+			for (uint32_t x = x0; x < x1; ++x) {
+				const uint64_t cell_begin = uint64_t{x} * reduce_x;
+				const uint64_t cell_end = std::min<uint64_t>(cell_begin + reduce_x, source.width);
+				std::array<uint64_t, 4> sum{};
+				for (uint64_t row = row_begin; row < row_end; ++row) {
+					const uint8_t* from = pixels + row * source.stride + cell_begin * 4u;
+					for (uint64_t cell = cell_begin; cell < cell_end; ++cell, from += 4) {
+						for (size_t channel = 0; channel < 4u; ++channel) {
+							sum[channel] += from[channel];
+						}
+					}
+				}
+				const uint64_t count = (row_end - row_begin) * (cell_end - cell_begin);
+				for (size_t channel = 0; channel < 4u; ++channel) {
+					*to++ = count == 0u ? uint8_t{0} : static_cast<uint8_t>((sum[channel] + count / 2u) / count);
+				}
+			}
 		}
-		const UINT32 limit = target->GetMaximumBitmapSize();
-		if (source->width > limit || source->height > limit) {
-			(void)make_pdf_error(ErrorCode::UnsupportedFeature, "An image is larger than Direct2D can hold; it is not drawn"); // recorded
-			return nullptr;
-		}
-		const D2D1_BITMAP_PROPERTIES properties = D2D1::BitmapProperties(
-			D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
-		ComPtr<ID2D1Bitmap> bitmap;
-		const HRESULT hr = target->CreateBitmap(D2D1::SizeU(source->width, source->height), source->pixels.data(),
-			source->stride, properties, bitmap.GetAddressOf());
-		if (FAILED(hr)) {
-			fail(hr);
-			return nullptr;
-		}
-		const size_t bytes = source->byte_size();
-		images.push_front(CachedImage{source, bitmap, bytes});
-		image_index[source.get()] = images.begin();
-		image_bytes += bytes;
-		while (image_bytes > kRasterImageCacheBytes && images.size() > 1u) {
-			image_bytes -= images.back().bytes;
-			image_index.erase(images.back().source.get());
-			images.pop_back();
-		}
-		return bitmap;
+		return out;
 	}
 
-	// The matrix from a bitmap's pixels (row 0 at the top of the unit square, ISO 32000-1 8.9.4) to tile pixels.
-	[[nodiscard]] std::optional<D2D1_MATRIX_3X2_F> bitmap_world(const DecodedBitmap& bitmap, const PdfMatrix& unit_to_full) const noexcept
+	// A whole image at one reduction, kept between tiles within `kRasterImageCacheBytes`.
+	[[nodiscard]] std::shared_ptr<const std::vector<uint8_t>> reduced_image(
+		const std::shared_ptr<const DecodedBitmap>& source, uint32_t reduce_x, uint32_t reduce_y, uint32_t width, uint32_t height)
 	{
-		const PdfMatrix pixels{1.0 / static_cast<double>(bitmap.width), 0.0, 0.0, -1.0 / static_cast<double>(bitmap.height), 0.0, 1.0};
-		const PdfMatrix m = concat_matrix(pixels, unit_to_full);
-		if (!is_finite_matrix(m)) {
+		const ImageKey key{source.get(), reduce_x, reduce_y};
+		const auto found = image_index.find(key);
+		if (found != image_index.end()) {
+			images.splice(images.begin(), images, found->second);
+			return images.front().pixels;
+		}
+		auto pixels = std::make_shared<const std::vector<uint8_t>>(reduced_cells(*source, reduce_x, reduce_y, 0u, 0u, width, height));
+		images.push_front(CachedImage{key, source, pixels});
+		image_index[key] = images.begin();
+		image_bytes += pixels->size();
+		// What a sampler still reads stays alive through its own reference, past any eviction here.
+		while (image_bytes > g_image_cache_bytes && images.size() > 1u) {
+			image_bytes -= images.back().pixels->size();
+			image_index.erase(images.back().key);
+			images.pop_back();
+		}
+		stats.image_cache_bytes = image_bytes;
+		return pixels;
+	}
+
+	// An image to read a device pixel from. A shrunken image is box-reduced by whole factors first, each axis its own, so a
+	// thin stroke in a scan keeps its share of each pixel where bilinear sampling would step over it.
+	struct ImageSampler {
+		std::shared_ptr<const std::vector<uint8_t>> reduced; // holds `pixels` when they are a shrunken copy
+		const uint8_t* pixels{nullptr};
+		size_t stride{0u};
+		uint32_t width{0u};
+		uint32_t height{0u};
+		bool linear{false};
+		// Whole-page pixels to cells.
+		double a{0.0}, b{0.0}, c{0.0}, d{0.0}, e{0.0}, f{0.0};
+
+		// The premultiplied channels at the centre of whole-page pixel (x, y), on no tile's account.
+		[[nodiscard]] std::array<double, 4> at(double x, double y) const noexcept
+		{
+			const double px = x + 0.5;
+			const double py = y + 0.5;
+			const double u = a * px + c * py + e;
+			const double v = b * px + d * py + f;
+			const auto cell = [this](int64_t cx, int64_t cy) {
+				const size_t x_at = static_cast<size_t>(std::clamp<int64_t>(cx, 0, int64_t{width} - 1));
+				const size_t y_at = static_cast<size_t>(std::clamp<int64_t>(cy, 0, int64_t{height} - 1));
+				return pixels + y_at * stride + x_at * 4u;
+			};
+			std::array<double, 4> out{};
+			if (!linear) {
+				const uint8_t* const p = cell(static_cast<int64_t>(std::floor(u)), static_cast<int64_t>(std::floor(v)));
+				for (size_t i = 0; i < 4u; ++i) {
+					out[i] = p[i];
+				}
+				return out;
+			}
+			const double fu = u - 0.5;
+			const double fv = v - 0.5;
+			const double x0 = std::floor(fu);
+			const double y0 = std::floor(fv);
+			const double tx = fu - x0;
+			const double ty = fv - y0;
+			const int64_t ix = static_cast<int64_t>(x0);
+			const int64_t iy = static_cast<int64_t>(y0);
+			const uint8_t* const p00 = cell(ix, iy);
+			const uint8_t* const p10 = cell(ix + 1, iy);
+			const uint8_t* const p01 = cell(ix, iy + 1);
+			const uint8_t* const p11 = cell(ix + 1, iy + 1);
+			for (size_t i = 0; i < 4u; ++i) {
+				const double top = p00[i] + (p10[i] - p00[i]) * tx;
+				const double bottom = p01[i] + (p11[i] - p01[i]) * tx;
+				out[i] = top + (bottom - top) * ty;
+			}
+			return out;
+		}
+	};
+
+	[[nodiscard]] std::optional<ImageSampler> sampler_for(
+		const std::shared_ptr<const DecodedBitmap>& source, const PdfMatrix& unit_to_full, bool linear)
+	{
+		const double width = source->width;
+		const double height = source->height;
+		const double cell_x = std::hypot(unit_to_full.a, unit_to_full.b) / width;
+		const double cell_y = std::hypot(unit_to_full.c, unit_to_full.d) / height;
+		const auto factor = [](double cell, uint32_t cells) {
+			return cell > 0.0 && cell < 0.5 ? static_cast<uint32_t>(std::clamp(std::floor(1.0 / cell), 1.0, static_cast<double>(cells))) : 1u;
+		};
+		const uint32_t reduce_x = factor(cell_x, source->width);
+		const uint32_t reduce_y = factor(cell_y, source->height);
+		const uint32_t reduced_width = (source->width + reduce_x - 1u) / reduce_x;
+		const uint32_t reduced_height = (source->height + reduce_y - 1u) / reduce_y;
+		// Row 0 is at the top of the unit square (ISO 32000-1 8.9.4).
+		const PdfMatrix cells{reduce_x / width, 0.0, 0.0, -(reduce_y / height), 0.0, 1.0};
+		const PdfMatrix m = concat_matrix(cells, unit_to_full);
+		const double det = m.a * m.d - m.b * m.c;
+		if (!is_finite_matrix(m) || det == 0.0 || !std::isfinite(det)) {
 			return std::nullopt;
 		}
-		return D2D1_MATRIX_3X2_F{static_cast<float>(m.a), static_cast<float>(m.b), static_cast<float>(m.c), static_cast<float>(m.d),
-			static_cast<float>(snapped(m.e) - tile_x), static_cast<float>(snapped(m.f) - tile_y)};
+		ImageSampler out;
+		if (reduce_x == 1u && reduce_y == 1u) {
+			out.pixels = source->pixels.data();
+			out.stride = source->stride;
+		} else {
+			out.reduced = reduced_image(source, reduce_x, reduce_y, reduced_width, reduced_height);
+			out.pixels = out.reduced->data();
+			out.stride = size_t{reduced_width} * 4u;
+		}
+		out.width = reduced_width;
+		out.height = reduced_height;
+		out.linear = linear;
+		out.a = m.d / det;
+		out.b = -m.b / det;
+		out.c = -m.c / det;
+		out.d = m.a / det;
+		out.e = (m.c * m.f - m.d * m.e) / det;
+		out.f = (m.b * m.e - m.a * m.f) / det;
+		return out;
 	}
 
 	// Whether a cell of `bitmap` covers less than a pixel: a shrunken image is always filtered, `/Interpolate` choosing
@@ -821,84 +1003,138 @@ struct Rasterizer::State {
 		return area < cells;
 	}
 
+	// An axis-aligned image's edges on whole pixels, at least one wide: strips of one scan then meet with no partly covered
+	// row between them, at any zoom, and the same edge is chosen on every tile since it is chosen on the page's grid.
+	[[nodiscard]] static PdfMatrix on_whole_pixels(const PdfMatrix& m) noexcept
+	{
+		const auto edges = [](double origin, double extent, double& out_origin, double& out_extent) {
+			const double from = std::round(origin);
+			double to = std::round(origin + extent);
+			if (to == from) {
+				to = from + (extent < 0.0 ? -1.0 : 1.0);
+			}
+			out_origin = from;
+			out_extent = to - from;
+		};
+		PdfMatrix out = m;
+		if (m.b == 0.0 && m.c == 0.0) {
+			edges(m.e, m.a, out.e, out.a);
+			edges(m.f, m.d, out.f, out.d);
+		} else if (m.a == 0.0 && m.d == 0.0) {
+			edges(m.e, m.c, out.e, out.c);
+			edges(m.f, m.b, out.f, out.b);
+		}
+		return out;
+	}
+
 	void draw_image(const DrawImageCommand& command, const PdfMatrix& ctm_full, float alpha)
 	{
 		if (command.bitmap == nullptr) {
 			return;
 		}
-		const PdfMatrix unit = concat_matrix(command.dest_transform, ctm_full);
-		const auto world = bitmap_world(*command.bitmap, unit);
-		if (!world.has_value()) {
+		PdfMatrix unit = concat_matrix(command.dest_transform, ctm_full);
+		if (!is_finite_matrix(unit)) {
+			return;
+		}
+		unit = on_whole_pixels(unit);
+		// The pixels it can touch on this tile, on whole-page coordinates.
+		const std::array<PdfPoint, 4> corners{transform_point(unit, PdfPoint{0.0, 0.0}), transform_point(unit, PdfPoint{1.0, 0.0}),
+			transform_point(unit, PdfPoint{0.0, 1.0}), transform_point(unit, PdfPoint{1.0, 1.0})};
+		double x_min = tile_x + tile_w;
+		double y_min = tile_y + tile_h;
+		double x_max = tile_x;
+		double y_max = tile_y;
+		for (const PdfPoint corner : corners) {
+			x_min = std::min(x_min, corner.x);
+			y_min = std::min(y_min, corner.y);
+			x_max = std::max(x_max, corner.x);
+			y_max = std::max(y_max, corner.y);
+		}
+		const double left = std::max(std::floor(x_min), tile_x);
+		const double top = std::max(std::floor(y_min), tile_y);
+		const double right = std::min(std::ceil(x_max), tile_x + tile_w);
+		const double bottom = std::min(std::ceil(y_max), tile_y + tile_h);
+		if (left >= right || top >= bottom) {
 			return;
 		}
 		const bool stencil = command.bitmap->is_monochrome_mask;
-		const DecodedBitmap* const mask_source = stencil ? command.bitmap.get() : command.soft_mask.get();
-		const ComPtr<ID2D1Bitmap> bitmap = uploaded(command.bitmap);
-		if (bitmap == nullptr) {
+		const auto image = sampler_for(command.bitmap, unit, command.interpolate || minified(*command.bitmap, unit));
+		if (!image.has_value()) {
 			return;
 		}
-		const bool linear = command.interpolate || minified(*command.bitmap, unit);
-		if (mask_source == nullptr) {
-			target->SetTransform(*world);
-			target->DrawBitmap(bitmap.Get(), nullptr, alpha,
-				linear ? D2D1_BITMAP_INTERPOLATION_MODE_LINEAR : D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-			target->SetTransform(D2D1::Matrix3x2F::Identity());
-			return;
+		std::optional<ImageSampler> mask;
+		if (!stencil && command.soft_mask != nullptr) {
+			mask = sampler_for(command.soft_mask, unit, command.soft_mask_interpolate || minified(*command.soft_mask, unit));
+			if (!mask.has_value()) {
+				return;
+			}
 		}
-		// Through the mask's coverage at its own resolution, inside the unit square so a clamped edge does not bleed.
-		const ComPtr<ID2D1Bitmap> mask_bitmap = stencil ? bitmap : uploaded(command.soft_mask);
-		const auto mask_world = bitmap_world(*mask_source, unit);
-		if (mask_bitmap == nullptr || !mask_world.has_value()) {
-			return;
+		// A stencil's colour is the tint's, premultiplied by its coverage.
+		const double tint_b = static_cast<double>(command.mask_tint_color.b) * command.mask_tint_color.a;
+		const double tint_g = static_cast<double>(command.mask_tint_color.g) * command.mask_tint_color.a;
+		const double tint_r = static_cast<double>(command.mask_tint_color.r) * command.mask_tint_color.a;
+		const double tint_a = command.mask_tint_color.a;
+		const uint32_t patch_w = static_cast<uint32_t>(right - left);
+		const uint32_t patch_h = static_cast<uint32_t>(bottom - top);
+		std::vector<uint8_t> patch(size_t{patch_w} * patch_h * 4u);
+		uint8_t* to = patch.data();
+		const auto byte = [](double value) {
+			return static_cast<uint8_t>(std::clamp(std::round(value), 0.0, 255.0));
+		};
+		for (uint32_t y = 0; y < patch_h; ++y) {
+			for (uint32_t x = 0; x < patch_w; ++x) {
+				const double px = left + x;
+				const double py = top + y;
+				std::array<double, 4> s = image->at(px, py);
+				if (stencil) {
+					const double coverage = s[3];
+					s = {tint_b * coverage, tint_g * coverage, tint_r * coverage, tint_a * coverage};
+				} else if (mask.has_value()) {
+					const double coverage = mask->at(px, py)[3] / 255.0;
+					for (double& channel : s) {
+						channel *= coverage;
+					}
+				}
+				for (const double channel : s) {
+					*to++ = byte(channel);
+				}
+			}
 		}
-		const bool mask_linear =
-			(stencil ? command.interpolate : command.soft_mask_interpolate) || minified(*mask_source, unit);
-		ComPtr<ID2D1BitmapBrush> mask_brush;
-		HRESULT hr = target->CreateBitmapBrush(mask_bitmap.Get(),
-			D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP,
-				mask_linear ? D2D1_BITMAP_INTERPOLATION_MODE_LINEAR : D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
-			mask_brush.GetAddressOf());
+		const D2D1_BITMAP_PROPERTIES properties = D2D1::BitmapProperties(
+			D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+		ComPtr<ID2D1Bitmap> bitmap;
+		const HRESULT hr = target->CreateBitmap(D2D1::SizeU(patch_w, patch_h), patch.data(), patch_w * 4u, properties, bitmap.GetAddressOf());
 		if (FAILED(hr)) {
 			fail(hr);
 			return;
 		}
-		mask_brush->SetTransform(*mask_world);
+		target->SetTransform(D2D1::Matrix3x2F::Identity());
+		const float dest_x = static_cast<float>(left - tile_x);
+		const float dest_y = static_cast<float>(top - tile_y);
+		const D2D1_RECT_F dest{dest_x, dest_y, dest_x + static_cast<float>(patch_w), dest_y + static_cast<float>(patch_h)};
+		// An axis-aligned image's edges are on whole pixels already; a turned one is filled through the unit square, whose
+		// edge is antialiased as any path's is.
+		if (axis_aligned(unit)) {
+			target->DrawBitmap(bitmap.Get(), dest, alpha, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+			return;
+		}
 		const std::array<PathVerb, 1> verbs{PathVerb::Rect};
 		const std::array<PdfPoint, 2> points{PdfPoint{0.0, 0.0}, PdfPoint{1.0, 1.0}};
 		const ComPtr<ID2D1PathGeometry> square = device_geometry(verbs, points, FillRule::NonZero, unit);
 		if (square == nullptr) {
 			return;
 		}
-		D2D1_RECT_F bounds{};
-		if (FAILED(square->GetBounds(nullptr, &bounds))) {
+		ComPtr<ID2D1BitmapBrush> patch_brush;
+		const HRESULT brush_hr = target->CreateBitmapBrush(bitmap.Get(),
+			D2D1::BitmapBrushProperties(D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR),
+			patch_brush.GetAddressOf());
+		if (FAILED(brush_hr)) {
+			fail(brush_hr);
 			return;
 		}
-		const D2D1_RECT_F content{std::max(bounds.left, 0.0f), std::max(bounds.top, 0.0f),
-			std::min(bounds.right, static_cast<float>(tile_w)), std::min(bounds.bottom, static_cast<float>(tile_h))};
-		if (content.left >= content.right || content.top >= content.bottom) {
-			return;
-		}
-		ID2D1Layer* const layer = next_layer();
-		if (layer == nullptr) {
-			return;
-		}
-		target->SetTransform(D2D1::Matrix3x2F::Identity());
-		D2D1_LAYER_PARAMETERS parameters = D2D1::LayerParameters(content, square.Get());
-		parameters.opacityBrush = mask_brush.Get();
-		target->PushLayer(parameters, layer);
-		if (stencil) {
-			const ComPtr<ID2D1SolidColorBrush> paint = brush(d2d_color(command.mask_tint_color, alpha));
-			if (paint != nullptr) {
-				target->FillGeometry(square.Get(), paint.Get());
-			}
-		} else {
-			target->SetTransform(*world);
-			target->DrawBitmap(bitmap.Get(), nullptr, alpha,
-				linear ? D2D1_BITMAP_INTERPOLATION_MODE_LINEAR : D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
-			target->SetTransform(D2D1::Matrix3x2F::Identity());
-		}
-		target->PopLayer();
-		--layers_in_use;
+		patch_brush->SetTransform(D2D1::Matrix3x2F::Translation(dest_x, dest_y));
+		patch_brush->SetOpacity(alpha);
+		target->FillGeometry(square.Get(), patch_brush.Get());
 	}
 
 	// Whether a box in tile pixels, widened one pixel for antialiasing, can touch the tile.

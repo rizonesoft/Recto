@@ -588,6 +588,35 @@ TEST(PdfRasterizer, StrokeAndAlpha)
 		}
 		EXPECT_NEAR(coverage, 1.0, 0.1);
 	}
+	// Under any CTM too: the horizontal line a 1 by 4 scale would thicken, the vertical one a 4 by 1 scale would, a shear.
+	for (const PdfMatrix ctm : {PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}, PdfMatrix{4.0, 0.0, 0.0, 1.0, 0.0, 0.0}, PdfMatrix{1.0, 0.0, 0.8, 1.0, 0.0, 0.0}}) {
+		SCOPED_TRACE(ctm.a);
+		DisplayListBuilder builder(kPage100);
+		ASSERT_TRUE(builder.concat_matrix(ctm).has_value());
+		ASSERT_TRUE(builder.set_stroke_style(0.0f).has_value());
+		// A horizontal line at device row 50.
+		const double user_y = 50.25 / ctm.d;
+		stroke_line(builder, {PdfPoint{1.0, user_y}, PdfPoint{20.0, user_y}});
+		const Image image = render_page(finished(builder));
+		double coverage = 0.0;
+		const uint32_t column = static_cast<uint32_t>(transform_point(ctm, PdfPoint{10.0, user_y}).x);
+		for (uint32_t y = 0; y < image.height; ++y) {
+			coverage += (255.0 - image.at(column, y).g) / 255.0;
+		}
+		EXPECT_NEAR(coverage, 1.0, 0.1);
+	}
+	{
+		DisplayListBuilder builder(kPage100);
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{4.0, 0.0, 0.0, 1.0, 0.0, 0.0}).has_value());
+		ASSERT_TRUE(builder.set_stroke_style(0.0f).has_value());
+		stroke_line(builder, {PdfPoint{12.5625, 10.0}, PdfPoint{12.5625, 90.0}}); // device x 50.25
+		const Image image = render_page(finished(builder));
+		double coverage = 0.0;
+		for (uint32_t x = 0; x < image.width; ++x) {
+			coverage += (255.0 - image.at(x, 50u).g) / 255.0;
+		}
+		EXPECT_NEAR(coverage, 1.0, 0.1);
+	}
 	// Dashes in user space: on and off 10 from x 10, at each scale.
 	for (const double scale : {1.0, 2.0}) {
 		SCOPED_TRACE(scale);
@@ -757,6 +786,233 @@ TEST(PdfRasterizer, ImageFixtures)
 		const uint32_t ccitt_row = 792u - 504u + 6u;
 		EXPECT_LT(image.at(264u + 8u * 4u + 2u, ccitt_row).g, 40);
 		EXPECT_GT(image.at(264u + 2u * 4u + 2u, ccitt_row).g, 215);
+	}
+}
+
+TEST(PdfRasterizer, ScanReduction)
+{
+	// A scan's thin rule, one row in 16, shrunk 16 times: every device row holds its share of ink, where a bilinear sample
+	// steps over 15 rows in 16 and shows white. The X axis keeps full size, so the reduction is per axis.
+	std::vector<uint8_t> rules;
+	for (uint32_t y = 0; y < 1600u; ++y) {
+		for (uint32_t x = 0; x < 80u; ++x) {
+			const uint8_t v = y % 16u == 0u ? 0u : 255u;
+			rules.insert(rules.end(), {v, v, v, 255});
+		}
+	}
+	const auto scan = bitmap_of(80u, 1600u, std::move(rules));
+	ASSERT_NE(scan, nullptr);
+	DisplayListBuilder builder(kPage100);
+	ASSERT_TRUE(builder.concat_matrix(PdfMatrix{80.0, 0.0, 0.0, 100.0, 10.0, 0.0}).has_value());
+	ASSERT_TRUE(builder.draw_image(scan, PdfMatrix::identity(), false).has_value());
+	const Image image = render_page(finished(builder));
+	for (uint32_t y = 2u; y < 98u; ++y) {
+		EXPECT_NEAR(image.at(50u, y).g, 239, 4) << "row " << y << ": 15 cells in 16 white";
+	}
+	// Turned, it is antialiased only at its edge, and tiles still agree.
+	const auto turned_list = [&] {
+		DisplayListBuilder turned(kPage100);
+		EXPECT_TRUE(turned.concat_matrix(PdfMatrix{40.0, 25.0, -25.0, 40.0, 45.0, 15.0}).has_value());
+		EXPECT_TRUE(turned.draw_image(scan, PdfMatrix::identity(), true).has_value());
+		return finished(turned);
+	}();
+	const Image turned_whole = render_page(turned_list, 1.5);
+	EXPECT_FALSE(blank(turned_whole));
+	// Its unit square's corners are (45, 15), (85, 40), (20, 55), (60, 80) in points: its box's corner stays white.
+	EXPECT_TRUE(white(turned_whole.at(static_cast<uint32_t>(82.0 * 1.5), static_cast<uint32_t>((100.0 - 75.0) * 1.5))));
+	EXPECT_FALSE(white(turned_whole.at(static_cast<uint32_t>(52.0 * 1.5), static_cast<uint32_t>((100.0 - 48.0) * 1.5)))) << "its middle";
+	const Image turned_tiled = stitched(turned_list, 1.5, 0, 32u);
+	recto::test::expect_rgba_equal(turned_tiled.bytes, turned_whole.bytes, turned_whole.width, turned_whole.height);
+	// Tiles agree when they reduce it.
+	const auto list = [&] {
+		DisplayListBuilder again(kPage100);
+		EXPECT_TRUE(again.concat_matrix(PdfMatrix{61.3, 0.0, 0.0, 77.7, 10.3, 5.1}).has_value());
+		EXPECT_TRUE(again.draw_image(scan, PdfMatrix::identity(), false).has_value());
+		return finished(again);
+	}();
+	const Image whole = render_page(list, 1.5);
+	const Image tiled = stitched(list, 1.5, 0, 32u);
+	recto::test::expect_rgba_equal(tiled.bytes, whole.bytes, whole.width, whole.height);
+}
+
+TEST(PdfRasterizer, ImageCacheBudget)
+{
+	// Shrunken copies stay within the budget, and an image and its mask both shrunk under one the second overflows are
+	// both still read: the sampler keeps what it reads alive past the eviction.
+	const auto square = [](uint8_t value, uint8_t alpha) {
+		std::vector<uint8_t> pixels;
+		pixels.reserve(400u * 400u * 4u);
+		for (int i = 0; i < 400 * 400; ++i) {
+			pixels.insert(pixels.end(), {value, value, value, alpha});
+		}
+		return bitmap_of(400u, 400u, std::move(pixels));
+	};
+	const auto image = square(40u, 255u);
+	const auto mask = square(0u, 255u);
+	const auto list = [&] {
+		DisplayListBuilder builder(kPage100);
+		EXPECT_TRUE(builder.concat_matrix(PdfMatrix{50.0, 0.0, 0.0, 50.0, 25.0, 25.0}).has_value());
+		EXPECT_TRUE(builder.draw_image(image, PdfMatrix::identity(), true, mask, kBlack, true).has_value());
+		return finished(builder);
+	}();
+	{
+		// Each copy is 50 by 50 cells, 10,000 bytes: a budget of 12,000 holds one.
+		detail::ScopedRasterImageCacheForTesting budget(12'000u);
+		auto made = Rasterizer::create();
+		ASSERT_TRUE(made.has_value());
+		const Image tight = render_page(list, 1.0, 0, ColorRgba::white(), **made);
+		EXPECT_EQ(tight.at(50u, 50u).g, 40);
+		EXPECT_EQ((*made)->stats().image_cache_bytes, 10'000u) << "the older copy was evicted";
+		EXPECT_EQ(render_page(list, 1.0, 0, ColorRgba::white(), **made).at(50u, 50u).g, 40);
+	}
+	auto made = Rasterizer::create();
+	ASSERT_TRUE(made.has_value());
+	(void)render_page(list, 1.0, 0, ColorRgba::white(), **made);
+	EXPECT_EQ((*made)->stats().image_cache_bytes, 20'000u) << "with room, both are kept";
+}
+
+TEST(PdfRasterizer, ImagePastBitmapLimit)
+{
+	// As wide as a DecodedBitmap can be, past what a Direct2D bitmap holds on many machines: each cell tells its column.
+	constexpr uint32_t kWidth = 65'536u;
+	std::vector<uint8_t> cells;
+	cells.reserve(size_t{kWidth} * 2u * 4u);
+	for (uint32_t y = 0; y < 2u; ++y) {
+		for (uint32_t x = 0; x < kWidth; ++x) {
+			cells.insert(cells.end(), {uint8_t{0}, static_cast<uint8_t>(x >> 8u), static_cast<uint8_t>(x & 0xFFu), uint8_t{255}});
+		}
+	}
+	const auto wide = bitmap_of(kWidth, 2u, std::move(cells));
+	ASSERT_NE(wide, nullptr);
+	std::vector<uint8_t> edge;
+	for (uint32_t y = 0; y < 2u; ++y) {
+		for (uint32_t x = 0; x < kWidth; ++x) {
+			edge.insert(edge.end(), {uint8_t{0}, uint8_t{0}, uint8_t{0}, x < 60'000u ? uint8_t{255} : uint8_t{0}});
+		}
+	}
+	const auto soft = bitmap_of(kWidth, 2u, std::move(edge));
+	ASSERT_NE(soft, nullptr);
+	const auto page = [&](bool masked) {
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, static_cast<double>(kWidth), 20.0});
+		EXPECT_TRUE(builder.concat_matrix(PdfMatrix{static_cast<double>(kWidth), 0.0, 0.0, 20.0, 0.0, 0.0}).has_value());
+		EXPECT_TRUE(builder.draw_image(wide, PdfMatrix::identity(), false, masked ? soft : nullptr, kBlack, false).has_value());
+		return finished(builder);
+	};
+	const auto plain = page(false);
+	for (const uint32_t x : {0u, 30'000u, 60'000u, kWidth - 512u}) {
+		SCOPED_TRACE(x);
+		TileSpec spec;
+		spec.tile_x_px = x;
+		spec.tile_width_px = 512u;
+		spec.tile_height_px = 20u;
+		const Image tile = render(plain, spec);
+		for (uint32_t column = 0; column < 512u; column += 37u) {
+			const uint32_t cell = x + column;
+			ASSERT_EQ(tile.at(column, 10u).r, static_cast<int>(cell & 0xFFu)) << column;
+			ASSERT_EQ(tile.at(column, 10u).g, static_cast<int>(cell >> 8u)) << column;
+		}
+	}
+	// Its mask, at its own cells: opaque to column 60,000 and clear past it, across this tile.
+	TileSpec spec;
+	spec.tile_x_px = 59'900u;
+	spec.tile_width_px = 512u;
+	spec.tile_height_px = 20u;
+	const Image tile = render(page(true), spec);
+	EXPECT_FALSE(white(tile.at(50u, 10u)));
+	EXPECT_TRUE(white(tile.at(150u, 10u))) << "past the mask's edge";
+}
+
+TEST(PdfRasterizer, AbuttingWithoutSeam)
+{
+	// Strips of one scan meeting at fractional zoom: each edge lands on a whole pixel, so no row between them is partly
+	// covered and shows the paper through. Independent of any tile: every row of the strips is exactly the strip's colour.
+	const auto gray = bitmap_of(1u, 1u, {60, 60, 60, 255});
+	ASSERT_NE(gray, nullptr);
+	for (const double scale : {1.0, 1.1, 1.333, 1.5, 2.25}) {
+		SCOPED_TRACE(scale);
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 100.0, 100.0});
+		for (int strip = 0; strip < 9; ++strip) {
+			ASSERT_TRUE(builder.save_state().has_value());
+			ASSERT_TRUE(builder.concat_matrix(PdfMatrix{60.0, 0.0, 0.0, 10.3, 20.0, 5.0 + strip * 10.3}).has_value());
+			ASSERT_TRUE(builder.draw_image(gray, PdfMatrix::identity(), false).has_value());
+			ASSERT_TRUE(builder.restore_state().has_value());
+		}
+		const auto list = finished(builder);
+		const Image image = render_page(list, scale);
+		const uint32_t column = static_cast<uint32_t>(50.0 * scale);
+		const uint32_t top = static_cast<uint32_t>(std::ceil((100.0 - 5.0 - 9.0 * 10.3) * scale)) + 1u;
+		const uint32_t bottom = static_cast<uint32_t>((100.0 - 5.0) * scale) - 1u;
+		for (uint32_t y = top; y < bottom; ++y) {
+			EXPECT_EQ(image.at(column, y).g, 60) << "row " << y;
+		}
+		// Translucent strips show a row painted twice as darker, so the strips must meet and not overlap.
+		{
+			DisplayListBuilder translucent(PdfRect{0.0, 0.0, 100.0, 100.0});
+			ASSERT_TRUE(translucent.set_alpha_and_blend(1.0f, 0.5f).has_value());
+			const auto ink = bitmap_of(1u, 1u, {0, 0, 0, 255});
+			for (int strip = 0; strip < 9; ++strip) {
+				ASSERT_TRUE(translucent.save_state().has_value());
+				ASSERT_TRUE(translucent.concat_matrix(PdfMatrix{60.0, 0.0, 0.0, 10.3, 20.0, 5.0 + strip * 10.3}).has_value());
+				ASSERT_TRUE(translucent.draw_image(ink, PdfMatrix::identity(), false).has_value());
+				ASSERT_TRUE(translucent.restore_state().has_value());
+			}
+			const Image half = render_page(finished(translucent), scale);
+			for (uint32_t y = top; y < bottom; ++y) {
+				EXPECT_NEAR(half.at(column, y).g, 128, 1) << "row " << y;
+			}
+		}
+		// Abutting strips crossing an engine tile's edge, tile against whole.
+		const Image large = render_page(list, scale * 8.0);
+		const Image tiled = stitched(list, scale * 8.0, 0);
+		recto::test::expect_rgba_equal(tiled.bytes, large.bytes, large.width, large.height);
+	}
+	// Abutting vector fills whose shared edge is a tile's edge, on a whole pixel: solid across it, by its own colour.
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 800.0, 100.0});
+	const double edge = 512.0 / 1.5; // the first engine tile's right edge at 150%
+	fill_rect(builder, 100.0, 10.0, edge - 100.0, 80.0, kBlack);
+	fill_rect(builder, edge, 10.0, 200.0, 80.0, kBlack);
+	const Image tiled = stitched(finished(builder), 1.5, 0);
+	for (uint32_t x = 505u; x < 520u; ++x) {
+		EXPECT_EQ(tiled.at(x, 75u).g, 0) << "column " << x;
+	}
+}
+
+TEST(PdfRasterizer, ClipsStitch)
+{
+	// An arbitrary clip and a turned rectangular one, each across tile edges, at a fractional zoom: tiles equal the whole.
+	const auto curved = [] {
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 400.0, 400.0});
+		PathBuilder blob;
+		blob.move_to(20.0, 200.0);
+		blob.cubic_bezier_to(PdfPoint{100.0, 420.0}, PdfPoint{300.0, 420.0}, PdfPoint{380.0, 200.0});
+		blob.cubic_bezier_to(PdfPoint{300.0, -20.0}, PdfPoint{100.0, -20.0}, PdfPoint{20.0, 200.0});
+		blob.close_subpath();
+		const auto id = builder.add_path(blob);
+		EXPECT_TRUE(id.has_value());
+		EXPECT_TRUE(builder.push_clip_path(*id).has_value());
+		fill_rect(builder, 0.0, 0.0, 400.0, 400.0, ColorRgba{0.2f, 0.4f, 0.8f});
+		return finished(builder);
+	}();
+	const auto turned = [] {
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 400.0, 400.0});
+		const double c = std::cos(0.5);
+		const double s = std::sin(0.5);
+		EXPECT_TRUE(builder.concat_matrix(PdfMatrix{c, s, -s, c, 200.0, 40.0}).has_value());
+		PathBuilder rect;
+		rect.rect(0.0, 0.0, 200.0, 200.0);
+		const auto id = builder.add_path(rect);
+		EXPECT_TRUE(id.has_value());
+		EXPECT_TRUE(builder.push_clip_path(*id).has_value());
+		fill_rect(builder, -400.0, -400.0, 1200.0, 1200.0, ColorRgba{0.8f, 0.3f, 0.2f});
+		return finished(builder);
+	}();
+	for (const auto& list : {curved, turned}) {
+		for (const double scale : {1.0, 1.37, 2.0}) {
+			SCOPED_TRACE(scale);
+			const Image whole = render_page(list, scale);
+			const Image tiled = stitched(list, scale, 0, 128u);
+			recto::test::expect_rgba_equal(tiled.bytes, whole.bytes, whole.width, whole.height);
+		}
 	}
 }
 

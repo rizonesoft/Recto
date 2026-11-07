@@ -7,7 +7,8 @@
 //
 // Tile identity: geometry is computed in double precision on the whole page's pixel grid, snapped to `kDeviceGrid`, and
 // only then moved by the tile's integer origin, so a tile and the whole page draw the same fractions of a pixel and
-// tiles stitch without a seam at any zoom.
+// tiles stitch without a seam at any zoom. Images are sampled the same way, each device pixel at its place on that grid,
+// and composited as a patch no larger than the tile, so no decoded image is ever uploaded whole.
 #pragma once
 
 #include "display_list.h"
@@ -31,7 +32,7 @@ inline constexpr double kMaxDeviceCoordinate = 4'000'000.0;
 inline constexpr uint64_t kMaxDashSegments = 100'000u;
 // Nesting of Type 3 glyph sub-lists replayed (D01 T02 section 31 bounds recording at the same depth).
 inline constexpr size_t kMaxType3ReplayDepth = 8u;
-// Decoded images this worker keeps uploaded between tiles, so a large image is not copied again for each tile.
+// Shrunken copies of decoded images this worker keeps between tiles, so a large image is not reduced again for each tile.
 inline constexpr size_t kRasterImageCacheBytes = size_t{256} << 20u;
 
 // One tile of a page. Pixel coordinates are on the whole rotated page's grid at `dpi_scale`, y down.
@@ -63,7 +64,24 @@ struct PagePixelSize {
 struct RasterStats {
 	uint64_t draws_replayed{0}; // Draw commands and glyphs of the last tile that were not culled.
 	uint64_t target_creations{0}; // Render targets this worker has ever made.
+	size_t image_cache_bytes{0}; // Shrunken image copies this worker holds now.
 };
+
+namespace detail {
+
+// Lowers `kRasterImageCacheBytes` for the calling thread's rasterizers, so a test reaches eviction with small images.
+class ScopedRasterImageCacheForTesting {
+public:
+	explicit ScopedRasterImageCacheForTesting(size_t bytes) noexcept;
+	~ScopedRasterImageCacheForTesting() noexcept;
+	ScopedRasterImageCacheForTesting(const ScopedRasterImageCacheForTesting&) = delete;
+	ScopedRasterImageCacheForTesting& operator=(const ScopedRasterImageCacheForTesting&) = delete;
+
+private:
+	size_t previous_;
+};
+
+} // namespace detail
 
 class Rasterizer {
 public:
