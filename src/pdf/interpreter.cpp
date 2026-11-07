@@ -343,6 +343,8 @@ public:
 	}
 
 private:
+	struct ImageSource;
+
 	// Damaged content (`DamagedFormat`) skips the operator it belongs to; every other lexer, parser or resolver failure
 	// (memory, a decoder or recursion limit, an internal error) stops the page and is returned.
 	[[nodiscard]] static bool fatal(const PdfError& error) noexcept
@@ -396,7 +398,7 @@ private:
 				}
 				const Op code = op_named(op->text.view());
 				if (code == Op::BeginInlineImage) {
-					auto skipped = skip_inline_image(parser);
+					auto skipped = read_inline_image(parser, !skip_next_);
 					if (resolve_failure_.has_value()) {
 						return *resolve_failure_; // a colour space the image named did not resolve, the cause of any refusal
 					}
@@ -579,14 +581,14 @@ private:
 			(at == data_start || (at > 0u && is_white(input[at - 1u]))) && (at + 2u == input.size() || is_white(input[at + 2u]));
 	}
 
-	// Inline images are read by section 4; until then `BI ... ID data EI` is skipped whole, so the data is never read
-	// as operators. The dictionary is parsed to find `ID`. An unfiltered image's data is skipped by its length. A
+	// `BI ... ID data EI`, framed and then drawn through the image path (D01 T02 section 45); the data is never read as
+	// operators. The dictionary is parsed to find `ID`. An unfiltered image's data is skipped by its length. A
 	// filtered one ends at the first `EI` before which the data decodes through its filters to the image's full size:
 	// an `EI` inside compressed data truncates it, so it cannot. Checking candidates may decode at most 64 MiB in all;
 	// past that the page is refused (`InlineImageFraming`), and a candidate the decoder refuses for any reason but
 	// damage refuses the page with that error. An image whose end cannot be verified this way (its size unknown, its
 	// data damaged) refuses the page with `DamagedFormat`: no `EI` is ever taken on trust.
-	[[nodiscard]] PdfResult<void> skip_inline_image(Parser& parser)
+	[[nodiscard]] PdfResult<void> read_inline_image(Parser& parser, bool draws)
 	{
 		static constexpr size_t kMaxInlineEntries = 64u;
 		static constexpr size_t kMaxFramingWork = 64u * 1024u * 1024u;
@@ -643,6 +645,25 @@ private:
 		if (!data_start.has_value()) {
 			return unframed("An inline image's dictionary could not be read to its ID");
 		}
+		// A form drawn again reads the same bytes: its verified end and its source are kept by the data's address, in
+		// content the page holds for its life, so nothing is framed or decoded again.
+		const uint8_t* const memo_key = input.data() + *data_start;
+		if (const auto it = inline_images_.find(memo_key); it != inline_images_.end()) {
+			lexer.seek(it->second.end + 2u);
+			return draws ? draw_inline_image(it->second.source) : PdfResult<void>{};
+		}
+		const auto framed = [&](size_t start, size_t length, size_t end) -> PdfResult<void> {
+			lexer.seek(end + 2u);
+			InlineImage image;
+			image.end = end;
+			RECTO_PDF_TRY(const bool usable, inline_source(image.source, entries, input.subspan(start, length)));
+			image.source.usable = usable;
+			if (inline_images_.size() < kMaxHeldResources) {
+				InlineImage& kept = inline_images_.emplace(memo_key, std::move(image)).first->second;
+				return draws ? draw_inline_image(kept.source) : PdfResult<void>{};
+			}
+			return draws ? draw_inline_image(image.source) : PdfResult<void>{};
+		};
 		const auto samples = inline_sample_bytes(entries);
 		if (!samples.has_value()) {
 			return unframed("An inline image's size could not be determined, so its end could not be found");
@@ -662,8 +683,7 @@ private:
 					++after;
 				}
 				if (ei_candidate(input, after, after)) {
-					lexer.seek(after + 2u);
-					return {};
+					return framed(start, *samples, after);
 				}
 			}
 			return unframed("An inline image's data is not followed by EI where its size says it ends");
@@ -691,8 +711,7 @@ private:
 			auto decoded = decode_stream(data, filters, *samples + std::max<size_t>(*samples, 64u * 1024u));
 			if (decoded.has_value()) {
 				if (decoded->size() >= *samples) {
-					lexer.seek(end + 2u);
-					return {};
+					return framed(*data_start, length, end);
 				}
 				continue; // too short: this `EI` cuts the data
 			}
@@ -702,6 +721,94 @@ private:
 			// Damaged: this `EI` truncates the data.
 		}
 		return unframed("An inline image's data decodes at no EI after it, so its end could not be found");
+	}
+
+	// An inline image's colour space in full (8.9.7): the device abbreviations, and an Indexed array with its base's.
+	[[nodiscard]] static PdfResult<PdfValue> inline_space_expanded(const PdfValue& space)
+	{
+		const auto expanded_name = [](std::string_view name) -> std::string_view {
+			return name == "G" ? "DeviceGray" : name == "RGB" ? "DeviceRGB" : name == "CMYK" ? "DeviceCMYK" : name;
+		};
+		if (const std::optional<std::string_view> name = space.as_name()) {
+			return PdfValue(PdfName::from_decoded(expanded_name(*name)));
+		}
+		const PdfArray* array = space.as_array();
+		const std::optional<std::string_view> family = array != nullptr && !array->empty() ? (*array)[0].as_name() : std::nullopt;
+		if (family != std::optional<std::string_view>("I") && family != std::optional<std::string_view>("Indexed")) {
+			return space.deep_clone();
+		}
+		PdfArray out;
+		out.push_back(PdfValue(PdfName::from_decoded("Indexed")));
+		for (size_t i = 1u; i < array->size(); ++i) {
+			const std::optional<std::string_view> name = i == 1u ? (*array)[i].as_name() : std::nullopt;
+			if (name.has_value()) {
+				out.push_back(PdfValue(PdfName::from_decoded(expanded_name(*name))));
+			} else {
+				RECTO_PDF_TRY_REF(element, (*array)[i].deep_clone());
+				out.push_back(std::move(element));
+			}
+		}
+		return PdfValue(std::move(out));
+	}
+
+	// `source` for a framed inline image: a stream built from its dictionary (Table 93's keys in full, /I here being
+	// /Interpolate) and its data, read as an image object is. False when nothing can be drawn, recorded.
+	[[nodiscard]] PdfResult<bool> inline_source(ImageSource& source, const InlineEntries& entries, std::span<const uint8_t> data)
+	{
+		static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kKeys = {{
+			{"W", "Width"},
+			{"H", "Height"},
+			{"BPC", "BitsPerComponent"},
+			{"CS", "ColorSpace"},
+			{"D", "Decode"},
+			{"DP", "DecodeParms"},
+			{"F", "Filter"},
+			{"IM", "ImageMask"},
+			{"I", "Interpolate"},
+			{"Intent", "Intent"},
+		}};
+		auto stream = std::make_shared<PdfStream>();
+		for (const auto& [abbreviation, key] : kKeys) {
+			const PdfValue* value = inline_entry(entries, abbreviation, key);
+			if (value == nullptr) {
+				continue;
+			}
+			if (key == "ColorSpace") {
+				RECTO_PDF_TRY_REF(space, inline_space_expanded(*value));
+				stream->dict.set(key, std::move(space));
+			} else {
+				RECTO_PDF_TRY_REF(cloned, value->deep_clone());
+				stream->dict.set(key, std::move(cloned));
+			}
+		}
+		const std::string filter = last_filter(stream->dict);
+		if (filter == "JBIG2Decode" || filter == "JPXDecode") {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An inline image cannot use JBIG2Decode or JPXDecode (8.9.7); it is not drawn"); // recorded
+			return false;
+		}
+		if (!hold_image_bytes(data.size())) {
+			record_image_refusal(data.size());
+			return false;
+		}
+		stream->raw_bytes.assign(data.begin(), data.end());
+		stream->raw_length = data.size();
+		source.inline_stream = stream;
+		RECTO_PDF_RETURN_IF_ERROR(read_image_dictionary(source, stream->dict));
+		RECTO_PDF_RETURN_IF_ERROR(prepare_stencil(source, *stream));
+		return source.usable;
+	}
+
+	// Hidden content draws nothing, and what the builder refuses is skipped as a malformed operator is.
+	[[nodiscard]] PdfResult<void> draw_inline_image(ImageSource& source)
+	{
+		if (hidden() || !source.usable) {
+			return {};
+		}
+		auto drawn = draw_image_source(source);
+		if (!drawn.has_value() && drawn.error().code == ErrorCode::DamagedFormat) {
+			return {};
+		}
+		return drawn;
 	}
 
 	[[nodiscard]] static std::optional<double> number(const PdfValue& v) noexcept
@@ -1949,6 +2056,7 @@ private:
 		std::vector<int64_t> color_key{};
 		std::vector<double> matte{};
 		int64_t alpha_in_data{0};
+		std::shared_ptr<const PdfStream> inline_stream{}; // an inline image's dictionary and data, built once
 		std::shared_ptr<const std::vector<uint8_t>> samples{}; // raw, while kept
 		std::shared_ptr<const std::vector<uint8_t>> alpha{};   // a JPX image's own, for /SMaskInData
 		std::shared_ptr<const ColorSpace> own_space{}; // a JPX image's own profile
@@ -1956,6 +2064,12 @@ private:
 		std::shared_ptr<const DecodedBitmap> mask{};
 		std::vector<ConvertedImage> conversions{};
 		std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> spaces{}; // by the scope's serial
+	};
+
+	// An inline image: where its `EI` is, and its source.
+	struct InlineImage {
+		size_t end{0};
+		ImageSource source{};
 	};
 
 	// An object read for an image, outside the held-resource budget and not kept. Null when missing, null or damaged; a
@@ -2237,6 +2351,25 @@ private:
 	{
 		ImageSource src;
 		src.ref = ref;
+		RECTO_PDF_RETURN_IF_ERROR(read_image_dictionary(src, dict));
+		if (image_sources_.size() >= kMaxHeldResources) {
+			(void)make_pdf_error(ErrorCode::ResourceLimit, "Image objects past the page's limit are not drawn"); // recorded
+			return static_cast<ImageSource*>(nullptr);
+		}
+		return &image_sources_.emplace(object_key(ref), std::move(src)).first->second;
+	}
+
+	[[nodiscard]] PdfResult<void> prepare_stencil(ImageSource& src, const PdfStream& stream)
+	{
+		if (src.stencil && src.usable) {
+			RECTO_PDF_TRY(src.stencil_bitmap, stencil_from(stream, true));
+			src.usable = src.stencil_bitmap != nullptr;
+		}
+		return {};
+	}
+
+	[[nodiscard]] PdfResult<void> read_image_dictionary(ImageSource& src, const PdfDict& dict)
+	{
 		const std::string filter = last_filter(dict);
 		src.jpx = filter == "JPXDecode";
 		src.image_filter = src.jpx || filter == "DCTDecode" || filter == "DCT";
@@ -2277,11 +2410,7 @@ private:
 			}
 			src.alpha_in_data = src.jpx ? int_of(dict, "SMaskInData").value_or(0) : 0;
 		}
-		if (image_sources_.size() >= kMaxHeldResources) {
-			(void)make_pdf_error(ErrorCode::ResourceLimit, "Image objects past the page's limit are not drawn"); // recorded
-			return static_cast<ImageSource*>(nullptr);
-		}
-		return &image_sources_.emplace(object_key(ref), std::move(src)).first->second;
+		return {};
 	}
 
 	// The image's masks and its own alpha, read when its data first is: /SMask over /Mask (11.6.5.3, 8.9.6). One that
@@ -2355,8 +2484,8 @@ private:
 		if (src.samples != nullptr) {
 			return src.samples;
 		}
-		const std::shared_ptr<const PdfValue> object = image_object(src.ref);
-		const PdfStream* stream = object != nullptr ? object->as_stream() : nullptr;
+		const std::shared_ptr<const PdfValue> object = src.inline_stream == nullptr ? image_object(src.ref) : nullptr;
+		const PdfStream* stream = src.inline_stream != nullptr ? src.inline_stream.get() : (object != nullptr ? object->as_stream() : nullptr);
 		if (stream == nullptr) {
 			src.usable = false;
 			return std::shared_ptr<const std::vector<uint8_t>>{};
@@ -2443,14 +2572,17 @@ private:
 			if (src == nullptr) {
 				return {};
 			}
-			if (src->stencil && src->usable) {
-				RECTO_PDF_TRY(src->stencil_bitmap, stencil_from(*stream, true));
-				src->usable = src->stencil_bitmap != nullptr;
-			}
+			RECTO_PDF_RETURN_IF_ERROR(prepare_stencil(*src, *stream));
 		}
 		if (!src->usable) {
 			return {};
 		}
+		return draw_image_source(*src);
+	}
+
+	[[nodiscard]] PdfResult<void> draw_image_source(ImageSource& source)
+	{
+		ImageSource* const src = &source;
 		if (src->stencil) {
 			// Painted in the current non-stroking colour; a colour that marks nothing draws nothing (8.6.6.4).
 			if (!state_.fill.paints()) {
@@ -3249,6 +3381,7 @@ private:
 	std::unordered_map<uint64_t, OcAnswer> oc_answers_{};
 	// Image XObjects (D01 T02 section 44): each object's source and conversions, what they hold and what has been decoded.
 	std::unordered_map<uint64_t, ImageSource> image_sources_{};
+	std::unordered_map<const uint8_t*, InlineImage> inline_images_{}; // by the address of the data, in content held for the page
 	size_t image_held_{0};
 	size_t image_decoded_{0};
 	const size_t image_budget_{page_image_budget}; // bitmaps held and data decoded, each, per page

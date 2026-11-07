@@ -253,10 +253,10 @@ TEST(PdfInterpreter, OperatorDispatch)
 	EXPECT_EQ(verbs_of(*r.list, draws[1].path_index), (std::vector<PathVerb>{PathVerb::MoveTo, PathVerb::LineTo}));
 	EXPECT_EQ(points_of(*r.list, draws[1].path_index), (std::vector<PdfPoint>{{40.0, 40.0}, {60.0, 40.0}}));
 
-	// An inline image's data is skipped to its `EI`, so the operators inside it are never read.
+	// An inline image's data ends at its `EI`, so the operators inside it are never read.
 	const auto inline_image = interpret("BI /W 13 /H 1 /BPC 8 /CS /G ID 0 0 m 5 5 l S EI 0 0 10 10 re f");
 	ASSERT_NE(inline_image.list, nullptr);
-	EXPECT_EQ(kinds(*inline_image.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*inline_image.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 	EXPECT_TRUE(all_of<DrawPathCommand>(*inline_image.list)[0].fill);
 
 	// Pixel data holding " EI " and operator-shaped bytes: an unfiltered image is skipped by its length (24 bytes of
@@ -265,12 +265,12 @@ TEST(PdfInterpreter, OperatorDispatch)
 	ASSERT_EQ(pixels.size(), 24u);
 	const auto by_length = interpret("BI /W 24 /H 1 /BPC 8 /CS /G ID " + pixels + "\nEI 0 0 10 10 re S");
 	ASSERT_NE(by_length.list, nullptr);
-	EXPECT_EQ(kinds(*by_length.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*by_length.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*by_length.list)[0].fill);
 	// A writer that put CR LF after `ID` still has its data measured from the byte after the LF.
 	const auto crlf = interpret("BI /W 2 /H 1 /BPC 8 /CS /G ID\r\nab EI 0 0 10 10 re f");
 	ASSERT_NE(crlf.list, nullptr);
-	EXPECT_EQ(kinds(*crlf.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*crlf.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 
 	// A Flate image whose decoded pixels hold " EI " and `re f` is framed by decoding: the `EI` inside the data truncates
 	// the stream, so only the `EI` after it, where the data decodes to all 62 samples, ends the image.
@@ -278,7 +278,7 @@ TEST(PdfInterpreter, OperatorDispatch)
 	ASSERT_EQ(flate_pixels.size(), 62u);
 	const auto framed = interpret("BI /W 62 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(flate_pixels) + "\nEI 0 0 10 10 re S");
 	ASSERT_NE(framed.list, nullptr);
-	EXPECT_EQ(kinds(*framed.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*framed.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*framed.list)[0].fill);
 
 	// However many false `EI`s the pixels hold, each one truncates the stream and the real one still ends the image.
@@ -292,7 +292,7 @@ TEST(PdfInterpreter, OperatorDispatch)
 	ASSERT_EQ(many_pixels.size(), 126u);
 	const auto many = interpret("BI /W 126 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(many_pixels) + "\nEI 0 0 10 10 re S");
 	ASSERT_NE(many.list, nullptr);
-	EXPECT_EQ(kinds(*many.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*many.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*many.list)[0].fill);
 
 	// Data longer than its dictionary says (5,062 bytes for one sample) still frames by decoding, inside the padding
@@ -300,7 +300,7 @@ TEST(PdfInterpreter, OperatorDispatch)
 	const std::string long_pixels = std::string(" EI 0 0 100 100 re f ") + std::string(40, ' ') + "\x80" + std::string(5'000, 'x');
 	const auto padded = interpret("BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(long_pixels) + " EI 0 0 10 10 re S");
 	ASSERT_NE(padded.list, nullptr);
-	EXPECT_EQ(kinds(*padded.list), (std::vector<K>{K::DrawPath}));
+	EXPECT_EQ(kinds(*padded.list), (std::vector<K>{K::DrawImage, K::DrawPath}));
 	EXPECT_FALSE(all_of<DrawPathCommand>(*padded.list)[0].fill);
 
 	// An operator that takes no operands, given one, is skipped like any operator with the wrong operands: each case
@@ -5786,6 +5786,164 @@ TEST(PdfInterpreter, OptionalContentImages)
 	EXPECT_EQ(in_block.first, 0u);
 	EXPECT_EQ(in_block.second, 0u) << "an image in a hidden block was decoded";
 	EXPECT_EQ(drawn("/X Do", "", &kFiveIsOff).first, 1u);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Inline images (D01 T02 section 45).
+// ---------------------------------------------------------------------------------------------------------------------
+
+// An inline image's first row, then the page's path after its EI.
+void expect_inline_row(std::string_view inline_image, const std::vector<int>& reds, std::string_view resources = "<< >>", std::string_view before = "")
+{
+	const auto r = interpret(std::string(before) + " " + std::string(inline_image) + " 0 0 10 10 re f", resources);
+	ASSERT_NE(r.list, nullptr);
+	EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u) << "the operators after EI did not run: " << inline_image;
+	const auto images = images_of(r);
+	ASSERT_EQ(images.size(), 1u) << inline_image;
+	ASSERT_EQ(images[0].bitmap->width, reds.size());
+	for (uint32_t x = 0; x < images[0].bitmap->width; ++x) {
+		EXPECT_EQ(cell(*images[0].bitmap, x, 0u).r, reds[x]) << inline_image << " cell " << x;
+	}
+}
+
+TEST(PdfInterpreter, InlineImages)
+{
+	using namespace std::string_view_literals;
+	// Each abbreviation and its full name.
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G ID \xFF\x40 EI", {255, 0x40});
+	expect_inline_row("BI /Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray ID \xFF\x40 EI", {255, 0x40});
+	expect_inline_row("BI /W 1 /H 1 /BPC 8 /CS /RGB ID \x10\x20\x30 EI", {0x10});
+	// /D is /Decode, through conversion.
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /D [1 0] ID \xFF\x40 EI", {0, 255 - 0x40});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /Decode [1 0] ID \xFF\x40 EI", {0, 255 - 0x40});
+	// /I in a colour space array is /Indexed, its base abbreviated too; a palette entry per sample.
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS [/I /RGB 1 <FF000010FF00>] ID \x01\x00 EI"sv, {0x10, 0xFF});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS [/Indexed /DeviceRGB 1 <FF000010FF00>] ID \x01\x00 EI"sv, {0x10, 0xFF});
+	// A colour space named in the resources, and an abbreviation winning over a resource of that name.
+	expect_inline_row("BI /W 1 /H 1 /BPC 8 /CS /Mine ID \x20 EI", {0x88}, "<< /ColorSpace << /Mine [/Indexed /DeviceRGB 255 <" + std::string(256u * 6u, '8') + ">] >> >>");
+	// A filter by its abbreviation, framed by decoding, and in an array with parameters.
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /AHx ID FF40> EI", {255, 0x40});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F [/AHx] ID FF40> EI", {255, 0x40});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string_view("\xFF\x40", 2u)) + " EI", {255, 0x40});
+	// /I in a dictionary is /Interpolate, default false.
+	{
+		for (const bool smooth : {false, true}) {
+			const auto r = interpret(std::string("BI /W 1 /H 1 /BPC 8 /CS /G") + (smooth ? " /I true" : "") + " ID \x80 EI");
+			ASSERT_EQ(images_of(r).size(), 1u);
+			EXPECT_EQ(images_of(r)[0].interpolate, smooth);
+		}
+		const auto full = interpret("BI /W 1 /H 1 /BPC 8 /CS /G /Interpolate true ID \x80 EI");
+		ASSERT_EQ(images_of(full).size(), 1u);
+		EXPECT_TRUE(images_of(full)[0].interpolate);
+	}
+	// A stencil in the fill colour, /D [1 0] the other way; and in a colorant that marks nothing, nothing.
+	{
+		const auto r = interpret("1 0 0 rg BI /W 2 /H 1 /IM true ID \x40 EI");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_TRUE(images[0].bitmap->is_monochrome_mask);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).a, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 1u, 0u).a, 0);
+		EXPECT_FLOAT_EQ(images[0].mask_tint_color.r, 1.0f);
+		const auto inverse = interpret("BI /W 2 /H 1 /IM true /D [1 0] ID \x40 EI");
+		ASSERT_EQ(images_of(inverse).size(), 1u);
+		EXPECT_EQ(cell(*images_of(inverse)[0].bitmap, 0u, 0u).a, 0);
+		const std::string none = "<< /ColorSpace << /S [/Separation /None /DeviceGray << /FunctionType 2 /Domain [0 1] /N 1 /C0 [1] /C1 [0] >>] >> >>";
+		const auto nothing = interpret("/S cs 1 scn BI /W 1 /H 1 /IM true ID \x00 EI 0 0 1 1 re n"sv, none);
+		ASSERT_NE(nothing.list, nullptr);
+		EXPECT_TRUE(images_of(nothing).empty());
+	}
+	// The stream goes on after EI, and the graphics state is as it was: a CTM places the image and the next path alike.
+	{
+		const auto r = interpret("10 0 0 10 5 5 cm BI /W 1 /H 1 /BPC 8 /CS /G ID \x80 EI 0 0 1 1 re f");
+		ASSERT_NE(r.list, nullptr);
+		const auto bounds = r.list->command_bounds();
+		const auto commands = r.list->commands();
+		size_t seen = 0;
+		for (size_t i = 0; i < commands.size(); ++i) {
+			if (commands[i].as<DrawImageCommand>() != nullptr || commands[i].as<DrawPathCommand>() != nullptr) {
+				ASSERT_TRUE(bounds[i].has_bounds);
+				expect_rect(bounds[i].bounds_pt, 5.0, 5.0, 15.0, 15.0);
+				++seen;
+			}
+		}
+		EXPECT_EQ(seen, 2u);
+	}
+	// An unusable colour space draws nothing, and the page goes on.
+	{
+		clear_diagnostics();
+		const auto r = interpret("BI /W 1 /H 1 /BPC 8 /CS [/Separation /X /NoSuch 1] ID \x80 EI 0 0 10 10 re f");
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(images_of(r).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+	}
+	// A BI whose operator damage skips is framed, not drawn: an unreadable operand before it.
+	{
+		const auto r = interpret("<zz> BI /W 1 /H 1 /BPC 8 /CS /G ID \x80 EI 0 0 10 10 re f");
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(images_of(r).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+	}
+}
+
+TEST(PdfInterpreter, InlineImagesInForm)
+{
+	const std::string image = "BI /W 1 /H 1 /BPC 8 /CS /RGB /F /Fl ID " + stored_zlib(std::string_view("\x80\x40\x20", 3u)) + " EI";
+	const auto drawn_with = [&](std::string_view content, std::string_view inline_image) {
+		const auto r = interpret(content, "<< /XObject << /F 5 0 R >> >>", {form_object("/BBox [0 0 10 10]", inline_image)});
+		return images_of(r);
+	};
+	// Drawn twice: one bitmap, and its second draw costs nothing, framing included.
+	{
+		const auto images = drawn_with("/F Do /F Do", image);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_EQ(images[0].bitmap.get(), images[1].bitmap.get());
+		const auto cost = [&](std::string_view content) {
+			const auto bytes = one_page_pdf(content, "<< /XObject << /F 5 0 R >> >>", {form_object("/BBox [0 0 10 10] /Filter /FlateDecode", stored_zlib(image))});
+			auto doc = Document::open_memory(bytes);
+			EXPECT_TRUE(doc.has_value());
+			detail::ScopedDecodeWorkMeter work;
+			EXPECT_TRUE(interpret_page(**doc, 0u).has_value());
+			return work.bytes();
+		};
+		const uint64_t once = cost("/F Do");
+		EXPECT_GT(once, 0u);
+		EXPECT_EQ(cost("/F Do /F Do /F Do"), once) << "a repeated inline image was framed or decoded again";
+	}
+	// One conversion per intent, unless /Intent says which: that the entry is not lost.
+	{
+		const auto without = drawn_with("/Perceptual ri /F Do /Saturation ri /F Do", image);
+		ASSERT_EQ(without.size(), 2u);
+		EXPECT_NE(without[0].bitmap.get(), without[1].bitmap.get());
+		const auto with = drawn_with("/Perceptual ri /F Do /Saturation ri /F Do",
+			"BI /W 1 /H 1 /BPC 8 /CS /RGB /Intent /AbsoluteColorimetric /F /Fl ID " + stored_zlib(std::string_view("\x80\x40\x20", 3u)) + " EI");
+		ASSERT_EQ(with.size(), 2u);
+		EXPECT_EQ(with[0].bitmap.get(), with[1].bitmap.get()) << "/Intent was lost from the inline dictionary";
+	}
+	// Two inline images in one stream are two images.
+	{
+		const auto r = interpret("BI /W 1 /H 1 /BPC 8 /CS /G ID \x10 EI BI /W 1 /H 1 /BPC 8 /CS /G ID \x20 EI");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).r, 0x10);
+		EXPECT_EQ(cell(*images[1].bitmap, 0u, 0u).r, 0x20);
+	}
+}
+
+TEST(PdfInterpreter, InlineImagesHidden)
+{
+	const std::string resources = "<< /Properties << /L 5 0 R >> >>";
+	const std::vector<std::string> objects{std::string(kOcg)};
+	const std::string content = "/OC /L BDC BI /W 1 /H 1 /BPC 8 /CS /G ID \x80 EI 0 0 10 10 re f EMC 20 20 5 5 re f";
+	const auto hidden_page = interpret_visible(content, resources, objects, &kFiveIsOff);
+	ASSERT_NE(hidden_page.list, nullptr);
+	EXPECT_TRUE(images_of(hidden_page).empty()) << "an inline image drew in a hidden block";
+	EXPECT_EQ(all_of<DrawPathCommand>(*hidden_page.list).size(), 1u) << "the operators after EI did not run";
+	const OptionalContentVisibility none{};
+	const auto shown_page = interpret_visible(content, resources, objects, &none);
+	ASSERT_NE(shown_page.list, nullptr);
+	EXPECT_EQ(images_of(shown_page).size(), 1u);
+	EXPECT_EQ(all_of<DrawPathCommand>(*shown_page.list).size(), 2u);
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

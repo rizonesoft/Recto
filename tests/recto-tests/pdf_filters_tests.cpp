@@ -8427,6 +8427,15 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		ASSERT_TRUE(draw_command("/SMaskInData 1", jp2, gray_jpx, "/S Do /X Do").has_value());
 		EXPECT_EQ(images_drawn, 1u) << "a JPX image's alpha was not charged";
 	}
+	// An inline image cannot use JPXDecode (8.9.7): framed, not drawn, recorded, and the stream goes on.
+	{
+		clear_diagnostics();
+		const std::string content = "/S Do BI /W 2 /H 1 /BPC 8 /CS /G /F /JPXDecode ID " + std::string(gray_jpx.begin(), gray_jpx.end()) + " EI /S Do";
+		ASSERT_TRUE(draw_command("", jp2, gray_jpx, content).has_value());
+		EXPECT_EQ(images_drawn, 2u) << "the inline JPX image drew, or the operators after its EI did not run";
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_TRUE(std::any_of(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }));
+	}
 	// A JPX /SMask ignores /Decode, as every JPX image does unless it is an image mask (Table 89).
 	{
 		const auto command = draw_command("/SMask 6 0 R", jp2, gray_jpx);
