@@ -519,6 +519,20 @@ private:
 
 	using InlineEntries = std::vector<std::pair<std::string, PdfValue>>;
 
+	// An inline image's dictionary keys that are read, abbreviated and in full (Table 93).
+	static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kInlineKeys = {{
+		{"W", "Width"},
+		{"H", "Height"},
+		{"BPC", "BitsPerComponent"},
+		{"CS", "ColorSpace"},
+		{"D", "Decode"},
+		{"DP", "DecodeParms"},
+		{"F", "Filter"},
+		{"IM", "ImageMask"},
+		{"I", "Interpolate"},
+		{"Intent", "Intent"},
+	}};
+
 	// An inline image entry by its abbreviated or full key (ISO 32000-1 Table 92).
 	[[nodiscard]] static const PdfValue* inline_entry(const InlineEntries& entries, std::string_view abbreviation, std::string_view key) noexcept
 	{
@@ -657,8 +671,24 @@ private:
 			lexer.seek(end + 2u);
 			InlineImage image;
 			image.end = end;
-			image.entries = std::move(entries);
 			image.data = input.subspan(start, length);
+			// Kept only what is read, and charged: a dictionary can hold far more than the image it describes.
+			size_t dictionary_bytes = 0;
+			for (auto& entry : entries) {
+				const bool read = std::any_of(kInlineKeys.begin(), kInlineKeys.end(), [&](const auto& key) {
+					return entry.first == key.first || entry.first == key.second;
+				});
+				if (read) {
+					dictionary_bytes += entry.first.capacity() + entry.second.heap_bytes();
+					image.entries.push_back(std::move(entry));
+				}
+			}
+			if (!hold_image_bytes(dictionary_bytes)) {
+				record_image_refusal(dictionary_bytes);
+				image.entries.clear();
+				image.prepared = true;
+				image.source.usable = false;
+			}
 			if (inline_images_.size() < kMaxHeldResources) {
 				InlineImage& kept = inline_images_.emplace(memo_key, std::move(image)).first->second;
 				return draws ? draw_inline_image(kept, std::move(decoded)) : PdfResult<void>{};
@@ -760,20 +790,8 @@ private:
 		ImageSource& source = image.source;
 		const InlineEntries& entries = image.entries;
 		const std::span<const uint8_t> data = image.data;
-		static constexpr std::array<std::pair<std::string_view, std::string_view>, 10> kKeys = {{
-			{"W", "Width"},
-			{"H", "Height"},
-			{"BPC", "BitsPerComponent"},
-			{"CS", "ColorSpace"},
-			{"D", "Decode"},
-			{"DP", "DecodeParms"},
-			{"F", "Filter"},
-			{"IM", "ImageMask"},
-			{"I", "Interpolate"},
-			{"Intent", "Intent"},
-		}};
 		auto stream = std::make_shared<PdfStream>();
-		for (const auto& [abbreviation, key] : kKeys) {
+		for (const auto& [abbreviation, key] : kInlineKeys) {
 			const PdfValue* value = inline_entry(entries, abbreviation, key);
 			if (value == nullptr) {
 				continue;

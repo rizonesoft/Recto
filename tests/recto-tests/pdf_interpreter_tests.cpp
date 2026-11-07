@@ -5994,6 +5994,24 @@ TEST(PdfInterpreter, InlineImagesHidden)
 		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
 		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
 	}
+	// A dictionary's unread keys are not kept, however large; one a key is read from counts against the budget, hidden
+	// or not, since the page keeps it to draw the image again.
+	{
+		std::string zeros;
+		for (int i = 0; i < 5'000; ++i) {
+			zeros += "0 ";
+		}
+		const detail::ScopedPageImageBudgetForTesting budget(4096u);
+		clear_diagnostics();
+		const auto unread = interpret_visible("BI /W 1 /H 1 /BPC 8 /CS /G /Unused [" + zeros + "] ID \x80 EI", resources, objects, &none);
+		ASSERT_NE(unread.list, nullptr);
+		EXPECT_EQ(images_of(unread).size(), 1u) << "an unread key was charged, and so kept";
+		const auto read = interpret_visible("BI /W 1 /H 1 /BPC 8 /CS /G /D [" + zeros + "] ID \x80 EI 0 0 1 1 re f", resources, objects, &none);
+		ASSERT_NE(read.list, nullptr);
+		EXPECT_TRUE(images_of(read).empty()) << "a large dictionary was kept uncharged";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		EXPECT_EQ(all_of<DrawPathCommand>(*read.list).size(), 1u);
+	}
 	// A hidden image is framed and no more; a drawn one takes its samples from that same decode, so it costs no more.
 	{
 		const std::string compressed = "BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(1u, '\x80')) + " EI";
