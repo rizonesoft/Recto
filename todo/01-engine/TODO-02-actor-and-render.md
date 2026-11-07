@@ -314,7 +314,7 @@ Implement `src/pdf/rasterizer.h` and `src/pdf/rasterizer.cpp` (`recto::pdf::Rast
 
 > **Deferred:** shadings, tiling patterns and text clip modes 4 to 7 (their paint is drawn, the clip is not accumulated) -> XREF: D01 T02 §16
 
-> **Deferred:** mid-replay cancellation -> XREF: D01 T02 §7
+> **Resolved:** mid-replay cancellation -> XREF: D01 T02 §7 (2026-11-07: closed by D01 T02 §7, whose polls reach every long loop of replay, filters and fonts)
 
 > **Deferred:** the mapping of every `HRESULT` to its retry behaviour, and render-target recreation, while this section returns each failure as a typed error -> XREF: D01 T02 §20
 
