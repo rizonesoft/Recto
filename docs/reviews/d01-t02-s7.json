@@ -1,0 +1,85 @@
+{
+  "ref": "D01 T02 \u00a77",
+  "title": "Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation",
+  "implementation_sha": "d049be582a198e0ea8975b530088f4425e5d2f7b",
+  "date": "2026-11-07",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s7.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=*Cancel* in Release on this host, latency held -> passed in build.cmd: [  PASSED  ] 446 tests",
+    "recto-tests.exe --gtest_filter=*Cancel*:PdfRasterizer.FlushBoundsEndDraw under ASan -> [  PASSED  ] 16 tests, each named poll reached",
+    "removing the per-glyph poll fails PdfRasterizer.CancelInsideOneCommand -> mutation failed it",
+    "Freeze check: CancelToken in src/pdf/cancel_token.h, zero upward includes, std::atomic<bool>, no locks; a cancel unwinds clips and the target stays valid -> PdfRasterizer.RenderTargetReusableAfterCancel passed, no new target made",
+    ".\\build.cmd -> 0 Warning(s) on all four builds; [  PASSED  ] 445 tests Debug, [  PASSED  ] 446 tests Release; Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s7.md",
+    "verdict": "filed",
+    "candidate": "97e67b68c457d0813482bd80becba43bdf5abdbe",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a719",
+      "D01 T02 \u00a78",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s7.md",
+    "candidate": "172c1bf7a4b20e4c708ae1b96523e9183981100c",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

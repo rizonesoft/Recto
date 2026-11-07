@@ -64,7 +64,7 @@ track: M1
 | 4 | §4 | Content-stream interpreter complete over the render corpus | §2, §3, §27, §28, §29, §30, §32, §33, §42, §43, §44, §45, §46, §47, D06 T05 §32, D06 T05 §33 | [x] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [x] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [x] |
-| 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
+| 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [x] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [ ] |
 | 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [ ] |
 | 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
@@ -399,9 +399,12 @@ Implement `CancelToken` and `CancelSource` in `src/pdf/cancel_token.h` (`recto::
 - [x] Poll the `CancelToken` in the native JPX decoder (per packet, per code-block, per wavelet level) and in DCT (WIC's one `CopyPixels` call copied in strips of 64 rows, so a poll falls between them) and JBIG2 decoding (each row of a generic and a refinement region), returning `Cancelled` with nothing cached. Done when: `PdfFilters.CancelDuringDecode` cancels during a JPX image's packets, code-blocks and wavelet levels, a JPEG's strips and a JBIG2 region's rows, each returning `Cancelled` within 10 ms, and the same bytes decoded again afterwards give the uncancelled result. **Corrected 2026-10-23:** (`D06 T05 §32` completion review: filed here).
 - [x] Poll the compilation's `CancelToken` in the interpreter's frame loop (`Interpreter::run_frames` in `src/pdf/interpreter.cpp`), so a cancel lands between operators inside nested Form XObjects as well as on the page (filed by the `D01 T02 §46` completion review). Done when: `PdfInterpreter.CancelInForms` cancels a page whose form fan-out would run for seconds and sees compilation stop within 10 ms with `Cancelled`, no `DisplayList` published, its scope closed so the next page on the thread is not cancelled, and no diagnostic recorded as damage.
 - [x] Poll in the input-sized loops still without one: the Adler checksum (a cancelled one is not a mismatch), LZW, ASCIIHex, ASCII85, RunLength and predictor rows. And prove the wait between polls, which a cancel at a poll cannot see: a cancel from another thread landing in running work. Done when: `PdfFilters.CancelWhileRunning` and `PdfRasterizer.CancelWhileRunning` each cancel while a large input runs and read `Cancelled` within `kCancelLatencyLimitMs`, 10 ms in Release: a 400,000-glyph run, an 8,192 by 8,192 reduction, full-tile fills, a path of 400,000 curves being built, each filter on tens of MiB, and a baseline 4,096 by 4,096 JPEG. The uninterruptible calls are measured with their times in the findings file: one large path's `FillGeometry`, and a large progressive JPEG's first `CopyPixels`. **Corrected 2026-11-07:** completion review.
-- [ ] Commit: `pdf: add cooperative CancelToken with sub-10ms mid-replay tile cancellation`
+- [x] Commit: `pdf: add cooperative CancelToken with sub-10ms mid-replay tile cancellation`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=*Cancel*` passes in Release with abort latency `< 10 ms` and under ASan with each named poll reached and clean subsequent tile renders on the same worker, and removing the per-glyph poll fails `PdfRasterizer.CancelInsideOneCommand`.
+
+> **Verified:** 2026-11-07 | §7 | d049be582a198e0ea8975b530088f4425e5d2f7b
+> **Review:** `docs/reviews/d01-t02-s7.json`
 
 ## 8. `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state
 
@@ -1526,7 +1529,7 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 > **Resolved:** a form's own `/OC` hiding it -> XREF: D01 T02 §47 (2026-11-06: closed by D01 T02 §47, whose `Interpreter::draw_xobject` skips a form whose `/OC` is off before it is charged or decoded)
 > **Resolved:** Image XObjects drawn from inside forms -> XREF: D01 T02 §44 (2026-11-07: closed by D01 T02 §44, whose `PdfInterpreter.ImageXObjects` draws an image named in a form's own `/Resources` under its matrix and `/BBox` clip)
 > **Deferred:** the drawn prefix kept when a form fan-out exhausts the work budget -> XREF: D01 T02 §19
-> **Deferred:** cancellation polled in the interpreter's frame loop -> XREF: D01 T02 §7
+> **Resolved:** cancellation polled in the interpreter's frame loop -> XREF: D01 T02 §7 (2026-11-07: closed by D01 T02 §7, whose `run_frames` polls every operator, in a form as on the page)
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.FormXObjectBasics:PdfInterpreter.FormXObjectResources:PdfInterpreter.FormXObjectCycle:PdfInterpreter.FormXObjectWork:PdfInterpreter.FormXObjectRefusals:PdfInterpreter.*` passes under ASan with 0 warnings.
 
