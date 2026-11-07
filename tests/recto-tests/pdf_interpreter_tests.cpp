@@ -5809,6 +5809,7 @@ void expect_inline_row(std::string_view inline_image, const std::vector<int>& re
 TEST(PdfInterpreter, InlineImages)
 {
 	using namespace std::string_view_literals;
+	static constexpr std::string_view sys_a85 = "s$-";
 	// Each abbreviation and its full name.
 	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G ID \xFF\x40 EI", {255, 0x40});
 	expect_inline_row("BI /Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray ID \xFF\x40 EI", {255, 0x40});
@@ -5825,6 +5826,35 @@ TEST(PdfInterpreter, InlineImages)
 	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /AHx ID FF40> EI", {255, 0x40});
 	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F [/AHx] ID FF40> EI", {255, 0x40});
 	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string_view("\xFF\x40", 2u)) + " EI", {255, 0x40});
+	// ASCII85, a /DP predictor (a row tag of 0, then the row), and CMYK as an image object draws it.
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /A85 ID " + std::string(sys_a85) + "~> EI", {255, 0x40});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F [/Fl] /DP [<< /Predictor 12 /Columns 2 >>] ID " + stored_zlib("\x00\xFF\x40"sv) + " EI", {255, 0x40});
+	expect_inline_row("BI /W 2 /H 1 /BPC 8 /CS /G /F /Fl /DP << /Predictor 12 /Columns 2 >> ID " + stored_zlib("\x00\xFF\x40"sv) + " EI", {255, 0x40});
+	{
+		const auto object = one_image("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceCMYK", "\x20\x40\x60\x10");
+		const auto in_line = interpret("BI /W 1 /H 1 /BPC 8 /CS /CMYK ID \x20\x40\x60\x10 EI");
+		ASSERT_EQ(images_of(object).size(), 1u);
+		ASSERT_EQ(images_of(in_line).size(), 1u);
+		const Bgra a = cell(*images_of(object)[0].bitmap, 0u, 0u);
+		const Bgra b = cell(*images_of(in_line)[0].bitmap, 0u, 0u);
+		EXPECT_EQ(a.r, b.r);
+		EXPECT_EQ(a.g, b.g);
+		EXPECT_EQ(a.b, b.b);
+		EXPECT_NE(a.r, a.g) << "this colour should tell its components apart";
+	}
+	// A CMYK JPEG inline: framing's decode gives RGBA, not the image path's samples, so it draws as an image object does.
+	{
+		const std::string jpeg = corpus_text("images/dct-4c-no-marker.jpg");
+		const auto object = one_image("/Width 16 /Height 8 /BitsPerComponent 8 /ColorSpace /DeviceCMYK /Filter /DCTDecode", jpeg);
+		const auto in_line = interpret("BI /W 16 /H 8 /BPC 8 /CS /CMYK /F /DCT ID " + jpeg + " EI");
+		ASSERT_EQ(images_of(object).size(), 1u);
+		ASSERT_EQ(images_of(in_line).size(), 1u);
+		const Bgra a = cell(*images_of(object)[0].bitmap, 3u, 0u);
+		const Bgra b = cell(*images_of(in_line)[0].bitmap, 3u, 0u);
+		EXPECT_EQ(a.r, b.r);
+		EXPECT_EQ(a.g, b.g);
+		EXPECT_EQ(a.b, b.b);
+	}
 	// /I in a dictionary is /Interpolate, default false.
 	{
 		for (const bool smooth : {false, true}) {
@@ -5944,6 +5974,30 @@ TEST(PdfInterpreter, InlineImagesHidden)
 	ASSERT_NE(shown_page.list, nullptr);
 	EXPECT_EQ(images_of(shown_page).size(), 1u);
 	EXPECT_EQ(all_of<DrawPathCommand>(*shown_page.list).size(), 2u);
+	// Hidden images cost no budget: the first of these stencils and its data would fill it, leaving a visible image none.
+	{
+		const std::string stencil = "BI /W 100 /H 100 /IM true ID " + std::string(1'300u, 'a') + " EI ";
+		const detail::ScopedPageImageBudgetForTesting budget(41'300u);
+		const auto r = interpret_visible("/OC /L BDC " + stencil + stencil + stencil + "EMC BI /W 1 /H 1 /BPC 8 /CS /G ID \x80 EI", resources, objects, &kFiveIsOff);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(images_of(r).size(), 1u) << "hidden inline images spent the visible image's budget";
+	}
+	// A hidden image is framed and no more; a drawn one takes its samples from that same decode, so it costs no more.
+	{
+		const std::string compressed = "BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(1u, '\x80')) + " EI";
+		const auto cost = [&](const OptionalContentVisibility* visibility) {
+			detail::ScopedDecodeWorkMeter work;
+			const auto r = interpret_visible("/OC /L BDC " + compressed + " EMC", resources, objects, visibility);
+			EXPECT_NE(r.list, nullptr);
+			return std::make_pair(images_of(r).size(), work.bytes());
+		};
+		const auto hidden_cost = cost(&kFiveIsOff);
+		const auto drawn_cost = cost(&none);
+		EXPECT_EQ(hidden_cost.first, 0u);
+		EXPECT_EQ(drawn_cost.first, 1u);
+		EXPECT_GT(hidden_cost.second, 0u) << "the meter cannot see the framing decode";
+		EXPECT_EQ(drawn_cost.second, hidden_cost.second) << "the image was decoded again after its framing";
+	}
 }
 
 TEST(PdfInterpreter, TextDecodeWork)
