@@ -326,6 +326,7 @@ public:
 			excluded_groups_ = sorted_keys(visibility->excluded);
 		}
 		auto page = std::make_unique<ResourceScope>();
+		page->serial = ++scope_serial_;
 		page->resources = &resources;
 		scope_ = page.get();
 		scopes_.push_back(std::move(page));
@@ -1241,6 +1242,8 @@ private:
 	// XObject's while it runs; each keeps its own category caches and font-by-name cache, since one name means
 	// different things in different scopes. Kept for the page by the `/Resources` object, at most kMaxResourceScopes.
 	struct ResourceScope {
+		// Never repeated on a page, where an address can: a scope past kMaxResourceScopes ends with its form.
+		uint64_t serial{0};
 		const PdfDict* resources{nullptr};
 		std::shared_ptr<const PdfValue> owner{}; // what `resources` lives in: a form's `/Resources` object, or the form
 		Category ext_gstates{};
@@ -1953,7 +1956,7 @@ private:
 		std::shared_ptr<const DecodedBitmap> stencil_bitmap{};
 		std::shared_ptr<const DecodedBitmap> mask{};
 		std::vector<ConvertedImage> conversions{};
-		std::vector<std::pair<ResourceScope*, std::shared_ptr<const ColorSpace>>> spaces{};
+		std::vector<std::pair<uint64_t, std::shared_ptr<const ColorSpace>>> spaces{}; // by the scope's serial
 	};
 
 	// An object read for an image, outside the held-resource budget and not kept. Null when missing, null or damaged; a
@@ -2422,14 +2425,14 @@ private:
 		if (!src.color_space.has_value()) {
 			return std::shared_ptr<const ColorSpace>{};
 		}
-		for (const auto& [scope, space] : src.spaces) {
-			if (scope == scope_) {
+		for (const auto& [serial, space] : src.spaces) {
+			if (serial == scope_->serial) {
 				return space;
 			}
 		}
 		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, spaces().resolve(*src.color_space));
 		if (src.spaces.size() < kMaxImageConversions) {
-			src.spaces.emplace_back(scope_, space);
+			src.spaces.emplace_back(scope_->serial, space);
 		}
 		return space;
 	}
@@ -3041,6 +3044,7 @@ private:
 			return scopes_.front().get();
 		}
 		auto scope = std::make_unique<ResourceScope>();
+		scope->serial = ++scope_serial_;
 		scope->owner = std::move(owner);
 		scope->resources = resources;
 		ResourceScope* raw = scope.get();
@@ -3259,6 +3263,7 @@ private:
 	const size_t image_budget_{page_image_budget}; // bitmaps held and data decoded, each, per page
 	size_t marked_depth_{0};
 	size_t hidden_at_{0};
+	uint64_t scope_serial_{0};
 	std::vector<std::unique_ptr<ResourceScope>> scopes_{};
 	std::unordered_map<uint64_t, ResourceScope*> scope_by_key_{};
 	ResourceScope* scope_{nullptr};

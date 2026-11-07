@@ -5634,6 +5634,38 @@ TEST(PdfInterpreter, ImageBudget)
 		EXPECT_EQ(page.r, page.g);
 		EXPECT_NE(in_form.r, in_form.g) << "the form's /DefaultGray was not used";
 	}
+	// Past the 256 scopes a page keeps, forms have short-lived scopes, whose addresses repeat: a form's /CS is still its own.
+	{
+		const std::string image = image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /CS", std::string_view("\x00", 1u));
+		std::vector<std::string> objects{image};
+		std::string xobjects;
+		std::string content;
+		int number = 6;
+		const auto add_form = [&](const std::string& entries, std::string_view body) {
+			objects.push_back(form_object("/BBox [0 0 10 10] /Resources << " + entries + " >>", body));
+			const std::string name = "/F" + std::to_string(number);
+			xobjects += name + " " + std::to_string(number) + " 0 R ";
+			content += name + " Do ";
+			++number;
+		};
+		// These use up the kept scopes, and draw no image: the image first meets the short-lived scopes below.
+		for (int i = 0; i < 256; ++i) {
+			add_form("/Marker " + std::to_string(i), "");
+		}
+		for (int i = 0; i < 8; ++i) {
+			const std::string palette = i % 2 == 0 ? "FF0000" : "0000FF";
+			add_form("/XObject << /I 5 0 R >> /ColorSpace << /CS [/Indexed /DeviceRGB 0 <" + palette + ">] >>", "/I Do");
+		}
+		const auto r = interpret(content, "<< /XObject << " + xobjects + ">> >>", objects);
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 8u);
+		for (size_t i = 0; i < 8u; ++i) {
+			SCOPED_TRACE(i);
+			const Bgra c = cell(*images[i].bitmap, 0u, 0u);
+			EXPECT_EQ(c.r, i % 2u == 0u ? 255 : 0) << "a form drew with another form's colour space";
+			EXPECT_EQ(c.b, i % 2u == 0u ? 0 : 255);
+		}
+	}
 	// The budget: distinct images past it are refused and recorded, and the next drawing stands.
 	{
 		const detail::ScopedPageImageBudgetForTesting budget(size_t{1} << 20u);
