@@ -8328,6 +8328,19 @@ TEST(PdfFilters, ImageStream)
 		EXPECT_EQ(data->image->pixels[2], 120u);
 		EXPECT_EQ(data->image->pixels[3], 60u);
 	}
+	// The limit holds across the chain's stages, not each alone: a hex stage after an inflate stage spends what the first
+	// produced, where the stream path gives each stage the whole limit.
+	{
+		std::vector<uint8_t> hex_text(size_t{1} << 16u, '4');
+		hex_text.push_back('>');
+		auto packed = flate_compress(hex_text);
+		ASSERT_TRUE(packed.has_value());
+		const auto stream = with_filter(PdfValue(PdfArray{flate, hex}), *packed);
+		const size_t one_stage = hex_text.size() + 1024u; // room for the inflate alone, not for the hex stage too
+		RECTO_EXPECT_ERR(decode_image_stream(stream, one_stage), ErrorCode::DecompressionLimitExceeded);
+		RECTO_ASSERT_OK(decode_stream(stream, one_stage));
+		RECTO_ASSERT_OK(decode_image_stream(stream, hex_text.size() + hex_text.size() / 2u + 1024u));
+	}
 	// A JPX image with its alpha.
 	{
 		std::array<J2kTestComponent, 4> four{};
@@ -8357,7 +8370,7 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 	const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
 	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
 	const auto jp2 = make_jp2(make_j2k_codestream(four, 2u, 1u), 2u, 1u, 4u, boxes);
-	const auto draw = [&](std::string_view entry) -> std::shared_ptr<const DecodedBitmap> {
+	const auto draw_command = [&](std::string_view entry, const std::vector<uint8_t>& image, const std::vector<uint8_t>& second) -> std::optional<DrawImageCommand> {
 		std::string pdf = "%PDF-1.7\n";
 		std::vector<size_t> offsets;
 		const auto object = [&](const std::string& body) {
@@ -8369,7 +8382,9 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		object("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /XObject << /X 5 0 R >> >> >>");
 		object("<< /Length 5 >>\nstream\n/X Do\nendstream");
 		object("<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /Filter /JPXDecode " + std::string(entry) + " /Length " +
-			std::to_string(jp2.size()) + " >>\nstream\n" + std::string(jp2.begin(), jp2.end()) + "\nendstream");
+			std::to_string(image.size()) + " >>\nstream\n" + std::string(image.begin(), image.end()) + "\nendstream");
+		object("<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /Filter /JPXDecode /Decode [1 0] /Length " +
+			std::to_string(second.size()) + " >>\nstream\n" + std::string(second.begin(), second.end()) + "\nendstream");
 		const size_t xref = pdf.size();
 		pdf += "xref\n0 " + std::to_string(offsets.size() + 1u) + "\n0000000000 65535 f \n";
 		for (const size_t off : offsets) {
@@ -8384,13 +8399,38 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		auto list = interpret_page(**doc, 0u);
 		EXPECT_TRUE(list.has_value());
 		for (const DisplayCommand& command : (*list)->commands()) {
-			if (const auto* image = command.as<DrawImageCommand>()) {
-				return image->bitmap;
+			if (const auto* drawn = command.as<DrawImageCommand>()) {
+				return *drawn;
 			}
 		}
 		ADD_FAILURE() << "no image drawn";
-		return nullptr;
+		return std::nullopt;
 	};
+	const std::array<J2kTestComponent, 1> gray_cells = {J2kTestComponent{{0u, 255u}, 2u, 1u, 8u, 1u, 1u}};
+	const std::vector<uint8_t> gray_jpx = make_j2k_codestream(gray_cells, 2u, 1u);
+	const auto draw = [&](std::string_view entry) -> std::shared_ptr<const DecodedBitmap> {
+		const auto command = draw_command(entry, jp2, gray_jpx);
+		return command.has_value() ? command->bitmap : nullptr;
+	};
+	// A JPX /SMask ignores /Decode, as every JPX image does unless it is an image mask (Table 89).
+	{
+		const auto command = draw_command("/SMask 6 0 R", jp2, gray_jpx);
+		ASSERT_TRUE(command.has_value());
+		ASSERT_NE(command->soft_mask, nullptr);
+		EXPECT_EQ(command->soft_mask->pixels[3], 0u) << "a JPX /SMask took its /Decode";
+		EXPECT_EQ(command->soft_mask->pixels[7], 255u);
+	}
+	// An Indexed JPX image of two-bit samples draws its palette entries, though the decoder scaled them to eight bits.
+	{
+		const std::array<J2kTestComponent, 1> two_bit = {J2kTestComponent{{1u, 2u}, 2u, 1u, 2u, 1u, 1u}};
+		const auto command = draw_command("/ColorSpace [/Indexed /DeviceRGB 3 <000000FF000000FF000000FF>]", make_j2k_codestream(two_bit, 2u, 1u), gray_jpx);
+		ASSERT_TRUE(command.has_value());
+		const auto& pixels = command->bitmap->pixels; // BGRA
+		EXPECT_EQ(pixels[2], 255u) << "the first sample is not palette entry 1, red";
+		EXPECT_EQ(pixels[0], 0u);
+		EXPECT_EQ(pixels[5], 255u) << "the second sample is not palette entry 2, green";
+		EXPECT_EQ(pixels[4], 0u);
+	}
 	const auto alpha = [](const std::shared_ptr<const DecodedBitmap>& bitmap, uint32_t x) { return bitmap != nullptr ? bitmap->pixels[x * 4u + 3u] : uint8_t{0}; };
 	for (const char* entry : {"/SMaskInData 1", "/SMaskInData 2"}) {
 		SCOPED_TRACE(entry);

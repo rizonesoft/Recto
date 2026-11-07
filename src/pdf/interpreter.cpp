@@ -1938,6 +1938,7 @@ private:
 		uint32_t width{0};
 		uint32_t height{0};
 		uint32_t bits{8};
+		uint32_t source_bits{8}; // a JPX stream's own, its samples scaled to eight bits for us
 		size_t components{0}; // the decoder's, for an image filter
 		std::optional<RenderingIntent> intent{};
 		std::optional<PdfValue> color_space{};
@@ -2204,8 +2205,8 @@ private:
 			return std::shared_ptr<const DecodedBitmap>{};
 		}
 		std::vector<double> decode = numbers_of(dict, "Decode");
-		if (decode.size() != 2u) {
-			decode.clear();
+		if (decode.size() != 2u || filter == "JPXDecode") {
+			decode.clear(); // a JPX image ignores /Decode unless it is an image mask (Table 89)
 		}
 		const std::shared_ptr<const ColorSpace> gray = ColorSpace::device(ColorSpaceKind::DeviceGray);
 		std::vector<uint8_t> pixels(bytes, 0u);
@@ -2387,6 +2388,7 @@ private:
 			src.width = image.width;
 			src.height = image.height;
 			src.components = image.components;
+			src.source_bits = image.source_bits;
 			if (!src.decoded && src.jpx && !image.icc_profile.empty()) {
 				RECTO_PDF_TRY(src.own_space, ColorSpace::from_icc_profile(image.icc_profile, image.components));
 			}
@@ -2576,8 +2578,18 @@ private:
 		}
 		std::vector<uint8_t> pixels(bytes, 0u);
 		std::vector<uint8_t> unmatted;
+		// An Indexed JPX image of fewer than eight bits: the decoder scaled its samples, and these are its palette indices.
+		const bool index_samples = src.jpx && space.kind() == ColorSpaceKind::Indexed && src.source_bits < 8u;
+		const uint32_t source_max = (uint32_t{1} << std::min<uint32_t>(src.source_bits, 8u)) - 1u;
+		std::vector<uint8_t> indices;
 		for (size_t y = 0; y < rows; ++y) {
-			const std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
+			std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
+			if (index_samples) {
+				indices.resize(row_bytes);
+				std::transform(row.begin(), row.end(), indices.begin(),
+					[source_max](uint8_t v) { return static_cast<uint8_t>((uint32_t{v} * source_max + 127u) / 255u); });
+				row = indices;
+			}
 			std::span<const uint8_t> source = row;
 			uint32_t bits = src.bits;
 			std::span<const double> row_decode = decode;

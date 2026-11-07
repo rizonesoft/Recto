@@ -11067,7 +11067,12 @@ PdfResult<WicDecodedImage> decode_jpx_image(
 	size_t max_decoded_bytes) noexcept
 {
 	try {
-		return decode_jpx_internal(input, decode_parms, max_decoded_bytes);
+		RECTO_PDF_TRY(WicDecodedImage image, decode_jpx_internal(input, decode_parms, max_decoded_bytes));
+		const auto header = inspect_jpx_header(input, max_decoded_bytes);
+		if (header.has_value()) {
+			image.source_bits = header->bpc;
+		}
+		return image;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -11534,6 +11539,7 @@ struct ResolvedLocal {
 	}
 
 	std::vector<uint8_t> stage_buf;
+	size_t chain_room = effective_limit; // for an image, what the stages may produce together
 	for (size_t i = 0; i < num_filters; ++i) {
 		if (!allow_jbig2 && filter_names[i] == "JBIG2Decode") {
 			return make_filter_error(
@@ -11621,17 +11627,18 @@ struct ResolvedLocal {
 			stage_parms = &(*merged_image_parms);
 			if (image_out != nullptr && i + 1u == num_filters) {
 				if (is_jpx) {
-					RECTO_PDF_TRY(*image_out, decode_jpx_image(stage_in, stage_parms, effective_limit));
+					RECTO_PDF_TRY(*image_out, decode_jpx_image(stage_in, stage_parms, chain_room));
 				} else {
-					RECTO_PDF_TRY(*image_out, decode_dct_image(stage_in, stage_parms, effective_limit, DctOutput::Samples));
+					RECTO_PDF_TRY(*image_out, decode_dct_image(stage_in, stage_parms, chain_room, DctOutput::Samples));
 				}
 				return std::vector<uint8_t>{};
 			}
 		}
 		RECTO_PDF_TRY(
 			std::vector<uint8_t> next_buf,
-			decode_single_filter(filter_names[i], stage_in, stage_parms, effective_limit, resolver));
+			decode_single_filter(filter_names[i], stage_in, stage_parms, image_out != nullptr ? chain_room : effective_limit, resolver));
 		stage_buf = std::move(next_buf);
+		chain_room -= std::min(chain_room, stage_buf.size());
 	}
 	return stage_buf;
 }

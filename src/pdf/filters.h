@@ -128,6 +128,9 @@ struct WicDecodedImage {
 	uint32_t height{0};
 	uint32_t components{0};
 	bool is_cmyk{false};
+	// Bits per sample in a JPX stream's own data; `pixels` holds them scaled to eight, so an Indexed image needs this to
+	// read its palette indices back.
+	uint8_t source_bits{8};
 	std::vector<uint8_t> pixels;
 	std::vector<uint8_t> rgba_pixels;
 	std::vector<uint8_t> bgra_pixels;
@@ -211,6 +214,7 @@ enum class DctOutput : uint8_t {
 // An image stream's data (D01 T02 section 44): the packed samples of the filter chain, or for a chain ending in
 // `DCTDecode` or `JPXDecode` that decoder's image, its size, components, 8-bit samples (a CMYK image's CMYK samples) and,
 // for JPX, its profile and alpha. `/Decode` is left to the caller, which needs the raw values for a colour key.
+// `max_decoded_bytes` bounds what the chain's stages produce together, so a chain cannot decode many times its limit.
 struct ImageStream {
 	std::vector<uint8_t> samples;
 	std::optional<WicDecodedImage> image;
