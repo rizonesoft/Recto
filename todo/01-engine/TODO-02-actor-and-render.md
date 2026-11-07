@@ -1416,6 +1416,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): `/Do` for `/S
 
 Filed 2026-10-28 from `§4`'s split (validation before the build): inline images (`BI ... ID ... EI`) decoded through `§44`'s image path on the framing `§3` already verifies (ISO 32000-1 section 8.9.7).
 
+**Corrected 2026-11-07:** validation before the build. `§44`'s path works from an image object, so this section gives it a stream built from the inline dictionary: abbreviated keys, colour space names and filter names expanded, `/I` read as `/Interpolate` in a dictionary (and as `/Indexed` in a colour space array), and masks and `/SMask` absent, since Table 93 has none. Defaults this section takes: a `JBIG2Decode` or `JPXDecode` inline image, which 8.9.7 forbids, is framed and not drawn, recorded; an inline image whose operator is skipped by damage before it is framed and not drawn. An image inside a form drawn many times is decoded once: its source is kept by its data's address in the form's content, which the page keeps for its life. `§3`'s page refusals for an image whose end cannot be found stay exactly as they are.
+
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
@@ -1427,10 +1429,11 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): inline images
 2. Add the tests below to `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: they pass under ASan.
 
 - [ ] Implement inline image parsing (`BI ... ID <data> EI`) expanding abbreviated dictionary keys (`W`, `H`, `BPC`, `CS`, `F`, `DP`, `IM`, `I`) and locating the `EI` delimiter safely via expected decoded row size + filter length. Done when: `PdfInterpreter.InlineImages` decodes `A85`, `Fl`, and raw inline images without misidentifying `EI` bytes inside binary pixel data. **Corrected 2026-10-24:** `D01 T02 §3` already parses the dictionary and frames the data (by length unfiltered, by decoding to the full sample size filtered, a 64 MiB work budget, CR LF after `ID`) and refuses an image whose end it cannot verify; this item decodes the image on that framing and keeps the rule that no `EI` is taken on trust (the reviews of `§3` showed every printable-bytes heuristic runs pixels as operators).
+- [ ] Draw every `§44` kind from an inline dictionary: `/W /H /BPC /CS /D /IM /I /F /DP` and their full names, device abbreviations `/G /RGB /CMYK`, `[/I /RGB 1 <...>]` with its base abbreviated, a colour space named in `/ColorSpace` resources, `/Decode` through conversion, a stencil in the fill colour, and a short data recovery as `§44`'s. A forbidden filter is framed and not drawn. Done when: `PdfInterpreter.InlineImages` reads each from cells computed by hand, the operators after each `EI` still running; a stencil in a `/None` colorant draws nothing; `PdfInterpreter.InlineImagesInForm` draws a form holding an inline image twice with one decode and one `DecodedBitmap`; and the existing framing refusals in `PdfInterpreter.OperatorDispatch` still refuse.
 - [ ] Draw nothing for an inline image inside a hidden block of `§47`, its framing still read so the stream continues after `EI` (ISO 32000-1 8.11.3.2). Done when: `PdfInterpreter.InlineImagesHidden` records no `DrawImage` inside a hidden block and the operators after `EI` still run. Filed by `§47`.
 - [ ] Commit: `pdf: inline images decoded into DrawImage`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.InlineImages` passes under ASan with 0 warnings.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.InlineImages*:PdfInterpreter.OperatorDispatch:PdfInterpreter.Image*` passes under ASan with 0 warnings, and treating `/I` in a dictionary as `/Indexed` fails `PdfInterpreter.InlineImages`.
 
 ## 46. Form XObjects with `/Matrix`, `/BBox` clip, resource fallback and a 32-level cap
 
