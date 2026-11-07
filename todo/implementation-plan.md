@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 106 | Checklist items: 679
+Sections: 106 | Checklist items: 683
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -108,7 +108,7 @@ Sections: 106 | Checklist items: 679
 | [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host              | 6     |
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
-| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 4     |
+| [ ]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 8     |
 | [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 3     |
 | [ ]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 2     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
@@ -926,4 +926,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 94/855 verified sections, 35 ready to run now.
 
-Checklist: 593/6292 items completed (includes Commit items).
+Checklist: 593/6296 items completed (includes Commit items).
