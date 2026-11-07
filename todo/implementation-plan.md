@@ -109,7 +109,7 @@ Sections: 106 | Checklist items: 685
 | [x]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host              | 8     |
 | [x]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host              | 7     |
 | [x]    | D01 T02 §44 | Image XObjects with stencil masks, explicit and colour-key masks and soft masks          | windows-host              | 9     |
-| [ ]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 4     |
+| [x]    | D01 T02 §45 | Inline images decoded on the interpreter's verified framing                              | windows-host              | 4     |
 | [ ]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 2     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 12    |
 | [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 10    |
@@ -924,6 +924,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 95/855 verified sections, 35 ready to run now.
+Progress: 96/855 verified sections, 35 ready to run now.
 
-Checklist: 605/6299 items completed (includes Commit items).
+Checklist: 606/6299 items completed (includes Commit items).
