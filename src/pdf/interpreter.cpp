@@ -683,7 +683,9 @@ private:
 					image.entries.push_back(std::move(entry));
 				}
 			}
-			if (!hold_image_bytes(dictionary_bytes)) {
+			if (hold_image_bytes(dictionary_bytes)) {
+				image.entries_bytes = dictionary_bytes;
+			} else {
 				record_image_refusal(dictionary_bytes);
 				image.entries.clear();
 				image.prepared = true;
@@ -803,6 +805,19 @@ private:
 				RECTO_PDF_TRY_REF(cloned, value->deep_clone());
 				stream->dict.set(key, std::move(cloned));
 			}
+		}
+		// The stream's dictionary now owns these values, and is what is kept: the entries go, and it is charged in their place.
+		image.entries.clear();
+		image.entries.shrink_to_fit();
+		image_held_ -= std::min(image_held_, image.entries_bytes);
+		image.entries_bytes = 0;
+		size_t dictionary_bytes = 0;
+		for (const auto& [key, value] : stream->dict.entries()) {
+			dictionary_bytes += key.view().size() + value.heap_bytes();
+		}
+		if (!hold_image_bytes(dictionary_bytes)) {
+			record_image_refusal(dictionary_bytes);
+			return false;
 		}
 		const std::string filter = last_filter(stream->dict);
 		if (filter == "JBIG2Decode" || filter == "JPXDecode") {
@@ -2112,7 +2127,8 @@ private:
 	// An inline image: where its `EI` is, and its source.
 	struct InlineImage {
 		size_t end{0};
-		InlineEntries entries{};
+		InlineEntries entries{}; // until it is first drawn, when its stream's dictionary takes them over
+		size_t entries_bytes{0}; // what they are charged at
 		std::span<const uint8_t> data{}; // in content the page holds for its life
 		bool prepared{false};
 		ImageSource source{};
@@ -2444,8 +2460,15 @@ private:
 				src.usable = false;
 			}
 			if (const PdfValue* space = dict.get("ColorSpace"); space != nullptr && !space->is_null()) {
-				RECTO_PDF_TRY_REF(cloned, space->deep_clone());
-				src.color_space = std::move(cloned);
+				// Kept for every scope that draws it, and it can be as large as a file writes it: charged.
+				const size_t space_bytes = space->heap_bytes();
+				if (hold_image_bytes(space_bytes)) {
+					RECTO_PDF_TRY_REF(cloned, space->deep_clone());
+					src.color_space = std::move(cloned);
+				} else {
+					record_image_refusal(space_bytes);
+					src.usable = false;
+				}
 			} else if (!src.image_filter && !src.one_bit_filter) {
 				(void)make_pdf_error(ErrorCode::DamagedFormat, "An image names no /ColorSpace; it is not drawn"); // recorded
 				src.usable = false;

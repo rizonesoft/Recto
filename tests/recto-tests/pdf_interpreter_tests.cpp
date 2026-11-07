@@ -6012,6 +6012,32 @@ TEST(PdfInterpreter, InlineImagesHidden)
 		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
 		EXPECT_EQ(all_of<DrawPathCommand>(*read.list).size(), 1u);
 	}
+	// Each copy a page keeps counts: 5,000 values fit a 1 MiB budget once and not twice, and an inline /ColorSpace is kept in
+	// its dictionary and in its source. The same array in an image object's /ColorSpace is charged too.
+	{
+		std::string zeros;
+		for (int i = 0; i < 5'000; ++i) {
+			zeros += "0 ";
+		}
+		const size_t one_copy = 5'000u * sizeof(PdfValue);
+		ASSERT_LT(one_copy, size_t{1} << 20u);
+		ASSERT_GT(one_copy * 2u, size_t{1} << 20u);
+		const detail::ScopedPageImageBudgetForTesting budget(size_t{1} << 20u);
+		clear_diagnostics();
+		const auto in_line = interpret_visible("BI /W 1 /H 1 /BPC 8 /CS [/I /RGB 0 [" + zeros + "]] ID \x80 EI 0 0 1 1 re f", resources, objects, &none);
+		ASSERT_NE(in_line.list, nullptr);
+		EXPECT_TRUE(images_of(in_line).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*in_line.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes)) << "a kept copy of an inline /ColorSpace was not charged";
+		const detail::ScopedPageImageBudgetForTesting small(4096u);
+		clear_diagnostics();
+		const auto object = interpret("/X Do 0 0 1 1 re f", "<< /XObject << /X 5 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace [/Indexed /DeviceRGB 0 [" + zeros + "]]", "\x80")});
+		ASSERT_NE(object.list, nullptr);
+		EXPECT_TRUE(images_of(object).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*object.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes)) << "an image object's kept /ColorSpace was not charged";
+	}
 	// A hidden image is framed and no more; a drawn one takes its samples from that same decode, so it costs no more.
 	{
 		const std::string compressed = "BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(1u, '\x80')) + " EI";
