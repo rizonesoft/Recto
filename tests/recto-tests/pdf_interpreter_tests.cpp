@@ -6153,9 +6153,34 @@ TEST(PdfInterpreter, CorpusRenderSweep)
 				++image;
 			}
 		}
+		// The vector block's clip, as written, with the path it was given and its rule; the images above show it ended.
+		const auto clips = all_of<PushClipPathCommand>(list);
+		ASSERT_FALSE(clips.empty());
+		EXPECT_EQ(clips[0].fill_rule, FillRule::NonZero);
+		EXPECT_EQ(verbs_of(list, clips[0].path_index), std::vector<PathVerb>{PathVerb::Rect});
+		const auto clip_points = points_of(list, clips[0].path_index);
+		ASSERT_FALSE(clip_points.empty());
+		EXPECT_DOUBLE_EQ(clip_points[0].x, 72.0);
+		EXPECT_DOUBLE_EQ(clip_points[0].y, 560.0);
+		// The JPEG: every coefficient zero, so each cell is the mid gray of a zero DC.
+		EXPECT_EQ(images[0].bitmap->height, 8u);
+		const Bgra jpeg_cell = cell(*images[0].bitmap, 4u, 4u);
+		EXPECT_NEAR(jpeg_cell.r, 128, 1);
+		EXPECT_NEAR(jpeg_cell.g, 128, 1);
+		EXPECT_NEAR(jpeg_cell.b, 128, 1);
+		// The CCITT rows its builder wrote: 4 white, 8 black, 4 white; then 5 white, 8 black, 3 white; and all white.
+		EXPECT_EQ(cell(*images[2].bitmap, 3u, 0u).r, 255);
+		EXPECT_EQ(cell(*images[2].bitmap, 4u, 0u).r, 0);
+		EXPECT_EQ(cell(*images[2].bitmap, 11u, 0u).r, 0);
+		EXPECT_EQ(cell(*images[2].bitmap, 12u, 0u).r, 255);
+		EXPECT_EQ(cell(*images[2].bitmap, 4u, 2u).r, 255);
+		EXPECT_EQ(cell(*images[2].bitmap, 5u, 2u).r, 0);
+		EXPECT_EQ(cell(*images[2].bitmap, 8u, 15u).r, 255);
 		// Each cell's RGB is x * 32, and its /SMask is (x + y) * 16.
+		EXPECT_EQ(images[1].bitmap->height, 8u);
 		EXPECT_EQ(cell(*images[1].bitmap, 3u, 5u).r, 3 * 32);
 		EXPECT_EQ(cell(*images[1].bitmap, 3u, 5u).g, 3 * 32);
+		EXPECT_EQ(cell(*images[1].bitmap, 3u, 5u).b, 3 * 32);
 		ASSERT_NE(images[1].soft_mask, nullptr);
 		EXPECT_EQ(cell(*images[1].soft_mask, 3u, 5u).a, (3 + 5) * 16);
 		EXPECT_EQ(images[0].soft_mask, nullptr);
