@@ -5,6 +5,8 @@
 // (ISO 32000-1 sections 7.5.4, 7.5.6, 7.5.7, and 7.5.8; D01 T01 sections 5-6).
 #include "xref.h"
 
+#include "cancel_token.h"
+
 #include "filters.h"
 
 #include <algorithm>
@@ -595,6 +597,9 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 		size_t cursor = 0;
 		for (const SubsectionSpan& sub : subsections) {
 			for (uint64_t i = 0; i < sub.count; ++i) {
+				if ((i & 0xFFFu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
+					return detail::cancelled_error();
+				}
 				const uint8_t* rec = decoded_bytes.data() + cursor;
 				cursor += entry_stride;
 
@@ -717,6 +722,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// /Length readings were cut short is final: a rescan checks only the streams it corrects, so it cannot vouch
 		// for the others.
 		if (plan.empty() || ambiguous || (!first.has_value() && (first.error().code == ErrorCode::OutOfMemory ||
+														first.error().code == ErrorCode::Cancelled ||
 														first.error().code == ErrorCode::DecompressionLimitExceeded ||
 														first.error().code == ErrorCode::ResourceLimit))) {
 			return first;
@@ -738,7 +744,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			std::vector<std::pair<uint64_t, int64_t>> inconsistent;
 			auto rescan = recover_damaged_xref_with(file_bytes, max_total_entries, &oracle, nullptr, &inconsistent);
 			if (!rescan.has_value()) {
-				if (rescan.error().code == ErrorCode::OutOfMemory) {
+				if (rescan.error().code == ErrorCode::OutOfMemory || rescan.error().code == ErrorCode::Cancelled) {
 					return rescan;
 				}
 				break;
@@ -1314,7 +1320,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
 		size_t pos = static_cast<size_t>(header_off);
+		size_t next_poll = pos;
 		while (pos < file_bytes.size()) {
+			if (pos >= next_poll) {
+				next_poll = pos + (size_t{1} << 16u);
+				if (detail::poll_cancel(detail::CancelSite::XrefParse)) {
+					return detail::cancelled_error();
+				}
+			}
 			const uint8_t b = file_bytes[pos];
 
 			// Skip PDF comment lines so `% 1 0 obj` or `% trailer` inside comments are ignored.
@@ -2162,12 +2175,14 @@ PdfResult<XrefTable> XrefTable::parse(
 		auto try_recover = [&](PdfError primary_err) -> PdfResult<XrefTable> {
 			if (!allow_recovery ||
 				primary_err.code == ErrorCode::OutOfMemory ||
+				primary_err.code == ErrorCode::Cancelled ||
 				primary_err.code == ErrorCode::DecompressionLimitExceeded) {
 				return primary_err;
 			}
 			auto rec = recover_damaged_xref(file_bytes, effective_max_entries);
 			if (rec.has_value() ||
 				rec.error().code == ErrorCode::OutOfMemory ||
+				rec.error().code == ErrorCode::Cancelled ||
 				rec.error().code == ErrorCode::DecompressionLimitExceeded) {
 				return rec;
 			}
@@ -2291,6 +2306,9 @@ PdfResult<XrefTable> XrefTable::parse(
 					total_rows_parsed += count;
 
 					for (uint64_t i = 0; i < count; ++i) {
+						if ((i & 0xFFFu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
+							return detail::cancelled_error();
+						}
 						Token off_tok;
 						Token gen_tok;
 						Token flag_tok;

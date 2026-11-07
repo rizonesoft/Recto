@@ -38,7 +38,12 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="atomic_write.cpp" />
     <ClCompile Include="core.cpp" />
+    <ClCompile Include="document_actor.cpp" />
+    <ClInclude Include="atomic_write.h" />
+    <ClInclude Include="cancel_token.h" />
+    <ClInclude Include="document_actor.h" />
     <ClInclude Include="recto_core.h" />
   </ItemGroup>
   <ItemGroup>

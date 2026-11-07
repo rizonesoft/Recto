@@ -1393,6 +1393,47 @@ PdfResult<std::shared_ptr<const DecodedBitmap>> DecodedBitmap::create(
 	}
 }
 
+namespace {
+
+[[nodiscard]] size_t measured_list_bytes(const std::vector<DisplayCommand>& commands, const std::vector<CommandBounds>& bounds,
+	const std::vector<RecordedPath>& paths, const std::vector<PathVerb>& verbs, const std::vector<PdfPoint>& points,
+	const std::vector<PositionedGlyph>& glyphs, const std::vector<float>& dashes) noexcept
+{
+	size_t total = sizeof(DisplayList) + commands.capacity() * sizeof(DisplayCommand) + bounds.capacity() * sizeof(CommandBounds) +
+		paths.capacity() * sizeof(RecordedPath) + verbs.capacity() * sizeof(PathVerb) + points.capacity() * sizeof(PdfPoint) +
+		glyphs.capacity() * sizeof(PositionedGlyph) + dashes.capacity() * sizeof(float);
+	// A logo drawn a thousand times is held once: sorted to find repeats, or counted each time if there is no memory for that.
+	std::vector<const DecodedBitmap*> images;
+	std::vector<const DisplayList*> subs;
+	try {
+		for (const DisplayCommand& command : commands) {
+			if (const auto* image = command.as<DrawImageCommand>(); image != nullptr) {
+				images.push_back(image->bitmap.get());
+				images.push_back(image->soft_mask.get());
+			} else if (const auto* run = command.as<DrawGlyphRunCommand>(); run != nullptr && run->type3_sub_list != nullptr) {
+				subs.push_back(run->type3_sub_list.get());
+			}
+		}
+		std::sort(images.begin(), images.end());
+		images.erase(std::unique(images.begin(), images.end()), images.end());
+		std::sort(subs.begin(), subs.end());
+		subs.erase(std::unique(subs.begin(), subs.end()), subs.end());
+	} catch (const std::bad_alloc&) {
+		// `images` and `subs` hold what they got, so the figure is a lower bound for this one list.
+	}
+	for (const DecodedBitmap* image : images) {
+		if (image != nullptr) {
+			total += image->byte_size();
+		}
+	}
+	for (const DisplayList* sub : subs) {
+		total += sub->memory_bytes();
+	}
+	return total;
+}
+
+} // namespace
+
 DisplayList::DisplayList(
 	PdfRect page_box_pt,
 	PdfRect content_bounds_pt,
@@ -1414,6 +1455,7 @@ DisplayList::DisplayList(
 	, path_points_(std::move(path_points))
 	, glyphs_(std::move(glyphs))
 	, dash_values_(std::move(dash_values))
+	, memory_bytes_(measured_list_bytes(commands_, command_bounds_, paths_, path_verbs_, path_points_, glyphs_, dash_values_))
 {
 	g_live_display_lists.fetch_add(1, std::memory_order_relaxed);
 }

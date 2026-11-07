@@ -593,6 +593,13 @@ public:
 		return commands_.size();
 	}
 
+	// The heap this list holds: its pools by capacity, each distinct decoded image once, and its Type 3 sub-lists; for a
+	// cache's budget. Computed once when the list is sealed.
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return memory_bytes_;
+	}
+
 	[[nodiscard]] std::span<const DisplayCommand> commands() const noexcept
 	{
 		return commands_;
@@ -706,6 +713,7 @@ private:
 	const std::vector<PdfPoint> path_points_;
 	const std::vector<PositionedGlyph> glyphs_;
 	const std::vector<float> dash_values_;
+	const size_t memory_bytes_;
 };
 
 // Configurable resource budgets for `DisplayListBuilder` to bound memory,

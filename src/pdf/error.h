@@ -750,6 +750,8 @@ enum class RefusalReason : uint16_t {
 	FormDepth, // Form XObjects nested past the depth limit
 	// Appended (D01 T02 section 6): replay.
 	DashSegments, // a dash pattern would cut one stroke past the limit
+	// Appended (D01 T02 section 8): the document actor.
+	ActorQueueFull, // a document's request queue past its limit
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -841,6 +843,8 @@ enum class RefusalReason : uint16_t {
 		return "FormDepth";
 	case RefusalReason::DashSegments:
 		return "DashSegments";
+	case RefusalReason::ActorQueueFull:
+		return "ActorQueueFull";
 	}
 	return "UnknownReason";
 }
@@ -969,6 +973,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::ColorSpaceSteps:
 		return "A colour space names more nested spaces than its limit (observed and bound count spaces visited); "
 			   "the spaces past the limit are not used, and the file may be damaged";
+	case RefusalReason::ActorQueueFull:
+		return "A document has more requests waiting than its queue holds (observed and bound count requests); this one was "
+			   "not taken, and asking again later may succeed";
 	case RefusalReason::DashSegments:
 		return "A dash pattern would cut one stroke into more pieces than the limit (observed and bound count pieces); "
 			   "the stroke is drawn solid, and the file may be damaged";

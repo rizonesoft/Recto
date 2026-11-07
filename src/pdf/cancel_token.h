@@ -26,12 +26,20 @@ public:
 
 	[[nodiscard]] bool is_cancelled() const noexcept
 	{
-		return flag_ != nullptr && flag_->load(std::memory_order_relaxed);
+		return (flag_ != nullptr && flag_->load(std::memory_order_relaxed)) ||
+			(second_ != nullptr && second_->load(std::memory_order_relaxed));
+	}
+
+	// Cancelled when either is: a request's own token and its owner's, say. Each must hold one flag at most.
+	[[nodiscard]] static CancelToken either(const CancelToken& a, const CancelToken& b) noexcept
+	{
+		CancelToken out = a;
+		out.second_ = b.flag_;
+		return out;
 	}
 
 private:
 	friend class CancelSource;
-	friend class ScopedCancelScopeAccess;
 
 	explicit CancelToken(std::shared_ptr<const std::atomic<bool>> flag) noexcept
 		: flag_(std::move(flag))
@@ -39,6 +47,7 @@ private:
 	}
 
 	std::shared_ptr<const std::atomic<bool>> flag_;
+	std::shared_ptr<const std::atomic<bool>> second_;
 };
 
 class CancelSource {
@@ -84,6 +93,8 @@ enum class CancelSite : uint8_t {
 	GeometryVerb,
 	InterpreterOperator,
 	ImageConvert,
+	FileRead,
+	XrefParse,
 	Inflate,
 	FilterLoop,
 	CMapEntry,

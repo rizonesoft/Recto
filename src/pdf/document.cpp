@@ -14,6 +14,8 @@
 
 #include "document.h"
 
+#include "cancel_token.h"
+
 #include "lexer.h"
 #include "parser.h"
 
@@ -1154,8 +1156,11 @@ PdfResult<std::vector<uint8_t>> Document::read_file_bytes(
 		uint64_t total_read = 0;
 		while (total_read < total_size) {
 			const uint64_t rem = total_size - total_read;
+			if (detail::poll_cancel(detail::CancelSite::FileRead)) {
+				return detail::cancelled_error();
+			}
 			const DWORD chunk = static_cast<DWORD>(
-				std::min<uint64_t>(rem, 64ULL * 1024ULL * 1024ULL));
+				std::min<uint64_t>(rem, 4ULL * 1024ULL * 1024ULL));
 			DWORD bytes_read = 0;
 			if (::ReadFile(h_file, buffer.data() + total_read, chunk, &bytes_read, nullptr) == FALSE ||
 				bytes_read == 0) {
