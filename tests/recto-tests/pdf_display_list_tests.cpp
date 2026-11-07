@@ -1583,9 +1583,27 @@ TEST(PdfDisplayList, ImageCoverageUsesMaskCells)
 		bool interpolate,
 		const std::shared_ptr<const DecodedBitmap>& mask) -> std::shared_ptr<const DisplayList> {
 		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
-		EXPECT_TRUE(builder.draw_image(bmp, dest, interpolate, mask).has_value());
+		EXPECT_TRUE(builder.draw_image(bmp, dest, interpolate, mask, ColorRgba::black(), interpolate).has_value());
 		return finish_ok(builder);
 	};
+
+	// A mask's coverage follows its own /Interpolate, not the image's (D01 T02 section 44): under a 2x1 mask with alpha
+	// `[0, 255]` a bilinear mask reaches half a cell further left than a nearest-neighbour one.
+	{
+		const auto opaque = make_bitmap(1u, 1u, {255u});
+		const auto mask = make_bitmap(2u, 1u, {0u, 255u});
+		const PdfMatrix dest{100.0, 0.0, 0.0, 100.0, 0.0, 0.0};
+		for (const bool mask_smooth : {false, true}) {
+			DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+			ASSERT_TRUE(builder.draw_image(opaque, dest, !mask_smooth, mask, ColorRgba::black(), mask_smooth).has_value());
+			const auto list = finish_ok(builder);
+			EXPECT_DOUBLE_EQ(list->command_bounds()[0].bounds_pt.x_min, mask_smooth ? 25.0 : 50.0);
+			const auto* command = list->commands()[0].as<DrawImageCommand>();
+			ASSERT_NE(command, nullptr);
+			EXPECT_EQ(command->soft_mask_interpolate, mask_smooth);
+			EXPECT_EQ(command->interpolate, !mask_smooth);
+		}
+	}
 
 	// 1. R3-6: a fully opaque 1x1 image under a 2x1 mask with alpha `[0, 255]`
 	//    paints only the mask's right cell.

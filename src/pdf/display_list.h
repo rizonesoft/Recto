@@ -463,8 +463,10 @@ struct DrawImageCommand {
 	std::shared_ptr<const DecodedBitmap> bitmap;
 	PdfMatrix dest_transform{}; // Maps unit square `[0,1]x[0,1]` to user space
 	bool interpolate{true};
+	// Coverage in its alpha, at its own resolution and with its own `/Interpolate`.
 	std::shared_ptr<const DecodedBitmap> soft_mask;
 	ColorRgba mask_tint_color{ColorRgba::black()};
+	bool soft_mask_interpolate{true};
 };
 
 // Tag enum matching `DisplayCommand::Payload` alternative indices.
@@ -812,7 +814,8 @@ public:
 		const PdfMatrix& dest_transform,
 		bool interpolate = true,
 		std::shared_ptr<const DecodedBitmap> soft_mask = nullptr,
-		ColorRgba mask_tint_color = ColorRgba::black()) noexcept;
+		ColorRgba mask_tint_color = ColorRgba::black(),
+		bool soft_mask_interpolate = true) noexcept;
 
 	[[nodiscard]] bool is_finished() const noexcept { return finished_; }
 	[[nodiscard]] size_t command_count() const noexcept { return commands_.size(); }

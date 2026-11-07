@@ -2202,7 +2202,8 @@ PdfResult<void> DisplayListBuilder::draw_image(
 	const PdfMatrix& dest_transform,
 	bool interpolate,
 	std::shared_ptr<const DecodedBitmap> soft_mask,
-	ColorRgba mask_tint_color) noexcept
+	ColorRgba mask_tint_color,
+	bool soft_mask_interpolate) noexcept
 {
 	if (auto ok = check_can_mutate(); !ok.has_value()) {
 		return ok;
@@ -2231,7 +2232,7 @@ PdfResult<void> DisplayListBuilder::draw_image(
 	if (potentially_visible) {
 		std::optional<PdfRect> coverage = unit_image_coverage(*bitmap, interpolate);
 		if (coverage.has_value() && soft_mask != nullptr) {
-			const auto mask_coverage = unit_image_coverage(*soft_mask, interpolate);
+			const auto mask_coverage = unit_image_coverage(*soft_mask, soft_mask_interpolate);
 			coverage = mask_coverage.has_value()
 				? intersect_rect(*coverage, *mask_coverage)
 				: std::nullopt;
@@ -2250,6 +2251,7 @@ PdfResult<void> DisplayListBuilder::draw_image(
 	cmd.interpolate = interpolate;
 	cmd.soft_mask = std::move(soft_mask);
 	cmd.mask_tint_color = mask_tint_color;
+	cmd.soft_mask_interpolate = soft_mask_interpolate;
 	commit_command(DisplayCommand{std::move(cmd)}, painted);
 	return {};
 }

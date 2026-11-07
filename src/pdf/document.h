@@ -479,6 +479,11 @@ public:
 		const PdfStream& stream,
 		size_t max_decoded_bytes = kMaxDecodedStreamBytes) const noexcept;
 
+	// An image stream's data (D01 T02 section 44), its parameters read without a copy.
+	[[nodiscard]] PdfResult<ImageStream> decode_image_stream(
+		const PdfStream& stream,
+		size_t max_decoded_bytes = kMaxDecodedStreamBytes) const noexcept;
+
 	// How many streams `decode_stream` has been asked to decode, for tests of once-per-page decoding.
 	[[nodiscard]] uint64_t decoded_stream_count() const noexcept
 	{

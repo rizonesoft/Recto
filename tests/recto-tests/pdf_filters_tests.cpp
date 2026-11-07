@@ -4,6 +4,8 @@
 // JPXDecode, chained filter execution, and the 256 MB decompression cap
 // (D01 T01 sections 7 and 8).
 #include "recto_pdf.h"
+#include "document.h"
+#include "interpreter.h"
 #include "test_support.h"
 
 #ifndef NOMINMAX
@@ -8249,6 +8251,158 @@ TEST(PdfFilters, FlateCompressSpeed)
 	}
 	EXPECT_GE(mb_per_s, 20.0);
 #endif
+}
+
+// An image stream's data through the chain (D01 T02 section 44): /Decode is left to the caller, and the last image filter
+// reports its image, not a flat buffer.
+TEST(PdfFilters, ImageStream)
+{
+	const auto corpus = [](std::string_view name) {
+		std::ifstream in(recto::test::corpus_path(std::string("images/") + std::string(name)), std::ios::binary);
+		EXPECT_TRUE(in.good()) << name;
+		return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+	};
+	const auto with_filter = [](PdfValue filter, std::vector<uint8_t> data, std::optional<PdfValue> decode = std::nullopt) {
+		PdfStream stream;
+		stream.dict.set(PdfName::from_decoded("Filter"), std::move(filter));
+		if (decode.has_value()) {
+			stream.dict.set(PdfName::from_decoded("Decode"), std::move(*decode));
+		}
+		stream.raw_length = data.size();
+		stream.raw_bytes = std::move(data);
+		return stream;
+	};
+	const PdfValue flate(PdfName::from_decoded("FlateDecode"));
+	const PdfValue hex(PdfName::from_decoded("ASCIIHexDecode"));
+	const PdfValue dct(PdfName::from_decoded("DCTDecode"));
+	// A raw chain's packed samples.
+	{
+		auto packed = flate_compress(std::vector<uint8_t>{1u, 2u, 3u});
+		ASSERT_TRUE(packed.has_value());
+		const auto data = decode_image_stream(with_filter(flate, *packed));
+		RECTO_ASSERT_OK(data);
+		EXPECT_FALSE(data->image.has_value());
+		EXPECT_EQ(data->samples, (std::vector<uint8_t>{1u, 2u, 3u}));
+	}
+	// A DCT image at the end of a chain: its first cell is 200, 90, 40 as stored.
+	const std::vector<uint8_t> rgb = corpus("dct-3c-adobe-rgb.jpg");
+	{
+		std::string text;
+		char digits[3];
+		for (const uint8_t b : rgb) {
+			std::snprintf(digits, sizeof(digits), "%02X", b);
+			text += digits;
+		}
+		text += ">";
+		const auto data = decode_image_stream(with_filter(PdfValue(PdfArray{hex, dct}), std::vector<uint8_t>(text.begin(), text.end())));
+		RECTO_ASSERT_OK(data);
+		ASSERT_TRUE(data->image.has_value());
+		EXPECT_EQ(data->image->components, 3u);
+		EXPECT_EQ(data->image->width, 16u);
+		EXPECT_EQ(data->samples.size(), 0u);
+		EXPECT_EQ(data->image->pixels[0], 200u);
+		EXPECT_EQ(data->image->pixels[1], 90u);
+		EXPECT_EQ(data->image->pixels[2], 40u);
+	}
+	// /Decode is not applied here: the same samples with it and without, while the stream path applies it.
+	{
+		const PdfValue invert(PdfArray{PdfValue(int64_t{1}), PdfValue(int64_t{0}), PdfValue(int64_t{1}), PdfValue(int64_t{0}), PdfValue(int64_t{1}), PdfValue(int64_t{0})});
+		const auto plain = decode_image_stream(with_filter(dct, rgb));
+		const auto decoded = decode_image_stream(with_filter(dct, rgb, invert));
+		RECTO_ASSERT_OK(plain);
+		RECTO_ASSERT_OK(decoded);
+		EXPECT_EQ(plain->image->pixels, decoded->image->pixels);
+		const auto stream_path = decode_stream(with_filter(dct, rgb, invert));
+		RECTO_ASSERT_OK(stream_path);
+		EXPECT_EQ((*stream_path)[0], 255u - 200u);
+	}
+	// A CMYK DCT image gives its four components, where the stream path gives RGBA.
+	{
+		const auto data = decode_image_stream(with_filter(dct, corpus("dct-4c-no-marker.jpg")));
+		RECTO_ASSERT_OK(data);
+		ASSERT_TRUE(data->image.has_value());
+		EXPECT_EQ(data->image->components, 4u);
+		EXPECT_EQ(data->image->pixels.size(), size_t{data->image->width} * data->image->height * 4u);
+		EXPECT_EQ(data->image->pixels[0], 20u);
+		EXPECT_EQ(data->image->pixels[1], 200u);
+		EXPECT_EQ(data->image->pixels[2], 120u);
+		EXPECT_EQ(data->image->pixels[3], 60u);
+	}
+	// A JPX image with its alpha.
+	{
+		std::array<J2kTestComponent, 4> four{};
+		for (uint32_t c = 0; c < 4u; ++c) {
+			four[c] = J2kTestComponent{{static_cast<uint16_t>(40u * c), static_cast<uint16_t>(40u * c + 10u)}, 2u, 1u, 8u, 1u, 1u};
+		}
+		const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+		const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
+		const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
+		const auto jp2 = make_jp2(make_j2k_codestream(four, 2u, 1u), 2u, 1u, 4u, boxes);
+		const auto data = decode_image_stream(with_filter(PdfValue(PdfName::from_decoded("JPXDecode")), jp2));
+		RECTO_ASSERT_OK(data);
+		ASSERT_TRUE(data->image.has_value());
+		EXPECT_EQ(data->image->components, 3u);
+		EXPECT_EQ(data->image->rgba_pixels[3], 120u);
+	}
+}
+
+// /SMaskInData (D01 T02 section 44): this file holds the JP2 builders.
+TEST(PdfInterpreter, ImageJpxAlpha)
+{
+	std::array<J2kTestComponent, 4> four{};
+	for (uint32_t c = 0; c < 4u; ++c) {
+		four[c] = J2kTestComponent{{static_cast<uint16_t>(40u * c), static_cast<uint16_t>(40u * c + 10u)}, 2u, 1u, 8u, 1u, 1u};
+	}
+	const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+	const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
+	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
+	const auto jp2 = make_jp2(make_j2k_codestream(four, 2u, 1u), 2u, 1u, 4u, boxes);
+	const auto draw = [&](std::string_view entry) -> std::shared_ptr<const DecodedBitmap> {
+		std::string pdf = "%PDF-1.7\n";
+		std::vector<size_t> offsets;
+		const auto object = [&](const std::string& body) {
+			offsets.push_back(pdf.size());
+			pdf += std::to_string(offsets.size()) + " 0 obj\n" + body + "\nendobj\n";
+		};
+		object("<< /Type /Catalog /Pages 2 0 R >>");
+		object("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+		object("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /XObject << /X 5 0 R >> >> >>");
+		object("<< /Length 5 >>\nstream\n/X Do\nendstream");
+		object("<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /Filter /JPXDecode " + std::string(entry) + " /Length " +
+			std::to_string(jp2.size()) + " >>\nstream\n" + std::string(jp2.begin(), jp2.end()) + "\nendstream");
+		const size_t xref = pdf.size();
+		pdf += "xref\n0 " + std::to_string(offsets.size() + 1u) + "\n0000000000 65535 f \n";
+		for (const size_t off : offsets) {
+			char line[32]{};
+			std::snprintf(line, sizeof(line), "%010llu 00000 n \n", static_cast<unsigned long long>(off));
+			pdf += line;
+		}
+		pdf += "trailer\n<< /Size " + std::to_string(offsets.size() + 1u) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref) + "\n%%EOF\n";
+		const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+		auto doc = Document::open_memory(bytes);
+		EXPECT_TRUE(doc.has_value());
+		auto list = interpret_page(**doc, 0u);
+		EXPECT_TRUE(list.has_value());
+		for (const DisplayCommand& command : (*list)->commands()) {
+			if (const auto* image = command.as<DrawImageCommand>()) {
+				return image->bitmap;
+			}
+		}
+		ADD_FAILURE() << "no image drawn";
+		return nullptr;
+	};
+	const auto alpha = [](const std::shared_ptr<const DecodedBitmap>& bitmap, uint32_t x) { return bitmap != nullptr ? bitmap->pixels[x * 4u + 3u] : uint8_t{0}; };
+	for (const char* entry : {"/SMaskInData 1", "/SMaskInData 2"}) {
+		SCOPED_TRACE(entry);
+		const auto bitmap = draw(entry);
+		EXPECT_EQ(alpha(bitmap, 0u), 120u);
+		EXPECT_EQ(alpha(bitmap, 1u), 130u);
+	}
+	for (const char* entry : {"/SMaskInData 0", ""}) {
+		SCOPED_TRACE(entry);
+		const auto bitmap = draw(entry);
+		EXPECT_EQ(alpha(bitmap, 0u), 255u);
+	}
 }
 
 } // namespace

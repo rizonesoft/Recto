@@ -208,6 +208,20 @@ enum class DctOutput : uint8_t {
 	const IndirectObjectResolver* resolver = nullptr,
 	const SharedObjectResolver* shared = nullptr) noexcept;
 
+// An image stream's data (D01 T02 section 44): the packed samples of the filter chain, or for a chain ending in
+// `DCTDecode` or `JPXDecode` that decoder's image, its size, components, 8-bit samples (a CMYK image's CMYK samples) and,
+// for JPX, its profile and alpha. `/Decode` is left to the caller, which needs the raw values for a colour key.
+struct ImageStream {
+	std::vector<uint8_t> samples;
+	std::optional<WicDecodedImage> image;
+};
+
+[[nodiscard]] PdfResult<ImageStream> decode_image_stream(
+	const PdfStream& stream,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr,
+	const SharedObjectResolver* shared = nullptr) noexcept;
+
 // Executes a single or chained `/FFilter` pipeline (up to `kMaxFilterChainDepth`
 // = 8 stages) using matching `/FDecodeParms` entries from `stream_dict` on
 // caller-supplied external stream bytes (`stream_dict` must specify `/F`).

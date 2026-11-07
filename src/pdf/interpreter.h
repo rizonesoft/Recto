@@ -64,4 +64,21 @@ struct OptionalContentVisibility {
 	const DisplayListLimits& limits = {},
 	const OptionalContentVisibility* visibility = nullptr) noexcept;
 
+namespace detail {
+
+// For a test: the bitmaps a page may hold and the data it may decode on this thread, in place of 512 MiB each, while this
+// lives. D01 T02 section 19 replaces refusal past this budget with reduction.
+class ScopedPageImageBudgetForTesting {
+public:
+	explicit ScopedPageImageBudgetForTesting(size_t bytes) noexcept;
+	~ScopedPageImageBudgetForTesting() noexcept;
+	ScopedPageImageBudgetForTesting(const ScopedPageImageBudgetForTesting&) = delete;
+	ScopedPageImageBudgetForTesting& operator=(const ScopedPageImageBudgetForTesting&) = delete;
+
+private:
+	size_t previous_;
+};
+
+} // namespace detail
+
 } // namespace recto::pdf

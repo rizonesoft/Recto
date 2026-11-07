@@ -4547,8 +4547,8 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		{"no operand", "Do", form_object("/BBox [0 0 1 1]", ""), ErrorCode::DamagedFormat},
 		{"a non-stream", "/X Do", "<< /Type /XObject /Subtype /Form >>", ErrorCode::DamagedFormat},
 		{"a PostScript XObject", "/X Do", stream_object("/Type /XObject /Subtype /PS", "showpage"), ErrorCode::UnsupportedFeature},
-		{"an Image XObject", "/X Do", stream_object("/Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", "A"),
-			ErrorCode::UnsupportedFeature},
+		{"an Image XObject with no /ColorSpace", "/X Do", stream_object("/Type /XObject /Subtype /Image /Width 1 /Height 1 /BitsPerComponent 8", "A"),
+			ErrorCode::DamagedFormat},
 		{"a singular matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 2 2 4 0 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
 		{"a five-number matrix", "/X Do", form_object("/BBox [0 0 10 10] /Matrix [1 0 0 1 0]", "0 0 1 1 re f"), ErrorCode::DamagedFormat},
 		{"a matrix whose determinant overflows", "/X Do",
@@ -4566,6 +4566,14 @@ TEST(PdfInterpreter, FormXObjectRefusals)
 		ASSERT_EQ(draws.size(), 1u) << "the refused XObject drew, or the page's next draw was lost";
 		expect_rect(draws[0].bounds_pt, 50.0, 50.0, 51.0, 51.0);
 		EXPECT_TRUE(recorded(c.code));
+	}
+	// A form whose stream fails to decode is recorded: a filter's error does not record itself.
+	{
+		clear_diagnostics();
+		const auto r = interpret("/X Do 50 50 1 1 re f", "<< /XObject << /X 5 0 R >> >>", {form_object("/BBox [0 0 10 10] /Filter /FlateDecode", "not flate")});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
 	}
 	// A form whose content ends inside an unterminated dictionary: the operator its operands belonged to is the form's to skip,
 	// and the caller's next operator still runs.
@@ -5094,6 +5102,632 @@ TEST(PdfInterpreter, OptionalContentForms)
 	// An /OCMD names a form's membership too, and a repeated Do answers from the classified entry.
 	const std::vector<std::string> member{std::string(kOcg), form_with("/OC 7 0 R"), "<< /Type /OCMD /OCGs 5 0 R /P /AllOff >>"};
 	EXPECT_EQ(draws_under("/X Do /X Do", resources, member, &kFiveIsOff), 2u);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Image XObjects (D01 T02 section 44).
+// ---------------------------------------------------------------------------------------------------------------------
+
+std::string image_xobject(std::string_view entries, std::string_view data)
+{
+	return stream_object("/Type /XObject /Subtype /Image " + std::string(entries), data);
+}
+
+std::string flate_string(std::string_view data)
+{
+	auto packed = flate_compress(std::vector<uint8_t>(data.begin(), data.end()));
+	EXPECT_TRUE(packed.has_value());
+	return packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string();
+}
+
+struct Bgra {
+	int b;
+	int g;
+	int r;
+	int a;
+};
+
+Bgra cell(const DecodedBitmap& bitmap, uint32_t x, uint32_t y)
+{
+	const uint8_t* p = bitmap.pixels.data() + size_t{y} * bitmap.stride + size_t{x} * 4u;
+	return Bgra{p[0], p[1], p[2], p[3]};
+}
+
+// The page's one image drawn from `object` (object 5) under `resources` and `content`.
+std::vector<DrawImageCommand> images_of(const Interpreted& r)
+{
+	return r.list != nullptr ? all_of<DrawImageCommand>(*r.list) : std::vector<DrawImageCommand>{};
+}
+
+Interpreted one_image(std::string_view entries, std::string_view data, std::string_view before = "")
+{
+	return interpret(std::string(before) + " /X Do", "<< /XObject << /X 5 0 R >> >>", {image_xobject(entries, data)});
+}
+
+// One image's first row of gray values.
+std::vector<int> gray_row(std::string_view entries, std::string_view data)
+{
+	const auto r = one_image(entries, data);
+	const auto images = images_of(r);
+	EXPECT_EQ(images.size(), 1u) << entries;
+	std::vector<int> out;
+	if (!images.empty()) {
+		for (uint32_t x = 0; x < images[0].bitmap->width; ++x) {
+			const Bgra c = cell(*images[0].bitmap, x, 0u);
+			EXPECT_EQ(c.a, 255);
+			out.push_back(c.r);
+		}
+	}
+	return out;
+}
+
+TEST(PdfInterpreter, ImageXObjects)
+{
+	// The render corpus's JPEG, Flate image with an /SMask, and CCITT image are each decoded and drawn.
+	{
+		const std::string pdf = corpus_text("render/images-and-vectors.pdf");
+		const auto r = interpret(std::vector<uint8_t>(pdf.begin(), pdf.end()));
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 3u);
+		EXPECT_EQ(images[0].bitmap->width, 8u);
+		EXPECT_EQ(images[0].soft_mask, nullptr);
+		ASSERT_NE(images[1].soft_mask, nullptr);
+		EXPECT_EQ(cell(*images[1].soft_mask, 7u, 7u).a, ((7 + 7) * 16) & 0xFF);
+		EXPECT_EQ(cell(*images[1].bitmap, 7u, 0u).r, (7 * 32) & 0xFF);
+		EXPECT_EQ(images[2].bitmap->width, 16u);
+	}
+	// Each component size, first cell white and second black, row by row from the top.
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 1 /ColorSpace /DeviceGray", "\x80"), (std::vector<int>{255, 0}));
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 2 /ColorSpace /DeviceGray", "\xC0"), (std::vector<int>{255, 0}));
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 4 /ColorSpace /DeviceGray", "\xF0"), (std::vector<int>{255, 0}));
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", std::string_view("\xFF\x00", 2u)), (std::vector<int>{255, 0}));
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 16 /ColorSpace /DeviceGray", std::string_view("\xFF\xFF\x00\x00", 4u)), (std::vector<int>{255, 0}));
+	// /Decode through conversion.
+	EXPECT_EQ(gray_row("/Width 2 /Height 1 /BitsPerComponent 1 /ColorSpace /DeviceGray /Decode [1 0]", "\x80"), (std::vector<int>{0, 255}));
+	// A row starts on a byte: the second row reads from its own byte.
+	{
+		const auto r = one_image("/Width 2 /Height 2 /BitsPerComponent 1 /ColorSpace /DeviceGray", "\x80\x40");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).r, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 1u, 1u).r, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 1u).r, 0);
+	}
+	// An Indexed palette.
+	{
+		const auto r = one_image("/Width 2 /Height 1 /BitsPerComponent 1 /ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>]", "\x40");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).r, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 1u, 0u).g, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 1u, 0u).r, 0);
+	}
+	// A stencil paints its 0 samples in the fill colour, and its 1 samples under /Decode [1 0].
+	{
+		const auto r = one_image("/Width 2 /Height 1 /ImageMask true", "\x40", "1 0 0 rg");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_TRUE(images[0].bitmap->is_monochrome_mask);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).a, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 1u, 0u).a, 0);
+		EXPECT_FLOAT_EQ(images[0].mask_tint_color.r, 1.0f);
+		EXPECT_FLOAT_EQ(images[0].mask_tint_color.g, 0.0f);
+		const auto inverse = one_image("/Width 2 /Height 1 /ImageMask true /Decode [1 0]", "\x40", "1 0 0 rg");
+		const auto inverted = images_of(inverse);
+		ASSERT_EQ(inverted.size(), 1u);
+		EXPECT_EQ(cell(*inverted[0].bitmap, 0u, 0u).a, 0);
+		EXPECT_EQ(cell(*inverted[0].bitmap, 1u, 0u).a, 255);
+	}
+	// /Interpolate, default false, and the unit square under the CTM.
+	{
+		const auto r = one_image("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", "\xFF", "64 0 0 32 10 20 cm");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_FALSE(images[0].interpolate);
+		const auto commands = r.list->commands();
+		const auto bounds = r.list->command_bounds();
+		for (size_t i = 0; i < commands.size(); ++i) {
+			if (commands[i].as<DrawImageCommand>() != nullptr) {
+				ASSERT_TRUE(bounds[i].has_bounds);
+				expect_rect(bounds[i].bounds_pt, 10.0, 20.0, 74.0, 52.0);
+			}
+		}
+		const auto smooth = one_image("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Interpolate true", "\xFF");
+		ASSERT_EQ(images_of(smooth).size(), 1u);
+		EXPECT_TRUE(images_of(smooth)[0].interpolate);
+	}
+	// A DCT image takes /Decode once: inverted, not back where it began. The file's samples are 200, 90, 40 at its first cell.
+	{
+		const std::string jpeg = corpus_text("images/dct-3c-adobe-rgb.jpg");
+		const std::string entries = "/Width 16 /Height 16 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode";
+		const auto plain = one_image(entries, jpeg);
+		const auto inverted = one_image(entries + " /Decode [1 0 1 0 1 0]", jpeg);
+		ASSERT_EQ(images_of(plain).size(), 1u);
+		ASSERT_EQ(images_of(inverted).size(), 1u);
+		const Bgra p = cell(*images_of(plain)[0].bitmap, 0u, 0u);
+		const Bgra q = cell(*images_of(inverted)[0].bitmap, 0u, 0u);
+		EXPECT_EQ(p.r, 200);
+		EXPECT_EQ(q.r, 255 - p.r);
+		EXPECT_EQ(q.g, 255 - p.g);
+		EXPECT_EQ(q.b, 255 - p.b);
+	}
+	// A CMYK DCT image is converted from its four components, whatever the dictionary says of them.
+	{
+		const std::string jpeg = corpus_text("images/dct-4c-no-marker.jpg");
+		const auto declared = one_image("/Width 16 /Height 16 /BitsPerComponent 8 /ColorSpace /DeviceCMYK /Filter /DCTDecode", jpeg);
+		const auto wrong = one_image("/Width 16 /Height 16 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode", jpeg);
+		ASSERT_EQ(images_of(declared).size(), 1u);
+		ASSERT_EQ(images_of(wrong).size(), 1u);
+		const Bgra a = cell(*images_of(declared)[0].bitmap, 0u, 0u);
+		const Bgra b = cell(*images_of(wrong)[0].bitmap, 0u, 0u);
+		EXPECT_EQ(a.r, b.r);
+		EXPECT_EQ(a.g, b.g);
+		EXPECT_EQ(a.b, b.b);
+	}
+	// Named inside a form's own /Resources, under its matrix and /BBox clip.
+	{
+		const auto r = interpret("/F Do", "<< /XObject << /F 5 0 R >> >>",
+			{form_object("/BBox [0 0 10 10] /Matrix [2 0 0 2 0 0] /Resources << /XObject << /I 6 0 R >> >>", "20 0 0 20 0 0 cm /I Do"),
+				image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray", "\xFF")});
+		ASSERT_NE(r.list, nullptr);
+		ASSERT_EQ(images_of(r).size(), 1u);
+		const auto commands = r.list->commands();
+		const auto bounds = r.list->command_bounds();
+		for (size_t i = 0; i < commands.size(); ++i) {
+			if (commands[i].as<DrawImageCommand>() != nullptr) {
+				ASSERT_TRUE(bounds[i].has_bounds);
+				expect_rect(bounds[i].bounds_pt, 0.0, 0.0, 20.0, 20.0); // 40 points wide, clipped by the /BBox at 2x
+			}
+		}
+	}
+}
+
+// Stencils and images in a colour that marks nothing draw nothing (8.6.6.4); the same in a colorant that marks, do.
+TEST(PdfInterpreter, NoneColorant)
+{
+	const std::string tint = "<< /FunctionType 2 /Domain [0 1] /N 1 /C0 [1] /C1 [0] >>";
+	const auto drawn = [&](std::string_view colorant) {
+		const std::string space = "[/Separation /" + std::string(colorant) + " /DeviceGray " + tint + "]";
+		const auto r = interpret("1 0 0 rg 0 0 9 9 re f /S cs 1 scn /M Do /I Do",
+			"<< /ColorSpace << /S " + space + " >> /XObject << /M 5 0 R /I 6 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 /ImageMask true", std::string_view("\x00", 1u)),
+				image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace " + space, "\x80")});
+		EXPECT_NE(r.list, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u) << "the red rectangle was lost";
+		return images_of(r).size();
+	};
+	EXPECT_EQ(drawn("None"), 0u);
+	EXPECT_EQ(drawn("Spot"), 2u);
+	// An image in a colour that marks nothing is not even decoded.
+	const auto decoded = [&](std::string_view colorant) {
+		const std::string space = "[/Separation /" + std::string(colorant) + " /DeviceGray " + tint + "]";
+		detail::ScopedDecodeWorkMeter work;
+		const auto r = interpret("/I Do", "<< /XObject << /I 5 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /Filter /FlateDecode /ColorSpace " + space, flate_string("\x80"))});
+		EXPECT_NE(r.list, nullptr);
+		return work.bytes();
+	};
+	EXPECT_GT(decoded("Spot"), 0u) << "the meter cannot see this image, so the 0 below proves nothing";
+	EXPECT_EQ(decoded("None"), 0u);
+}
+
+TEST(PdfInterpreter, ImageMasks)
+{
+	const std::string gray = "/BitsPerComponent 8 /ColorSpace /DeviceGray";
+	// A colour key hides raw samples in its range, at each size.
+	const auto alphas = [](const Interpreted& r) {
+		std::vector<int> out;
+		const auto images = images_of(r);
+		EXPECT_EQ(images.size(), 1u);
+		if (!images.empty()) {
+			for (uint32_t x = 0; x < images[0].bitmap->width; ++x) {
+				out.push_back(cell(*images[0].bitmap, x, 0u).a);
+			}
+		}
+		return out;
+	};
+	EXPECT_EQ(alphas(one_image("/Width 2 /Height 1 /BitsPerComponent 1 /ColorSpace /DeviceGray /Mask [1 1]", "\x80")), (std::vector<int>{0, 255}));
+	EXPECT_EQ(alphas(one_image("/Width 3 /Height 1 " + gray + " /Mask [10 20]", std::string_view("\x09\x0F\x15", 3u))), (std::vector<int>{255, 0, 255}));
+	EXPECT_EQ(alphas(one_image("/Width 2 /Height 1 /BitsPerComponent 16 /ColorSpace /DeviceGray /Mask [256 257]", std::string_view("\x01\x01\x02\x00", 4u))), (std::vector<int>{0, 255}));
+	EXPECT_EQ(alphas(one_image("/Width 2 /Height 1 /BitsPerComponent 1 /ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>] /Mask [1 1]", "\x40")), (std::vector<int>{255, 0}));
+	// All components must fall in range, and a hidden cell is premultiplied to nothing.
+	{
+		const auto r = one_image("/Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Mask [1 1 2 2 3 3]", std::string_view("\x01\x02\x03\x01\x02\x04", 6u));
+		EXPECT_EQ(alphas(r), (std::vector<int>{0, 255}));
+		EXPECT_EQ(cell(*images_of(r)[0].bitmap, 0u, 0u).b, 0);
+	}
+	// A key that does not fit is ignored, recorded: wrong length, past the sample's range.
+	for (const char* key : {"[1 1 2 2]", "[0 300]"}) {
+		SCOPED_TRACE(key);
+		clear_diagnostics();
+		EXPECT_EQ(alphas(one_image("/Width 1 /Height 1 " + gray + " /Mask " + key, std::string_view("\x01", 1u))), (std::vector<int>{255}));
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	// Compared before /Decode: the file's first cell is 200, 90, 40, and /Decode inverts what is drawn, not what is keyed.
+	{
+		const std::string jpeg = corpus_text("images/dct-3c-adobe-rgb.jpg");
+		const auto r = one_image("/Width 16 /Height 16 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode "
+								 "/Decode [1 0 1 0 1 0] /Mask [200 200 90 90 40 40]", jpeg);
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(cell(*images_of(r)[0].bitmap, 0u, 0u).a, 0) << "the key compared the decoded value";
+		const auto after = one_image("/Width 16 /Height 16 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode "
+									 "/Decode [1 0 1 0 1 0] /Mask [55 55 165 165 215 215]", jpeg);
+		ASSERT_EQ(images_of(after).size(), 1u);
+		EXPECT_EQ(cell(*images_of(after)[0].bitmap, 0u, 0u).a, 255);
+	}
+	const std::string one_cell = image_xobject("/Width 1 /Height 1 " + gray + " /MASKENTRY", "\x80");
+	const auto with_mask = [&](std::string_view entry, std::vector<std::string> more) {
+		std::string image = one_cell;
+		image.replace(image.find("/MASKENTRY"), 10u, entry);
+		std::vector<std::string> objects{std::move(image)};
+		objects.insert(objects.end(), more.begin(), more.end());
+		return interpret("/X Do 50 50 1 1 re f", "<< /XObject << /X 5 0 R >> >>", objects);
+	};
+	// An explicit mask at another resolution, both ways of its /Decode: a 1 masks out by default.
+	{
+		const auto r = with_mask("/Mask 6 0 R", {image_xobject("/Width 2 /Height 1 /ImageMask true", "\x40")});
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		ASSERT_NE(images[0].soft_mask, nullptr);
+		EXPECT_EQ(images[0].soft_mask->width, 2u);
+		EXPECT_FALSE(images[0].soft_mask->is_monochrome_mask);
+		EXPECT_EQ(cell(*images[0].soft_mask, 0u, 0u).a, 255);
+		EXPECT_EQ(cell(*images[0].soft_mask, 1u, 0u).a, 0);
+		const auto inverse = with_mask("/Mask 6 0 R", {image_xobject("/Width 2 /Height 1 /ImageMask true /Decode [1 0]", "\x40")});
+		ASSERT_EQ(images_of(inverse).size(), 1u);
+		EXPECT_EQ(cell(*images_of(inverse)[0].soft_mask, 0u, 0u).a, 0);
+		EXPECT_EQ(cell(*images_of(inverse)[0].soft_mask, 1u, 0u).a, 255);
+	}
+	// An SMask at another resolution through /Decode [1 0], and its own /Interpolate apart from the image's.
+	{
+		const auto r = with_mask("/Interpolate true /SMask 6 0 R",
+			{image_xobject("/Width 2 /Height 1 " + gray + " /Decode [1 0]", std::string_view("\xFF\x40", 2u))});
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		ASSERT_NE(images[0].soft_mask, nullptr);
+		EXPECT_EQ(cell(*images[0].soft_mask, 0u, 0u).a, 0);
+		EXPECT_EQ(cell(*images[0].soft_mask, 1u, 0u).a, 255 - 0x40);
+		EXPECT_TRUE(images[0].interpolate);
+		EXPECT_FALSE(images[0].soft_mask_interpolate);
+		const auto opposite = with_mask("/SMask 6 0 R", {image_xobject("/Width 2 /Height 1 /Interpolate true " + gray, std::string_view("\xFF\x40", 2u))});
+		ASSERT_EQ(images_of(opposite).size(), 1u);
+		EXPECT_FALSE(images_of(opposite)[0].interpolate);
+		EXPECT_TRUE(images_of(opposite)[0].soft_mask_interpolate);
+	}
+	// /SMask wins over /Mask.
+	{
+		const auto r = with_mask("/SMask 6 0 R /Mask 7 0 R",
+			{image_xobject("/Width 1 /Height 1 " + gray, "\x10"), image_xobject("/Width 2 /Height 1 /ImageMask true", "\x40")});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(cell(*images_of(r)[0].soft_mask, 0u, 0u).a, 0x10);
+		EXPECT_EQ(images_of(r)[0].soft_mask->width, 1u);
+	}
+	// /ImageMask true ignores both.
+	{
+		const auto r = interpret("/X Do", "<< /XObject << /X 5 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 /ImageMask true /SMask 6 0 R", std::string_view("\x00", 1u)), image_xobject("/Width 1 /Height 1 " + gray, "\x10")});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(images_of(r)[0].soft_mask, nullptr);
+	}
+	// A mask that cannot be used leaves the image drawn without it, recorded, and the page's next drawing stands.
+	const std::vector<std::pair<const char*, std::string>> bad_masks = {
+		{"an /SMask with no size", image_xobject(gray, "\x10")},
+		{"an /SMask of bad /BitsPerComponent", image_xobject("/Width 1 /Height 1 /BitsPerComponent 3 /ColorSpace /DeviceGray", "\x10")},
+		{"an /SMask whose filter fails", image_xobject("/Width 1 /Height 1 " + gray + " /Filter /FlateDecode", "not flate")},
+		{"an /SMask that is not a stream", "<< /Width 1 >>"},
+	};
+	for (const auto& [what, object] : bad_masks) {
+		SCOPED_TRACE(what);
+		clear_diagnostics();
+		const auto r = with_mask("/SMask 6 0 R", {object});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(images_of(r)[0].soft_mask, nullptr);
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+		// The failure belongs to the mask: the image draws again, without it.
+		std::string image = one_cell;
+		image.replace(image.find("/MASKENTRY"), 10u, "/SMask 6 0 R");
+		const auto twice = interpret("/X Do /X Do", "<< /XObject << /X 5 0 R >> >>", {image, object});
+		EXPECT_EQ(images_of(twice).size(), 2u);
+	}
+	{
+		clear_diagnostics();
+		const auto r = with_mask("/Mask 6 0 R", {image_xobject("/Width 2 /Height 1 " + gray, std::string_view("\x10\x20", 2u))});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(images_of(r)[0].soft_mask, nullptr) << "a /Mask that is no image mask was used";
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+}
+
+TEST(PdfInterpreter, ImageMatte)
+{
+	// Pre-blended over black at alpha 128: 128 reads back as 255, and a cell of alpha 0 keeps its value.
+	{
+		const auto r = interpret("/X Do", "<< /XObject << /X 5 0 R >> >>",
+			{image_xobject("/Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /SMask 6 0 R", std::string_view("\x80\x40\x20\x33\x44\x55", 6u)),
+				image_xobject("/Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Matte [0 0 0]", std::string_view("\x80\x00", 2u))});
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		const Bgra c = cell(*images[0].bitmap, 0u, 0u);
+		EXPECT_NEAR(c.r, 255, 1);
+		EXPECT_NEAR(c.g, 127, 1);
+		EXPECT_NEAR(c.b, 64, 1);
+		const Bgra zero = cell(*images[0].bitmap, 1u, 0u);
+		EXPECT_EQ(zero.r, 0x33);
+		EXPECT_EQ(zero.g, 0x44);
+		EXPECT_EQ(zero.b, 0x55);
+	}
+	// DeviceCMYK: undone before conversion, it matches the plain colour drawn directly. c' = m + a (c - m) with c = 50%, 0, 0, 0,
+	// m = 100% each, a = 128/255; undoing in sRGB after conversion does not arrive at this colour.
+	{
+		const double a = 128.0 / 255.0;
+		const auto mix = [a](double c, double m) { return static_cast<char>(static_cast<uint8_t>(std::lround((m + a * (c - m)) * 255.0))); };
+		const std::string blended{mix(0.5, 1.0), mix(0.0, 1.0), mix(0.0, 1.0), mix(0.0, 1.0)};
+		const auto r = interpret("/X Do /Y Do", "<< /XObject << /X 5 0 R /Y 7 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceCMYK /SMask 6 0 R", blended),
+				image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Matte [1 1 1 1]", "\x80"),
+				image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceCMYK", std::string_view("\x80\x00\x00\x00", 4u))});
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 2u);
+		const Bgra unmatted = cell(*images[0].bitmap, 0u, 0u);
+		const Bgra plain = cell(*images[1].bitmap, 0u, 0u);
+		EXPECT_NEAR(unmatted.r, plain.r, 3);
+		EXPECT_NEAR(unmatted.g, plain.g, 3);
+		EXPECT_NEAR(unmatted.b, plain.b, 3);
+	}
+	// A /Matte that does not fit is ignored, recorded: another size, the wrong count, an Indexed image.
+	const std::vector<std::pair<std::string, std::string>> unfit = {
+		{"/BitsPerComponent 8 /ColorSpace /DeviceRGB", "/Width 2 /Height 1 /Matte [0 0 0]"},
+		{"/BitsPerComponent 8 /ColorSpace /DeviceRGB", "/Width 1 /Height 1 /Matte [0 0]"},
+		{"/BitsPerComponent 8 /ColorSpace [/Indexed /DeviceRGB 0 <102030>]", "/Width 1 /Height 1 /Matte [0]"},
+	};
+	for (const auto& [image, mask] : unfit) {
+		SCOPED_TRACE(mask);
+		clear_diagnostics();
+		const bool rgb = image.find("DeviceRGB /") == std::string::npos && image.find("Indexed") == std::string::npos;
+		const auto r = interpret("/X Do", "<< /XObject << /X 5 0 R >> >>",
+			{image_xobject("/Width 1 /Height 1 " + image + " /SMask 6 0 R", rgb ? std::string_view("\x80\x40\x20", 3u) : std::string_view("\x00\x40\x20", 3u)),
+				image_xobject(mask + " /BitsPerComponent 8 /ColorSpace /DeviceGray", std::string_view("\x80\x80", 2u))});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+		EXPECT_NE(cell(*images_of(r)[0].bitmap, 0u, 0u).r, 255) << "the /Matte was applied";
+	}
+}
+
+TEST(PdfInterpreter, ImageRecovery)
+{
+	const std::string gray = "/BitsPerComponent 8 /ColorSpace /DeviceGray";
+	// A stream short of its rows draws what it has; the rest is transparent.
+	{
+		clear_diagnostics();
+		const auto r = one_image("/Width 1 /Height 4 " + gray, "\xFF\x80");
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).r, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 1u).r, 0x80);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 1u).a, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 2u).a, 0);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 3u).a, 0);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	// Extra data is ignored, and a stencil's missing rows paint nothing.
+	EXPECT_EQ(gray_row("/Width 1 /Height 1 " + gray, "\x80\x81\x82"), (std::vector<int>{0x80}));
+	{
+		const auto r = one_image("/Width 1 /Height 2 /ImageMask true", std::string_view("\x00", 1u));
+		const auto images = images_of(r);
+		ASSERT_EQ(images.size(), 1u);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 0u).a, 255);
+		EXPECT_EQ(cell(*images[0].bitmap, 0u, 1u).a, 0);
+	}
+	// Each refusal is recorded and draws nothing, the next drawing stands, and one failure is met once.
+	const std::vector<std::pair<const char*, std::string>> refused = {
+		{"no size", gray},
+		{"a width past the limit", "/Width 65537 /Height 1 " + gray},
+		{"an area past the limit", "/Width 65536 /Height 65536 " + gray},
+		{"bad /BitsPerComponent", "/Width 1 /Height 1 /BitsPerComponent 3 /ColorSpace /DeviceGray"},
+		{"no /ColorSpace", "/Width 1 /Height 1 /BitsPerComponent 8"},
+		{"an unusable /ColorSpace", "/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /NoSuchSpace"},
+		{"a filter that fails", "/Width 1 /Height 1 " + gray + " /Filter /FlateDecode"},
+	};
+	for (const auto& [what, entries] : refused) {
+		SCOPED_TRACE(what);
+		clear_diagnostics();
+		const auto r = interpret("/X Do /X Do 50 50 1 1 re f", "<< /XObject << /X 5 0 R >> >>", {image_xobject(entries, "not flate")});
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(images_of(r).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	// A CCITT image with no /ColorSpace is one gray bit, and a stencil's /BitsPerComponent is not asked for.
+	{
+		const std::string pdf = corpus_text("render/images-and-vectors.pdf");
+		auto doc = Document::open_memory(std::vector<uint8_t>(pdf.begin(), pdf.end()));
+		ASSERT_TRUE(doc.has_value());
+		const auto ccitt = (*doc)->resolve_object_shared(IndirectRef{10u, 0u});
+		ASSERT_TRUE(ccitt.has_value());
+		const PdfStream* stream = (*ccitt)->as_stream();
+		ASSERT_NE(stream, nullptr);
+		const std::string data(stream->raw_bytes.begin(), stream->raw_bytes.end());
+		const auto r = one_image("/Width 16 /Height 16 /Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 16 /Rows 16 /BlackIs1 false >>", data);
+		EXPECT_EQ(images_of(r).size(), 1u);
+	}
+}
+
+TEST(PdfInterpreter, ImageBudget)
+{
+	const std::string gray = "/BitsPerComponent 8 /ColorSpace /DeviceGray";
+	const auto decodes_of = [](std::string_view content, std::string_view resources, const std::vector<std::string>& objects,
+								std::vector<DrawImageCommand>* out) {
+		const auto bytes = one_page_pdf(content, resources, objects);
+		auto doc = Document::open_memory(bytes);
+		EXPECT_TRUE(doc.has_value());
+		const uint64_t before = (*doc)->decoded_stream_count();
+		auto list = interpret_page(**doc, 0u);
+		EXPECT_TRUE(list.has_value());
+		if (out != nullptr && list.has_value()) {
+			*out = all_of<DrawImageCommand>(**list);
+		}
+		return (*doc)->decoded_stream_count() - before;
+	};
+	const std::string filtered = image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /FlateDecode", flate_string(std::string_view("\x80\x40\x20", 3u)));
+	// Drawn twice: one decode, one bitmap.
+	{
+		std::vector<DrawImageCommand> images;
+		const uint64_t once = decodes_of("/X Do", "<< /XObject << /X 5 0 R >> >>", {filtered}, nullptr);
+		EXPECT_EQ(decodes_of("/X Do /X Do", "<< /XObject << /X 5 0 R >> >>", {filtered}, &images), once);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_EQ(images[0].bitmap.get(), images[1].bitmap.get());
+	}
+	// Another intent is another conversion of the same decode; an image's own /Intent is not moved by the state's.
+	{
+		std::vector<DrawImageCommand> images;
+		const uint64_t once = decodes_of("/X Do", "<< /XObject << /X 5 0 R >> >>", {filtered}, nullptr);
+		EXPECT_EQ(decodes_of("/Perceptual ri /X Do /Saturation ri /X Do", "<< /XObject << /X 5 0 R >> >>", {filtered}, &images), once);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_NE(images[0].bitmap.get(), images[1].bitmap.get());
+		const std::string own = image_xobject("/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Intent /Perceptual", std::string_view("\x80\x40\x20", 3u));
+		decodes_of("/Saturation ri /X Do /AbsoluteColorimetric ri /X Do", "<< /XObject << /X 5 0 R >> >>", {own}, &images);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_EQ(images[0].bitmap.get(), images[1].bitmap.get());
+	}
+	// A form's /DefaultGray changes what the same image draws as: one decode, the right colours for each scope.
+	{
+		std::vector<DrawImageCommand> images;
+		const std::string plain_gray = image_xobject("/Width 1 /Height 1 " + gray + " /Filter /FlateDecode", flate_string("\x80"));
+		const uint64_t once = decodes_of("/X Do", "<< /XObject << /X 5 0 R >> >>", {plain_gray}, nullptr);
+		const std::string form = form_object(
+			"/BBox [0 0 10 10] /Resources << /XObject << /X 5 0 R >> /ColorSpace << /DefaultGray [/Separation /Spot /DeviceRGB "
+			"<< /FunctionType 2 /Domain [0 1] /N 1 /C0 [1 0 0] /C1 [0 1 0] >>] >> >>",
+			"/X Do");
+		const uint64_t both = decodes_of("/X Do /F Do", "<< /XObject << /X 5 0 R /F 6 0 R >> >>", {plain_gray, form}, &images);
+		EXPECT_EQ(both - once, 1u) << "the image was decoded again (the form's own content is the one more decode)";
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_NE(images[0].bitmap.get(), images[1].bitmap.get());
+		const Bgra page = cell(*images[0].bitmap, 0u, 0u);
+		const Bgra in_form = cell(*images[1].bitmap, 0u, 0u);
+		EXPECT_EQ(page.r, page.g);
+		EXPECT_NE(in_form.r, in_form.g) << "the form's /DefaultGray was not used";
+	}
+	// The budget: distinct images past it are refused and recorded, and the next drawing stands.
+	{
+		const detail::ScopedPageImageBudgetForTesting budget(size_t{1} << 20u);
+		std::vector<std::string> objects;
+		std::string xobjects;
+		std::string content;
+		const std::string data = flate_string(std::string(size_t{256} * 256u, '\x40'));
+		for (int i = 0; i < 12; ++i) {
+			objects.push_back(image_xobject("/Width 256 /Height 256 " + gray + " /Filter /FlateDecode", data));
+			xobjects += "/I" + std::to_string(i) + " " + std::to_string(5 + i) + " 0 R ";
+			content += "/I" + std::to_string(i) + " Do ";
+		}
+		clear_diagnostics();
+		const auto r = interpret(content + "50 50 1 1 re f", "<< /XObject << " + xobjects + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		const size_t drawn = images_of(r).size();
+		EXPECT_GE(drawn, 1u);
+		EXPECT_LT(drawn, 12u) << "the bitmap budget stopped nothing";
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+	}
+	// Distinct damaged images are charged: their decoding stops at the budget, though none is ever drawn.
+	{
+		const detail::ScopedPageImageBudgetForTesting budget(size_t{1} << 20u);
+		std::string damaged = flate_string(std::string(size_t{1} << 18u, '\x40'));
+		damaged[damaged.size() - 1u] = static_cast<char>(damaged.back() ^ 0x55); // its checksum
+		std::vector<std::string> objects;
+		std::string xobjects;
+		std::string content;
+		for (int i = 0; i < 40; ++i) {
+			objects.push_back(image_xobject("/Width 512 /Height 512 " + gray + " /Filter /FlateDecode", damaged));
+			xobjects += "/I" + std::to_string(i) + " " + std::to_string(5 + i) + " 0 R ";
+			content += "/I" + std::to_string(i) + " Do ";
+		}
+		clear_diagnostics();
+		const auto r = interpret(content, "<< /XObject << " + xobjects + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(images_of(r).empty());
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes)) << "damaged images were not charged";
+	}
+	// Raw samples give way to a bitmap that needs their room, decoded again for another conversion.
+	{
+		const detail::ScopedPageImageBudgetForTesting budget(size_t{3} << 20u);
+		std::vector<DrawImageCommand> images;
+		const std::string big = image_xobject("/Width 512 /Height 512 /BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /FlateDecode",
+			flate_string(std::string(size_t{512} * 512u * 3u, '\x40')));
+		const uint64_t once = decodes_of("/X Do", "<< /XObject << /X 5 0 R >> >>", {big}, nullptr);
+		EXPECT_EQ(decodes_of("/Perceptual ri /X Do /Perceptual ri /X Do", "<< /XObject << /X 5 0 R >> >>", {big}, &images), once);
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_EQ(images[0].bitmap.get(), images[1].bitmap.get());
+		// Room for the samples and two bitmaps, less a little: the second bitmap takes the samples' room, and a third
+		// conversion decodes again before its refusal.
+		const detail::ScopedPageImageBudgetForTesting tight(size_t{512} * 512u * 3u + size_t{2} * 512u * 512u * 4u - 1024u);
+		EXPECT_EQ(decodes_of("/Perceptual ri /X Do /Saturation ri /X Do", "<< /XObject << /X 5 0 R >> >>", {big}, &images), once)
+			<< "the second conversion should have used the samples still held";
+		ASSERT_EQ(images.size(), 2u);
+		EXPECT_NE(images[0].bitmap.get(), images[1].bitmap.get());
+		clear_diagnostics();
+		EXPECT_EQ(decodes_of("/Perceptual ri /X Do /Saturation ri /X Do /AbsoluteColorimetric ri /X Do", "<< /XObject << /X 5 0 R >> >>", {big}, &images), once + 1u)
+			<< "a conversion after the samples gave way must decode again";
+		EXPECT_EQ(images.size(), 2u);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
+	// An image object past the 64 MiB held-resource budget is read: its data is not held.
+	{
+		std::string data(size_t{70} << 20u, '\x40');
+		const auto r = one_image("/Width 1 /Height 1 " + gray, data);
+		ASSERT_EQ(images_of(r).size(), 1u) << "a large image was refused by the held-resource budget";
+		EXPECT_EQ(cell(*images_of(r)[0].bitmap, 0u, 0u).r, 0x40);
+	}
+	// Memory running out returns OutOfMemory, never a page with a hole in it: every allocation in turn.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		const auto bytes = one_page_pdf("/X Do", "<< /XObject << /X 5 0 R >> >>",
+			{image_xobject("/Width 2 /Height 2 " + gray + " /SMask 6 0 R", "abcd"), image_xobject("/Width 2 /Height 2 " + gray, "efgh")});
+		size_t refusals = 0;
+		for (uint32_t nth = 1u; nth <= 300u; ++nth) {
+			SCOPED_TRACE(nth);
+			auto doc = Document::open_memory(bytes);
+			ASSERT_TRUE(doc.has_value());
+			std::optional<PdfResult<std::shared_ptr<const DisplayList>>> page;
+			{
+				const recto::test::ScopedAllocationFailure fail(nth, 32u);
+				page.emplace(interpret_page(**doc, 0u));
+			}
+			if (!page->has_value()) {
+				EXPECT_EQ(page->error().code, ErrorCode::OutOfMemory);
+				++refusals;
+			} else {
+				const auto images = all_of<DrawImageCommand>(***page);
+				ASSERT_EQ(images.size(), 1u) << "a page lost its image to an allocation failure";
+				EXPECT_NE(images[0].soft_mask, nullptr) << "an image lost its mask to an allocation failure";
+			}
+		}
+		EXPECT_GT(refusals, 0u);
+	}
+}
+
+TEST(PdfInterpreter, OptionalContentImages)
+{
+	const std::string resources = "<< /Properties << /L 5 0 R >> /XObject << /X 6 0 R >> >>";
+	const std::array<IndirectRef, 1> other{IndirectRef{7u, 0u}};
+	const OptionalContentVisibility on{other, {}};
+	const std::string data = flate_string("\x80");
+	const std::string entries = "/Width 1 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceGray /Filter /FlateDecode";
+	const auto drawn = [&](std::string_view content, std::string_view extra, const OptionalContentVisibility* visibility) {
+		detail::ScopedDecodeWorkMeter work;
+		const auto r = interpret_visible(content, resources, {std::string(kOcg), image_xobject(entries + " " + std::string(extra), data)}, visibility);
+		EXPECT_NE(r.list, nullptr);
+		return std::make_pair(r.list != nullptr ? all_of<DrawImageCommand>(*r.list).size() : size_t{9999}, work.bytes());
+	};
+	const auto on_image = drawn("/X Do", "/OC 5 0 R", &on);
+	EXPECT_EQ(on_image.first, 1u);
+	EXPECT_GT(on_image.second, 0u) << "the meter cannot see this image, so the 0 below proves nothing";
+	const auto off_image = drawn("/X Do", "/OC 5 0 R", &kFiveIsOff);
+	EXPECT_EQ(off_image.first, 0u);
+	EXPECT_EQ(off_image.second, 0u) << "an image whose /OC is off was decoded";
+	const auto in_block = drawn("/OC /L BDC /X Do EMC", "", &kFiveIsOff);
+	EXPECT_EQ(in_block.first, 0u);
+	EXPECT_EQ(in_block.second, 0u) << "an image in a hidden block was decoded";
+	EXPECT_EQ(drawn("/X Do", "", &kFiveIsOff).first, 1u);
 }
 
 TEST(PdfInterpreter, TextDecodeWork)

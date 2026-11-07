@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
+#include <iterator>
 #include <memory>
 #include <new>
 #include <optional>
@@ -306,6 +308,9 @@ static_assert(std::ranges::is_sorted(kOperators, {}, &std::pair<std::string_view
 	const auto it = std::ranges::lower_bound(kOperators, name, {}, &std::pair<std::string_view, Op>::first);
 	return it != kOperators.end() && it->first == name ? it->second : Op::Other;
 }
+
+// The bitmaps a page may hold and the data it may decode, each, until D01 T02 section 19 reduces images instead.
+thread_local size_t page_image_budget = size_t{512} << 20u;
 
 class Interpreter {
 public:
@@ -1333,6 +1338,15 @@ private:
 		} else {
 			kept = std::move(*object);
 		}
+		return held_admitted(key, std::move(kept));
+	}
+
+	// `kept`, an object resolved for `key`, taken into what the page holds within its budget, and remembered either way.
+	[[nodiscard]] std::shared_ptr<const PdfValue> held_admitted(uint64_t key, std::shared_ptr<const PdfValue> kept)
+	{
+		if (const auto it = held_.find(key); it != held_.end()) {
+			return it->second;
+		}
 		if (kept != nullptr && kept->is_null()) {
 			kept = nullptr;
 		}
@@ -1350,15 +1364,6 @@ private:
 			held_.emplace(key, kept);
 		}
 		return kept;
-	}
-
-	// Stops holding the object `key` names, its bytes returned to the budget; it stays remembered as refused.
-	void release_held(uint64_t key) noexcept
-	{
-		if (const auto it = held_.find(key); it != held_.end() && it->second != nullptr) {
-			held_bytes_ -= std::min(held_bytes_, it->second->heap_bytes());
-			it->second = nullptr;
-		}
 	}
 
 	// The resource named `name` in `slot`'s category, resolved, or none.
@@ -1906,7 +1911,722 @@ private:
 		if (target.kind == XObjectEntry::Kind::Form) {
 			return draw_form(target, object_key(*ref));
 		}
-		return {}; // refused, or an Image or PostScript XObject: recorded when first met
+		if (target.kind == XObjectEntry::Kind::Image) {
+			return draw_image_object(*ref);
+		}
+		return {}; // refused, or a PostScript XObject: recorded when first met
+	}
+
+	// An Image XObject for the page (D01 T02 section 44), read once from its dictionary. Its samples are decoded once and
+	// kept raw, before /Decode, while the budget allows; a conversion is kept per effective colour space and intent,
+	// since one image can be drawn under different /Default* resources or rendering intents.
+	struct ConvertedImage {
+		std::shared_ptr<const ColorSpace> space;
+		RenderingIntent intent{RenderingIntent::RelativeColorimetric};
+		std::shared_ptr<const DecodedBitmap> bitmap; // null: refused, and remembered
+	};
+	struct ImageSource {
+		IndirectRef ref{};
+		bool usable{true};
+		bool stencil{false};
+		bool decoded{false};
+		bool image_filter{false}; // ends in DCTDecode or JPXDecode: the decoder says the size and the components
+		bool jpx{false};
+		bool one_bit_filter{false}; // ends in CCITTFaxDecode or JBIG2Decode
+		bool interpolate{false};
+		bool mask_interpolate{false};
+		uint32_t width{0};
+		uint32_t height{0};
+		uint32_t bits{8};
+		size_t components{0}; // the decoder's, for an image filter
+		std::optional<RenderingIntent> intent{};
+		std::optional<PdfValue> color_space{};
+		std::vector<double> decode{};
+		std::vector<int64_t> color_key{};
+		std::vector<double> matte{};
+		int64_t alpha_in_data{0};
+		std::shared_ptr<const std::vector<uint8_t>> samples{}; // raw, while kept
+		std::shared_ptr<const std::vector<uint8_t>> alpha{};   // a JPX image's own, for /SMaskInData
+		std::shared_ptr<const std::vector<uint8_t>> matte_alpha{};
+		std::shared_ptr<const ColorSpace> own_space{}; // a JPX image's own profile
+		std::shared_ptr<const DecodedBitmap> stencil_bitmap{};
+		std::shared_ptr<const DecodedBitmap> mask{};
+		std::vector<ConvertedImage> conversions{};
+		std::vector<std::pair<ResourceScope*, std::shared_ptr<const ColorSpace>>> spaces{};
+	};
+
+	// An object read for an image, outside the held-resource budget and not kept. Null when missing, null or damaged; a
+	// fatal failure is kept for `dispatch`.
+	[[nodiscard]] std::shared_ptr<const PdfValue> image_object(IndirectRef ref)
+	{
+		auto object = document_.resolve_object_shared(ref);
+		if (!object.has_value()) {
+			if (fatal(object.error()) && !resolve_failure_.has_value()) {
+				resolve_failure_ = object.error();
+			}
+			return nullptr;
+		}
+		return (*object != nullptr && (*object)->is_null()) ? nullptr : std::move(*object);
+	}
+
+	[[nodiscard]] std::optional<int64_t> int_of(const PdfDict& dict, std::string_view key)
+	{
+		const Held value = entry_of(dict, key);
+		return value ? value->as_int() : std::nullopt;
+	}
+
+	[[nodiscard]] bool bool_of(const PdfDict& dict, std::string_view key)
+	{
+		const Held value = entry_of(dict, key);
+		return value && value->as_bool() == std::optional<bool>(true);
+	}
+
+	// The numbers of an array entry, resolved; empty when it is absent, too long or holds anything else.
+	[[nodiscard]] std::vector<double> numbers_of(const PdfDict& dict, std::string_view key)
+	{
+		std::vector<double> out;
+		const Held value = entry_of(dict, key);
+		const PdfArray* array = value ? value->as_array() : nullptr;
+		if (array == nullptr || array->size() > kMaxImageArrayEntries) {
+			return out;
+		}
+		for (const PdfValue& element : *array) {
+			const Held number = shared(element);
+			const std::optional<double> n = number ? number->as_number() : std::nullopt;
+			if (!n.has_value()) {
+				return {};
+			}
+			out.push_back(*n);
+		}
+		return out;
+	}
+
+	// The name of a stream's last filter, or empty.
+	[[nodiscard]] std::string last_filter(const PdfDict& dict)
+	{
+		const Held filter = entry_of(dict, "Filter");
+		if (!filter) {
+			return {};
+		}
+		if (const PdfArray* stages = filter->as_array()) {
+			if (stages->empty()) {
+				return {};
+			}
+			const Held stage = shared(*std::prev(stages->end()));
+			const std::optional<std::string_view> name = stage ? stage->as_name() : std::nullopt;
+			return name.has_value() ? std::string(*name) : std::string();
+		}
+		const std::optional<std::string_view> name = filter->as_name();
+		return name.has_value() ? std::string(*name) : std::string();
+	}
+
+	[[nodiscard]] static bool usable_size(uint64_t width, uint64_t height) noexcept
+	{
+		return width >= 1u && height >= 1u && width <= 65'536u && height <= 65'536u &&
+			width * height * 4u <= kMaxDecodedStreamBytes;
+	}
+
+	// A stream's data, within what the page may decode: every byte the decoders produce counts, kept or not, so distinct
+	// damaged images cannot each cost a full decode. None when it cannot be drawn, recorded; OutOfMemory is returned.
+	[[nodiscard]] PdfResult<std::optional<ImageStream>> decoded_image(const PdfStream& stream)
+	{
+		const auto refused = [&] {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, image_decoded_,
+				image_budget_, "Image data past the page's budget is not drawn"));
+		};
+		if (image_decoded_ >= image_budget_) {
+			refused();
+			return std::optional<ImageStream>{};
+		}
+		const size_t limit = std::min(kMaxDecodedStreamBytes, image_budget_ - image_decoded_);
+		detail::ScopedDecodeWorkMeter work;
+		auto decoded = document_.decode_image_stream(stream, limit);
+		const auto charge = [&](uint64_t bytes) {
+			image_decoded_ = static_cast<size_t>(std::min<uint64_t>(image_budget_, uint64_t{image_decoded_} + bytes));
+		};
+		if (!decoded.has_value()) {
+			const ErrorCode code = decoded.error().code;
+			if (code == ErrorCode::OutOfMemory) {
+				return decoded.error();
+			}
+			if (code == ErrorCode::DecompressionLimitExceeded) {
+				charge(limit); // what it decoded used all it was allowed
+				refused();
+			} else {
+				charge(work.bytes());
+				record_diagnostic(decoded.error()); // a filter's error does not record itself
+			}
+			return std::optional<ImageStream>{};
+		}
+		charge(std::max<uint64_t>(work.bytes(), decoded->samples.size() + (decoded->image.has_value() ? decoded->image->pixels.size() : 0u)));
+		return std::optional<ImageStream>(std::move(*decoded));
+	}
+
+	// Whether `bytes` more can be held for the page's images.
+	[[nodiscard]] bool hold_image_bytes(size_t bytes) noexcept
+	{
+		if (bytes > image_budget_ - std::min(image_budget_, image_held_)) {
+			return false;
+		}
+		image_held_ += bytes;
+		return true;
+	}
+
+	void record_image_refusal(size_t bytes)
+	{
+		record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, image_held_ + bytes,
+			image_budget_, "An image past the page's bitmap budget is not drawn"));
+	}
+
+	[[nodiscard]] static uint32_t sample_at(std::span<const uint8_t> row, size_t index, uint32_t bits) noexcept
+	{
+		switch (bits) {
+		case 16u:
+			return (uint32_t{row[index * 2u]} << 8u) | row[index * 2u + 1u];
+		case 8u:
+			return row[index];
+		default: {
+			const size_t bit = index * bits;
+			const uint32_t shift = 8u - bits - static_cast<uint32_t>(bit % 8u);
+			return (uint32_t{row[bit / 8u]} >> shift) & ((1u << bits) - 1u);
+		}
+		}
+	}
+
+	// A stencil's cells as a bitmap whose alpha says which are painted (8.9.6.2: a sample of 0 paints, or of 1 under
+	// /Decode [1 0]); rows the stream does not hold paint nothing. Null when it cannot be used, recorded.
+	[[nodiscard]] PdfResult<std::shared_ptr<const DecodedBitmap>> stencil_from(const PdfStream& stream, bool tinted)
+	{
+		const PdfDict& dict = stream.dict;
+		const std::vector<double> decode = numbers_of(dict, "Decode");
+		const bool one_paints = decode.size() == 2u && decode[0] > decode[1];
+		const std::string filter = last_filter(dict);
+		const bool image_filter = filter == "JPXDecode" || filter == "DCTDecode" || filter == "DCT";
+		uint64_t width = static_cast<uint64_t>(std::max<int64_t>(0, int_of(dict, "Width").value_or(0)));
+		uint64_t height = static_cast<uint64_t>(std::max<int64_t>(0, int_of(dict, "Height").value_or(0)));
+		if (!image_filter && !usable_size(width, height)) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A stencil mask's size cannot be used; it is not drawn"); // recorded
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		RECTO_PDF_TRY(std::optional<ImageStream> data, decoded_image(stream));
+		if (!data.has_value()) {
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		// JPX and DCT have no one-bit form: a sample at or past the middle reads as 1.
+		const bool wide = data->image.has_value();
+		if (wide) {
+			width = data->image->width;
+			height = data->image->height;
+			if (data->image->components != 1u || !usable_size(width, height)) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "A stencil mask's image data cannot be used; it is not drawn"); // recorded
+				return std::shared_ptr<const DecodedBitmap>{};
+			}
+		}
+		const std::vector<uint8_t>& samples = wide ? data->image->pixels : data->samples;
+		const size_t row_bytes = wide ? static_cast<size_t>(width) : static_cast<size_t>((width + 7u) / 8u);
+		const size_t rows = std::min<size_t>(static_cast<size_t>(height), samples.size() / row_bytes);
+		if (rows < height) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A stencil mask's data is short; the rest paints nothing"); // recorded
+		}
+		const size_t bytes = static_cast<size_t>(width * height * 4u);
+		if (!hold_image_bytes(bytes)) {
+			record_image_refusal(bytes);
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		std::vector<uint8_t> pixels(bytes, 0u);
+		for (size_t y = 0; y < rows; ++y) {
+			const std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
+			uint8_t* out = pixels.data() + y * static_cast<size_t>(width) * 4u;
+			for (size_t x = 0; x < width; ++x) {
+				const bool one = wide ? row[x] >= 128u : ((row[x / 8u] >> (7u - x % 8u)) & 1u) != 0u;
+				if (one == one_paints) {
+					std::memset(out + x * 4u, 0xFF, 4u);
+				}
+			}
+		}
+		auto bitmap = DecodedBitmap::create(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+			static_cast<uint32_t>(width) * 4u, std::move(pixels), tinted);
+		if (!bitmap.has_value()) {
+			if (bitmap.error().code == ErrorCode::OutOfMemory) {
+				return bitmap.error();
+			}
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		return std::shared_ptr<const DecodedBitmap>(std::move(*bitmap));
+	}
+
+	// An /SMask: its gray samples, through its /Decode, as the alpha of a bitmap of its own size; `alpha_out` takes the
+	// alpha per cell when the caller needs it for /Matte. Null when it cannot be used, recorded.
+	[[nodiscard]] PdfResult<std::shared_ptr<const DecodedBitmap>> soft_mask_from(
+		const PdfStream& stream, std::vector<uint8_t>* alpha_out, uint32_t& width_out, uint32_t& height_out)
+	{
+		const PdfDict& dict = stream.dict;
+		const std::string filter = last_filter(dict);
+		const bool image_filter = filter == "JPXDecode" || filter == "DCTDecode" || filter == "DCT";
+		const bool one_bit = filter == "CCITTFaxDecode" || filter == "CCF" || filter == "JBIG2Decode";
+		uint64_t width = static_cast<uint64_t>(std::max<int64_t>(0, int_of(dict, "Width").value_or(0)));
+		uint64_t height = static_cast<uint64_t>(std::max<int64_t>(0, int_of(dict, "Height").value_or(0)));
+		uint32_t bits = static_cast<uint32_t>(std::clamp<int64_t>(int_of(dict, "BitsPerComponent").value_or(one_bit ? 1 : 0), 0, 32));
+		if (one_bit) {
+			bits = 1u;
+		}
+		if (!image_filter && (!usable_size(width, height) || (bits != 1u && bits != 2u && bits != 4u && bits != 8u && bits != 16u))) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An /SMask's size or /BitsPerComponent cannot be used; the image is drawn without it"); // recorded
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		RECTO_PDF_TRY(std::optional<ImageStream> data, decoded_image(stream));
+		if (!data.has_value()) {
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		if (data->image.has_value()) {
+			width = data->image->width;
+			height = data->image->height;
+			bits = 8u;
+			if (data->image->components != 1u || !usable_size(width, height)) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An /SMask is not one gray component; the image is drawn without it"); // recorded
+				return std::shared_ptr<const DecodedBitmap>{};
+			}
+		}
+		const std::vector<uint8_t>& samples = data->image.has_value() ? data->image->pixels : data->samples;
+		const size_t row_bytes = static_cast<size_t>((width * bits + 7u) / 8u);
+		const size_t rows = std::min<size_t>(static_cast<size_t>(height), samples.size() / row_bytes);
+		const size_t bytes = static_cast<size_t>(width * height * 4u);
+		if (!hold_image_bytes(bytes)) {
+			record_image_refusal(bytes);
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		std::vector<double> decode = numbers_of(dict, "Decode");
+		if (decode.size() != 2u) {
+			decode.clear();
+		}
+		const std::shared_ptr<const ColorSpace> gray = ColorSpace::device(ColorSpaceKind::DeviceGray);
+		std::vector<uint8_t> pixels(bytes, 0u);
+		if (alpha_out != nullptr) {
+			alpha_out->assign(static_cast<size_t>(width * height), 0u);
+		}
+		for (size_t y = 0; y < rows; ++y) {
+			const std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
+			RECTO_PDF_TRY(const std::vector<uint8_t> rgba,
+				gray->convert_samples(row, static_cast<size_t>(width), bits, decode, RenderingIntent::RelativeColorimetric, document_));
+			uint8_t* out = pixels.data() + y * static_cast<size_t>(width) * 4u;
+			for (size_t x = 0; x < width; ++x) {
+				const uint8_t a = rgba[x * 4u];
+				out[x * 4u] = out[x * 4u + 1u] = out[x * 4u + 2u] = out[x * 4u + 3u] = a;
+				if (alpha_out != nullptr) {
+					(*alpha_out)[y * static_cast<size_t>(width) + x] = a;
+				}
+			}
+		}
+		auto bitmap = DecodedBitmap::create(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+			static_cast<uint32_t>(width) * 4u, std::move(pixels));
+		if (!bitmap.has_value()) {
+			if (bitmap.error().code == ErrorCode::OutOfMemory) {
+				return bitmap.error();
+			}
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		width_out = static_cast<uint32_t>(width);
+		height_out = static_cast<uint32_t>(height);
+		return std::shared_ptr<const DecodedBitmap>(std::move(*bitmap));
+	}
+
+	// The image's dictionary, read once; its data waits for the first draw that needs it. Null past the page's limit.
+	[[nodiscard]] PdfResult<ImageSource*> image_source(IndirectRef ref, const PdfDict& dict)
+	{
+		ImageSource src;
+		src.ref = ref;
+		const std::string filter = last_filter(dict);
+		src.jpx = filter == "JPXDecode";
+		src.image_filter = src.jpx || filter == "DCTDecode" || filter == "DCT";
+		src.one_bit_filter = filter == "CCITTFaxDecode" || filter == "CCF" || filter == "JBIG2Decode";
+		src.stencil = bool_of(dict, "ImageMask");
+		src.interpolate = bool_of(dict, "Interpolate");
+		const int64_t width = int_of(dict, "Width").value_or(0);
+		const int64_t height = int_of(dict, "Height").value_or(0);
+		if (width > 0 && height > 0) {
+			src.width = static_cast<uint32_t>(std::min<int64_t>(width, 0xFFFFFFFFll));
+			src.height = static_cast<uint32_t>(std::min<int64_t>(height, 0xFFFFFFFFll));
+		}
+		if (!src.stencil) {
+			if (src.one_bit_filter) {
+				src.bits = 1u;
+			} else if (!src.image_filter) {
+				const int64_t bits = int_of(dict, "BitsPerComponent").value_or(0);
+				src.bits = bits == 1 || bits == 2 || bits == 4 || bits == 8 || bits == 16 ? static_cast<uint32_t>(bits) : 0u;
+				if (src.bits == 0u) {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's /BitsPerComponent cannot be used; it is not drawn"); // recorded
+					src.usable = false;
+				}
+			}
+			if (!src.image_filter && !usable_size(src.width, src.height)) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's size cannot be used; it is not drawn"); // recorded
+				src.usable = false;
+			}
+			if (const PdfValue* space = dict.get("ColorSpace"); space != nullptr && !space->is_null()) {
+				RECTO_PDF_TRY_REF(cloned, space->deep_clone());
+				src.color_space = std::move(cloned);
+			} else if (!src.image_filter && !src.one_bit_filter) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An image names no /ColorSpace; it is not drawn"); // recorded
+				src.usable = false;
+			}
+			src.decode = numbers_of(dict, "Decode");
+			if (const Held intent = entry_of(dict, "Intent"); intent && intent->as_name().has_value()) {
+				src.intent = rendering_intent_named(*intent->as_name());
+			}
+			src.alpha_in_data = src.jpx ? int_of(dict, "SMaskInData").value_or(0) : 0;
+		}
+		if (image_sources_.size() >= kMaxHeldResources) {
+			(void)make_pdf_error(ErrorCode::ResourceLimit, "Image objects past the page's limit are not drawn"); // recorded
+			return static_cast<ImageSource*>(nullptr);
+		}
+		return &image_sources_.emplace(object_key(ref), std::move(src)).first->second;
+	}
+
+	// The image's masks and its own alpha, read when its data first is: /SMask over /Mask (11.6.5.3, 8.9.6). One that
+	// cannot be used leaves the image drawn without it, recorded.
+	[[nodiscard]] PdfResult<void> read_masks(ImageSource& src, const PdfDict& dict)
+	{
+		const PdfValue* soft_value = dict.get("SMask");
+		const Held soft = soft_value != nullptr ? shared_outside_budget(*soft_value) : Held{};
+		if (const PdfStream* stream = soft ? soft->as_stream() : nullptr) {
+			std::vector<double> matte = numbers_of(stream->dict, "Matte");
+			std::vector<uint8_t> alpha;
+			uint32_t width = 0;
+			uint32_t height = 0;
+			src.mask_interpolate = bool_of(stream->dict, "Interpolate");
+			RECTO_PDF_TRY(src.mask, soft_mask_from(*stream, matte.empty() ? nullptr : &alpha, width, height));
+			if (src.mask != nullptr && !matte.empty()) {
+				if (width == src.width && height == src.height) {
+					src.matte = std::move(matte);
+					src.matte_alpha = std::make_shared<const std::vector<uint8_t>>(std::move(alpha));
+				} else {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "/Matte needs an /SMask of the image's size; it is ignored"); // recorded
+				}
+			}
+			return {};
+		}
+		if (soft && !soft->is_null()) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An /SMask is not a stream; the image is drawn without it"); // recorded
+		}
+		if (const PdfValue* mask_value = dict.get("Mask")) {
+			const Held mask = shared_outside_budget(*mask_value);
+			if (mask && mask->as_stream() != nullptr) {
+				const PdfStream& stream = *mask->as_stream();
+				if (bool_of(stream.dict, "ImageMask")) {
+					src.mask_interpolate = bool_of(stream.dict, "Interpolate");
+					RECTO_PDF_TRY(src.mask, stencil_from(stream, false));
+				} else {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "An explicit /Mask is not an image mask; the image is drawn without it"); // recorded
+				}
+				return {};
+			}
+			if (mask && mask->as_array() != nullptr) {
+				for (const double n : numbers_of(dict, "Mask")) {
+					src.color_key.push_back(static_cast<int64_t>(n));
+				}
+				if (src.color_key.empty()) {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "A colour key /Mask cannot be used; it is ignored"); // recorded
+				}
+				return {};
+			}
+		}
+		return {};
+	}
+
+	// A value, an indirect one read outside the held-resource budget, since a mask's data can be large.
+	[[nodiscard]] Held shared_outside_budget(const PdfValue& value)
+	{
+		const std::optional<IndirectRef> ref = value.as_ref();
+		if (!ref.has_value()) {
+			return Held{nullptr, &value};
+		}
+		std::shared_ptr<const PdfValue> object = image_object(*ref);
+		const PdfValue* target = object.get();
+		return Held{std::move(object), target};
+	}
+
+	// The image's data, decoding it (again, if it was released for the budget). Null when it cannot be drawn.
+	[[nodiscard]] PdfResult<std::shared_ptr<const std::vector<uint8_t>>> image_samples(ImageSource& src)
+	{
+		if (src.samples != nullptr) {
+			return src.samples;
+		}
+		const std::shared_ptr<const PdfValue> object = image_object(src.ref);
+		const PdfStream* stream = object != nullptr ? object->as_stream() : nullptr;
+		if (stream == nullptr) {
+			src.usable = false;
+			return std::shared_ptr<const std::vector<uint8_t>>{};
+		}
+		RECTO_PDF_TRY(std::optional<ImageStream> data, decoded_image(*stream));
+		if (!data.has_value()) {
+			src.usable = false;
+			return std::shared_ptr<const std::vector<uint8_t>>{};
+		}
+		std::shared_ptr<const std::vector<uint8_t>> samples;
+		if (data->image.has_value()) {
+			WicDecodedImage& image = *data->image;
+			if (!usable_size(image.width, image.height)) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's size cannot be used; it is not drawn"); // recorded
+				src.usable = false;
+				return std::shared_ptr<const std::vector<uint8_t>>{};
+			}
+			src.width = image.width;
+			src.height = image.height;
+			src.components = image.components;
+			if (!src.decoded && src.jpx && !image.icc_profile.empty()) {
+				RECTO_PDF_TRY(src.own_space, ColorSpace::from_icc_profile(image.icc_profile, image.components));
+			}
+			if (!src.decoded && src.alpha_in_data != 0 && image.rgba_pixels.size() == size_t{image.width} * image.height * 4u) {
+				std::vector<uint8_t> alpha(size_t{image.width} * image.height);
+				for (size_t i = 0; i < alpha.size(); ++i) {
+					alpha[i] = image.rgba_pixels[i * 4u + 3u];
+				}
+				src.alpha = std::make_shared<const std::vector<uint8_t>>(std::move(alpha));
+			}
+			samples = std::make_shared<const std::vector<uint8_t>>(std::move(image.pixels));
+		} else {
+			samples = std::make_shared<const std::vector<uint8_t>>(std::move(data->samples));
+		}
+		if (!src.decoded) {
+			src.decoded = true;
+			RECTO_PDF_RETURN_IF_ERROR(read_masks(src, stream->dict));
+			if (src.mask != nullptr) {
+				src.alpha = nullptr; // /SMask and /Mask win over /SMaskInData
+			}
+		}
+		if (hold_image_bytes(samples->size())) {
+			src.samples = samples;
+		}
+		return samples;
+	}
+
+	// The colour space `src` draws in here: its /ColorSpace in the drawing scope, kept per scope; null when none can be.
+	[[nodiscard]] PdfResult<std::shared_ptr<const ColorSpace>> declared_space(ImageSource& src)
+	{
+		if (!src.color_space.has_value()) {
+			return std::shared_ptr<const ColorSpace>{};
+		}
+		for (const auto& [scope, space] : src.spaces) {
+			if (scope == scope_) {
+				return space;
+			}
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> space, spaces().resolve(*src.color_space));
+		if (src.spaces.size() < kMaxImageConversions) {
+			src.spaces.emplace_back(scope_, space);
+		}
+		return space;
+	}
+
+	[[nodiscard]] PdfResult<void> draw_image_object(IndirectRef ref)
+	{
+		ImageSource* src = nullptr;
+		if (const auto it = image_sources_.find(object_key(ref)); it != image_sources_.end()) {
+			src = &it->second;
+		} else {
+			const std::shared_ptr<const PdfValue> object = image_object(ref);
+			const PdfStream* stream = object != nullptr ? object->as_stream() : nullptr;
+			if (stream == nullptr) {
+				return {};
+			}
+			RECTO_PDF_TRY(src, image_source(ref, stream->dict));
+			if (src == nullptr) {
+				return {};
+			}
+			if (src->stencil && src->usable) {
+				RECTO_PDF_TRY(src->stencil_bitmap, stencil_from(*stream, true));
+				src->usable = src->stencil_bitmap != nullptr;
+			}
+		}
+		if (!src->usable) {
+			return {};
+		}
+		if (src->stencil) {
+			// Painted in the current non-stroking colour; a colour that marks nothing draws nothing (8.6.6.4).
+			if (!state_.fill.paints()) {
+				return {};
+			}
+			RECTO_PDF_TRY(const ColorRgba tint, rgba(state_.fill, false));
+			RECTO_PDF_RETURN_IF_ERROR(sync_state(false));
+			return builder_.draw_image(src->stencil_bitmap, PdfMatrix::identity(), src->interpolate, nullptr, tint);
+		}
+		RECTO_PDF_TRY(std::shared_ptr<const ColorSpace> declared, declared_space(*src));
+		if (declared != nullptr && !declared->paints()) {
+			return {}; // its own colour space marks nothing (8.6.6.4), so nothing is decoded
+		}
+		if (declared == nullptr && src->color_space.has_value()) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's /ColorSpace cannot be used; it is not drawn"); // recorded
+			return {};
+		}
+		std::shared_ptr<const std::vector<uint8_t>> samples;
+		if (!src->decoded) {
+			RECTO_PDF_TRY(samples, image_samples(*src));
+			if (samples == nullptr) {
+				return {};
+			}
+		}
+		// What the data says wins over what the dictionary says for a decoder that reports its own components.
+		std::shared_ptr<const ColorSpace> space = declared;
+		if (src->image_filter && (space == nullptr || space->components() != src->components)) {
+			space = src->own_space;
+			if (space == nullptr || space->components() != src->components) {
+				if (src->components != 1u && src->components != 3u && src->components != 4u) {
+					(void)make_pdf_error(ErrorCode::DamagedFormat, "An image has components no device space holds; it is not drawn"); // recorded
+					return {};
+				}
+				RECTO_PDF_TRY(space, spaces().device(src->components == 1u ? ColorSpaceKind::DeviceGray
+						: src->components == 3u                            ? ColorSpaceKind::DeviceRGB
+																		   : ColorSpaceKind::DeviceCMYK));
+			}
+		} else if (space == nullptr) {
+			RECTO_PDF_TRY(space, spaces().device(ColorSpaceKind::DeviceGray)); // CCITT and JBIG2 data is one gray bit
+		}
+		if (space == nullptr || !space->paints()) {
+			return {};
+		}
+		const RenderingIntent intent = src->intent.value_or(state_.rendering_intent);
+		std::shared_ptr<const DecodedBitmap> bitmap;
+		bool known = false;
+		for (const ConvertedImage& conversion : src->conversions) {
+			if (conversion.space == space && conversion.intent == intent) {
+				bitmap = conversion.bitmap;
+				known = true;
+				break;
+			}
+		}
+		if (!known) {
+			if (samples == nullptr) {
+				RECTO_PDF_TRY(samples, image_samples(*src));
+				if (samples == nullptr) {
+					return {};
+				}
+			}
+			RECTO_PDF_TRY(bitmap, converted_image(*src, *samples, *space, intent));
+			if (src->conversions.size() < kMaxImageConversions) {
+				src->conversions.push_back(ConvertedImage{space, intent, bitmap});
+			}
+		}
+		if (bitmap == nullptr) {
+			return {};
+		}
+		RECTO_PDF_RETURN_IF_ERROR(sync_state(false));
+		return builder_.draw_image(std::move(bitmap), PdfMatrix::identity(), src->interpolate, src->mask, ColorRgba::black(), src->mask_interpolate);
+	}
+
+	// The image's samples in `space` as premultiplied BGRA: /Decode applied by `convert_samples` (never for a JPX image,
+	// which ignores it, ISO 32000-2 Table 87), a colour key compared with the raw samples, /Matte undone on the components
+	// before conversion. Rows the data does not hold stay transparent. Null when it cannot be drawn, recorded.
+	[[nodiscard]] PdfResult<std::shared_ptr<const DecodedBitmap>> converted_image(
+		ImageSource& src, const std::vector<uint8_t>& samples, const ColorSpace& space, RenderingIntent intent)
+	{
+		const size_t width = src.width;
+		const size_t height = src.height;
+		const size_t comps = space.components();
+		const size_t bytes = width * height * 4u;
+		const auto over_budget = [&] { return bytes > image_budget_ - std::min(image_budget_, image_held_); };
+		if (over_budget() && src.samples != nullptr) {
+			// Its raw samples give way, decoded again if needed; the caller's `samples` still holds them for this conversion.
+			image_held_ -= std::min(image_held_, src.samples->size());
+			src.samples = nullptr;
+		}
+		if (!hold_image_bytes(bytes)) {
+			record_image_refusal(bytes);
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		const uint64_t row_bits = uint64_t{width} * comps * src.bits;
+		const size_t row_bytes = static_cast<size_t>((row_bits + 7u) / 8u);
+		const size_t rows = row_bytes != 0u ? std::min(height, samples.size() / row_bytes) : 0u;
+		if (rows < height) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's data is short; the rest is transparent"); // recorded
+		}
+		std::vector<double> decode = src.jpx ? std::vector<double>{} : src.decode;
+		if (!decode.empty() && decode.size() != comps * 2u) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An image's /Decode does not fit its components; the default is used"); // recorded
+			decode.clear();
+		}
+		const uint32_t max_sample = (uint32_t{1} << src.bits) - 1u;
+		bool use_key = !src.color_key.empty();
+		if (use_key) {
+			use_key = src.color_key.size() == comps * 2u;
+			for (size_t i = 0; use_key && i < comps; ++i) {
+				use_key = src.color_key[i * 2u] >= 0 && src.color_key[i * 2u + 1u] <= int64_t{max_sample};
+			}
+			if (!use_key) {
+				(void)make_pdf_error(ErrorCode::DamagedFormat, "A colour key /Mask does not fit its image; it is ignored"); // recorded
+			}
+		}
+		bool use_matte = !src.matte.empty();
+		if (use_matte && (src.matte.size() != comps || space.kind() == ColorSpaceKind::Indexed)) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "/Matte does not fit its image; it is ignored"); // recorded
+			use_matte = false;
+		}
+		std::vector<uint8_t> pixels(bytes, 0u);
+		std::vector<uint8_t> unmatted;
+		for (size_t y = 0; y < rows; ++y) {
+			const std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
+			std::span<const uint8_t> source = row;
+			uint32_t bits = src.bits;
+			std::span<const double> row_decode = decode;
+			if (use_matte) {
+				// 11.6.5.3: c = m + (c' - m) / alpha on the decoded components; the result goes on as 16-bit samples
+				// over each component's default range.
+				unmatted.resize(width * comps * 2u);
+				for (size_t x = 0; x < width; ++x) {
+					const double alpha = (*src.matte_alpha)[y * width + x] / 255.0;
+					for (size_t c = 0; c < comps; ++c) {
+						const auto [low, high] = space.component_range(c);
+						const double d0 = decode.empty() ? low : decode[c * 2u];
+						const double d1 = decode.empty() ? high : decode[c * 2u + 1u];
+						double value = d0 + sample_at(row, x * comps + c, src.bits) * (d1 - d0) / max_sample;
+						if (alpha > 0.0) {
+							value = src.matte[c] + (value - src.matte[c]) / alpha;
+						}
+						const double unit = high > low ? std::clamp((value - low) / (high - low), 0.0, 1.0) : 0.0;
+						const auto encoded = static_cast<uint32_t>(std::lround(unit * 65535.0));
+						unmatted[(x * comps + c) * 2u] = static_cast<uint8_t>(encoded >> 8u);
+						unmatted[(x * comps + c) * 2u + 1u] = static_cast<uint8_t>(encoded & 0xFFu);
+					}
+				}
+				source = unmatted;
+				bits = 16u;
+				row_decode = {};
+			}
+			auto converted = space.convert_samples(source, width, bits, row_decode, intent, document_);
+			if (!converted.has_value()) {
+				if (converted.error().code == ErrorCode::OutOfMemory) {
+					return converted.error();
+				}
+				return std::shared_ptr<const DecodedBitmap>{};
+			}
+			const std::vector<uint8_t>& rgba = *converted;
+			uint8_t* out = pixels.data() + y * width * 4u;
+			for (size_t x = 0; x < width; ++x) {
+				uint32_t alpha = src.alpha != nullptr ? (*src.alpha)[y * width + x] : 255u;
+				if (use_key) {
+					bool keyed = true;
+					for (size_t c = 0; keyed && c < comps; ++c) {
+						const int64_t value = sample_at(row, x * comps + c, src.bits);
+						keyed = value >= src.color_key[c * 2u] && value <= src.color_key[c * 2u + 1u];
+					}
+					if (keyed) {
+						alpha = 0u;
+					}
+				}
+				const auto premultiplied = [alpha](uint8_t v) { return static_cast<uint8_t>((uint32_t{v} * alpha + 127u) / 255u); };
+				out[x * 4u] = premultiplied(rgba[x * 4u + 2u]);
+				out[x * 4u + 1u] = premultiplied(rgba[x * 4u + 1u]);
+				out[x * 4u + 2u] = premultiplied(rgba[x * 4u]);
+				out[x * 4u + 3u] = static_cast<uint8_t>(alpha);
+			}
+		}
+		auto bitmap = DecodedBitmap::create(src.width, src.height, src.width * 4u, std::move(pixels));
+		if (!bitmap.has_value()) {
+			if (bitmap.error().code == ErrorCode::OutOfMemory) {
+				return bitmap.error();
+			}
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
+		return std::shared_ptr<const DecodedBitmap>(std::move(*bitmap));
 	}
 
 	// The XObject `ref` names, classified once for the page. Its object is held through `held_object` (once per page,
@@ -1920,7 +2640,9 @@ private:
 			return it->second;
 		}
 		XObjectEntry entry;
-		std::shared_ptr<const PdfValue> object = held_object(ref);
+		// Read outside the held-resource budget until it is known to be a form: an image's data can be far larger, and
+		// is not kept (D01 T02 section 44).
+		std::shared_ptr<const PdfValue> object = image_object(ref);
 		const PdfStream* stream = object != nullptr ? object->as_stream() : nullptr;
 		if (object != nullptr && stream == nullptr) {
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "An XObject is not a stream"); // recorded
@@ -1932,12 +2654,14 @@ private:
 				const std::optional<PdfMatrix> matrix = form_matrix(stream->dict);
 				const std::optional<PdfRect> bbox = form_bbox(stream->dict);
 				if (matrix.has_value() && bbox.has_value()) {
-					entry = XObjectEntry{XObjectEntry::Kind::Form, object, *matrix, *bbox};
+					object = held_admitted(key, std::move(object));
+					if (object != nullptr) {
+						entry = XObjectEntry{XObjectEntry::Kind::Form, object, *matrix, *bbox};
+					}
 				} else {
 					(void)make_pdf_error(ErrorCode::DamagedFormat, "A Form XObject's /Matrix or /BBox cannot be used; it is not drawn"); // recorded
 				}
 			} else if (subtype == std::optional<std::string_view>("Image")) {
-				record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "Image XObjects are drawn by D01 T02 section 44"));
 				entry.kind = XObjectEntry::Kind::Image;
 			} else if (subtype == std::optional<std::string_view>("PS")) {
 				record_diagnostic(make_pdf_error(ErrorCode::UnsupportedFeature, "PostScript XObjects are never run (8.8.2)"));
@@ -1949,11 +2673,10 @@ private:
 				entry.hidden = hidden_by_entry(stream->dict);
 			}
 		}
-		if (entry.kind != XObjectEntry::Kind::Form) {
-			release_held(key); // nothing will draw it, so it holds nothing
-		}
 		if (xobject_entries_.size() >= kMaxHeldResources) {
-			return entry.kind == XObjectEntry::Kind::Form ? (transient_entry_ = std::move(entry)) : kRefused;
+			return entry.kind == XObjectEntry::Kind::Form || entry.kind == XObjectEntry::Kind::Image
+				? (transient_entry_ = std::move(entry))
+				: kRefused;
 		}
 		return xobject_entries_.emplace(key, std::move(entry)).first->second;
 	}
@@ -2377,9 +3100,7 @@ private:
 					kMaxFormContentBytes, "Form XObject content past the page's budget is not drawn"));
 			} else {
 				charge(work.bytes());
-				if (code != ErrorCode::DamagedFormat) {
-					record_diagnostic(decoded.error());
-				}
+				record_diagnostic(decoded.error()); // a filter's error does not record itself
 			}
 			return remember(nullptr);
 		}
@@ -2491,6 +3212,8 @@ private:
 	static constexpr size_t kMaxFormContentBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxTextFontBytes = size_t{64} << 20u;
 	static constexpr size_t kMaxInkMemo = 65'536u;
+	static constexpr size_t kMaxImageArrayEntries = 64u;             // two numbers for each of 32 components
+	static constexpr size_t kMaxImageConversions = 8u;               // kept per image; more are made as they are drawn
 	static constexpr size_t kMaxOcExpressionDepth = 32u;
 	static constexpr size_t kMaxOcExpressionNodes = 4'096u;
 	static constexpr size_t kMaxOcGroupsListed = 65'536u;
@@ -2503,6 +3226,11 @@ private:
 	std::vector<uint64_t> off_groups_{};
 	std::vector<uint64_t> excluded_groups_{};
 	std::unordered_map<uint64_t, OcAnswer> oc_answers_{};
+	// Image XObjects (D01 T02 section 44): each object's source and conversions, what they hold and what has been decoded.
+	std::unordered_map<uint64_t, ImageSource> image_sources_{};
+	size_t image_held_{0};
+	size_t image_decoded_{0};
+	const size_t image_budget_{page_image_budget}; // bitmaps held and data decoded, each, per page
 	size_t marked_depth_{0};
 	size_t hidden_at_{0};
 	std::vector<std::unique_ptr<ResourceScope>> scopes_{};
@@ -2565,6 +3293,20 @@ private:
 };
 
 } // namespace
+
+namespace detail {
+
+ScopedPageImageBudgetForTesting::ScopedPageImageBudgetForTesting(size_t bytes) noexcept
+	: previous_(std::exchange(page_image_budget, bytes))
+{
+}
+
+ScopedPageImageBudgetForTesting::~ScopedPageImageBudgetForTesting() noexcept
+{
+	page_image_budget = previous_;
+}
+
+} // namespace detail
 
 PdfResult<std::shared_ptr<const DisplayList>> interpret_content(
 	const Document& document,

@@ -11245,7 +11245,8 @@ struct ResolvedLocal {
 	const PdfDict* stream_dict_context = nullptr,
 	const IndirectObjectResolver* resolver = nullptr,
 	bool allow_jbig2 = true,
-	const SharedObjectResolver* shared = nullptr)
+	const SharedObjectResolver* shared = nullptr,
+	WicDecodedImage* image_out = nullptr)
 {
 	// Any of /Filter, /DecodeParms, their array elements and the parameter values inside a /DecodeParms dictionary
 	// may be an indirect reference (ISO 32000-1 section 7.3.10). /Filter, /DecodeParms and their array elements are
@@ -11563,7 +11564,8 @@ struct ResolvedLocal {
 			}
 			// A JPXDecode image that is not an /ImageMask ignores /Decode (ISO 32000-2 Table 87), so that is decided
 			// first and an ignored /Decode is never resolved: a bad reference in it cannot fail the decode.
-			bool decode_applies = decode_entry != nullptr;
+			// With `image_out` the caller converts the samples and applies /Decode itself.
+			bool decode_applies = decode_entry != nullptr && image_out == nullptr;
 			if (is_jpx && decode_applies) {
 				const PdfValue* mask_entry =
 					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
@@ -11617,6 +11619,14 @@ struct ResolvedLocal {
 				merged_image_parms->set("Decode", PdfValue(std::move(*decode_numbers)));
 			}
 			stage_parms = &(*merged_image_parms);
+			if (image_out != nullptr && i + 1u == num_filters) {
+				if (is_jpx) {
+					RECTO_PDF_TRY(*image_out, decode_jpx_image(stage_in, stage_parms, effective_limit));
+				} else {
+					RECTO_PDF_TRY(*image_out, decode_dct_image(stage_in, stage_parms, effective_limit, DctOutput::Samples));
+				}
+				return std::vector<uint8_t>{};
+			}
 		}
 		RECTO_PDF_TRY(
 			std::vector<uint8_t> next_buf,
@@ -11691,12 +11701,15 @@ bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept
 	return metered(*filter);
 }
 
-PdfResult<std::vector<uint8_t>> decode_stream(
+namespace {
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream_into(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
 	size_t max_decoded_bytes,
 	const IndirectObjectResolver* resolver,
-	const SharedObjectResolver* shared) noexcept
+	const SharedObjectResolver* shared,
+	WicDecodedImage* image_out) noexcept
 {
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
@@ -11739,7 +11752,8 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 			&stream_dict,
 			resolver,
 			/*allow_jbig2=*/true,
-			shared);
+			shared,
+			image_out);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -11748,6 +11762,37 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 		return make_pdf_error(
 			ErrorCode::InternalError,
 			"Unexpected exception while executing stream filter pipeline");
+	}
+}
+
+} // namespace
+
+PdfResult<std::vector<uint8_t>> decode_stream(
+	std::span<const uint8_t> raw_bytes,
+	const PdfDict& stream_dict,
+	size_t max_decoded_bytes,
+	const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared) noexcept
+{
+	return decode_stream_into(raw_bytes, stream_dict, max_decoded_bytes, resolver, shared, nullptr);
+}
+
+PdfResult<ImageStream> decode_image_stream(
+	const PdfStream& stream,
+	size_t max_decoded_bytes,
+	const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared) noexcept
+{
+	try {
+		ImageStream out;
+		WicDecodedImage image;
+		RECTO_PDF_TRY(out.samples, decode_stream_into(stream.raw_bytes, stream.dict, max_decoded_bytes, resolver, shared, &image));
+		if (image.width != 0u) {
+			out.image = std::move(image);
+		}
+		return out;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while decoding an image stream");
 	}
 }
 

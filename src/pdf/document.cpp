@@ -1991,6 +1991,28 @@ PdfResult<std::vector<uint8_t>> Document::decode_stream(
 	}
 }
 
+PdfResult<ImageStream> Document::decode_image_stream(
+	const PdfStream& stream,
+	size_t max_decoded_bytes) const noexcept
+{
+	try {
+		++decoded_streams_;
+		if (needs_password()) {
+			return make_doc_error(
+				ErrorCode::NeedsPassword,
+				DiagnosticId::NeedsPassword,
+				"Cannot decode PDF stream before document is authenticated");
+		}
+		const IndirectObjectResolver resolver = [this](IndirectRef ref) -> PdfResult<PdfValue> {
+			return this->resolve_object(ref);
+		};
+		const SharedObjectResolver shared = [this](IndirectRef ref) { return this->resolve_object_shared(ref); };
+		return recto::pdf::decode_image_stream(stream, max_decoded_bytes, &resolver, &shared);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while decoding an image stream");
+	}
+}
+
 PdfResult<std::vector<uint8_t>> Document::decode_page_contents_from_dict(
 	const PdfDict& page_dict) const
 {
