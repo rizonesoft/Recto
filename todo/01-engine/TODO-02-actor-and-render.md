@@ -220,6 +220,8 @@ Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/p
 
 ## 4. Content-stream interpreter complete over the render corpus
 
+> **Started:** 2026-11-07T05:30Z
+
 > **Groomed 2026-10-23:** added `D06 T05 §32` (JPX per-component decode) and `D06 T05 §33` (DCT `/ColorTransform`, Adobe CMYK and YCCK) to `Depends On`: `/Do` image decoding renders wrong colours and sizes until those decoder repairs ship, and the corpus sweep below would pin the wrong pixels.
 
 > **Corrected 2026-10-28:** (validation before the build) split for single responsibility (AGENTS.md, todo/README.md): this section held text operators, glyphs for four font kinds, image XObjects, inline images, Form XObjects, optional content and the corpus sweep, ten items each a section's work. They moved verbatim to `§42` (text operators), `§43` (glyphs), `§44` (image XObjects), `§45` (inline images), `§46` (Form XObjects) and `§47` (optional content). This section keeps the corpus sweep and depends on all six, so every section that depends on `§4` still waits for the whole interpreter.
@@ -237,11 +239,11 @@ The content-stream interpreter of `src/pdf/interpreter.cpp` interprets every pag
 
 1. Run the corpus sweep over `tests/corpus/render/` in `tests/recto-tests/pdf_interpreter_tests.cpp`. Done when: `PdfInterpreter.CorpusRenderSweep` passes under ASan.
 
-- [ ] Interpret every page of `tests/corpus/render/` (`simple-1p.pdf`, `compressed-xref-2p.pdf`, `incremental-2rev.pdf`, `rotated-pages.pdf`, `images-and-vectors.pdf`, and unlocked `encrypted-*.pdf`) into `DisplayList`s with zero errors under ASan. Done when: `PdfInterpreter.CorpusRenderSweep` walks the folder, fails on a file its table does not name, and reads each file's page count and, per page, its glyph runs, images and path draws as the corpus builder wrote them, so an empty list fails it.
-- [ ] Interpret every page of each `tests/corpus/broken/` file that opens. Done when: `PdfInterpreter.CorpusBrokenSweep` walks the folder with a table of its own, and a file that opens has each page give a list or a typed error, `corrupt-xref-recoverable.pdf` drawing what it holds.
+- [ ] Interpret every page of `tests/corpus/render/` (`simple-1p.pdf`, `compressed-xref-2p.pdf`, `incremental-2rev.pdf`, `rotated-pages.pdf`, `images-and-vectors.pdf`, and unlocked `encrypted-*.pdf`) into `DisplayList`s with zero errors under ASan. Done when: `PdfInterpreter.CorpusRenderSweep` walks the folder, fails on a file its table does not name, and reads each file's page count and, per page, its glyph runs, images and path draws as the corpus builder wrote them, so an empty list fails it; and in `images-and-vectors.pdf` reads what its builder wrote for each value: the `/GS1` alpha, the clip, each image's size and a cell of it, the `/SMask` at its cell, and the Form XObject's placement. **Corrected 2026-11-07:** plan review; a count alone passed a list that lost them.
+- [ ] Interpret every page of each `tests/corpus/broken/` file that opens. Done when: `PdfInterpreter.CorpusBrokenSweep` walks the folder with a table of each file's exact outcome (the open error `PdfDocument.BrokenCorpusSweep` pins, or that it opens), and `corrupt-xref-recoverable.pdf` draws its one page's text. **Corrected 2026-11-07:** plan review; was any list or typed error.
 - [ ] Commit: `pdf: interpret every page of the render corpus`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.*` passes under ASan across all corpus render and broken files, and a page drawing nothing fails `PdfInterpreter.CorpusRenderSweep`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.*:PdfDocument.BrokenCorpusSweep` passes under ASan across all corpus render and broken files, and a page drawing nothing fails `PdfInterpreter.CorpusRenderSweep`.
 
 ## 5. Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)
 
