@@ -226,7 +226,7 @@ Interpret a page's content stream into a `DisplayList` (`D01 T02 §1`) in `src/p
 
 The content-stream interpreter of `src/pdf/interpreter.cpp` interprets every page of the render corpus once text (`§42`, `§43`), images (`§44`, `§45`), Form XObjects (`§46`) and optional content (`§47`) are built (ISO 32000-1 sections 8.8, 8.9 and 9).
 
-**Corrected 2026-11-07:** validation before the build. "Zero errors" would pass on empty lists, a named list would miss a file added later, the checkpoint names the broken corpus while no item did, and the encrypted files need their password (`recto-test`, as `pdf_crypto_tests.cpp` opens them). So the sweep walks the folder, fails on a file its table does not name, and reads what each page should draw; a broken file either refuses to open as `PdfDocument.BrokenCorpus` already pins, or each page returns a list or a typed error, never a crash.
+**Corrected 2026-11-07:** validation before the build. "Zero errors" would pass on empty lists, a named list would miss a file added later, the checkpoint names the broken corpus while no item did, and the encrypted files need their password (`recto-test`, as `pdf_crypto_tests.cpp` opens them). So the sweep walks the folder, fails on a file its table does not name, and reads what each page should draw; a broken file either refuses to open as `PdfDocument.BrokenCorpusSweep` already pins, or each page returns a list or a typed error, never a crash.
 
 **Phase:** 1
 **Needs:** windows-host
