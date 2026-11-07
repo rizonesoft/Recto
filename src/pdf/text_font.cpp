@@ -598,12 +598,12 @@ struct TextFontBuilder {
 	}
 
 	static PdfResult<std::shared_ptr<const TextFont>> composite(const Document& document, const PdfDict& dict,
-		std::optional<PdfError>& fatal)
+		std::optional<PdfError>& fatal, Type0Memo* memo)
 	{
 		const IndirectObjectResolver resolver = [&document](IndirectRef ref) { return document.resolve_object(ref); };
 		const SharedObjectResolver shared = [&document](IndirectRef ref) { return document.resolve_object_shared(ref); };
 		std::optional<PdfError> program_error;
-		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver, &shared, &program_error));
+		RECTO_PDF_TRY(std::shared_ptr<const Type0Font> type0, load_type0_font(dict, resolver, &shared, &program_error, memo));
 		auto font = std::make_shared<TextFont>();
 		font->kind_ = TextFontKind::Composite;
 		font->vertical_ = type0->cmap().vertical();
@@ -646,7 +646,7 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::fallback() noexcept
 	}
 }
 
-PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& document, const PdfValue& font) noexcept
+PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& document, const PdfValue& font, Type0Memo* memo) noexcept
 {
 	try {
 		std::optional<PdfError> fatal;
@@ -673,7 +673,7 @@ PdfResult<std::shared_ptr<const TextFont>> TextFont::resolve(const Document& doc
 		const Resolved subtype_value = resolved(document, dict->get("Subtype"), fatal); // kept alive for the view
 		const std::optional<std::string_view> subtype = name_of(subtype_value);
 		if (subtype == std::optional<std::string_view>("Type0")) {
-			return finish(TextFontBuilder::composite(document, *dict, fatal));
+			return finish(TextFontBuilder::composite(document, *dict, fatal, memo));
 		}
 		if (subtype == std::optional<std::string_view>("Type3")) {
 			return finish(TextFontBuilder::type3(document, *dict, fatal));

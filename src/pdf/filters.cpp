@@ -11162,11 +11162,16 @@ namespace {
 [[nodiscard]] PdfResult<bool> stream_entry_present(
 	const PdfDict& dict,
 	std::string_view key,
-	const IndirectObjectResolver* resolver)
+	const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared = nullptr)
 {
 	const PdfValue* v = dict.get(key);
 	if (v == nullptr || v->is_null()) {
 		return false;
+	}
+	if (const auto ref = v->as_ref(); ref.has_value() && shared != nullptr && *shared) {
+		RECTO_PDF_TRY(const std::shared_ptr<const PdfValue> target, (*shared)(*ref));
+		return target != nullptr && !target->is_null();
 	}
 	if (const auto ref = v->as_ref(); ref.has_value() && resolver != nullptr && *resolver) {
 		RECTO_PDF_TRY_REF(target, (*resolver)(*ref));
@@ -11212,6 +11217,26 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 // length alone, so the pipeline keeps a marker for it instead of copying it.
 constexpr size_t kMaxCopiedNameBytes = 127;
 
+// A value the pipeline resolved one level: its own copy, or the document's cached value held without one (D01 T02
+// section 48). Empty when the entry was direct.
+struct ResolvedLocal {
+	std::optional<PdfValue> owned{};
+	std::shared_ptr<const PdfValue> held{};
+
+	[[nodiscard]] bool has_value() const noexcept
+	{
+		return owned.has_value() || held != nullptr;
+	}
+	[[nodiscard]] const PdfValue& operator*() const noexcept
+	{
+		return held != nullptr ? *held : *owned;
+	}
+	[[nodiscard]] const PdfValue* operator->() const noexcept
+	{
+		return &**this;
+	}
+};
+
 [[nodiscard]] PdfResult<std::vector<uint8_t>> execute_filter_pipeline(
 	std::span<const uint8_t> raw_bytes,
 	const PdfValue* filter_val,
@@ -11219,7 +11244,8 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 	size_t effective_limit,
 	const PdfDict* stream_dict_context = nullptr,
 	const IndirectObjectResolver* resolver = nullptr,
-	bool allow_jbig2 = true)
+	bool allow_jbig2 = true,
+	const SharedObjectResolver* shared = nullptr)
 {
 	// Any of /Filter, /DecodeParms, their array elements and the parameter values inside a /DecodeParms dictionary
 	// may be an indirect reference (ISO 32000-1 section 7.3.10). /Filter, /DecodeParms and their array elements are
@@ -11230,10 +11256,21 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 	// left as it is and refused below as before. Arrays longer than the filter chain are left for the length checks
 	// below to refuse.
 	std::deque<PdfValue> resolved;
-	const bool can_resolve = resolver != nullptr && static_cast<bool>(*resolver);
+	std::deque<std::shared_ptr<const PdfValue>> held_values; // shared results, kept for pointers into them
+	const bool can_share = shared != nullptr && static_cast<bool>(*shared);
+	const bool can_resolve = can_share || (resolver != nullptr && static_cast<bool>(*resolver));
 	const auto deref = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
 		if (v == nullptr || !v->is_ref() || !can_resolve) {
 			return v;
+		}
+		if (can_share) {
+			RECTO_PDF_TRY(std::shared_ptr<const PdfValue> value, (*shared)(*v->as_ref()));
+			if (value == nullptr) {
+				resolved.emplace_back(); // nothing there reads as null (7.3.10)
+				return &resolved.back();
+			}
+			held_values.push_back(std::move(value));
+			return held_values.back().get();
 		}
 		auto target = (*resolver)(*v->as_ref());
 		if (!target.has_value()) {
@@ -11243,15 +11280,19 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 		return &resolved.back();
 	};
 	// Resolves one level into a value the caller owns and drops, so a resolver result nothing keeps is not retained.
-	const auto resolve_local = [&](const PdfValue& v) -> PdfResult<std::optional<PdfValue>> {
+	const auto resolve_local = [&](const PdfValue& v) -> PdfResult<ResolvedLocal> {
 		if (!v.is_ref() || !can_resolve) {
-			return std::optional<PdfValue>{};
+			return ResolvedLocal{};
+		}
+		if (can_share) {
+			RECTO_PDF_TRY(std::shared_ptr<const PdfValue> value, (*shared)(*v.as_ref()));
+			return value != nullptr ? ResolvedLocal{std::nullopt, std::move(value)} : ResolvedLocal{PdfValue{}, nullptr};
 		}
 		auto target = (*resolver)(*v.as_ref());
 		if (!target.has_value()) {
 			return std::move(target).error();
 		}
-		return std::optional<PdfValue>(std::move(*target));
+		return ResolvedLocal{std::move(*target), nullptr};
 	};
 	// /Filter array elements resolve to names: a referenced element keeps only its name (or a non-name marker the
 	// name check below refuses), never the resolver's whole result.
@@ -11263,7 +11304,7 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 		if (const PdfArray* arr = filter_val != nullptr ? filter_val->as_array() : nullptr;
 			arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
 			for (size_t i = 0; i < arr->size(); ++i) {
-				RECTO_PDF_TRY(std::optional<PdfValue> target, resolve_local((*arr)[i]));
+				RECTO_PDF_TRY(ResolvedLocal target, resolve_local((*arr)[i]));
 				if (!target.has_value()) {
 					filter_elems[i] = &(*arr)[i];
 					continue;
@@ -11286,9 +11327,9 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 		bool predictor_active = true;
 		if (filter_name == "FlateDecode" || filter_name == "Fl" || filter_name == "LZWDecode" || filter_name == "LZW") {
 			const PdfValue* predictor = parms.get("Predictor");
-			std::optional<PdfValue> predictor_target;
+			ResolvedLocal predictor_target;
 			if (predictor != nullptr) {
-				RECTO_PDF_TRY(std::optional<PdfValue> t, resolve_local(*predictor));
+				RECTO_PDF_TRY(ResolvedLocal t, resolve_local(*predictor));
 				predictor_target = std::move(t);
 				if (predictor_target.has_value()) {
 					predictor = &*predictor_target;
@@ -11323,7 +11364,7 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 			if (!defined(key.view())) {
 				continue;
 			}
-			RECTO_PDF_TRY(std::optional<PdfValue> target_holder, resolve_local(value));
+			RECTO_PDF_TRY(ResolvedLocal target_holder, resolve_local(value));
 			const PdfValue& target = target_holder.has_value() ? *target_holder : value;
 			const auto target_name = target.as_name();
 			if (target.is_null() || target.is_bool() || target.is_number() ||
@@ -11362,7 +11403,7 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 	// one large dictionary cost it once at a time, not once each.
 	const auto element_stage_parms = [&](std::string_view filter_name, const PdfValue& element, bool& is_valid)
 		-> PdfResult<const PdfDict*> {
-		RECTO_PDF_TRY(std::optional<PdfValue> target_holder, resolve_local(element));
+		RECTO_PDF_TRY(ResolvedLocal target_holder, resolve_local(element));
 		const PdfValue& target = target_holder.has_value() ? *target_holder : element;
 		is_valid = true;
 		if (const PdfDict* dict = target.as_dict()) {
@@ -11526,9 +11567,9 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 			if (is_jpx && decode_applies) {
 				const PdfValue* mask_entry =
 					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
-				std::optional<PdfValue> mask_target;
+				ResolvedLocal mask_target;
 				if (mask_entry != nullptr) {
-					RECTO_PDF_TRY(std::optional<PdfValue> t, resolve_local(*mask_entry));
+					RECTO_PDF_TRY(ResolvedLocal t, resolve_local(*mask_entry));
 					mask_target = std::move(t);
 					if (mask_target.has_value()) {
 						mask_entry = &*mask_target;
@@ -11541,7 +11582,7 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 			// a malformed direct array, and nothing in it (a large string, say) is retained or copied first.
 			std::optional<PdfArray> decode_numbers;
 			if (decode_applies) {
-				RECTO_PDF_TRY(std::optional<PdfValue> decode_target, resolve_local(*decode_entry));
+				RECTO_PDF_TRY(ResolvedLocal decode_target, resolve_local(*decode_entry));
 				if (decode_target.has_value()) {
 					decode_entry = &*decode_target;
 				}
@@ -11549,7 +11590,7 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 					decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents) {
 					decode_numbers.emplace();
 					for (const PdfValue& e : *decode_arr) {
-						RECTO_PDF_TRY(std::optional<PdfValue> element_target, resolve_local(e));
+						RECTO_PDF_TRY(ResolvedLocal element_target, resolve_local(e));
 						const std::optional<double> n =
 							element_target.has_value() ? element_target->as_number() : e.as_number();
 						if (!n.has_value()) {
@@ -11654,12 +11695,13 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
 	size_t max_decoded_bytes,
-	const IndirectObjectResolver* resolver) noexcept
+	const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared) noexcept
 {
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 
-		RECTO_PDF_TRY(const bool has_f, stream_entry_present(stream_dict, "F", resolver));
+		RECTO_PDF_TRY(const bool has_f, stream_entry_present(stream_dict, "F", resolver, shared));
 		if (has_f) {
 			return make_pdf_error(
 				ErrorCode::UnsupportedFeature,
@@ -11668,14 +11710,14 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 
 		// Orphan /FFilter or /FDecodeParms without /F are malformed regardless
 		// of whether inline /Filter is also present.
-		RECTO_PDF_TRY(const bool has_ffilter, stream_entry_present(stream_dict, "FFilter", resolver));
+		RECTO_PDF_TRY(const bool has_ffilter, stream_entry_present(stream_dict, "FFilter", resolver, shared));
 		if (has_ffilter) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"Stream dictionary specifies /FFilter without /F external file specification");
 		}
-		RECTO_PDF_TRY(const bool has_fparms, stream_entry_present(stream_dict, "FDecodeParms", resolver));
+		RECTO_PDF_TRY(const bool has_fparms, stream_entry_present(stream_dict, "FDecodeParms", resolver, shared));
 		if (has_fparms) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
@@ -11695,7 +11737,9 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 			parms_val,
 			effective_limit,
 			&stream_dict,
-			resolver);
+			resolver,
+			/*allow_jbig2=*/true,
+			shared);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -11710,9 +11754,10 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 PdfResult<std::vector<uint8_t>> decode_stream(
 	const PdfStream& stream,
 	size_t max_decoded_bytes,
-	const IndirectObjectResolver* resolver) noexcept
+	const IndirectObjectResolver* resolver,
+	const SharedObjectResolver* shared) noexcept
 {
-	return decode_stream(stream.raw_bytes, stream.dict, max_decoded_bytes, resolver);
+	return decode_stream(stream.raw_bytes, stream.dict, max_decoded_bytes, resolver, shared);
 }
 
 PdfResult<std::vector<uint8_t>> decode_external_stream(

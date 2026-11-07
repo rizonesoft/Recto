@@ -193,16 +193,20 @@ enum class DctOutput : uint8_t {
 // `stream_dict`. Streams specifying an external file (`/F`) are rejected on
 // inline `decode_stream` with `ErrorCode::UnsupportedFeature`; callers that
 // have resolved external bytes explicitly invoke `decode_external_stream`.
+// With `shared`, indirect `/Filter`, `/DecodeParms`, stage parameters and `/F`, `/FFilter` and `/FDecodeParms` are read
+// from the document's cached values without a copy; `resolver` still serves a JBIG2 stage's `/JBIG2Globals`.
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
-	const IndirectObjectResolver* resolver = nullptr) noexcept;
+	const IndirectObjectResolver* resolver = nullptr,
+	const SharedObjectResolver* shared = nullptr) noexcept;
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	const PdfStream& stream,
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
-	const IndirectObjectResolver* resolver = nullptr) noexcept;
+	const IndirectObjectResolver* resolver = nullptr,
+	const SharedObjectResolver* shared = nullptr) noexcept;
 
 // Executes a single or chained `/FFilter` pipeline (up to `kMaxFilterChainDepth`
 // = 8 stages) using matching `/FDecodeParms` entries from `stream_dict` on

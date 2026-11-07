@@ -2996,21 +2996,22 @@ TEST(PdfInterpreter, TextFontEdges)
 
 TEST(PdfInterpreter, TextFontBudget)
 {
-	// Six hundred distinct /Type0 fonts over one descendant whose /CIDToGIDMap holds 65,536 entries (128 KiB each,
-	// from a small compressed stream): the page's 64 MiB font budget runs out near the 512th, and the rest take the
+	// Six hundred /Type0 fonts over distinct descendants whose /CIDToGIDMap holds 65,536 entries (128 KiB each, from
+	// one small compressed stream): the page's 64 MiB font budget runs out near the 512th, and the rest take the
 	// fallback, recorded, instead of each holding its own table.
 	auto packed = flate_compress(std::vector<uint8_t>(size_t{2} << 16u, 1u));
 	ASSERT_TRUE(packed.has_value());
 	std::vector<std::string> objects{kF1, kF1Descriptor,
-		"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
-		"/Supplement 0 >> /CIDToGIDMap 8 0 R >>",
 		stream_object("/Filter /FlateDecode", std::string(packed->begin(), packed->end()))};
 	std::string fonts;
 	std::string content = "BT ";
 	for (int i = 0; i < 600; ++i) {
+		objects.push_back(
+			"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
+			"/Supplement 0 >> /CIDToGIDMap 7 0 R >>");
 		objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) +
-			" /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
-		fonts += "/C" + std::to_string(i) + " " + std::to_string(9 + i) + " 0 R ";
+			" /Encoding /Identity-H /DescendantFonts [" + std::to_string(8 + 2 * i) + " 0 R] >>");
+		fonts += "/C" + std::to_string(i) + " " + std::to_string(9 + 2 * i) + " 0 R ";
 		content += "/C" + std::to_string(i) + " 10 Tf <0001> Tj ";
 	}
 	clear_diagnostics();
@@ -3018,6 +3019,142 @@ TEST(PdfInterpreter, TextFontBudget)
 	ASSERT_NE(r.list, nullptr);
 	EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
 	EXPECT_EQ(all_of<RecordedGlyphRun>(*r.list).size(), 600u) << "every string is still positioned";
+}
+
+// A CMap stream of `count` three-byte mappings that do not merge (1.6 MiB held for 100,000), Flate-compressed so a page
+// can hold many.
+std::string large_cmap_stream(int count)
+{
+	std::string text = "begincmap 1 begincodespacerange <000000> <FFFFFF> endcodespacerange\n";
+	text += std::to_string(count) + " begincidrange\n";
+	char line[64];
+	for (int i = 0; i < count; ++i) {
+		const int code = i * 2;
+		std::snprintf(line, sizeof(line), "<%06X> <%06X> 0\n", code, code);
+		text += line;
+	}
+	text += "endcidrange\nendcmap\n";
+	auto packed = flate_compress(std::vector<uint8_t>(text.begin(), text.end()));
+	EXPECT_TRUE(packed.has_value());
+	return stream_object("/Filter /FlateDecode", packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string());
+}
+
+constexpr std::string_view kWideDescendantPrefix =
+	"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /X /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) "
+	"/Supplement 0 >> /DW 777 ";
+
+// What each font charges once it is shared (D01 T02 section 48): a descendant and a CMap count once, kept or not, however
+// many fonts name them. Each case below is past the 64 MiB budget if it were charged per font, so every font keeps its own
+// widths (7.77 at size 10; the fallback's first glyph is different).
+TEST(PdfInterpreter, SharedDescendantBudget)
+{
+	auto packed = flate_compress(std::vector<uint8_t>(size_t{2} << 16u, 1u));
+	ASSERT_TRUE(packed.has_value());
+	const std::string map_stream = stream_object("/Filter /FlateDecode", std::string(packed->begin(), packed->end()));
+	const auto page = [](int count, std::vector<std::string> objects, int first_font, int font_step, const std::string& font_entries,
+						  const std::string& text) {
+		std::string fonts;
+		std::string content = "BT ";
+		for (int i = 0; i < count; ++i) {
+			const int number = first_font + font_step * i;
+			objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) + " " +
+				(font_entries.empty() ? "/Encoding /Identity-H /DescendantFonts [" + std::to_string(number - 1) + " 0 R]" : font_entries) + " >>");
+			fonts += "/C" + std::to_string(i) + " " + std::to_string(number) + " 0 R ";
+			content += "/C" + std::to_string(i) + " 10 Tf " + text + " Tj ";
+			if (font_step > 1 && i + 1 < count) {
+				objects.push_back(objects[6]); // the next descendant, as the first
+			}
+		}
+		clear_diagnostics();
+		return interpret(content + "ET", "<< /Font << " + fonts + ">> >>", objects);
+	};
+	const auto all_wide = [](const Interpreted& r, size_t count) {
+		ASSERT_NE(r.list, nullptr);
+		const auto runs = all_of<RecordedGlyphRun>(*r.list);
+		ASSERT_EQ(runs.size(), count);
+		for (const RecordedGlyphRun& run : runs) {
+			const auto glyphs = r.list->glyphs(run);
+			ASSERT_TRUE(glyphs.has_value());
+			EXPECT_DOUBLE_EQ((*glyphs)[0].advance_pt, 7.77) << "a font lost its widths to the budget";
+		}
+	};
+	const std::string wide_with_map = std::string(kWideDescendantPrefix) + "/CIDToGIDMap 8 0 R >>";
+	// Six hundred fonts over one descendant with a 128 KiB map.
+	{
+		const auto r = page(600, {kF1, kF1Descriptor, wide_with_map, map_stream}, 9, 1, "/Encoding /Identity-H /DescendantFonts [7 0 R]", "<0001>");
+		EXPECT_FALSE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		all_wide(r, 600u);
+	}
+	// Fifty fonts over one CMap of 100,000 mappings.
+	{
+		const auto r = page(50, {kF1, kF1Descriptor, std::string(kWideDescendantPrefix) + ">>", large_cmap_stream(100'000)}, 9, 1,
+			"/Encoding 8 0 R /DescendantFonts [7 0 R]", "<000001>");
+		EXPECT_FALSE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+		all_wide(r, 50u);
+	}
+	// Six hundred distinct descendants of that size still reach the budget.
+	{
+		std::vector<std::string> objects{kF1, kF1Descriptor, map_stream, std::string(kWideDescendantPrefix) + "/CIDToGIDMap 7 0 R >>"};
+		std::string fonts;
+		std::string content = "BT ";
+		for (int i = 0; i < 600; ++i) {
+			objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /X" + std::to_string(i) + " /Encoding /Identity-H /DescendantFonts [" +
+				std::to_string(8 + 2 * i) + " 0 R] >>");
+			objects.push_back(objects[3]);
+			fonts += "/C" + std::to_string(i) + " " + std::to_string(9 + 2 * i) + " 0 R ";
+			content += "/C" + std::to_string(i) + " 10 Tf <0001> Tj ";
+		}
+		objects.pop_back();
+		clear_diagnostics();
+		const auto r = interpret(content + "ET", "<< /Font << " + fonts + ">> >>", objects);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
+}
+
+// Fonts over one damaged descendant, or one whose program alone is damaged (D01 T02 section 48): each font is positioned as
+// the first was, with its diagnostic.
+TEST(PdfInterpreter, SharedDescendantFailures)
+{
+	const auto advances = [](const std::vector<std::string>& extra, const std::string& text) {
+		std::vector<std::string> objects{kF1, kF1Descriptor};
+		objects.insert(objects.end(), extra.begin(), extra.end());
+		const int first = 5 + static_cast<int>(objects.size());
+		objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /A /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
+		objects.push_back("<< /Type /Font /Subtype /Type0 /BaseFont /B /Encoding /Identity-H /DescendantFonts [7 0 R] >>");
+		clear_diagnostics();
+		auto r = interpret("BT /A 10 Tf " + text + " Tj /B 10 Tf " + text + " Tj ET",
+			"<< /Font << /A " + std::to_string(first) + " 0 R /B " + std::to_string(first + 1) + " 0 R >> >>", objects);
+		std::vector<double> out;
+		if (r.list != nullptr) {
+			for (const RecordedGlyphRun& run : all_of<RecordedGlyphRun>(*r.list)) {
+				const auto glyphs = r.list->glyphs(run);
+				out.push_back(glyphs.has_value() ? (*glyphs)[0].advance_pt : -1.0);
+			}
+		}
+		return out;
+	};
+	// A damaged descendant: both fall back to Helvetica, whose advance for the first byte is not the /DW 777 below.
+	{
+		const auto damaged = advances({"<< /Type /Font /Subtype /NotACidFont /DW 777 >>"}, "(A)");
+		ASSERT_EQ(damaged.size(), 2u);
+		EXPECT_DOUBLE_EQ(damaged[0], damaged[1]);
+		EXPECT_NE(damaged[0], 7.77);
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_GE(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 2)
+			<< "the second font over a damaged descendant recorded nothing";
+	}
+	// A damaged program alone: both keep their codes and advances, and neither has a face.
+	{
+		const auto program = advances({std::string(kWideDescendantPrefix) + "/FontDescriptor 8 0 R >>",
+			"<< /Type /FontDescriptor /FontName /X /Flags 4 /FontFile2 9 0 R >>", stream_object("", "not a font program")}, "<0001>");
+		ASSERT_EQ(program.size(), 2u);
+		EXPECT_DOUBLE_EQ(program[0], 7.77);
+		EXPECT_DOUBLE_EQ(program[1], 7.77);
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_GE(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 2)
+			<< "the second font over a damaged program recorded nothing";
+	}
 }
 
 TEST(PdfInterpreter, TextFontCount)

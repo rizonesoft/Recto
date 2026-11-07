@@ -467,6 +467,210 @@ TEST(PdfFont, Type0SharedResolver)
 	ASSERT_NE((*by_share)->font(), nullptr);
 }
 
+// A shared resolver over `o`, each object kept once, as a document's cache keeps it.
+struct SharedObjects {
+	explicit SharedObjects(Objects& objects)
+		: resolver([this, &objects](IndirectRef r) -> PdfResult<std::shared_ptr<const PdfValue>> {
+			auto& slot = cache[r.obj_num];
+			if (slot == nullptr) {
+				RECTO_PDF_TRY(PdfValue value, objects.resolver(r));
+				slot = std::make_shared<const PdfValue>(std::move(value));
+			}
+			return slot;
+		})
+	{
+	}
+	std::map<uint32_t, std::shared_ptr<const PdfValue>> cache;
+	SharedObjectResolver resolver;
+};
+
+PdfValue flate_stream(PdfDict d, std::string_view text)
+{
+	auto packed = flate_compress(bytes_of(text));
+	EXPECT_TRUE(packed.has_value());
+	d.set("Filter", name("FlateDecode"));
+	return stream(std::move(d), packed.has_value() ? *packed : std::vector<uint8_t>{});
+}
+
+constexpr std::string_view kSmallCMap = "begincmap 1 begincodespacerange <00> <FF> endcodespacerange endcmap";
+
+// One built CIDFont per descendant object (D01 T02 section 48).
+TEST(PdfFont, SharedDescendant)
+{
+	const auto type0 = [](PdfValue encoding, PdfValue descendants) {
+		return dict({{"Type", name("Font")}, {"Subtype", name("Type0")}, {"Encoding", std::move(encoding)}, {"DescendantFonts", std::move(descendants)}});
+	};
+	const IndirectObjectResolver refuses = [](IndirectRef) -> PdfResult<PdfValue> {
+		ADD_FAILURE() << "the copying resolver was called";
+		return make_pdf_error(ErrorCode::DamagedFormat, "copied");
+	};
+	// Two encodings over one indirect descendant, and two over one shared array holding it directly: one build each, the
+	// same pointer, each font's own CMap, widths as an unshared load gives them.
+	{
+		Objects o;
+		const PdfValue cid_font = PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"DW", number(777)}}));
+		o.table.emplace(3u, cid_font);
+		o.table.emplace(4u, array({cid_font}));
+		o.table.emplace(5u, flate_stream(PdfDict{}, kSmallCMap));
+		SharedObjects shared(o);
+		for (PdfValue descendants : {array({ref(3u)}), ref(4u)}) {
+			Type0Memo memo;
+			const auto a = load_type0_font(type0(name("Identity-H"), descendants), refuses, &shared.resolver, nullptr, &memo);
+			const auto b = load_type0_font(type0(ref(5u), descendants), refuses, &shared.resolver, nullptr, &memo);
+			ASSERT_TRUE(a.has_value() && b.has_value());
+			EXPECT_EQ((*a)->descendant().get(), (*b)->descendant().get()) << "the descendant was built twice";
+			EXPECT_EQ((*a)->cmap().codespace_count(), CidCMap::identity(false).codespace_count());
+			EXPECT_EQ((*b)->cmap().codespace_count(), 1u) << "the second font took the first's CMap";
+			EXPECT_NE((*a)->shared_cmap().get(), (*b)->shared_cmap().get());
+			const auto alone = load_type0_font(type0(name("Identity-H"), descendants), o.resolver);
+			ASSERT_TRUE(alone.has_value());
+			EXPECT_DOUBLE_EQ((*a)->widths().advance(1u), (*alone)->widths().advance(1u));
+			EXPECT_DOUBLE_EQ((*b)->widths().advance(1u), 0.777);
+			EXPECT_NE((*alone)->descendant().get(), (*a)->descendant().get()) << "a load without a memo shared";
+			// Counted in the memo, once, and not by the fonts.
+			EXPECT_GE(memo.memory_bytes(), (*a)->descendant()->memory_bytes());
+			EXPECT_LT((*a)->memory_bytes(), (*alone)->memory_bytes());
+		}
+		// A direct descendant in a direct array has no object to share by.
+		Type0Memo memo;
+		const auto a = load_type0_font(type0(name("Identity-H"), array({cid_font})), refuses, &shared.resolver, nullptr, &memo);
+		const auto b = load_type0_font(type0(name("Identity-H"), array({cid_font})), refuses, &shared.resolver, nullptr, &memo);
+		ASSERT_TRUE(a.has_value() && b.has_value());
+		EXPECT_NE((*a)->descendant().get(), (*b)->descendant().get());
+		EXPECT_EQ(memo.memory_bytes(), 0u);
+		EXPECT_GE((*a)->memory_bytes(), (*a)->descendant()->memory_bytes());
+	}
+	// A damaged descendant (its map has an odd length, found after its stream decodes): each font is refused with the damage
+	// recorded, from one decode.
+	{
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"CIDToGIDMap", ref(4u)}})));
+		o.table.emplace(4u, flate_stream(PdfDict{}, "odd"));
+		SharedObjects shared(o);
+		Type0Memo memo;
+		clear_diagnostics();
+		for (int i = 0; i < 2; ++i) {
+			detail::ScopedDecodeWorkMeter work;
+			RECTO_EXPECT_ERR(load_type0_font(type0(name("Identity-H"), array({ref(3u)})), refuses, &shared.resolver, nullptr, &memo), ErrorCode::DamagedFormat);
+			if (i == 0) {
+				EXPECT_GT(work.bytes(), 0u) << "the meter cannot see this stream";
+			} else {
+				EXPECT_EQ(work.bytes(), 0u) << "it was built again";
+			}
+		}
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_GE(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 2);
+	}
+	// A CMap kept for a font whose descendant then fails is counted, so a page cannot keep them past its budget uncharged.
+	{
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("NotACidFont")}})));
+		o.table.emplace(5u, flate_stream(PdfDict{}, kSmallCMap));
+		SharedObjects shared(o);
+		Type0Memo memo;
+		RECTO_EXPECT_ERR(load_type0_font(type0(ref(5u), array({ref(3u)})), refuses, &shared.resolver, nullptr, &memo), ErrorCode::DamagedFormat);
+		ASSERT_EQ(memo.cmaps.size(), 1u);
+		ASSERT_NE(memo.cmaps.begin()->second.built, nullptr);
+		EXPECT_GE(memo.memory_bytes(), memo.cmaps.begin()->second.built->memory_bytes());
+		EXPECT_GT(memo.memory_bytes(), 0u);
+	}
+	// A damaged CMap stream, the same way: one that names no codespace range.
+	{
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}})));
+		o.table.emplace(5u, flate_stream(PdfDict{}, "begincmap endcmap"));
+		SharedObjects shared(o);
+		Type0Memo memo;
+		clear_diagnostics();
+		for (int i = 0; i < 2; ++i) {
+			detail::ScopedDecodeWorkMeter work;
+			RECTO_EXPECT_ERR(load_type0_font(type0(ref(5u), array({ref(3u)})), refuses, &shared.resolver, nullptr, &memo), ErrorCode::DamagedFormat);
+			if (i == 0) {
+				EXPECT_GT(work.bytes(), 0u) << "the meter cannot see this stream";
+			} else {
+				EXPECT_EQ(work.bytes(), 0u) << "it was built again";
+			}
+		}
+		const auto tail = diagnostics_tail(32u);
+		EXPECT_GE(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 2);
+	}
+	// A descendant whose program alone is damaged: both fonts keep their codes and advances, with no face and the error.
+	{
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"DW", number(777)}, {"FontDescriptor", ref(6u)}})));
+		o.table.emplace(6u, PdfValue(dict({{"FontFile2", ref(7u)}})));
+		o.table.emplace(7u, flate_stream(PdfDict{}, "not a font"));
+		SharedObjects shared(o);
+		Type0Memo memo;
+		for (int i = 0; i < 2; ++i) {
+			std::optional<PdfError> program_error;
+			detail::ScopedDecodeWorkMeter work;
+			const auto font = load_type0_font(type0(name("Identity-H"), array({ref(3u)})), refuses, &shared.resolver, &program_error, &memo);
+			if (i == 0) {
+				EXPECT_GT(work.bytes(), 0u) << "the meter cannot see this stream";
+			} else {
+				EXPECT_EQ(work.bytes(), 0u) << "it was built again";
+			}
+			ASSERT_TRUE(font.has_value());
+			ASSERT_TRUE(program_error.has_value()) << "font " << i << " lost the program's error";
+			EXPECT_EQ((*font)->font(), nullptr);
+			const uint8_t text[] = {0u, 1u};
+			EXPECT_DOUBLE_EQ((*font)->next(text).advance, 0.777);
+		}
+	}
+	// Fifty fonts over one CMap stream with indirect /DecodeParms: one decode, nothing copied.
+	{
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}})));
+		o.table.emplace(5u, flate_stream(dict({{"DecodeParms", ref(9u)}}), kSmallCMap));
+		o.table.emplace(9u, PdfValue(dict({{"Predictor", number(1)}})));
+		SharedObjects shared(o);
+		Type0Memo memo;
+		for (int i = 0; i < 50; ++i) {
+			detail::ScopedDecodeWorkMeter work;
+			const auto font = load_type0_font(type0(ref(5u), array({ref(3u)})), refuses, &shared.resolver, nullptr, &memo);
+			ASSERT_TRUE(font.has_value()) << font.error().message.view();
+			if (i == 0) {
+				EXPECT_GT(work.bytes(), 0u) << "the meter cannot see this stream";
+			} else {
+				EXPECT_EQ(work.bytes(), 0u) << "the shared CMap was decoded again";
+			}
+		}
+	}
+	// Out of memory during a build is returned and never kept: every allocation in turn, and the same memo then loads.
+	if (recto::test::ScopedAllocationFailure::available()) {
+		Objects o;
+		o.table.emplace(3u, PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"DW", number(777)},
+								{"CIDToGIDMap", ref(4u)}})));
+		o.table.emplace(4u, flate_stream(PdfDict{}, std::string(2'000u, 'x')));
+		o.table.emplace(5u, flate_stream(PdfDict{}, kSmallCMap));
+		const PdfDict font_dict = type0(ref(5u), array({ref(3u)}));
+		size_t refusals = 0;
+		for (uint32_t nth = 1u; nth <= 200u; ++nth) {
+			SCOPED_TRACE(nth);
+			SharedObjects shared(o);
+			ASSERT_TRUE(shared.resolver(IndirectRef(3u)).has_value());
+			ASSERT_TRUE(shared.resolver(IndirectRef(4u)).has_value());
+			ASSERT_TRUE(shared.resolver(IndirectRef(5u)).has_value());
+			Type0Memo memo;
+			std::optional<PdfResult<std::shared_ptr<const Type0Font>>> first;
+			{
+				const recto::test::ScopedAllocationFailure fail(nth, 32u);
+				first.emplace(load_type0_font(font_dict, refuses, &shared.resolver, nullptr, &memo));
+			}
+			if (first->has_value()) {
+				continue;
+			}
+			EXPECT_EQ(first->error().code, ErrorCode::OutOfMemory);
+			++refusals;
+			const auto later = load_type0_font(font_dict, refuses, &shared.resolver, nullptr, &memo);
+			ASSERT_TRUE(later.has_value()) << "a failure from running out of memory was kept";
+			EXPECT_DOUBLE_EQ((*later)->widths().advance(1u), 0.777);
+		}
+		EXPECT_GT(refusals, 0u);
+	}
+}
+
 // A Type 0 font assembled from its object graph, indirect references throughout.
 TEST(PdfFont, Type0Assembly)
 {

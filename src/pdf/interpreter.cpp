@@ -1674,13 +1674,14 @@ private:
 		}
 		// Each page resolves at most kMaxCachedFonts fonts within kMaxTextFontBytes: past either, a font takes the
 		// fallback unresolved, so a page of many distinct fonts never rebuilds or holds them without bound.
-		if (fonts_resolved_ >= kMaxCachedFonts || font_bytes_ >= kMaxTextFontBytes) {
-			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, font_bytes_,
+		const size_t font_heap = font_bytes_ + type0_memo_.memory_bytes(); // the fonts' own, and what they share once
+		if (fonts_resolved_ >= kMaxCachedFonts || font_heap >= kMaxTextFontBytes) {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, font_heap,
 				kMaxTextFontBytes, "Fonts past the page's limit; drawn with the fallback"));
 			return fallback();
 		}
 		++fonts_resolved_;
-		RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, TextFont::resolve(document_, value));
+		RECTO_PDF_TRY(std::shared_ptr<const TextFont> font, TextFont::resolve(document_, value, &type0_memo_));
 		font_bytes_ += font->memory_bytes();
 		if (ref.has_value()) {
 			font_objects_.emplace(object_key(*ref), font);
@@ -2544,6 +2545,7 @@ private:
 	std::map<InkKey, std::pair<std::optional<PdfRect>, bool>, InkKeyLess> ink_memo_{};
 	size_t fonts_resolved_{0};
 	size_t font_bytes_{0};
+	Type0Memo type0_memo_{}; // the page's built CIDFonts and encoding CMaps (D01 T02 section 48), bounded by fonts_resolved_
 	PdfMatrix text_matrix_{};
 	PdfMatrix line_matrix_{};
 	std::optional<ColorSpaces> spaces_{};

@@ -11,8 +11,10 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace recto::pdf {
@@ -181,47 +183,97 @@ struct Type0Glyph {
 	CidVertical vertical{};
 };
 
+// A built CIDFont (D01 T02 section 48), immutable once built and shared by every `/Type0` font naming it: its kind, map,
+// widths and embedded program, or the error its program failed with when only that failed.
+struct CidDescendant {
+	CidFontKind kind = CidFontKind::CIDFontType0;
+	CidToGidMap map = CidToGidMap::identity();
+	CidWidths widths{};
+	std::shared_ptr<const LoadedFont> font{};
+	std::optional<PdfError> program_error{};
+
+	// The heap its map, widths and retained embedded program (with its parsed tables) hold.
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return sizeof(*this) + map.memory_bytes() + widths.memory_bytes() + (font != nullptr ? font->memory_bytes() : 0u);
+	}
+};
+
+// One page's built descendants and encoding CMaps by object (D01 T02 section 48), so fonts naming one share it. Each entry
+// is a built value or a recoverable failure, which is not built again; a fatal error is never kept. What it keeps counts
+// here, from the moment it is kept, whether or not the font that built it then loaded.
+class Type0Memo {
+public:
+	[[nodiscard]] size_t memory_bytes() const noexcept
+	{
+		return bytes_;
+	}
+
+	template <typename T>
+	struct Entry {
+		std::shared_ptr<const T> built{};
+		std::optional<PdfError> failure{};
+	};
+	std::unordered_map<uint64_t, Entry<CidDescendant>> descendants{};
+	std::unordered_map<uint64_t, Entry<CidCMap>> cmaps{};
+
+	void charge(size_t bytes) noexcept
+	{
+		bytes_ += bytes;
+	}
+
+private:
+	size_t bytes_ = 0;
+};
+
 // A `/Type0` font, immutable once loaded.
 class Type0Font {
 public:
-	Type0Font(CidCMap cmap, CidFontKind kind, CidToGidMap map, CidWidths widths,
-		std::shared_ptr<const LoadedFont> font) noexcept;
+	// `cmap_in_memo` and `descendant_in_memo` say a `Type0Memo` holds and counts that part.
+	Type0Font(std::shared_ptr<const CidCMap> cmap, bool cmap_in_memo, std::shared_ptr<const CidDescendant> descendant,
+		bool descendant_in_memo) noexcept;
 
 	// The first code of `bytes` (length 0 at the end).
 	[[nodiscard]] Type0Glyph next(std::span<const uint8_t> bytes) const noexcept;
 
 	[[nodiscard]] const CidCMap& cmap() const noexcept
 	{
-		return cmap_;
+		return *cmap_;
 	}
 	[[nodiscard]] CidFontKind kind() const noexcept
 	{
-		return kind_;
+		return descendant_->kind;
 	}
 	[[nodiscard]] const CidWidths& widths() const noexcept
 	{
-		return widths_;
+		return descendant_->widths;
 	}
 	// The embedded program, or null when the descendant embeds none (`§17` substitutes it).
 	[[nodiscard]] const std::shared_ptr<const LoadedFont>& font() const noexcept
 	{
-		return font_;
+		return descendant_->font;
+	}
+	// The built CIDFont, which fonts over one memoized descendant share.
+	[[nodiscard]] const std::shared_ptr<const CidDescendant>& descendant() const noexcept
+	{
+		return descendant_;
+	}
+	[[nodiscard]] const std::shared_ptr<const CidCMap>& shared_cmap() const noexcept
+	{
+		return cmap_;
 	}
 
-	// The heap its CMap, maps, widths and retained embedded program (with its parsed tables) hold, for a caller's
-	// memory budget.
+	// The heap it alone holds, for a caller's memory budget: a part in a `Type0Memo` is the memo's to count.
 	[[nodiscard]] size_t memory_bytes() const noexcept
 	{
-		const size_t program = font_ != nullptr ? font_->memory_bytes() : 0u;
-		return sizeof(*this) + cmap_.memory_bytes() + map_.memory_bytes() + widths_.memory_bytes() + program;
+		return sizeof(*this) + (cmap_in_memo_ ? 0u : cmap_->memory_bytes()) + (descendant_in_memo_ ? 0u : descendant_->memory_bytes());
 	}
 
 private:
-	const CidCMap cmap_;
-	const CidFontKind kind_;
-	const CidToGidMap map_;
-	const CidWidths widths_;
-	const std::shared_ptr<const LoadedFont> font_;
+	const std::shared_ptr<const CidCMap> cmap_;
+	const std::shared_ptr<const CidDescendant> descendant_;
+	const bool cmap_in_memo_;
+	const bool descendant_in_memo_;
 };
 
 // A `/Type0` font from its dictionary (9.7.6): its `/Encoding` (an Identity name, or an embedded CMap stream inheriting
@@ -233,8 +285,11 @@ private:
 // With `program_error`, a program the loaders refuse as damaged, unsupported or past a bound does not refuse the font:
 // the error is stored there and the font loads with its CMap and widths and no program (D01 T02 section 43 draws its
 // text advance-only); without it the font is refused with the loader's error.
+// With `memo`, a descendant named by a reference (its own, or the reference of the `/DescendantFonts` array holding it)
+// and an embedded encoding CMap named by a reference are built once and shared, and a recoverable failure of either is
+// returned again, its diagnostic recorded, without building it again.
 [[nodiscard]] PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(const PdfDict& type0,
 	const IndirectObjectResolver& resolver, const SharedObjectResolver* shared = nullptr,
-	std::optional<PdfError>* program_error = nullptr) noexcept;
+	std::optional<PdfError>* program_error = nullptr, Type0Memo* memo = nullptr) noexcept;
 
 } // namespace recto::pdf

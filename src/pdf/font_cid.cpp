@@ -2,6 +2,7 @@
 #include "font_cid.h"
 
 #include "cmap_lexer.h"
+#include "function.h"
 
 #include <algorithm>
 #include <array>
@@ -682,19 +683,18 @@ CidVertical CidWidths::vertical(uint32_t cid) const noexcept
 // Type0Font and its assembly
 // ---------------------------------------------------------------------------------------------------------------------
 
-Type0Font::Type0Font(CidCMap cmap, CidFontKind kind, CidToGidMap map, CidWidths widths,
-	std::shared_ptr<const LoadedFont> font) noexcept
+Type0Font::Type0Font(std::shared_ptr<const CidCMap> cmap, bool cmap_in_memo, std::shared_ptr<const CidDescendant> descendant,
+	bool descendant_in_memo) noexcept
 	: cmap_(std::move(cmap))
-	, kind_(kind)
-	, map_(std::move(map))
-	, widths_(std::move(widths))
-	, font_(std::move(font))
+	, descendant_(std::move(descendant))
+	, cmap_in_memo_(cmap_in_memo)
+	, descendant_in_memo_(descendant_in_memo)
 {
 }
 
 Type0Glyph Type0Font::next(std::span<const uint8_t> bytes) const noexcept
 {
-	const CidCode code = cmap_.next(bytes);
+	const CidCode code = cmap_->next(bytes);
 	Type0Glyph out;
 	out.code = code.code;
 	out.length = code.length;
@@ -702,18 +702,25 @@ Type0Glyph Type0Font::next(std::span<const uint8_t> bytes) const noexcept
 	if (code.length == 0u) {
 		return out;
 	}
-	out.glyph = cid_glyph(code.cid, kind_, map_, font_.get());
+	const CidDescendant& d = *descendant_;
+	out.glyph = cid_glyph(code.cid, d.kind, d.map, d.font.get());
 	// A CID the font has no glyph for takes the code's notdef mapping, else CID 0 (9.7.6.3), for its glyph and metrics.
-	if (out.glyph == 0u && code.cid != 0u && font_ != nullptr) {
+	if (out.glyph == 0u && code.cid != 0u && d.font != nullptr) {
 		out.cid = code.notdef_cid;
-		out.glyph = cid_glyph(out.cid, kind_, map_, font_.get());
+		out.glyph = cid_glyph(out.cid, d.kind, d.map, d.font.get());
 	}
-	out.advance = widths_.advance(out.cid);
-	out.vertical = widths_.vertical(out.cid);
+	out.advance = d.widths.advance(out.cid);
+	out.vertical = d.widths.vertical(out.cid);
 	return out;
 }
 
 namespace {
+
+// A failure that reads the same every time, so a memo keeps it instead of building again.
+[[nodiscard]] bool memoizable(ErrorCode code) noexcept
+{
+	return code == ErrorCode::DamagedFormat || code == ErrorCode::UnsupportedFeature || code == ErrorCode::ResourceLimit;
+}
 
 struct Type0Loader {
 	const IndirectObjectResolver& resolver;
@@ -736,7 +743,7 @@ struct Type0Loader {
 
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> bytes(const PdfStream& stream, size_t limit) const
 	{
-		return decode_stream(stream, limit, &resolver);
+		return decode_stream(stream, limit, &resolver, shared_resolver);
 	}
 
 	// An embedded CMap stream and the CMaps it inherits, `level` counting this one.
@@ -843,32 +850,116 @@ struct Type0Loader {
 		}
 		return std::shared_ptr<const LoadedFont>{};
 	}
+
+	// A descendant CIDFont built from its dictionary. With `keep_program_error`, a program that alone fails recoverably
+	// is kept as the descendant's error, with no face.
+	[[nodiscard]] PdfResult<CidDescendant> descendant(const PdfDict& dict, bool keep_program_error) const
+	{
+		Held subtype_holder;
+		RECTO_PDF_TRY(const PdfValue* subtype_value, value(dict.get("Subtype"), subtype_holder));
+		const std::optional<std::string_view> subtype =
+			subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
+		CidDescendant out;
+		if (subtype == "CIDFontType2") {
+			out.kind = CidFontKind::CIDFontType2;
+		} else if (subtype != "CIDFontType0") {
+			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is neither CIDFontType0 nor CIDFontType2");
+		}
+		RECTO_PDF_TRY_REF(widths, CidWidths::build(dict.get("DW"), dict.get("W"), dict.get("DW2"), dict.get("W2"), &resolver,
+									  shared_resolver));
+		out.widths = std::move(widths);
+		if (out.kind == CidFontKind::CIDFontType2) {
+			Held map_holder;
+			RECTO_PDF_TRY(const PdfValue* map_value, value(dict.get("CIDToGIDMap"), map_holder));
+			if (map_value != nullptr && map_value->is_stream()) {
+				RECTO_PDF_TRY(const std::vector<uint8_t> data, bytes(*map_value->as_stream(), kMaxDecodedStreamBytes));
+				RECTO_PDF_TRY_REF(parsed, CidToGidMap::parse(data));
+				out.map = std::move(parsed);
+			} else if (map_value != nullptr && map_value->as_name() != std::optional<std::string_view>("Identity")) {
+				return cid_error(ErrorCode::DamagedFormat, "CIDToGIDMap is neither /Identity nor a stream");
+			}
+		}
+		// The descriptor's program, if it embeds one.
+		Held descriptor_holder;
+		RECTO_PDF_TRY(const PdfValue* descriptor, value(dict.get("FontDescriptor"), descriptor_holder));
+		if (descriptor != nullptr && descriptor->is_dict()) {
+			auto loaded = program_with_charset(*descriptor->as_dict(), out.kind);
+			if (keep_program_error && !loaded.has_value() && memoizable(loaded.error().code)) {
+				out.program_error = loaded.error(); // the font keeps its CMap and widths, with no face
+			} else {
+				RECTO_PDF_RETURN_IF_ERROR(loaded);
+				out.font = loaded->font;
+				if (loaded->charset.has_value()) {
+					out.map = std::move(*loaded->charset);
+				}
+			}
+		}
+		return out;
+	}
 };
+
+// `slots`' value for `key`: the one kept (a recoverable failure given back with its diagnostic recorded), else what `build`
+// makes, kept when there is a memo and a key.
+template <typename T, typename Build>
+[[nodiscard]] PdfResult<std::shared_ptr<const T>> built_once(Type0Memo* memo,
+	std::unordered_map<uint64_t, Type0Memo::Entry<T>>* slots, const std::optional<IndirectRef>& ref, bool& in_memo, Build&& build)
+{
+	in_memo = false;
+	const bool keeps = memo != nullptr && ref.has_value();
+	if (keeps) {
+		if (const auto it = slots->find(object_key(*ref)); it != slots->end()) {
+			if (it->second.failure.has_value()) {
+				if (it->second.failure->code != ErrorCode::UnsupportedFeature) {
+					record_diagnostic(*it->second.failure); // an UnsupportedFeature is recorded by whoever handles it
+				}
+				return *it->second.failure;
+			}
+			in_memo = true;
+			return it->second.built;
+		}
+	}
+	PdfResult<T> made = build();
+	if (!made.has_value()) {
+		if (keeps && memoizable(made.error().code)) {
+			slots->emplace(object_key(*ref), Type0Memo::Entry<T>{nullptr, made.error()});
+		}
+		return made.error();
+	}
+	std::shared_ptr<const T> value = std::make_shared<const T>(std::move(*made));
+	if (keeps) {
+		slots->emplace(object_key(*ref), Type0Memo::Entry<T>{value, std::nullopt});
+		memo->charge(value->memory_bytes());
+		in_memo = true;
+	}
+	return value;
+}
 
 } // namespace
 
 PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 	const PdfDict& type0, const IndirectObjectResolver& resolver, const SharedObjectResolver* shared,
-	std::optional<PdfError>* program_error) noexcept
+	std::optional<PdfError>* program_error, Type0Memo* memo) noexcept
 {
 	try {
 		Type0Loader loader{resolver, shared, {}};
 		// The encoding CMap.
 		Held encoding_holder;
 		RECTO_PDF_TRY(const PdfValue* encoding, loader.value(type0.get("Encoding"), encoding_holder));
-		std::optional<CidCMap> cmap;
+		std::shared_ptr<const CidCMap> cmap;
+		bool cmap_in_memo = false;
 		if (encoding != nullptr && encoding->is_name()) {
 			const std::string_view name = *encoding->as_name();
 			if (name != "Identity-H" && name != "Identity-V") {
 				return cid_error(ErrorCode::UnsupportedFeature, "Type 0 font uses a predefined CMap other than Identity");
 			}
-			cmap = CidCMap::identity(name == "Identity-V");
+			cmap = std::make_shared<const CidCMap>(CidCMap::identity(name == "Identity-V"));
 		} else if (encoding != nullptr && encoding->is_stream()) {
-			if (const std::optional<IndirectRef> ref = type0.get_ref("Encoding")) {
+			const std::optional<IndirectRef> ref = type0.get_ref("Encoding");
+			if (ref.has_value()) {
 				loader.cmap_objects.insert(ref->obj_num);
 			}
-			RECTO_PDF_TRY_REF(parsed, loader.cmap(*encoding->as_stream(), 1u));
-			cmap = std::move(parsed);
+			RECTO_PDF_TRY(cmap, built_once<CidCMap>(memo, memo != nullptr ? &memo->cmaps : nullptr, ref, cmap_in_memo,
+				[&]() -> PdfResult<CidCMap> { return loader.cmap(*encoding->as_stream(), 1u); }));
 		} else {
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font has no /Encoding CMap");
 		}
@@ -878,57 +969,30 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 		if (descendants == nullptr || !descendants->is_array() || descendants->as_array()->size() != 1u) {
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font does not have exactly one descendant font");
 		}
-		Held descendant_holder;
-		RECTO_PDF_TRY(const PdfValue* descendant_value, loader.value(&(*descendants->as_array())[0], descendant_holder));
-		if (descendant_value == nullptr || !descendant_value->is_dict()) {
-			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is not a font dictionary");
-		}
-		const PdfDict& descendant = *descendant_value->as_dict();
-		Held subtype_holder;
-		RECTO_PDF_TRY(const PdfValue* subtype_value, loader.value(descendant.get("Subtype"), subtype_holder));
-		const std::optional<std::string_view> subtype =
-			subtype_value != nullptr ? subtype_value->as_name() : std::optional<std::string_view>{};
-		CidFontKind kind = CidFontKind::CIDFontType0;
-		if (subtype == "CIDFontType2") {
-			kind = CidFontKind::CIDFontType2;
-		} else if (subtype != "CIDFontType0") {
-			return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is neither CIDFontType0 nor CIDFontType2");
-		}
-		RECTO_PDF_TRY_REF(widths, CidWidths::build(descendant.get("DW"), descendant.get("W"), descendant.get("DW2"),
-									  descendant.get("W2"), &resolver, shared));
-		CidToGidMap map = CidToGidMap::identity();
-		if (kind == CidFontKind::CIDFontType2) {
-			Held map_holder;
-			RECTO_PDF_TRY(const PdfValue* map_value, loader.value(descendant.get("CIDToGIDMap"), map_holder));
-			if (map_value != nullptr && map_value->is_stream()) {
-				RECTO_PDF_TRY(const std::vector<uint8_t> data, loader.bytes(*map_value->as_stream(), kMaxDecodedStreamBytes));
-				RECTO_PDF_TRY_REF(parsed, CidToGidMap::parse(data));
-				map = std::move(parsed);
-			} else if (map_value != nullptr && map_value->as_name() != std::optional<std::string_view>("Identity")) {
-				return cid_error(ErrorCode::DamagedFormat, "CIDToGIDMap is neither /Identity nor a stream");
+		const PdfValue& entry = (*descendants->as_array())[0];
+		// Its object, else the array's when the array is shared and holds it directly.
+		const std::optional<IndirectRef> descendant_ref = entry.as_ref().has_value() ? entry.as_ref() : type0.get_ref("DescendantFonts");
+		// With a memo a program's failure is kept with the descendant, whichever font asks next.
+		const bool keep_program_error = program_error != nullptr || memo != nullptr;
+		bool descendant_in_memo = false;
+		RECTO_PDF_TRY(std::shared_ptr<const CidDescendant> built,
+			built_once<CidDescendant>(memo, memo != nullptr ? &memo->descendants : nullptr, descendant_ref, descendant_in_memo,
+				[&]() -> PdfResult<CidDescendant> {
+					Held descendant_holder;
+					RECTO_PDF_TRY(const PdfValue* descendant_value, loader.value(&entry, descendant_holder));
+					if (descendant_value == nullptr || !descendant_value->is_dict()) {
+						return cid_error(ErrorCode::DamagedFormat, "Type 0 font's descendant is not a font dictionary");
+					}
+					return loader.descendant(*descendant_value->as_dict(), keep_program_error);
+				}));
+		if (built->program_error.has_value()) {
+			if (program_error == nullptr) {
+				return *built->program_error;
 			}
-		}
-		// The descriptor's program, if it embeds one.
-		std::shared_ptr<const LoadedFont> font;
-		Held descriptor_holder;
-		RECTO_PDF_TRY(const PdfValue* descriptor, loader.value(descendant.get("FontDescriptor"), descriptor_holder));
-		if (descriptor != nullptr && descriptor->is_dict()) {
-			auto program = loader.program_with_charset(*descriptor->as_dict(), kind);
-			const bool usable_without = program_error != nullptr && !program.has_value() &&
-				(program.error().code == ErrorCode::DamagedFormat || program.error().code == ErrorCode::UnsupportedFeature ||
-					program.error().code == ErrorCode::ResourceLimit);
-			if (usable_without) {
-				*program_error = program.error(); // the font keeps its CMap and widths, with no face
-			} else {
-				RECTO_PDF_RETURN_IF_ERROR(program);
-				font = program->font;
-				if (program->charset.has_value()) {
-					map = std::move(*program->charset);
-				}
-			}
+			*program_error = built->program_error;
 		}
 		return std::shared_ptr<const Type0Font>(
-			std::make_shared<const Type0Font>(std::move(*cmap), kind, std::move(map), std::move(widths), std::move(font)));
+			std::make_shared<const Type0Font>(std::move(cmap), cmap_in_memo, std::move(built), descendant_in_memo));
 	} catch (const std::bad_alloc&) {
 		return cid_error(ErrorCode::OutOfMemory, "Out of memory loading a Type 0 font");
 	}

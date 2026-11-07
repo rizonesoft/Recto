@@ -57,9 +57,10 @@ class TextFont {
 public:
 	// The font a `/Font` resource value names (direct or indirect). A font that is missing, damaged, of a kind this
 	// reader does not read, or refused by a bound gives the fallback with its diagnostic recorded; `OutOfMemory` and
-	// any other failure are returned, and stop the page as the interpreter's other resolver failures do.
+	// any other failure are returned, and stop the page as the interpreter's other resolver failures do. With `memo`,
+	// composite fonts share built descendants and encoding CMaps through it (D01 T02 section 48).
 	[[nodiscard]] static PdfResult<std::shared_ptr<const TextFont>> resolve(
-		const Document& document, const PdfValue& font) noexcept;
+		const Document& document, const PdfValue& font, Type0Memo* memo = nullptr) noexcept;
 
 	// Helvetica's AFM widths and box (a recorded default for a font that cannot be used), or `OutOfMemory`
 	// when memory runs out building it.

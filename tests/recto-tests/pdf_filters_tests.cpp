@@ -174,6 +174,97 @@ TEST(PdfFilters, IndirectFilterAndDecodeParmsResolve)
 	RECTO_EXPECT_ERR(decode_stream(raw, missing, kMaxDecodedStreamBytes, &resolver), ErrorCode::DamagedFormat);
 }
 
+// Filter parameters read through the shared resolver (D01 T02 section 48): the same bytes and the same refusals as
+// through the copying resolver, and no copy.
+TEST(PdfFilters, SharedResolverParms)
+{
+	auto packed = flate_compress(std::vector<uint8_t>{'A', 'B', 'C'});
+	ASSERT_TRUE(packed.has_value());
+	const std::span<const uint8_t> raw(*packed);
+	const auto object = [](uint32_t number) -> PdfResult<PdfValue> {
+		PdfDict predictor;
+		predictor.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{12u, 0u}));
+		switch (number) {
+		case 10u:
+			return PdfValue(std::move(predictor));
+		case 11u:
+			return PdfValue(PdfName::from_decoded("FlateDecode"));
+		case 12u:
+			return PdfValue(int64_t{1});
+		case 13u:
+			return PdfValue(int64_t{7}); // not a dictionary, so bad /DecodeParms
+		case 14u:
+			return PdfValue{};
+		default:
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+	};
+	size_t copies = 0;
+	const IndirectObjectResolver copying = [&](IndirectRef r) {
+		++copies;
+		return object(r.obj_num);
+	};
+	const SharedObjectResolver shared = [&](IndirectRef r) -> PdfResult<std::shared_ptr<const PdfValue>> {
+		if (r.obj_num == 15u) {
+			return std::shared_ptr<const PdfValue>{}; // a resolver may hand back nothing: read as null
+		}
+		RECTO_PDF_TRY(PdfValue value, object(r.obj_num));
+		return std::make_shared<const PdfValue>(std::move(value));
+	};
+	const auto make = [](std::vector<std::pair<std::string_view, PdfValue>> entries) {
+		PdfDict d;
+		for (auto& [key, value] : entries) {
+			d.set(PdfName::from_decoded(key), std::move(value));
+		}
+		return d;
+	};
+	const PdfValue flate(PdfName::from_decoded("FlateDecode"));
+	const std::vector<PdfDict> good = {
+		make({{"Filter", flate}, {"DecodeParms", PdfValue(IndirectRef{10u, 0u})}}),
+		make({{"Filter", PdfValue(IndirectRef{11u, 0u})}, {"DecodeParms", PdfValue(IndirectRef{10u, 0u})}}),
+		make({{"Filter", PdfValue(PdfArray{PdfValue(IndirectRef{11u, 0u})})}, {"DecodeParms", PdfValue(PdfArray{PdfValue(IndirectRef{10u, 0u})})}}),
+		make({{"Filter", flate}, {"DecodeParms", PdfValue(IndirectRef{14u, 0u})}}),
+		make({{"Filter", flate}, {"F", PdfValue(IndirectRef{14u, 0u})}, {"FFilter", PdfValue(IndirectRef{14u, 0u})}}),
+	};
+	for (const PdfDict& d : good) {
+		copies = 0;
+		auto by_share = decode_stream(raw, d, kMaxDecodedStreamBytes, nullptr, &shared);
+		RECTO_ASSERT_OK(by_share);
+		EXPECT_EQ(copies, 0u);
+		auto by_both = decode_stream(raw, d, kMaxDecodedStreamBytes, &copying, &shared);
+		RECTO_ASSERT_OK(by_both);
+		EXPECT_EQ(copies, 0u) << "the copying resolver was called although a shared one was given";
+		auto by_copy = decode_stream(raw, d, kMaxDecodedStreamBytes, &copying);
+		RECTO_ASSERT_OK(by_copy);
+		EXPECT_EQ(*by_share, *by_copy);
+		EXPECT_EQ(*by_share, (std::vector<uint8_t>{'A', 'B', 'C'}));
+	}
+	const std::vector<PdfDict> refused = {
+		make({{"Filter", flate}, {"DecodeParms", PdfValue(IndirectRef{99u, 0u})}}),
+		make({{"Filter", PdfValue(IndirectRef{99u, 0u})}}),
+		make({{"Filter", flate}, {"DecodeParms", PdfValue(PdfArray{PdfValue(IndirectRef{13u, 0u})})}}),
+		make({{"Filter", flate}, {"FFilter", PdfValue(IndirectRef{11u, 0u})}}),
+		make({{"Filter", flate}, {"FDecodeParms", PdfValue(IndirectRef{10u, 0u})}}),
+	};
+	// Nothing from the shared resolver reads as a null object, in each place it is read.
+	for (const PdfDict& d : {
+			 make({{"Filter", flate}, {"DecodeParms", PdfValue(IndirectRef{15u, 0u})}}),
+			 make({{"Filter", flate}, {"DecodeParms", PdfValue(PdfArray{PdfValue(IndirectRef{15u, 0u})})}}),
+			 make({{"Filter", flate}, {"FFilter", PdfValue(IndirectRef{15u, 0u})}}),
+		 }) {
+		auto nothing = decode_stream(raw, d, kMaxDecodedStreamBytes, nullptr, &shared);
+		RECTO_ASSERT_OK(nothing);
+		EXPECT_EQ(*nothing, (std::vector<uint8_t>{'A', 'B', 'C'}));
+	}
+	for (const PdfDict& d : refused) {
+		const auto by_share = decode_stream(raw, d, kMaxDecodedStreamBytes, nullptr, &shared);
+		const auto by_copy = decode_stream(raw, d, kMaxDecodedStreamBytes, &copying);
+		ASSERT_FALSE(by_share.has_value());
+		ASSERT_FALSE(by_copy.has_value());
+		EXPECT_EQ(by_share.error().code, by_copy.error().code);
+	}
+}
+
 // An incomplete Huffman code is valid only as a single one-bit code (RFC 1951 section 3.2.7, zlib inftrees.c):
 // a lone two-bit literal/length or distance code is refused, as zlib refuses both vectors.
 TEST(PdfFilters, LoneHuffmanCodeLongerThanOneBitIsRefused)
