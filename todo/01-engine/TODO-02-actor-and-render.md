@@ -1489,6 +1489,8 @@ Filed 2026-10-28 from `§4`'s split (validation before the build): marked conten
 
 ## 48. One built CIDFont per shared `/Type0` descendant object
 
+> **Started:** 2026-11-07T00:00Z
+
 Filed 2026-10-28 from `D01 T01 §11`'s measurement: with the resolved-object cache, fifty `/Type0` fonts over one descendant whose `/W` holds 65,534 widths parse it twice in all (34 parses for the page) but still take 18.6 s in x64 Debug (75.7 s before the cache), because `load_type0_font` (`src/pdf/font_cid.cpp`) rebuilds the descendant's width runs, CIDToGIDMap and program for every font that names it, about 370 ms each. Acrobat and pdfium (`CPDF_CIDFont` per descendant dictionary) build a CIDFont once and share it. Recto shares the built descendant (its `CidWidths`, `CidToGidMap`, program and descriptor) across every `/Type0` font of a page that names the same descendant object, keyed by `object_key`, within the page's font budget (`§42`), while each font keeps its own encoding CMap. -> XREF: D01 T01 §11
 
 **Corrected 2026-11-07:** validation before the build. Fifty distinct 128 KiB descendants hold 6.4 MiB and cannot reach the 64 MiB budget, so the refusal fixture needs 600 of them (the budget ends near the 512th); and `PdfInterpreter.TextFontBudget`'s six hundred fonts over one descendant would stop proving anything once it is shared, so it moves to distinct descendants. The checklist named neither the memo's shape, nor a descendant reached through a shared `/DescendantFonts` array whose one entry is direct, nor how a failed build avoids repeating its cost: a recoverable failure is memoized as that failure, so every font takes the fallback with the diagnostic without building it again, while `OutOfMemory` and other fatal errors are never kept.
