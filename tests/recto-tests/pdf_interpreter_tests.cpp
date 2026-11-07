@@ -6159,9 +6159,11 @@ TEST(PdfInterpreter, CorpusRenderSweep)
 		EXPECT_EQ(clips[0].fill_rule, FillRule::NonZero);
 		EXPECT_EQ(verbs_of(list, clips[0].path_index), std::vector<PathVerb>{PathVerb::Rect});
 		const auto clip_points = points_of(list, clips[0].path_index);
-		ASSERT_FALSE(clip_points.empty());
+		ASSERT_EQ(clip_points.size(), 2u);
 		EXPECT_DOUBLE_EQ(clip_points[0].x, 72.0);
 		EXPECT_DOUBLE_EQ(clip_points[0].y, 560.0);
+		EXPECT_DOUBLE_EQ(clip_points[1].x, 468.0);
+		EXPECT_DOUBLE_EQ(clip_points[1].y, 160.0);
 		// The JPEG: every coefficient zero, so each cell is the mid gray of a zero DC.
 		EXPECT_EQ(images[0].bitmap->height, 8u);
 		const Bgra jpeg_cell = cell(*images[0].bitmap, 4u, 4u);
