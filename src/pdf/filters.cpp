@@ -8540,7 +8540,7 @@ void idwt_53_1d(
 }
 
 // 2D 5-3 reversible inverse DWT for one resolution level.
-void idwt_53_2d(
+[[nodiscard]] bool idwt_53_2d(
 	uint32_t w,
 	uint32_t h,
 	uint32_t ll_w,
@@ -8555,13 +8555,16 @@ void idwt_53_2d(
 {
 	out.assign(static_cast<size_t>(w) * h, 0);
 	if (w == 0u || h == 0u) {
-		return;
+		return true;
 	}
 	const uint32_t hl_w = w - ll_w;
 	const uint32_t lh_h = h - ll_h;
 
 	// Horizontal synthesis directly into `out` on top rows (LL + HL) and bottom rows (LH + HH).
 	for (uint32_t y = 0; y < ll_h; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		const auto low_row = (ll_w > 0u)
 			? std::span<const int32_t>(ll.data() + static_cast<size_t>(y) * ll_w, ll_w)
 			: std::span<const int32_t>{};
@@ -8575,6 +8578,9 @@ void idwt_53_2d(
 			odd_x);
 	}
 	for (uint32_t y = 0; y < lh_h; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		const auto low_row = (ll_w > 0u)
 			? std::span<const int32_t>(lh.data() + static_cast<size_t>(y) * ll_w, ll_w)
 			: std::span<const int32_t>{};
@@ -8593,6 +8599,9 @@ void idwt_53_2d(
 	std::vector<int32_t> high_buf(lh_h, 0);
 	std::vector<int32_t> dst_buf(h, 0);
 	for (uint32_t x = 0; x < w; ++x) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		for (uint32_t y = 0; y < ll_h; ++y) {
 			low_buf[y] = out[static_cast<size_t>(y) * w + x];
 		}
@@ -8606,11 +8615,12 @@ void idwt_53_2d(
 			odd_y);
 		for (uint32_t y = 0; y < h; ++y) {
 			if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
-				return; // the caller's next poll returns Cancelled
+				return false;
 			}
 			out[static_cast<size_t>(y) * w + x] = dst_buf[y];
 		}
 	}
+	return true;
 }
 
 // 1D 9-7 irreversible inverse DWT (ITU-T T.800 §F.3.6 and §F.3.8.2 lifting steps).
@@ -8681,7 +8691,7 @@ void idwt_97_1d(
 	}
 }
 
-void idwt_97_2d_float(
+[[nodiscard]] bool idwt_97_2d_float(
 	uint32_t w,
 	uint32_t h,
 	uint32_t ll_w,
@@ -8696,12 +8706,15 @@ void idwt_97_2d_float(
 {
 	out.assign(static_cast<size_t>(w) * h, 0.0f);
 	if (w == 0u || h == 0u) {
-		return;
+		return true;
 	}
 	const uint32_t hl_w = w - ll_w;
 	const uint32_t lh_h = h - ll_h;
 
 	for (uint32_t y = 0; y < ll_h; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		const auto low_row = (ll_w > 0u)
 			? std::span<const float>(ll.data() + static_cast<size_t>(y) * ll_w, ll_w)
 			: std::span<const float>{};
@@ -8715,6 +8728,9 @@ void idwt_97_2d_float(
 			odd_x);
 	}
 	for (uint32_t y = 0; y < lh_h; ++y) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		const auto low_row = (ll_w > 0u)
 			? std::span<const float>(lh.data() + static_cast<size_t>(y) * ll_w, ll_w)
 			: std::span<const float>{};
@@ -8732,6 +8748,9 @@ void idwt_97_2d_float(
 	std::vector<float> high_buf(lh_h, 0.0f);
 	std::vector<float> dst_buf(h, 0.0f);
 	for (uint32_t x = 0; x < w; ++x) {
+		if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
+			return false;
+		}
 		for (uint32_t y = 0; y < ll_h; ++y) {
 			low_buf[y] = out[static_cast<size_t>(y) * w + x];
 		}
@@ -8745,11 +8764,12 @@ void idwt_97_2d_float(
 			odd_y);
 		for (uint32_t y = 0; y < h; ++y) {
 			if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
-				return; // the caller's next poll returns Cancelled
+				return false;
 			}
 			out[static_cast<size_t>(y) * w + x] = dst_buf[y];
 		}
 	}
+	return true;
 }
 
 [[nodiscard]] PdfResult<WicDecodedImage> decode_jpx_native(
@@ -10788,7 +10808,7 @@ struct Jp2Palette {
 							return detail::cancelled_error();
 						}
 						std::vector<int32_t> next_ll;
-						idwt_53_2d(
+						if (!idwt_53_2d(
 							rs.res_w,
 							rs.res_h,
 							ll_w,
@@ -10799,7 +10819,9 @@ struct Jp2Palette {
 							rs.subbands[0].coeffs,
 							rs.subbands[1].coeffs,
 							rs.subbands[2].coeffs,
-							next_ll);
+							next_ll)) {
+							return detail::cancelled_error();
+						}
 						std::vector<SubbandState>().swap(rs.subbands);
 						cur_ll = std::move(next_ll);
 					}
@@ -10817,7 +10839,7 @@ struct Jp2Palette {
 						if (detail::poll_cancel(detail::CancelSite::JpxWavelet)) {
 							return detail::cancelled_error();
 						}
-						idwt_97_2d_float(
+						if (!idwt_97_2d_float(
 							rs.res_w,
 							rs.res_h,
 							ll_w,
@@ -10828,7 +10850,9 @@ struct Jp2Palette {
 							rs.subbands[0].coeffs_f,
 							rs.subbands[1].coeffs_f,
 							rs.subbands[2].coeffs_f,
-							next_ll);
+							next_ll)) {
+							return detail::cancelled_error();
+						}
 						std::vector<SubbandState>().swap(rs.subbands);
 						cur_ll = std::move(next_ll);
 					}

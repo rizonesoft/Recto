@@ -65,6 +65,7 @@ struct PagePixelSize {
 struct RasterStats {
 	uint64_t draws_replayed{0}; // Draw commands and glyphs of the last tile that were not culled.
 	uint64_t target_creations{0}; // Render targets this worker has ever made.
+	uint64_t flushes{0}; // Batches of the last tile handed to the target, so `EndDraw` holds at most one.
 	size_t image_cache_bytes{0}; // Shrunken image copies this worker holds now.
 };
 

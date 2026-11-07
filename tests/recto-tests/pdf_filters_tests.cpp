@@ -8489,6 +8489,29 @@ TEST(PdfFilters, CancelDuringDecode)
 		ASSERT_TRUE(again.has_value());
 		EXPECT_EQ(again->pixels, jpx_whole->pixels) << "nothing was cached by the cancelled decode";
 	}
+	// Inside the transform at every point the last component's last level polls: `Cancelled`, never partial pixels as a
+	// success. Counted first, so the last poll of the whole decode is among them.
+	struct Counter {
+		uint32_t wavelet{0u};
+	} counter;
+	{
+		const detail::ScopedCancelPollHookForTesting counting(
+			[](CancelSite site, void* context) noexcept {
+				if (site == CancelSite::JpxWavelet) {
+					++static_cast<Counter*>(context)->wavelet;
+				}
+			},
+			&counter);
+		ASSERT_TRUE(decode_jpx_image(jpx).has_value());
+	}
+	ASSERT_GE(counter.wavelet, 6u) << "each level polls before it and in each pass";
+	for (uint32_t nth = 1u; nth <= counter.wavelet; ++nth) {
+		SCOPED_TRACE(nth);
+		(void)recto::test::expect_cancelled_at(CancelSite::JpxWavelet, nth, [&](const CancelToken& token) {
+			const ScopedCancelScope scope(token);
+			return decode_jpx_image(jpx);
+		});
+	}
 	const auto jpeg = recto::test::read_file_bytes(recto::test::corpus_path("images/dct-3c-jfif.jpg"));
 	const auto jpeg_whole = decode_dct_image(jpeg);
 	ASSERT_TRUE(jpeg_whole.has_value());

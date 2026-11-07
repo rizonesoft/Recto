@@ -1073,6 +1073,7 @@ struct Rasterizer::State {
 		std::vector<uint8_t> out(width * height * 4u);
 		uint8_t* to = out.data();
 		const uint8_t* const pixels = source.pixels.data();
+		uint64_t visited = 0u;
 		for (uint32_t y = y0; y < y1; ++y) {
 			if (poll(detail::CancelSite::ImageReduce)) {
 				return {}; // the caller caches nothing
@@ -1084,6 +1085,14 @@ struct Rasterizer::State {
 				const uint64_t cell_end = std::min<uint64_t>(cell_begin + reduce_x, source.width);
 				std::array<uint64_t, 4> sum{};
 				for (uint64_t row = row_begin; row < row_end; ++row) {
+					// By source cells visited: one output cell of a heavily shrunken image can hold all of them.
+					visited += cell_end - cell_begin;
+					if (visited >= 65'536u) {
+						visited = 0u;
+						if (poll(detail::CancelSite::ImageReduce)) {
+							return {};
+						}
+					}
 					const uint8_t* from = pixels + row * source.stride + cell_begin * 4u;
 					for (uint64_t cell = cell_begin; cell < cell_end; ++cell, from += 4) {
 						for (size_t channel = 0; channel < 4u; ++channel) {
@@ -1539,8 +1548,16 @@ struct Rasterizer::State {
 		const auto commands = list.commands();
 		const auto bounds = list.command_bounds();
 		for (size_t i = 0; i < commands.size() && SUCCEEDED(failure) && !cancelled; ++i) {
+			// Each batch is handed to the target, or a cancelled tile's `EndDraw` can wait on what Direct2D has queued: 3 ms at
+			// worst of 20 cancels with this, 16 to 40 without it.
 			if (++commands_since_poll >= 64u) {
 				commands_since_poll = 0u;
+				const HRESULT flushed = target->Flush();
+				++stats.flushes;
+				if (FAILED(flushed)) {
+					fail(flushed);
+					break;
+				}
 				if (poll(detail::CancelSite::RasterCommand)) {
 					break;
 				}
@@ -1702,6 +1719,7 @@ PdfResult<void> Rasterizer::render_tile(const std::shared_ptr<const DisplayList>
 		return invalid("A tile's background is not a colour");
 	}
 	s.stats.draws_replayed = 0u;
+	s.stats.flushes = 0u;
 	s.cancelled = false;
 	s.commands_since_poll = 0u;
 	try {

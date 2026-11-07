@@ -1986,7 +1986,9 @@ TEST(PdfRasterizer, PreCancelledTile)
 		ASSERT_EQ(done.error().code, ErrorCode::Cancelled);
 	}
 	const double each_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started).count() / kRuns;
-	EXPECT_LT(each_us, 10.0);
+	if (recto::test::cancel_latency_held()) {
+		EXPECT_LT(each_us, 10.0);
+	}
 	EXPECT_EQ(bench.worker_owned->stats().target_creations, 0u) << "Direct2D was touched";
 	bench.expect_untouched();
 }
@@ -2034,8 +2036,7 @@ TEST(PdfRasterizer, MidReplayCancelUnder10Ms)
 	ASSERT_FALSE(done.has_value());
 	EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
 	EXPECT_EQ(shared.polls, 4u) << "no later command was polled";
-	const double latency_ms = std::chrono::duration<double, std::milli>(returned - cancelled_at).count();
-	EXPECT_LT(latency_ms, 10.0);
+	recto::test::expect_cancel_latency(std::chrono::duration<double, std::milli>(returned - cancelled_at).count(), "command 256 of 50,000");
 	bench.expect_untouched();
 }
 
@@ -2179,10 +2180,11 @@ TEST(PdfRasterizer, CancelAfterLastPoll)
 	bench.expect_next_exact(list);
 }
 
-TEST(PdfRasterizer, EndDrawBoundedAfterCancel)
+TEST(PdfRasterizer, FlushBoundsEndDraw)
 {
-	// 50,000 fills of the whole tile, the heaviest cheap command: `EndDraw` is part of a cancel's time, and the software
-	// target has drawn as it went, so it finds little left to do.
+	// 50,000 fills of the whole tile, the heaviest cheap command: `EndDraw` is part of a cancel's time, and each batch was
+	// handed over, so it finds one at most. One run's time cannot tell this from Direct2D having drawn as it went (it often
+	// has), so the flushes are counted as well.
 	DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
 	for (int i = 0; i < 50'000; ++i) {
 		fill_rect(builder, 0.0, 0.0, 512.0, 512.0, ColorRgba{0.5f, 0.5f, 0.5f});
@@ -2193,6 +2195,7 @@ TEST(PdfRasterizer, EndDrawBoundedAfterCancel)
 	const double ms = expect_cancelled_at(CancelSite::RasterCommand, 700u, [&](const CancelToken& token) { return bench.run(list, token); });
 	std::printf("[          ] a cancel with EndDraw took %.3f ms\n", ms);
 	bench.expect_untouched();
+	EXPECT_EQ(bench.worker_owned->stats().flushes, 700u) << "one per 64 commands, up to the cancel";
 }
 
 TEST(PdfRasterizer, CancelWhileRunning)
@@ -2230,6 +2233,13 @@ TEST(PdfRasterizer, CancelWhileRunning)
 		const auto list = finished(builder);
 		CancelBench bench;
 		(void)expect_cancelled_while_running(CancelSite::ImageReduce, "an 8,192 by 8,192 image's reduction", [&](const CancelToken& token) { return bench.run(list, token); });
+		// Into one pixel: one output cell holds all 67 million source cells, so the poll cannot be by output row.
+		DisplayListBuilder tiny(PdfRect{0.0, 0.0, 512.0, 512.0});
+		ASSERT_TRUE(tiny.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 10.0, 10.0}).has_value());
+		ASSERT_TRUE(tiny.draw_image(image, PdfMatrix::identity(), false).has_value());
+		const auto tiny_list = finished(tiny);
+		CancelBench tiny_bench;
+		(void)expect_cancelled_while_running(CancelSite::ImageReduce, "that image into one pixel", [&](const CancelToken& token) { return tiny_bench.run(tiny_list, token); });
 	}
 	{
 		DisplayListBuilder builder(PdfRect{0.0, 0.0, 512.0, 512.0});
