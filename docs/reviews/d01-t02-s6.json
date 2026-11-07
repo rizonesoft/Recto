@@ -1,0 +1,84 @@
+{
+  "ref": "D01 T02 \u00a76",
+  "title": "Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)",
+  "implementation_sha": "60a2fa6f44501e4e039cfba962640eaea22260de",
+  "date": "2026-11-07",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s6.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s6.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfRasterizer.* under ASan -> [  PASSED  ] 31 tests.",
+    "a tile origin off by one fails PdfRasterizer.TileStitchIdentity -> mutation failed TileStitchIdentity, ClipsStitch and ScanReduction",
+    "Freeze check: a Rasterizer stays on its thread and reads the list as const -> PdfRasterizer.OwnerThreadOnly and PdfRasterizer.SharedListTwoWorkers passed",
+    ".\\build.cmd -> 0 Warning(s) on all four builds; [  PASSED  ] 433 tests Debug (FlateCompressSpeed skipped), [  PASSED  ] 434 tests Release; Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s6.md",
+    "verdict": "filed",
+    "candidate": "a0e92ed368b399b8fa9164f4d25a06c70e7d0b61",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T03 \u00a710",
+      "D06 T01 \u00a77",
+      "D01 T02 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s6.md",
+    "candidate": "1610c2f9d6e5049d5f32c69734f0192bb14b4bba",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

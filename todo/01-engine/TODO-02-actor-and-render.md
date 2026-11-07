@@ -63,7 +63,7 @@ track: M1
 | 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
 | 4 | §4 | Content-stream interpreter complete over the render corpus | §2, §3, §27, §28, §29, §30, §32, §33, §42, §43, §44, §45, §46, §47, D06 T05 §32, D06 T05 §33 | [x] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [x] |
-| 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
+| 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [x] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [ ] |
 | 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [ ] |
@@ -352,9 +352,12 @@ Implement `src/pdf/rasterizer.h` and `src/pdf/rasterizer.cpp` (`recto::pdf::Rast
 - [x] Keep one bad command from losing a tile: a path, matrix or stroke width that goes non-finite in single precision is skipped, a coordinate past `kMaxDeviceCoordinate` is clamped, a dash pattern that would cut one stroke into more than `kMaxDashSegments` pieces draws solid with `RefusalReason::DashSegments` recorded. Done when: `PdfRasterizer.HostileGeometry` renders a page holding each of them beside a normal rectangle, the rectangle painted, in a bounded time, and the dash refusal read with its observed and bound counts.
 - [x] Store goldens as PNG under `tests/goldens/rasterizer/`, each compared with `compute_ssim` over the box holding the ink at `kGoldenSsim` (0.98) and over each 32-pixel window holding ink at `kGoldenWindowSsim` (0.90), written only with `RECTO_UPDATE_GOLDENS=1` (temp file then replace) and viewed by the writer, listed by name in the findings file. A missing golden fails the test. **Corrected 2026-11-07:** the build; SSIM over a whole page is held up by its white paper, so a page missing a glyph passed 0.98. Done when: `PdfRasterizer.GoldenSeam` fails on a missing golden and on a golden with a glyph painted out.
 - [x] Keep valid images and hairlines from the completion review: a zero width is one device pixel under any CTM; a shrunken image is box-reduced by whole factors, per axis, on a grid anchored at the image; every image is sampled per device pixel on the page's grid and composited as a patch no larger than the tile, so none is uploaded whole and `ID2D1RenderTarget::GetMaximumBitmapSize` does not limit it; an axis-aligned image's edges land on whole pixels. Done when: `PdfRasterizer.StrokeAndAlpha` reads one pixel's coverage for a hairline under `1 0 0 4`, `4 0 0 1` and a shear; `PdfRasterizer.ScanReduction` reads each row of a one-in-sixteen rule at its share of ink; `PdfRasterizer.ImagePastBitmapLimit` reads a 65,536-cell-wide image's own cells on tiles along it, its mask at its own cells; `PdfRasterizer.AbuttingWithoutSeam` reads strips of one colour with no paler row at fractional zoom, and abutting fills solid across a tile's edge; `PdfRasterizer.ClipsStitch` reads tiles equal to the whole page under a curved clip and a turned rectangular one, since a Direct2D layer's own geometric mask rounds by tile, so a clip's coverage is drawn by the fill every path takes and the layer only multiplies by it; `PdfRasterizer.ImageCacheBudget` reads the shrunken copies within their budget, an image and its mask both still read when the second overflows it. **Corrected 2026-11-07:** completion review; a hairline changed width with the CTM, a large image vanished, a bilinear shrink lost thin strokes, Direct2D's sampling rounded by tile offset, and comparing tiles to the whole page could not see a seam both held.
-- [ ] Commit: `pdf: implement Direct2D DisplayList tile rasterizer with seam-free tile stitching`
+- [x] Commit: `pdf: implement Direct2D DisplayList tile rasterizer with seam-free tile stitching`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.*` passes under ASan, and a tile origin off by one pixel fails `PdfRasterizer.TileStitchIdentity`.
+
+> **Verified:** 2026-11-07 | §6 | 60a2fa6f44501e4e039cfba962640eaea22260de
+> **Review:** `docs/reviews/d01-t02-s6.json`
 
 ## 7. Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation
 
