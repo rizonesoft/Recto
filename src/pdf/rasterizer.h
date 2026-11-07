@@ -69,6 +69,10 @@ struct RasterStats {
 
 namespace detail {
 
+// The cell a sample coordinate reads, clamped in floating point first: a near-singular image matrix gives coordinates no
+// integer holds, and a NaN reads cell 0.
+[[nodiscard]] uint32_t raster_cell_index(double coordinate, uint32_t cells) noexcept;
+
 // Lowers `kRasterImageCacheBytes` for the calling thread's rasterizers, so a test reaches eviction with small images.
 class ScopedRasterImageCacheForTesting {
 public:

@@ -27,6 +27,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -617,6 +618,48 @@ TEST(PdfRasterizer, StrokeAndAlpha)
 		}
 		EXPECT_NEAR(coverage, 1.0, 0.1);
 	}
+	// A dashed hairline under a CTM that scales its axes apart: one pixel wide, its dashes still 10 user units long, which
+	// is 10 pixels along x and 40 along y here.
+	{
+		DisplayListBuilder builder(kPage100);
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}).has_value());
+		const std::array<float, 2> dash{10.0f, 10.0f};
+		ASSERT_TRUE(builder.set_stroke_style(0.0f, LineCap::Butt, LineJoin::Miter, 10.0f, dash).has_value());
+		stroke_line(builder, {PdfPoint{2.0, 22.5}, PdfPoint{42.0, 22.5}}); // device row 10
+		stroke_line(builder, {PdfPoint{70.25, 0.0}, PdfPoint{70.25, 24.0}}); // from device y 0 up to 96: on to user 10, off to 20, on
+		const Image image = render_page(finished(builder));
+		const auto dark = [](const Bgra& p) { return p.g < 200; };
+		EXPECT_TRUE(dark(image.at(7u, 10u)));
+		EXPECT_FALSE(dark(image.at(17u, 10u)));
+		EXPECT_TRUE(dark(image.at(27u, 10u)));
+		EXPECT_FALSE(dark(image.at(37u, 10u)));
+		EXPECT_TRUE(dark(image.at(70u, 70u))) << "user y 7.5, in the first dash";
+		EXPECT_FALSE(dark(image.at(70u, 30u))) << "user y 17.5, in the first gap";
+		EXPECT_TRUE(dark(image.at(70u, 8u))) << "user y 23, in the second dash";
+		double coverage = 0.0;
+		for (uint32_t x = 60u; x < 80u; ++x) {
+			coverage += (255.0 - image.at(x, 70u).g) / 255.0;
+		}
+		EXPECT_NEAR(coverage, 1.0, 0.1) << "still one pixel wide";
+	}
+	// Each subpath starts the pattern again (8.4.3.6): 5 into a dash of 10, the next subpath's dash is still 10 long.
+	{
+		DisplayListBuilder builder(kPage100);
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}).has_value());
+		const std::array<float, 2> dash{10.0f, 10.0f};
+		ASSERT_TRUE(builder.set_stroke_style(0.0f, LineCap::Butt, LineJoin::Miter, 10.0f, dash).has_value());
+		PathBuilder two;
+		two.move_to(2.0, 12.5);
+		two.line_to(7.0, 12.5);
+		two.move_to(20.0, 12.5);
+		two.line_to(60.0, 12.5);
+		const auto id = builder.add_path(two);
+		ASSERT_TRUE(id.has_value());
+		ASSERT_TRUE(builder.draw_path(*id, kBlack, kBlack, true, false).has_value());
+		const Image image = render_page(finished(builder));
+		EXPECT_LT(image.at(27u, 50u).g, 200) << "the second subpath's first dash runs to x 30";
+		EXPECT_GT(image.at(35u, 50u).g, 200);
+	}
 	// Dashes in user space: on and off 10 from x 10, at each scale.
 	for (const double scale : {1.0, 2.0}) {
 		SCOPED_TRACE(scale);
@@ -833,6 +876,71 @@ TEST(PdfRasterizer, ScanReduction)
 	const Image whole = render_page(list, 1.5);
 	const Image tiled = stitched(list, 1.5, 0, 32u);
 	recto::test::expect_rgba_equal(tiled.bytes, whole.bytes, whole.width, whole.height);
+}
+
+TEST(PdfRasterizer, SampleCoordinatesClamp)
+{
+	using detail::raster_cell_index;
+	EXPECT_EQ(raster_cell_index(0.5, 4u), 0u);
+	EXPECT_EQ(raster_cell_index(2.9, 4u), 2u);
+	EXPECT_EQ(raster_cell_index(3.0, 4u), 3u);
+	EXPECT_EQ(raster_cell_index(7.0, 4u), 3u);
+	EXPECT_EQ(raster_cell_index(-1.0, 4u), 0u);
+	// Past any integer, and not a number.
+	EXPECT_EQ(raster_cell_index(9.9e21, 4u), 3u);
+	EXPECT_EQ(raster_cell_index(-9.9e21, 4u), 0u);
+	EXPECT_EQ(raster_cell_index(std::numeric_limits<double>::infinity(), 4u), 3u);
+	EXPECT_EQ(raster_cell_index(-std::numeric_limits<double>::infinity(), 4u), 0u);
+	EXPECT_EQ(raster_cell_index(std::numeric_limits<double>::quiet_NaN(), 4u), 0u);
+	// A near-singular image matrix, whose inverse gives such coordinates on real pixels: linear and nearest, no crash, and
+	// the page goes on.
+	const auto image = bitmap_of(2u, 2u, {0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255});
+	ASSERT_NE(image, nullptr);
+	for (const bool linear : {false, true}) {
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		ASSERT_TRUE(builder.save_state().has_value());
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{100.0, 100.0, 1e-20, 2e-20, 0.0, 0.0}).has_value());
+		ASSERT_TRUE(builder.draw_image(image, PdfMatrix::identity(), linear).has_value());
+		ASSERT_TRUE(builder.restore_state().has_value());
+		fill_rect(builder, 150.0, 150.0, 10.0, 10.0, kBlack);
+		const Image rendered = render_page(finished(builder));
+		EXPECT_TRUE(painted(rendered.at(155u, 45u)));
+	}
+}
+
+TEST(PdfRasterizer, ImageCacheOwnsNoSource)
+{
+	// A page's image dies with its list, though its shrunken copy was cached on this worker.
+	auto made = Rasterizer::create();
+	ASSERT_TRUE(made.has_value());
+	std::weak_ptr<const DecodedBitmap> watched;
+	const auto page_with = [](const std::shared_ptr<const DecodedBitmap>& image) {
+		DisplayListBuilder builder(kPage100);
+		EXPECT_TRUE(builder.concat_matrix(PdfMatrix{50.0, 0.0, 0.0, 50.0, 25.0, 25.0}).has_value());
+		EXPECT_TRUE(builder.draw_image(image, PdfMatrix::identity(), false).has_value());
+		return finished(builder);
+	};
+	const auto square = [](uint8_t value) {
+		std::vector<uint8_t> pixels;
+		pixels.reserve(400u * 400u * 4u);
+		for (int i = 0; i < 400 * 400; ++i) {
+			pixels.insert(pixels.end(), {value, value, value, 255});
+		}
+		return bitmap_of(400u, 400u, std::move(pixels));
+	};
+	{
+		auto image = square(40u);
+		watched = image;
+		const auto list = page_with(image);
+		image.reset();
+		EXPECT_EQ(render_page(list, 1.0, 0, ColorRgba::white(), **made).at(50u, 50u).g, 40);
+		EXPECT_EQ((*made)->stats().image_cache_bytes, 10'000u);
+	}
+	EXPECT_TRUE(watched.expired()) << "the worker's cache kept a page's decoded image alive";
+	// A later image, even at the same address, is read for itself; the copy of the dead one goes when the next is cached.
+	const auto next = square(200u);
+	EXPECT_EQ(render_page(page_with(next), 1.0, 0, ColorRgba::white(), **made).at(50u, 50u).g, 200);
+	EXPECT_EQ((*made)->stats().image_cache_bytes, 10'000u);
 }
 
 TEST(PdfRasterizer, ImageCacheBudget)
@@ -1279,6 +1387,15 @@ TEST(PdfRasterizer, HostileGeometry)
 	EXPECT_EQ(dash_refusal->code, ErrorCode::ResourceLimit);
 	EXPECT_EQ(dash_refusal->bound, kMaxDashSegments);
 	EXPECT_GT(dash_refusal->observed.value_or(0u), kMaxDashSegments);
+	// The same ceiling where a dashed hairline is cut by hand.
+	clear_diagnostics();
+	DisplayListBuilder hairline(kPage100);
+	ASSERT_TRUE(hairline.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}).has_value());
+	ASSERT_TRUE(hairline.set_stroke_style(0.0f, LineCap::Butt, LineJoin::Miter, 10.0f, dash).has_value());
+	stroke_line(hairline, {PdfPoint{0.0, 10.0}, PdfPoint{10000.0, 10.0}});
+	const Image solid = render_page(finished(hairline));
+	EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::DashSegments));
+	EXPECT_LT(solid.at(50u, 59u).g + solid.at(50u, 60u).g, 400) << "drawn solid";
 }
 
 TEST(PdfRasterizer, RenderTargetReuse)

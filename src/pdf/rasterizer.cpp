@@ -204,6 +204,15 @@ struct GlyphKey {
 
 namespace detail {
 
+uint32_t raster_cell_index(double coordinate, uint32_t cells) noexcept
+{
+	if (cells == 0u || !(coordinate > 0.0)) {
+		return 0u; // a NaN too
+	}
+	const double last = static_cast<double>(cells - 1u);
+	return coordinate >= last ? cells - 1u : static_cast<uint32_t>(coordinate);
+}
+
 ScopedRasterImageCacheForTesting::ScopedRasterImageCacheForTesting(size_t bytes) noexcept
 	: previous_(g_image_cache_bytes)
 {
@@ -269,7 +278,8 @@ struct Rasterizer::State {
 	};
 	struct CachedImage {
 		ImageKey key;
-		std::shared_ptr<const DecodedBitmap> source; // keeps the key's address from being reused
+		std::weak_ptr<const DecodedBitmap> source; // owns nothing: a page's image dies with its list, and an expired entry
+		                                           // cannot answer for a new image at its address
 		std::shared_ptr<const std::vector<uint8_t>> pixels; // premultiplied BGRA, the reduced width's rows with no padding
 	};
 	std::list<CachedImage> images; // most recently used first
@@ -598,6 +608,178 @@ struct Rasterizer::State {
 		return style;
 	}
 
+	[[nodiscard]] static bool dash_pattern_paints(std::span<const float> values) noexcept
+	{
+		double sum = 0.0;
+		for (const float value : values) {
+			if (!std::isfinite(value) || value < 0.0f) {
+				return false;
+			}
+			sum += static_cast<double>(value);
+		}
+		return sum > 0.0;
+	}
+
+	// A zero-width line one pixel wide whose dashes are measured in user space, though no pen in device space could give
+	// them their lengths under a CTM that scales its axes apart (8.4.3.6): the path is cut here, along its own lengths under
+	// `pen`, restarting at each subpath, and the pieces drawn as a solid hairline.
+	void stroke_dashed_hairline(const DisplayList& list, std::span<const PathVerb> verbs, std::span<const PdfPoint> points,
+		const PdfMatrix& to_full, const PdfMatrix& pen, const SetStrokeStyleCommand& stroke, std::span<const float> pattern,
+		const D2D1_COLOR_F& color)
+	{
+		const double det = pen.a * pen.d - pen.b * pen.c;
+		const auto user_length = [&](double dx, double dy) {
+			return std::hypot((pen.d * dx - pen.c * dy) / det, (pen.a * dy - pen.b * dx) / det);
+		};
+		double period = 0.0;
+		for (const float value : pattern) {
+			period += static_cast<double>(value);
+		}
+		if (pattern.size() % 2u == 1u) {
+			period *= 2.0; // an odd pattern repeats with its dashes and gaps exchanged
+		}
+		std::vector<PathVerb> out_verbs;
+		std::vector<PdfPoint> out_points;
+		uint64_t pieces = 0u;
+		bool too_many = false;
+		size_t index = 0u;
+		double left = 0.0;
+		bool on = true;
+		bool drawing = false;
+		const auto restart = [&] {
+			double phase = std::fmod(std::max(static_cast<double>(stroke.dash_phase), 0.0), period);
+			index = 0u;
+			on = true;
+			left = static_cast<double>(pattern[0]);
+			while (phase >= left && phase > 0.0) {
+				phase -= left;
+				index = (index + 1u) % pattern.size();
+				on = !on;
+				left = static_cast<double>(pattern[index]);
+			}
+			left -= phase;
+			drawing = false;
+		};
+		const auto segment = [&](PdfPoint a, PdfPoint b) {
+			const double dx = b.x - a.x;
+			const double dy = b.y - a.y;
+			const double length = user_length(dx, dy);
+			if (!std::isfinite(length) || !std::isfinite(dx) || !std::isfinite(dy)) {
+				return;
+			}
+			double at = 0.0;
+			const auto here = [&](double along) {
+				const double t = length > 0.0 ? along / length : 0.0;
+				return PdfPoint{a.x + dx * t, a.y + dy * t};
+			};
+			while (!too_many) {
+				if (on && !drawing) {
+					out_verbs.push_back(PathVerb::MoveTo);
+					out_points.push_back(here(at));
+					drawing = true;
+					too_many = ++pieces > kMaxDashSegments;
+				}
+				const double remaining = length - at;
+				if (remaining < left) {
+					left -= remaining;
+					if (on) {
+						out_verbs.push_back(PathVerb::LineTo);
+						out_points.push_back(b);
+					}
+					return;
+				}
+				at += left;
+				if (on) {
+					out_verbs.push_back(PathVerb::LineTo);
+					out_points.push_back(here(at));
+					drawing = false;
+				}
+				index = (index + 1u) % pattern.size();
+				on = !on;
+				left = static_cast<double>(pattern[index]);
+			}
+		};
+		std::optional<PdfPoint> current;
+		PdfPoint start{};
+		size_t at = 0u;
+		const auto full = [&](PdfPoint p) { return transform_point(to_full, p); };
+		for (const PathVerb verb : verbs) {
+			switch (verb) {
+			case PathVerb::MoveTo:
+				if (at < points.size()) {
+					start = full(points[at]);
+					current = start;
+					restart();
+				}
+				at += 1u;
+				break;
+			case PathVerb::LineTo:
+				if (at < points.size() && current.has_value()) {
+					const PdfPoint next = full(points[at]);
+					segment(*current, next);
+					current = next;
+				}
+				at += 1u;
+				break;
+			case PathVerb::CubicBezierTo:
+				if (at + 3u <= points.size() && current.has_value()) {
+					const PdfPoint p0 = *current;
+					const PdfPoint p1 = full(points[at]);
+					const PdfPoint p2 = full(points[at + 1u]);
+					const PdfPoint p3 = full(points[at + 2u]);
+					const uint32_t count = cubic_pieces(p0, p1, p2, p3, 1.0);
+					PdfPoint previous = p0;
+					for (uint32_t i = 1u; i <= count; ++i) {
+						const double t = static_cast<double>(i) / static_cast<double>(count);
+						const double u = 1.0 - t;
+						const PdfPoint next{u * u * u * p0.x + 3.0 * u * u * t * p1.x + 3.0 * u * t * t * p2.x + t * t * t * p3.x,
+							u * u * u * p0.y + 3.0 * u * u * t * p1.y + 3.0 * u * t * t * p2.y + t * t * t * p3.y};
+						segment(previous, next);
+						previous = next;
+					}
+					current = p3;
+				}
+				at += 3u;
+				break;
+			case PathVerb::Rect:
+				if (at + 2u <= points.size()) {
+					const PdfPoint o = points[at];
+					const PdfPoint size = points[at + 1u];
+					const std::array<PdfPoint, 4> corners{full(o), full(PdfPoint{o.x + size.x, o.y}), full(PdfPoint{o.x + size.x, o.y + size.y}), full(PdfPoint{o.x, o.y + size.y})};
+					restart();
+					segment(corners[0], corners[1]);
+					segment(corners[1], corners[2]);
+					segment(corners[2], corners[3]);
+					segment(corners[3], corners[0]);
+					start = corners[0];
+					current = start;
+				}
+				at += 2u;
+				break;
+			case PathVerb::CloseSubpath:
+				if (current.has_value()) {
+					segment(*current, start);
+					current = start;
+				}
+				break;
+			}
+			if (too_many) {
+				break;
+			}
+		}
+		SetStrokeStyleCommand solid = stroke;
+		solid.dash_count = 0u;
+		if (too_many) {
+			record_diagnostic(make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::DashSegments, pieces, kMaxDashSegments,
+				"A dash pattern would cut one stroke past the limit; it is drawn solid"));
+			stroke_path(list, verbs, points, to_full, pen, solid, color);
+			return;
+		}
+		if (!out_points.empty()) {
+			stroke_path(list, out_verbs, out_points, PdfMatrix::identity(), PdfMatrix::identity(), solid, color);
+		}
+	}
+
 	// Strokes a path whose points `to_full` places, with a pen under `pen` (the CTM to pixels, ISO 32000-1 8.5.3.2). The
 	// outline is widened once in a space that does not know the tile, the pen's own about the path's first point, and only
 	// then placed on the page's grid and filled: Direct2D stroking in single precision rounds differently at each tile's
@@ -635,6 +817,13 @@ struct Rasterizer::State {
 		} else {
 			l = PdfMatrix{pen.a, pen.b, pen.c, pen.d, 0.0, 0.0};
 			width_units = line_width;
+		}
+		if (hairline && !round_pen && !singular) {
+			const auto values = list.dash_values(stroke);
+			if (values.has_value() && dash_pattern_paints(*values)) {
+				stroke_dashed_hairline(list, verbs, points, to_full, pen, stroke, *values, color);
+				return;
+			}
 		}
 		const double l_det = l.a * l.d - l.b * l.c;
 		const PdfMatrix inverse{l.d / l_det, -l.b / l_det, -l.c / l_det, l.a / l_det, 0.0, 0.0};
@@ -881,9 +1070,18 @@ struct Rasterizer::State {
 	{
 		const ImageKey key{source.get(), reduce_x, reduce_y};
 		const auto found = image_index.find(key);
-		if (found != image_index.end()) {
+		if (found != image_index.end() && !found->second->source.expired()) {
 			images.splice(images.begin(), images, found->second);
 			return images.front().pixels;
+		}
+		for (auto entry = images.begin(); entry != images.end();) {
+			if (entry->source.expired()) {
+				image_bytes -= entry->pixels->size();
+				image_index.erase(entry->key);
+				entry = images.erase(entry);
+			} else {
+				++entry;
+			}
 		}
 		auto pixels = std::make_shared<const std::vector<uint8_t>>(reduced_cells(*source, reduce_x, reduce_y, 0u, 0u, width, height));
 		images.push_front(CachedImage{key, source, pixels});
@@ -918,14 +1116,14 @@ struct Rasterizer::State {
 			const double py = y + 0.5;
 			const double u = a * px + c * py + e;
 			const double v = b * px + d * py + f;
-			const auto cell = [this](int64_t cx, int64_t cy) {
-				const size_t x_at = static_cast<size_t>(std::clamp<int64_t>(cx, 0, int64_t{width} - 1));
-				const size_t y_at = static_cast<size_t>(std::clamp<int64_t>(cy, 0, int64_t{height} - 1));
+			const auto cell = [this](double cx, double cy) {
+				const size_t x_at = detail::raster_cell_index(cx, width);
+				const size_t y_at = detail::raster_cell_index(cy, height);
 				return pixels + y_at * stride + x_at * 4u;
 			};
 			std::array<double, 4> out{};
 			if (!linear) {
-				const uint8_t* const p = cell(static_cast<int64_t>(std::floor(u)), static_cast<int64_t>(std::floor(v)));
+				const uint8_t* const p = cell(std::floor(u), std::floor(v));
 				for (size_t i = 0; i < 4u; ++i) {
 					out[i] = p[i];
 				}
@@ -935,14 +1133,13 @@ struct Rasterizer::State {
 			const double fv = v - 0.5;
 			const double x0 = std::floor(fu);
 			const double y0 = std::floor(fv);
-			const double tx = fu - x0;
-			const double ty = fv - y0;
-			const int64_t ix = static_cast<int64_t>(x0);
-			const int64_t iy = static_cast<int64_t>(y0);
-			const uint8_t* const p00 = cell(ix, iy);
-			const uint8_t* const p10 = cell(ix + 1, iy);
-			const uint8_t* const p01 = cell(ix, iy + 1);
-			const uint8_t* const p11 = cell(ix + 1, iy + 1);
+			// Past a double's fractions, or not a number: no blend, only the cell it clamps to.
+			const double tx = std::isfinite(fu) ? fu - x0 : 0.0;
+			const double ty = std::isfinite(fv) ? fv - y0 : 0.0;
+			const uint8_t* const p00 = cell(x0, y0);
+			const uint8_t* const p10 = cell(x0 + 1.0, y0);
+			const uint8_t* const p01 = cell(x0, y0 + 1.0);
+			const uint8_t* const p11 = cell(x0 + 1.0, y0 + 1.0);
 			for (size_t i = 0; i < 4u; ++i) {
 				const double top = p00[i] + (p10[i] - p00[i]) * tx;
 				const double bottom = p01[i] + (p11[i] - p01[i]) * tx;
