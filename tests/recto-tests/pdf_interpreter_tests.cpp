@@ -6056,6 +6056,166 @@ TEST(PdfInterpreter, InlineImagesHidden)
 	}
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The interpreter over the corpus (D01 T02 section 4).
+// ---------------------------------------------------------------------------------------------------------------------
+
+std::vector<std::string> corpus_files(std::string_view folder)
+{
+	std::vector<std::string> out;
+	for (const auto& entry : std::filesystem::directory_iterator(recto::test::corpus_path(folder))) {
+		if (entry.is_regular_file()) {
+			out.push_back(entry.path().filename().string());
+		}
+	}
+	std::sort(out.begin(), out.end());
+	return out;
+}
+
+TEST(PdfInterpreter, CorpusRenderSweep)
+{
+	struct Page {
+		size_t glyph_runs;
+		size_t images;
+		size_t paths;
+	};
+	struct File {
+		std::string_view name;
+		std::string_view password;
+		std::vector<Page> pages;
+	};
+	// Counted from what scripts/build-corpus.py writes on each page.
+	const std::vector<File> table = {
+		{"compressed-xref-2p.pdf", "", {{1u, 0u, 1u}, {1u, 0u, 1u}}},
+		{"encrypted-aes-128.pdf", "recto-test", {{2u, 0u, 1u}}},
+		{"encrypted-aes-256.pdf", "recto-test", {{2u, 0u, 1u}}},
+		{"encrypted-rc4-128.pdf", "recto-test", {{2u, 0u, 1u}}},
+		{"images-and-vectors.pdf", "", {{2u, 3u, 5u}}},
+		{"incremental-2rev.pdf", "", {{2u, 0u, 1u}}},
+		{"rotated-pages.pdf", "", {{1u, 0u, 1u}, {1u, 0u, 1u}, {1u, 0u, 1u}, {1u, 0u, 1u}}},
+		{"simple-1p.pdf", "", {{2u, 0u, 3u}}},
+	};
+	std::vector<std::string> named;
+	for (const File& file : table) {
+		named.emplace_back(file.name);
+	}
+	std::sort(named.begin(), named.end());
+	EXPECT_EQ(corpus_files("render"), named) << "a render corpus file is not in this table, or one is gone";
+	for (const File& file : table) {
+		SCOPED_TRACE(file.name);
+		const std::string pdf = corpus_text("render/" + std::string(file.name));
+		const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+		auto doc = file.password.empty() ? Document::open_memory(bytes) : Document::open_memory(bytes, file.password);
+		ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+		ASSERT_EQ((*doc)->page_count(), file.pages.size());
+		for (size_t page = 0; page < file.pages.size(); ++page) {
+			SCOPED_TRACE(page);
+			clear_diagnostics();
+			auto list = interpret_page(**doc, page);
+			ASSERT_TRUE(list.has_value()) << list.error().message.view();
+			EXPECT_EQ(all_of<RecordedGlyphRun>(**list).size(), file.pages[page].glyph_runs);
+			EXPECT_EQ(all_of<DrawImageCommand>(**list).size(), file.pages[page].images);
+			EXPECT_EQ(all_of<DrawPathCommand>(**list).size(), file.pages[page].paths);
+		}
+	}
+	// The values of the one page that holds each kind, from its builder.
+	{
+		const std::string pdf = corpus_text("render/images-and-vectors.pdf");
+		const auto r = interpret(std::vector<uint8_t>(pdf.begin(), pdf.end()));
+		ASSERT_NE(r.list, nullptr);
+		const DisplayList& list = *r.list;
+		// /GS1 sets /CA 0.9 and /ca 0.75 for the vector block.
+		const auto alphas = all_of<SetAlphaAndBlendCommand>(list);
+		ASSERT_FALSE(alphas.empty());
+		EXPECT_FLOAT_EQ(alphas[0].stroke_alpha, 0.9f);
+		EXPECT_FLOAT_EQ(alphas[0].fill_alpha, 0.75f);
+		// The vector block's first fill is inside its clip, 72 560 468 160; the first image after its Q is not clipped by it.
+		const auto draws = draw_bounds(list);
+		ASSERT_GE(draws.size(), 3u);
+		ASSERT_TRUE(draws[0].has_bounds);
+		expect_rect(draws[0].bounds_pt, 72.0, 560.0, 312.0, 720.0);
+		// 64 by 64 points at 72 440, 168 440 and 264 440, each a bitmap of its own size.
+		const auto images = all_of<DrawImageCommand>(list);
+		ASSERT_EQ(images.size(), 3u);
+		EXPECT_EQ(images[0].bitmap->width, 8u);
+		EXPECT_EQ(images[0].bitmap->height, 8u);
+		EXPECT_EQ(images[1].bitmap->width, 8u);
+		EXPECT_EQ(images[2].bitmap->width, 16u);
+		EXPECT_EQ(images[2].bitmap->height, 16u);
+		const auto commands = list.commands();
+		const auto bounds = list.command_bounds();
+		size_t image = 0;
+		for (size_t i = 0; i < commands.size(); ++i) {
+			if (commands[i].as<DrawImageCommand>() != nullptr) {
+				ASSERT_TRUE(bounds[i].has_bounds);
+				const double x = 72.0 + 96.0 * static_cast<double>(image);
+				expect_rect(bounds[i].bounds_pt, x, 440.0, x + 64.0, 504.0);
+				++image;
+			}
+		}
+		// Each cell's RGB is x * 32, and its /SMask is (x + y) * 16.
+		EXPECT_EQ(cell(*images[1].bitmap, 3u, 5u).r, 3 * 32);
+		EXPECT_EQ(cell(*images[1].bitmap, 3u, 5u).g, 3 * 32);
+		ASSERT_NE(images[1].soft_mask, nullptr);
+		EXPECT_EQ(cell(*images[1].soft_mask, 3u, 5u).a, (3 + 5) * 16);
+		EXPECT_EQ(images[0].soft_mask, nullptr);
+		EXPECT_EQ(images[2].soft_mask, nullptr);
+		// The form's fill, 0 0 140 64 under 1 0 0 1 360 440, within its /BBox, in the form's colour.
+		bool form_fill = false;
+		for (size_t i = 0; i < commands.size(); ++i) {
+			const auto* path = commands[i].as<DrawPathCommand>();
+			if (path != nullptr && path->fill && bounds[i].has_bounds && std::abs(bounds[i].bounds_pt.x_min - 360.0) < 1e-6) {
+				expect_rect(bounds[i].bounds_pt, 360.0, 440.0, 500.0, 504.0);
+				EXPECT_NEAR(path->fill_color.r, 0.92f, 0.02f);
+				EXPECT_NEAR(path->fill_color.b, 0.72f, 0.02f);
+				form_fill = true;
+			}
+		}
+		EXPECT_TRUE(form_fill) << "the Form XObject's fill was not placed";
+	}
+}
+
+TEST(PdfInterpreter, CorpusBrokenSweep)
+{
+	struct Outcome {
+		std::string_view name;
+		std::optional<ErrorCode> open_error;
+	};
+	// As PdfDocument.BrokenCorpusSweep pins them.
+	const std::vector<Outcome> table = {
+		{"corrupt-xref-recoverable.pdf", std::nullopt},
+		{"cyclic-pages-tree.pdf", ErrorCode::DamagedFormat},
+		{"cyclic-xref-prev.pdf", ErrorCode::DamagedFormat},
+		{"deep-nested-array-70.pdf", ErrorCode::RecursionLimitExceeded},
+		{"deflate-bomb-10kb.pdf", ErrorCode::DecompressionLimitExceeded},
+		{"empty-0b.pdf", ErrorCode::NotAPdf},
+		{"non-pdf-header.pdf", ErrorCode::NotAPdf},
+		{"truncated-header.pdf", ErrorCode::DamagedFormat},
+		{"truncated-stream.pdf", ErrorCode::DamagedFormat},
+	};
+	std::vector<std::string> named;
+	for (const Outcome& outcome : table) {
+		named.emplace_back(outcome.name);
+	}
+	EXPECT_EQ(corpus_files("broken"), named) << "a broken corpus file is not in this table, or one is gone";
+	for (const Outcome& outcome : table) {
+		SCOPED_TRACE(outcome.name);
+		const std::string pdf = corpus_text("broken/" + std::string(outcome.name));
+		const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+		auto doc = Document::open_memory(bytes);
+		if (outcome.open_error.has_value()) {
+			ASSERT_FALSE(doc.has_value());
+			EXPECT_EQ(doc.error().code, *outcome.open_error);
+			continue;
+		}
+		ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+		ASSERT_EQ((*doc)->page_count(), 1u);
+		auto list = interpret_page(**doc, 0u);
+		ASSERT_TRUE(list.has_value()) << list.error().message.view();
+		EXPECT_FALSE(all_of<RecordedGlyphRun>(**list).empty()) << "the recovered page's text was not drawn";
+	}
+}
+
 TEST(PdfInterpreter, TextDecodeWork)
 {
 	// Decoding a string is charged to the page's work budget before the builder sees the run, at the font's codespace
