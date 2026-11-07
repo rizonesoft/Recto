@@ -1951,7 +1951,6 @@ private:
 		int64_t alpha_in_data{0};
 		std::shared_ptr<const std::vector<uint8_t>> samples{}; // raw, while kept
 		std::shared_ptr<const std::vector<uint8_t>> alpha{};   // a JPX image's own, for /SMaskInData
-		std::shared_ptr<const std::vector<uint8_t>> matte_alpha{};
 		std::shared_ptr<const ColorSpace> own_space{}; // a JPX image's own profile
 		std::shared_ptr<const DecodedBitmap> stencil_bitmap{};
 		std::shared_ptr<const DecodedBitmap> mask{};
@@ -2164,10 +2163,9 @@ private:
 		return std::shared_ptr<const DecodedBitmap>(std::move(*bitmap));
 	}
 
-	// An /SMask: its gray samples, through its /Decode, as the alpha of a bitmap of its own size; `alpha_out` takes the
-	// alpha per cell when the caller needs it for /Matte. Null when it cannot be used, recorded.
-	[[nodiscard]] PdfResult<std::shared_ptr<const DecodedBitmap>> soft_mask_from(
-		const PdfStream& stream, std::vector<uint8_t>* alpha_out, uint32_t& width_out, uint32_t& height_out)
+	// An /SMask: its gray samples, through its /Decode, as the alpha of a bitmap of its own size. Null when it cannot be
+	// used, recorded.
+	[[nodiscard]] PdfResult<std::shared_ptr<const DecodedBitmap>> soft_mask_from(const PdfStream& stream)
 	{
 		const PdfDict& dict = stream.dict;
 		const std::string filter = last_filter(dict);
@@ -2213,9 +2211,6 @@ private:
 		}
 		const std::shared_ptr<const ColorSpace> gray = ColorSpace::device(ColorSpaceKind::DeviceGray);
 		std::vector<uint8_t> pixels(bytes, 0u);
-		if (alpha_out != nullptr) {
-			alpha_out->assign(static_cast<size_t>(width * height), 0u);
-		}
 		for (size_t y = 0; y < rows; ++y) {
 			const std::span<const uint8_t> row(samples.data() + y * row_bytes, row_bytes);
 			RECTO_PDF_TRY(const std::vector<uint8_t> rgba,
@@ -2224,9 +2219,6 @@ private:
 			for (size_t x = 0; x < width; ++x) {
 				const uint8_t a = rgba[x * 4u];
 				out[x * 4u] = out[x * 4u + 1u] = out[x * 4u + 2u] = out[x * 4u + 3u] = a;
-				if (alpha_out != nullptr) {
-					(*alpha_out)[y * static_cast<size_t>(width) + x] = a;
-				}
 			}
 		}
 		auto bitmap = DecodedBitmap::create(static_cast<uint32_t>(width), static_cast<uint32_t>(height),
@@ -2237,8 +2229,6 @@ private:
 			}
 			return std::shared_ptr<const DecodedBitmap>{};
 		}
-		width_out = static_cast<uint32_t>(width);
-		height_out = static_cast<uint32_t>(height);
 		return std::shared_ptr<const DecodedBitmap>(std::move(*bitmap));
 	}
 
@@ -2302,15 +2292,11 @@ private:
 		const Held soft = soft_value != nullptr ? shared_outside_budget(*soft_value) : Held{};
 		if (const PdfStream* stream = soft ? soft->as_stream() : nullptr) {
 			std::vector<double> matte = numbers_of(stream->dict, "Matte");
-			std::vector<uint8_t> alpha;
-			uint32_t width = 0;
-			uint32_t height = 0;
 			src.mask_interpolate = bool_of(stream->dict, "Interpolate");
-			RECTO_PDF_TRY(src.mask, soft_mask_from(*stream, matte.empty() ? nullptr : &alpha, width, height));
+			RECTO_PDF_TRY(src.mask, soft_mask_from(*stream));
 			if (src.mask != nullptr && !matte.empty()) {
-				if (width == src.width && height == src.height) {
-					src.matte = std::move(matte);
-					src.matte_alpha = std::make_shared<const std::vector<uint8_t>>(std::move(alpha));
+				if (src.mask->width == src.width && src.mask->height == src.height) {
+					src.matte = std::move(matte); // undone from the mask's own alpha, which is already held and charged
 				} else {
 					(void)make_pdf_error(ErrorCode::DamagedFormat, "/Matte needs an /SMask of the image's size; it is ignored"); // recorded
 				}
@@ -2396,11 +2382,16 @@ private:
 				RECTO_PDF_TRY(src.own_space, ColorSpace::from_icc_profile(image.icc_profile, image.components));
 			}
 			if (!src.decoded && src.alpha_in_data != 0 && image.rgba_pixels.size() == size_t{image.width} * image.height * 4u) {
-				std::vector<uint8_t> alpha(size_t{image.width} * image.height);
-				for (size_t i = 0; i < alpha.size(); ++i) {
-					alpha[i] = image.rgba_pixels[i * 4u + 3u];
+				const size_t alpha_bytes = size_t{image.width} * image.height;
+				if (hold_image_bytes(alpha_bytes)) {
+					std::vector<uint8_t> alpha(alpha_bytes);
+					for (size_t i = 0; i < alpha.size(); ++i) {
+						alpha[i] = image.rgba_pixels[i * 4u + 3u];
+					}
+					src.alpha = std::make_shared<const std::vector<uint8_t>>(std::move(alpha));
+				} else {
+					record_image_refusal(alpha_bytes); // its own alpha cannot be kept, so it draws opaque
 				}
-				src.alpha = std::make_shared<const std::vector<uint8_t>>(std::move(alpha));
 			}
 			samples = std::make_shared<const std::vector<uint8_t>>(std::move(image.pixels));
 		} else {
@@ -2601,7 +2592,7 @@ private:
 				// over each component's default range.
 				unmatted.resize(width * comps * 2u);
 				for (size_t x = 0; x < width; ++x) {
-					const double alpha = (*src.matte_alpha)[y * width + x] / 255.0;
+					const double alpha = src.mask->pixels[(y * width + x) * 4u + 3u] / 255.0;
 					for (size_t c = 0; c < comps; ++c) {
 						const auto [low, high] = space.component_range(c);
 						const double d0 = decode.empty() ? low : decode[c * 2u];

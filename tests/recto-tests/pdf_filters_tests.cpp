@@ -8370,7 +8370,8 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 	const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u, 0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
 	const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
 	const auto jp2 = make_jp2(make_j2k_codestream(four, 2u, 1u), 2u, 1u, 4u, boxes);
-	const auto draw_command = [&](std::string_view entry, const std::vector<uint8_t>& image, const std::vector<uint8_t>& second) -> std::optional<DrawImageCommand> {
+	size_t images_drawn = 0;
+	const auto draw_command = [&](std::string_view entry, const std::vector<uint8_t>& image, const std::vector<uint8_t>& second, std::string_view content = "/X Do") -> std::optional<DrawImageCommand> {
 		std::string pdf = "%PDF-1.7\n";
 		std::vector<size_t> offsets;
 		const auto object = [&](const std::string& body) {
@@ -8379,12 +8380,13 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		};
 		object("<< /Type /Catalog /Pages 2 0 R >>");
 		object("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-		object("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /XObject << /X 5 0 R >> >> >>");
-		object("<< /Length 5 >>\nstream\n/X Do\nendstream");
+		object("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources << /XObject << /X 5 0 R /S 7 0 R >> >> >>");
+		object("<< /Length " + std::to_string(content.size()) + " >>\nstream\n" + std::string(content) + "\nendstream");
 		object("<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /Filter /JPXDecode " + std::string(entry) + " /Length " +
 			std::to_string(image.size()) + " >>\nstream\n" + std::string(image.begin(), image.end()) + "\nendstream");
 		object("<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /Filter /JPXDecode /Decode [1 0] /Length " +
 			std::to_string(second.size()) + " >>\nstream\n" + std::string(second.begin(), second.end()) + "\nendstream");
+		object("<< /Type /XObject /Subtype /Image /Width 100 /Height 100 /ImageMask true /Length 1300 >>\nstream\n" + std::string(1300u, '\0') + "\nendstream");
 		const size_t xref = pdf.size();
 		pdf += "xref\n0 " + std::to_string(offsets.size() + 1u) + "\n0000000000 65535 f \n";
 		for (const size_t off : offsets) {
@@ -8398,13 +8400,18 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		EXPECT_TRUE(doc.has_value());
 		auto list = interpret_page(**doc, 0u);
 		EXPECT_TRUE(list.has_value());
+		std::optional<DrawImageCommand> first;
+		images_drawn = 0;
 		for (const DisplayCommand& command : (*list)->commands()) {
 			if (const auto* drawn = command.as<DrawImageCommand>()) {
-				return *drawn;
+				++images_drawn;
+				if (!first.has_value()) {
+					first = *drawn;
+				}
 			}
 		}
-		ADD_FAILURE() << "no image drawn";
-		return std::nullopt;
+		EXPECT_TRUE(first.has_value()) << "no image drawn";
+		return first;
 	};
 	const std::array<J2kTestComponent, 1> gray_cells = {J2kTestComponent{{0u, 255u}, 2u, 1u, 8u, 1u, 1u}};
 	const std::vector<uint8_t> gray_jpx = make_j2k_codestream(gray_cells, 2u, 1u);
@@ -8412,6 +8419,14 @@ TEST(PdfInterpreter, ImageJpxAlpha)
 		const auto command = draw_command(entry, jp2, gray_jpx);
 		return command.has_value() ? command->bitmap : nullptr;
 	};
+	// Its alpha counts against the page's bitmap budget: a stencil leaves room for the alpha and the samples, not for
+	// the alpha and a bitmap. (40,000 bytes for the stencil, 2 of alpha, 6 of samples, which give way to 8 of bitmap.)
+	{
+		const detail::ScopedPageImageBudgetForTesting budget(40'008u);
+		clear_diagnostics();
+		ASSERT_TRUE(draw_command("/SMaskInData 1", jp2, gray_jpx, "/S Do /X Do").has_value());
+		EXPECT_EQ(images_drawn, 1u) << "a JPX image's alpha was not charged";
+	}
 	// A JPX /SMask ignores /Decode, as every JPX image does unless it is an image mask (Table 89).
 	{
 		const auto command = draw_command("/SMask 6 0 R", jp2, gray_jpx);
