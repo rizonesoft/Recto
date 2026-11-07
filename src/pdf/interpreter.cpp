@@ -651,7 +651,7 @@ private:
 		const uint8_t* const memo_key = input.data() + *data_start;
 		if (const auto it = inline_images_.find(memo_key); it != inline_images_.end()) {
 			lexer.seek(it->second.end + 2u);
-			return draws ? draw_inline_image(it->second) : PdfResult<void>{};
+			return draws ? draw_inline_image(it->second, std::nullopt) : PdfResult<void>{};
 		}
 		const auto framed = [&](size_t start, size_t length, size_t end, std::optional<std::vector<uint8_t>> decoded) -> PdfResult<void> {
 			lexer.seek(end + 2u);
@@ -659,14 +659,11 @@ private:
 			image.end = end;
 			image.entries = std::move(entries);
 			image.data = input.subspan(start, length);
-			if (draws && !hidden()) {
-				image.framing_decode = std::move(decoded); // what framing decoded, which drawing needs next
-			}
 			if (inline_images_.size() < kMaxHeldResources) {
 				InlineImage& kept = inline_images_.emplace(memo_key, std::move(image)).first->second;
-				return draws ? draw_inline_image(kept) : PdfResult<void>{};
+				return draws ? draw_inline_image(kept, std::move(decoded)) : PdfResult<void>{};
 			}
-			return draws ? draw_inline_image(image) : PdfResult<void>{};
+			return draws ? draw_inline_image(image, std::move(decoded)) : PdfResult<void>{};
 		};
 		const auto samples = inline_sample_bytes(entries);
 		if (!samples.has_value()) {
@@ -758,7 +755,7 @@ private:
 	// An inline image's source: a stream built from its dictionary (Table 93's keys in full, /I here being /Interpolate)
 	// and its data, read as an image object is, built when it is first drawn, so a hidden one costs only its framing.
 	// False when nothing can be drawn, recorded.
-	[[nodiscard]] PdfResult<bool> inline_source(InlineImage& image)
+	[[nodiscard]] PdfResult<bool> inline_source(InlineImage& image, std::optional<std::vector<uint8_t>> framing_decode)
 	{
 		ImageSource& source = image.source;
 		const InlineEntries& entries = image.entries;
@@ -804,28 +801,29 @@ private:
 		RECTO_PDF_RETURN_IF_ERROR(read_image_dictionary(source, stream->dict));
 		RECTO_PDF_RETURN_IF_ERROR(prepare_stencil(source, *stream));
 		// The chain's samples, already decoded to frame it. An image filter's stream form is not the image path's.
-		if (image.framing_decode.has_value() && source.usable && !source.stencil && !source.image_filter) {
-			const size_t bytes = image.framing_decode->size();
+		if (framing_decode.has_value() && source.usable && !source.stencil && !source.image_filter) {
+			const size_t bytes = framing_decode->size();
 			if (hold_image_bytes(bytes)) {
 				image_decoded_ = std::min(image_budget_, image_decoded_ + bytes);
-				source.samples = std::make_shared<const std::vector<uint8_t>>(std::move(*image.framing_decode));
+				source.samples = std::make_shared<const std::vector<uint8_t>>(std::move(*framing_decode));
 				source.decoded = true;
 			}
 		}
-		image.framing_decode.reset();
 		return source.usable;
 	}
 
 	// Hidden content draws nothing and costs nothing past its framing, and what the builder refuses is skipped as a
 	// malformed operator is.
-	[[nodiscard]] PdfResult<void> draw_inline_image(InlineImage& image)
+	// `framing_decode` is what framing just decoded, a parameter so that it lives only for this draw and cannot be
+	// kept uncharged whichever way preparing the image ends.
+	[[nodiscard]] PdfResult<void> draw_inline_image(InlineImage& image, std::optional<std::vector<uint8_t>> framing_decode)
 	{
 		if (hidden()) {
 			return {};
 		}
 		if (!image.prepared) {
 			image.prepared = true;
-			RECTO_PDF_TRY(const bool usable, inline_source(image));
+			RECTO_PDF_TRY(const bool usable, inline_source(image, std::move(framing_decode)));
 			image.source.usable = usable;
 		}
 		if (!image.source.usable) {
@@ -2098,7 +2096,6 @@ private:
 		size_t end{0};
 		InlineEntries entries{};
 		std::span<const uint8_t> data{}; // in content the page holds for its life
-		std::optional<std::vector<uint8_t>> framing_decode{};
 		bool prepared{false};
 		ImageSource source{};
 	};

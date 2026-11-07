@@ -5982,6 +5982,18 @@ TEST(PdfInterpreter, InlineImagesHidden)
 		ASSERT_NE(r.list, nullptr);
 		EXPECT_EQ(images_of(r).size(), 1u) << "hidden inline images spent the visible image's budget";
 	}
+	// A compressed image past the budget is refused and recorded, and the page goes on. Its framing decode lives only for
+	// the draw that refused it (a parameter of draw_inline_image): nothing of it is kept for the page.
+	{
+		const std::string big = "BI /W 512 /H 512 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(size_t{512} * 512u, '\x40')) + " EI ";
+		const detail::ScopedPageImageBudgetForTesting budget(1024u);
+		clear_diagnostics();
+		const auto r = interpret_visible(big + big + "0 0 1 1 re f", resources, objects, &none);
+		ASSERT_NE(r.list, nullptr);
+		EXPECT_TRUE(images_of(r).empty());
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+		EXPECT_TRUE(recorded(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes));
+	}
 	// A hidden image is framed and no more; a drawn one takes its samples from that same decode, so it costs no more.
 	{
 		const std::string compressed = "BI /W 1 /H 1 /BPC 8 /CS /G /F /Fl ID " + stored_zlib(std::string(1u, '\x80')) + " EI";
