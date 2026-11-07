@@ -5337,7 +5337,7 @@ TEST(PdfInterpreter, ImageMasks)
 		EXPECT_EQ(cell(*images_of(r)[0].bitmap, 0u, 0u).b, 0);
 	}
 	// A key that does not fit is ignored, recorded: wrong length, past the sample's range.
-	for (const char* key : {"[1 1 2 2]", "[0 300]"}) {
+	for (const char* key : {"[1 1 2 2]", "[0 300]", "[1 100000000000000000000.0]", "[0.5 1.5]", "[-1 1]", "[1 -1]", "[2 1]"}) {
 		SCOPED_TRACE(key);
 		clear_diagnostics();
 		EXPECT_EQ(alphas(one_image("/Width 1 /Height 1 " + gray + " /Mask " + key, std::string_view("\x01", 1u))), (std::vector<int>{255}));
@@ -5436,6 +5436,32 @@ TEST(PdfInterpreter, ImageMasks)
 		ASSERT_EQ(images_of(r).size(), 1u);
 		EXPECT_EQ(images_of(r)[0].soft_mask, nullptr) << "a /Mask that is no image mask was used";
 		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	// An image mask whose supplied /BitsPerComponent is not 1 cannot be used; omitted, or 1, it can.
+	{
+		clear_diagnostics();
+		const auto r = with_mask("/Mask 6 0 R", {image_xobject("/Width 2 /Height 1 /ImageMask true /BitsPerComponent 8", "\x40\x40")});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		EXPECT_EQ(images_of(r)[0].soft_mask, nullptr) << "a mask of bad /BitsPerComponent was read as one bit";
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+		EXPECT_EQ(all_of<DrawPathCommand>(*r.list).size(), 1u);
+		const auto one = with_mask("/Mask 6 0 R", {image_xobject("/Width 2 /Height 1 /ImageMask true /BitsPerComponent 1", "\x40")});
+		ASSERT_EQ(images_of(one).size(), 1u);
+		EXPECT_NE(images_of(one)[0].soft_mask, nullptr);
+		clear_diagnostics();
+		const auto stencil = one_image("/Width 2 /Height 1 /ImageMask true /BitsPerComponent 8", "\x40\x40");
+		EXPECT_TRUE(images_of(stencil).empty());
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat));
+	}
+	// A short /SMask keeps its rows, the rest transparent, and says so.
+	{
+		clear_diagnostics();
+		const auto r = with_mask("/SMask 6 0 R", {image_xobject("/Width 1 /Height 2 " + gray, "\x80")});
+		ASSERT_EQ(images_of(r).size(), 1u);
+		ASSERT_NE(images_of(r)[0].soft_mask, nullptr);
+		EXPECT_EQ(cell(*images_of(r)[0].soft_mask, 0u, 0u).a, 0x80);
+		EXPECT_EQ(cell(*images_of(r)[0].soft_mask, 0u, 1u).a, 0);
+		EXPECT_TRUE(recorded(ErrorCode::DamagedFormat)) << "a short /SMask hid part of the image without a word";
 	}
 }
 

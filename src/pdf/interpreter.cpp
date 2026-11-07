@@ -2108,6 +2108,11 @@ private:
 			(void)make_pdf_error(ErrorCode::DamagedFormat, "A stencil mask's size cannot be used; it is not drawn"); // recorded
 			return std::shared_ptr<const DecodedBitmap>{};
 		}
+		// 8.9.6.2: if present it shall be 1. Other data read as one bit would mask the wrong cells.
+		if (!image_filter && int_of(dict, "BitsPerComponent").value_or(1) != 1) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "A stencil mask's /BitsPerComponent is not 1; it is not used"); // recorded
+			return std::shared_ptr<const DecodedBitmap>{};
+		}
 		RECTO_PDF_TRY(std::optional<ImageStream> data, decoded_image(stream));
 		if (!data.has_value()) {
 			return std::shared_ptr<const DecodedBitmap>{};
@@ -2190,6 +2195,9 @@ private:
 		const std::vector<uint8_t>& samples = data->image.has_value() ? data->image->pixels : data->samples;
 		const size_t row_bytes = static_cast<size_t>((width * bits + 7u) / 8u);
 		const size_t rows = std::min<size_t>(static_cast<size_t>(height), samples.size() / row_bytes);
+		if (rows < height) {
+			(void)make_pdf_error(ErrorCode::DamagedFormat, "An /SMask's data is short; what it does not hold is transparent"); // recorded
+		}
 		const size_t bytes = static_cast<size_t>(width * height * 4u);
 		if (!hold_image_bytes(bytes)) {
 			record_image_refusal(bytes);
@@ -2321,10 +2329,16 @@ private:
 				return {};
 			}
 			if (mask && mask->as_array() != nullptr) {
-				for (const double n : numbers_of(dict, "Mask")) {
-					src.color_key.push_back(static_cast<int64_t>(n));
-				}
-				if (src.color_key.empty()) {
+				// Whole numbers a sample can hold, read before any becomes an integer: a real past int64_t has no conversion.
+				const std::vector<double> key = numbers_of(dict, "Mask");
+				const bool whole = !key.empty() && std::all_of(key.begin(), key.end(), [](double n) {
+					return n >= 0.0 && n <= 65'535.0 && n == std::floor(n);
+				});
+				if (whole) {
+					for (const double n : key) {
+						src.color_key.push_back(static_cast<int64_t>(n));
+					}
+				} else {
 					(void)make_pdf_error(ErrorCode::DamagedFormat, "A colour key /Mask cannot be used; it is ignored"); // recorded
 				}
 				return {};
@@ -2549,7 +2563,7 @@ private:
 		if (use_key) {
 			use_key = src.color_key.size() == comps * 2u;
 			for (size_t i = 0; use_key && i < comps; ++i) {
-				use_key = src.color_key[i * 2u] >= 0 && src.color_key[i * 2u + 1u] <= int64_t{max_sample};
+				use_key = src.color_key[i * 2u] <= src.color_key[i * 2u + 1u] && src.color_key[i * 2u + 1u] <= int64_t{max_sample};
 			}
 			if (!use_key) {
 				(void)make_pdf_error(ErrorCode::DamagedFormat, "A colour key /Mask does not fit its image; it is ignored"); // recorded
