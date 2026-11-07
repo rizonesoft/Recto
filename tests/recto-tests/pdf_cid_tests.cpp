@@ -561,6 +561,29 @@ TEST(PdfFont, SharedDescendant)
 		const auto tail = diagnostics_tail(32u);
 		EXPECT_GE(std::count_if(tail.begin(), tail.end(), [](const DiagnosticEntry& e) { return e.code == ErrorCode::DamagedFormat; }), 2);
 	}
+	// One object named both ways: a font whose /DescendantFonts [7 0 R] finds an array where a dictionary belongs is damaged,
+	// and a font whose /DescendantFonts 7 0 R names that array properly is not, in either order.
+	{
+		Objects o;
+		o.table.emplace(7u, array({PdfValue(dict({{"Type", name("Font")}, {"Subtype", name("CIDFontType2")}, {"DW", number(777)}}))}));
+		SharedObjects shared(o);
+		const PdfDict malformed = type0(name("Identity-H"), array({ref(7u)}));
+		const PdfDict proper = type0(name("Identity-H"), ref(7u));
+		{
+			Type0Memo memo;
+			RECTO_EXPECT_ERR(load_type0_font(malformed, refuses, &shared.resolver, nullptr, &memo), ErrorCode::DamagedFormat);
+			const auto good = load_type0_font(proper, refuses, &shared.resolver, nullptr, &memo);
+			ASSERT_TRUE(good.has_value()) << "a malformed font's failure was given to a font that names the array properly";
+			EXPECT_DOUBLE_EQ((*good)->widths().advance(1u), 0.777);
+		}
+		{
+			Type0Memo memo;
+			const auto good = load_type0_font(proper, refuses, &shared.resolver, nullptr, &memo);
+			ASSERT_TRUE(good.has_value());
+			EXPECT_DOUBLE_EQ((*good)->widths().advance(1u), 0.777);
+			RECTO_EXPECT_ERR(load_type0_font(malformed, refuses, &shared.resolver, nullptr, &memo), ErrorCode::DamagedFormat);
+		}
+	}
 	// A CMap kept for a font whose descendant then fails is counted, so a page cannot keep them past its budget uncharged.
 	{
 		Objects o;

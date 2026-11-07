@@ -902,12 +902,12 @@ struct Type0Loader {
 // makes, kept when there is a memo and a key.
 template <typename T, typename Build>
 [[nodiscard]] PdfResult<std::shared_ptr<const T>> built_once(Type0Memo* memo,
-	std::unordered_map<uint64_t, Type0Memo::Entry<T>>* slots, const std::optional<IndirectRef>& ref, bool& in_memo, Build&& build)
+	std::unordered_map<uint64_t, Type0Memo::Entry<T>>* slots, const std::optional<uint64_t>& key, bool& in_memo, Build&& build)
 {
 	in_memo = false;
-	const bool keeps = memo != nullptr && ref.has_value();
+	const bool keeps = memo != nullptr && key.has_value();
 	if (keeps) {
-		if (const auto it = slots->find(object_key(*ref)); it != slots->end()) {
+		if (const auto it = slots->find(*key); it != slots->end()) {
 			if (it->second.failure.has_value()) {
 				if (it->second.failure->code != ErrorCode::UnsupportedFeature) {
 					record_diagnostic(*it->second.failure); // an UnsupportedFeature is recorded by whoever handles it
@@ -921,13 +921,13 @@ template <typename T, typename Build>
 	PdfResult<T> made = build();
 	if (!made.has_value()) {
 		if (keeps && memoizable(made.error().code)) {
-			slots->emplace(object_key(*ref), Type0Memo::Entry<T>{nullptr, made.error()});
+			slots->emplace(*key, Type0Memo::Entry<T>{nullptr, made.error()});
 		}
 		return made.error();
 	}
 	std::shared_ptr<const T> value = std::make_shared<const T>(std::move(*made));
 	if (keeps) {
-		slots->emplace(object_key(*ref), Type0Memo::Entry<T>{value, std::nullopt});
+		slots->emplace(*key, Type0Memo::Entry<T>{value, std::nullopt});
 		memo->charge(value->memory_bytes());
 		in_memo = true;
 	}
@@ -958,7 +958,8 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 			if (ref.has_value()) {
 				loader.cmap_objects.insert(ref->obj_num);
 			}
-			RECTO_PDF_TRY(cmap, built_once<CidCMap>(memo, memo != nullptr ? &memo->cmaps : nullptr, ref, cmap_in_memo,
+			const std::optional<uint64_t> cmap_key = ref.has_value() ? std::optional<uint64_t>(object_key(*ref)) : std::nullopt;
+			RECTO_PDF_TRY(cmap, built_once<CidCMap>(memo, memo != nullptr ? &memo->cmaps : nullptr, cmap_key, cmap_in_memo,
 				[&]() -> PdfResult<CidCMap> { return loader.cmap(*encoding->as_stream(), 1u); }));
 		} else {
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font has no /Encoding CMap");
@@ -970,13 +971,20 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 			return cid_error(ErrorCode::DamagedFormat, "Type 0 font does not have exactly one descendant font");
 		}
 		const PdfValue& entry = (*descendants->as_array())[0];
-		// Its object, else the array's when the array is shared and holds it directly.
-		const std::optional<IndirectRef> descendant_ref = entry.as_ref().has_value() ? entry.as_ref() : type0.get_ref("DescendantFonts");
+		// Its object, else the array's when the array is shared and holds it directly, apart from the object's own key:
+		// one object can be named both ways, and a font that finds an array where a dictionary belongs is damaged by that
+		// alone, which says nothing of a font that names the array properly.
+		std::optional<uint64_t> descendant_key;
+		if (const std::optional<IndirectRef> own = entry.as_ref()) {
+			descendant_key = object_key(*own);
+		} else if (const std::optional<IndirectRef> list = type0.get_ref("DescendantFonts")) {
+			descendant_key = object_key(*list) | (uint64_t{1} << 63u);
+		}
 		// With a memo a program's failure is kept with the descendant, whichever font asks next.
 		const bool keep_program_error = program_error != nullptr || memo != nullptr;
 		bool descendant_in_memo = false;
 		RECTO_PDF_TRY(std::shared_ptr<const CidDescendant> built,
-			built_once<CidDescendant>(memo, memo != nullptr ? &memo->descendants : nullptr, descendant_ref, descendant_in_memo,
+			built_once<CidDescendant>(memo, memo != nullptr ? &memo->descendants : nullptr, descendant_key, descendant_in_memo,
 				[&]() -> PdfResult<CidDescendant> {
 					Held descendant_holder;
 					RECTO_PDF_TRY(const PdfValue* descendant_value, loader.value(&entry, descendant_holder));
