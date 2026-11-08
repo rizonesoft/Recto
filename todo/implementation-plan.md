@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 106 | Checklist items: 702
+Sections: 107 | Checklist items: 709
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -117,7 +117,7 @@ Sections: 106 | Checklist items: 702
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
-| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 12    |
+| [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 15    |
 | [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 10    |
 | [ ]    | D01 T02 §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics                | windows-host              | 8     |
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host              | 12    |
@@ -125,6 +125,7 @@ Sections: 106 | Checklist items: 702
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
 | [ ]    | D01 T02 §38 | Cancellable Flate compression and incremental revisions (`CancelToken`)                  | windows-host              | 4     |
+| [ ]    | D01 T02 §49 | Blending in a transparency group's own colour space (`/CS`)                              | windows-host              | 4     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
@@ -924,6 +925,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 100/855 verified sections, 43 ready to run now.
+Progress: 100/856 verified sections, 43 ready to run now.
 
-Checklist: 649/6316 items completed (includes Commit items).
+Checklist: 649/6323 items completed (includes Commit items).
