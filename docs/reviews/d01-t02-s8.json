@@ -1,0 +1,81 @@
+{
+  "ref": "D01 T02 \u00a78",
+  "title": "`DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state",
+  "implementation_sha": "49d5486df97773b7bb35accc1e95feca3316f292",
+  "date": "2026-11-09",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s8.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build.ps1 -EnableASAN -Configuration Debug -TestFilter Actor.*:AtomicWrite.* -> [  PASSED  ] 23 tests, AtomicWrite.AllocationFailures skipped (no allocation injection under ASan); debug_live_documents() and debug_live_display_lists() return to their start in Actor.TwentyDocumentsLifecycle",
+    "removing close_source->cancel() from close() -> Actor.CloseDuringCompile FAILED (closing during a compile: returned in 66804.805 ms)",
+    "build.cmd -> 0 Warning(s) 0 Error(s) on x64 and ARM64 Debug and Release; x64 Debug [  PASSED  ] 472 tests (FlateCompressSpeed skipped); x64 Release [  PASSED  ] 473 tests on re-run (PdfRasterizer.FlushBoundsEndDraw 34.5 ms on the loaded host first)"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s8.md",
+    "verdict": "filed",
+    "candidate": "bb0e8d0bf088e70d4e009aa2c3f8711c33462679",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D02 T01 \u00a712"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s8.md",
+    "candidate": "665a83ee1a029e91859a64a3ca5a6e9e5817ee42",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

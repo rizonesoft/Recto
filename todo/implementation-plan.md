@@ -113,7 +113,7 @@ Sections: 106 | Checklist items: 700
 | [x]    | D01 T02 §4  | Content-stream interpreter complete over the render corpus                               | windows-host              | 3     |
 | [x]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 21    |
 | [x]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 11    |
-| [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 8     |
+| [x]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 8     |
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
@@ -924,6 +924,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 99/855 verified sections, 40 ready to run now.
+Progress: 100/855 verified sections, 43 ready to run now.
 
-Checklist: 648/6314 items completed (includes Commit items).
+Checklist: 649/6314 items completed (includes Commit items).
