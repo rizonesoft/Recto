@@ -454,6 +454,8 @@ Implement `src/core/document_actor.h` and `src/core/document_actor.cpp` (`recto:
 
 ## 9. `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation
 
+> **Started:** 2026-11-08T23:35Z
+
 Implement `src/core/render_pool.h/.cpp` and `src/core/tile_scheduler.h/.cpp` (`recto::core::RenderPool` and `recto::core::TileScheduler`, foundation plan sections 4.3, 4.5, 4.7):
 - `RenderPool`: spawns `N = std::clamp(std::thread::hardware_concurrency() - 2u, 2u, 8u)` worker threads (or an explicit `worker_count` override for determinism testing in `D01 T03 §6`). Each worker thread initializes COM (`COINIT_MULTITHREADED`) and owns one dedicated `recto::pdf::Rasterizer` instance for its entire lifetime.
 - `TileKey` (`doc_id`, `page_index`, `zoom_bucket_milli`, `rotation_deg`, `tile_x`, `tile_y`) and 4 priority tiers:
