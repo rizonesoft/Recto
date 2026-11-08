@@ -33,6 +33,14 @@ class DisplayList;
 // display lists on shutdown.
 [[nodiscard]] int64_t debug_live_display_lists() noexcept;
 
+namespace detail {
+
+// Makes the calling thread's next `DisplayList` find no memory to measure its distinct images, once, for a test.
+void fail_next_list_measure_for_testing() noexcept;
+[[nodiscard]] bool fail_list_measure_for_testing() noexcept;
+
+} // namespace detail
+
 // 2D point in PDF user/page/text space (1/72 inch points).
 struct PdfPoint {
 	double x{0.0};

@@ -41,7 +41,8 @@ void reached(detail::AtomicWriteStage stage, const std::wstring& temporary) noex
 	}
 }
 
-constexpr DWORD kChunkBytes = 16u << 20u;
+// 4 MiB: a cancel waits at most one chunk's read and compare, about a millisecond from the cache.
+constexpr DWORD kChunkBytes = 4u << 20u;
 constexpr int kReplaceAttempts = 3;
 constexpr DWORD kReplaceRetryMs = 50u;
 
@@ -92,8 +93,8 @@ private:
 	return make_pdf_error(error == ERROR_NOT_ENOUGH_MEMORY || error == ERROR_OUTOFMEMORY ? ErrorCode::OutOfMemory : ErrorCode::IoError, what);
 }
 
-// Whether the file at `path` holds exactly `bytes`.
-[[nodiscard]] bool file_holds(const std::wstring& path, std::span<const uint8_t> bytes, DWORD& error) noexcept
+// Whether the file at `path` holds exactly `bytes`; `ERROR_CANCELLED` when `cancel` is seen between chunks.
+[[nodiscard]] bool file_holds(const std::wstring& path, std::span<const uint8_t> bytes, DWORD& error, const pdf::CancelToken& cancel = {}) noexcept
 {
 	Handle file(::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
 	if (!file.valid()) {
@@ -118,6 +119,13 @@ private:
 	}
 	size_t at = 0u;
 	while (at < bytes.size()) {
+		if (at != 0u) {
+			reached(detail::AtomicWriteStage::ReadBackChunk, path);
+		}
+		if (cancel.is_cancelled()) {
+			error = ERROR_CANCELLED;
+			return false;
+		}
 		const DWORD want = static_cast<DWORD>(std::min<size_t>(bytes.size() - at, kChunkBytes));
 		DWORD got = 0u;
 		if (::ReadFile(file.get(), chunk.data(), want, &got, nullptr) == FALSE || got != want) {
@@ -238,7 +246,10 @@ PdfResult<void> atomic_write_file(
 		file.reset();
 		reached(detail::AtomicWriteStage::ReadBack, temporary);
 		DWORD read_error = injected(detail::AtomicWriteStage::ReadBack);
-		if (read_error != 0u || !file_holds(temporary, bytes, read_error)) {
+		if (read_error != 0u || !file_holds(temporary, bytes, read_error, cancel)) {
+			if (read_error == ERROR_CANCELLED) {
+				return pdf::detail::cancelled_error();
+			}
 			return write_failure(read_error, "The temporary file did not read back as written; the destination is unchanged");
 		}
 		::SetFileAttributesW(temporary.c_str(), FILE_ATTRIBUTE_NORMAL);
@@ -251,9 +262,16 @@ PdfResult<void> atomic_write_file(
 		// The commit point.
 		DWORD replace_error = injected(detail::AtomicWriteStage::Replace);
 		for (int attempt = 0; replace_error == 0u && attempt < kReplaceAttempts; ++attempt) {
+			if (attempt != 0) {
+				// A cancel while a scanner held the file is still before the commit point.
+				reached(detail::AtomicWriteStage::Retry, temporary);
+				if (cancel.is_cancelled()) {
+					return pdf::detail::cancelled_error();
+				}
+			}
 			const DWORD existing = ::GetFileAttributesW(target.c_str());
 			const BOOL done = existing != INVALID_FILE_ATTRIBUTES
-				? ::ReplaceFileW(target.c_str(), temporary.c_str(), nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS, nullptr, nullptr)
+				? ::ReplaceFileW(target.c_str(), temporary.c_str(), nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)
 				: ::MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH);
 			if (done != FALSE) {
 				remove.active = false;

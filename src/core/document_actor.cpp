@@ -236,8 +236,18 @@ struct DocumentHandle::State {
 			++stats.cache_misses;
 		}
 		RECTO_PDF_TRY(std::shared_ptr<const pdf::DisplayList> list, pdf::interpret_page(*document, page, {}, nullptr, cancel));
-		lists.push_front(CachedList{page, list});
-		index[page] = lists.begin();
+		// All or nothing: the index slot first, then the list, so memory running out at either leaves the cache as it was.
+		if (failing(detail::ActorFailure::CacheIndex)) {
+			throw std::bad_alloc();
+		}
+		const auto slot = index.try_emplace(page, lists.end()).first;
+		try {
+			lists.push_front(CachedList{page, list});
+		} catch (...) {
+			index.erase(slot);
+			throw;
+		}
+		slot->second = lists.begin();
 		list_bytes += list->memory_bytes();
 		evict();
 		touch_stats();
@@ -320,13 +330,18 @@ DocumentHandle::DocumentHandle(std::unique_ptr<State> state) noexcept
 PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOptions& options) noexcept
 {
 	try {
+		// Everything that allocates comes before the thread: a failure after it would unwind a joinable thread.
 		auto state = std::make_unique<State>(options);
+		if (failing(detail::ActorFailure::HandleCreate)) {
+			throw std::bad_alloc();
+		}
+		std::shared_ptr<DocumentHandle> handle(new DocumentHandle(std::move(state)));
 		if (failing(detail::ActorFailure::ThreadStart)) {
 			throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
 		}
-		State* const raw = state.get();
-		state->thread = std::thread([raw] { raw->main(); });
-		return std::shared_ptr<DocumentHandle>(new DocumentHandle(std::move(state)));
+		State* const raw = handle->state_.get();
+		raw->thread = std::thread([raw] { raw->main(); });
+		return handle;
 	} catch (const std::system_error&) {
 		return make_pdf_error(ErrorCode::InternalError, "A document's thread could not start");
 	} catch (const std::bad_alloc&) {

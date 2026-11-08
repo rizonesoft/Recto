@@ -113,6 +113,8 @@ enum class ActorFailure : uint8_t {
 	ThreadStart,
 	QueueInsert,
 	ActorCopy,
+	HandleCreate,
+	CacheIndex,
 };
 
 class ScopedActorFailureForTesting {

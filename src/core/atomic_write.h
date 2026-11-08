@@ -12,15 +12,16 @@
 namespace recto::core {
 
 // Writes `bytes` to `destination`: a temporary file beside it, flushed, read back and compared, then `ReplaceFileW` over
-// an existing file (which keeps its ACL) or `MoveFileExW` for a new one, and read back once more. A sharing violation on
-// the replace is retried, since a scanner often holds a new file briefly.
+// an existing file (which keeps its ACL, or the save fails with the destination unchanged) or `MoveFileExW` for a new
+// one, and read back once more. A sharing violation on the replace is retried, since a scanner often holds a new file
+// briefly.
 //
 // By publication state: a failure before the replace leaves the destination unchanged and removes the temporary file; a
 // failed replace with the destination still there, or a failed move to a path that had no file, does the same; a failed
-// replace after which a destination that was there is gone
-// keeps the temporary file, then the only copy, and names it in the error; a read-back after the replace that differs is
-// an error naming the destination. Cancelled before the replace, nothing changed; past it, the file is saved and the
-// call succeeds.
+// replace after which a destination that was there is gone keeps the temporary file, then the only copy, and names it in
+// the error; a read-back after the replace that differs is an error naming the destination. Cancelled before the replace
+// (the read-back is polled by chunk, and each retry checks), nothing changed; past it, the file is saved and the call
+// succeeds.
 [[nodiscard]] pdf::PdfResult<void> atomic_write_file(
 	const std::filesystem::path& destination, std::span<const uint8_t> bytes, const pdf::CancelToken& cancel = {}) noexcept;
 
@@ -33,6 +34,8 @@ enum class AtomicWriteStage : uint8_t {
 	ReadBack,
 	Replace,
 	Verify,
+	ReadBackChunk, // between chunks of the read-back before the replace
+	Retry,         // before each retry of a replace a sharing violation refused
 };
 
 // Makes the calling thread's next atomic write fail at `stage` with `win32_error`, for a test.
@@ -48,8 +51,9 @@ private:
 	uint32_t previous_error_;
 };
 
-// Called on the calling thread just before `ReadBack`, `Replace` (ahead of the last cancel check) and `Verify`, with the
-// temporary file's path, so a test can change the files on disk or cancel at that point.
+// Called on the calling thread just before `ReadBack`, each later `ReadBackChunk`, `Replace` (ahead of the last cancel
+// check), each `Retry` (ahead of its cancel check) and `Verify`, with the temporary file's path, so a test can change the
+// files on disk or cancel at that point.
 using AtomicWriteHook = void (*)(AtomicWriteStage stage, const std::filesystem::path& temporary, void* context) noexcept;
 
 class ScopedAtomicWriteHookForTesting {

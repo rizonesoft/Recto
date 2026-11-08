@@ -3,9 +3,14 @@
 #include "../../src/core/document_actor.h"
 
 #include "../../src/pdf/error.h"
+#include "../../src/pdf/interpreter.h"
 
 #include "cancel_test_support.h"
 #include "test_support.h"
+
+// After windows.h, which cancel_test_support.h brings in.
+#include <aclapi.h>
+#include <sddl.h>
 
 #include <gtest/gtest.h>
 
@@ -386,6 +391,33 @@ TEST(Actor, DisplayListByteBudget)
 		ASSERT_TRUE(finish(tight->get_display_list(page)).has_value());
 		EXPECT_EQ(tight->stats().cached_pages, 1u);
 	}
+}
+
+TEST(Actor, ListBytesWithoutMemoryToMeasure)
+{
+	// Two images, one drawn three times. Measured with no memory to find the distinct ones, a list may count too much and
+	// never too little, so the cache's byte budget stays a ceiling.
+	const std::string image_a = "<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4096 >>\nstream\n" + std::string(4096u, 'a') + "\nendstream";
+	const std::string image_b = "<< /Type /XObject /Subtype /Image /Width 64 /Height 64 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4096 >>\nstream\n" + std::string(4096u, 'b') + "\nendstream";
+	recto::test::TempDir dir;
+	const auto path = written(dir, "images.pdf",
+		pdf_of(1u, "q 50 0 0 50 0 0 cm /A Do Q q 50 0 0 50 60 0 cm /A Do Q q 50 0 0 50 120 0 cm /A Do Q q 50 0 0 50 0 60 cm /B Do Q",
+			"<< /XObject << /A 5 0 R /B 6 0 R >> >>", {image_a, image_b}));
+	auto document = Document::open(path);
+	ASSERT_TRUE(document.has_value());
+	const auto measured = pdf::interpret_page(**document, 0u, {}, nullptr, {});
+	ASSERT_TRUE(measured.has_value());
+	pdf::detail::fail_next_list_measure_for_testing();
+	const auto unmeasured = pdf::interpret_page(**document, 0u, {}, nullptr, {});
+	ASSERT_TRUE(unmeasured.has_value());
+	EXPECT_FALSE(pdf::detail::fail_list_measure_for_testing()) << "the failure was never consumed, so nothing is proven";
+	size_t images = 0u;
+	for (const pdf::DisplayCommand& command : (*measured)->commands()) {
+		images += command.as<pdf::DrawImageCommand>() != nullptr ? 1u : 0u;
+	}
+	ASSERT_EQ(images, 4u);
+	EXPECT_GE((*measured)->memory_bytes(), 2u * 64u * 64u) << "the two images are held";
+	EXPECT_GT((*unmeasured)->memory_bytes(), (*measured)->memory_bytes()) << "without memory to find repeats, each draw counts";
 }
 
 TEST(Actor, ConcurrentRequests)
@@ -842,6 +874,38 @@ TEST(Actor, AsyncFailures)
 		EXPECT_EQ(handle.error().code, ErrorCode::InternalError);
 	}
 	EXPECT_EQ(debug_live_documents(), 0);
+	{
+		// Memory running out for the handle itself: a typed result, and no thread was started to be unwound.
+		const detail::ScopedActorFailureForTesting failure(detail::ActorFailure::HandleCreate);
+		const auto handle = DocumentHandle::start();
+		ASSERT_FALSE(handle.has_value());
+		EXPECT_EQ(handle.error().code, ErrorCode::OutOfMemory);
+	}
+	EXPECT_EQ(debug_live_documents(), 0);
+	{
+		// Memory running out while a compiled list is cached: nothing half-inserted, and the cache keeps its count.
+		const auto two = written(dir, "two.pdf", pdf_of(2u, "0 0 10 10 re f"));
+		ActorOptions options;
+		options.max_cached_pages = 1u;
+		const auto cache = started(options);
+		ASSERT_NE(cache, nullptr);
+		ASSERT_TRUE(finish(cache->open(two)).has_value());
+		{
+			const detail::ScopedActorFailureForTesting failure(detail::ActorFailure::CacheIndex);
+			expect_code(cache->get_display_list(0u), ErrorCode::OutOfMemory);
+		}
+		EXPECT_EQ(cache->stats().cached_pages, 0u);
+		EXPECT_EQ(cache->stats().cached_bytes, 0u);
+		const auto first = finish(cache->get_display_list(1u));
+		ASSERT_TRUE(first.has_value());
+		const auto second = finish(cache->get_display_list(0u));
+		ASSERT_TRUE(second.has_value());
+		EXPECT_EQ(cache->stats().cached_pages, 1u);
+		EXPECT_EQ(cache->stats().cached_bytes, (*second)->memory_bytes()) << "the evicted list's bytes were not the ones counted";
+		const auto again = finish(cache->get_display_list(0u));
+		ASSERT_TRUE(again.has_value());
+		EXPECT_EQ(again->get(), second->get()) << "page 0 was not cached after the failure";
+	}
 	const auto handle = started();
 	ASSERT_NE(handle, nullptr);
 	ASSERT_TRUE(finish(handle->open(path)).has_value());
@@ -1051,6 +1115,32 @@ TEST(AtomicWrite, PublicationStates)
 		EXPECT_EQ(recto::test::read_file_bytes(target), after);
 		reset();
 	}
+	// Cancelled while a scanner holds the file between retries, then released: still before the commit point, so unchanged.
+	{
+		auto source = pdf::CancelSource::create();
+		ASSERT_TRUE(source.has_value());
+		struct Scanner {
+			pdf::CancelSource* source;
+			HANDLE held;
+			static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
+			{
+				auto& self = *static_cast<Scanner*>(context);
+				if (stage == AtomicWriteStage::Retry && self.held != INVALID_HANDLE_VALUE) {
+					self.source->cancel();
+					::CloseHandle(self.held);
+					self.held = INVALID_HANDLE_VALUE;
+				}
+			}
+		} scanner{&*source, ::CreateFileW(target.c_str(), GENERIC_READ, 0u, nullptr, OPEN_EXISTING, 0u, nullptr)};
+		ASSERT_NE(scanner.held, INVALID_HANDLE_VALUE);
+		const detail::ScopedAtomicWriteHookForTesting hook(&Scanner::hook, &scanner);
+		const auto done = atomic_write_file(target, after, source->token());
+		ASSERT_FALSE(done.has_value());
+		EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
+		EXPECT_EQ(scanner.held, INVALID_HANDLE_VALUE) << "no retry was reached";
+		EXPECT_EQ(recto::test::read_file_bytes(target), before);
+		EXPECT_EQ(temporaries(), 0u);
+	}
 	// A failed read-back after publication: said plainly, naming the destination.
 	{
 		const ScopedAtomicWriteFailureForTesting failure(AtomicWriteStage::Verify, ERROR_FILE_CORRUPT);
@@ -1080,6 +1170,95 @@ TEST(AtomicWrite, PublicationStates)
 	const DWORD attributes = ::GetFileAttributesW(fresh.c_str());
 	EXPECT_EQ(attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_TEMPORARY), 0u) << "a saved file kept the temporary file's attributes";
 	EXPECT_EQ(temporaries(), 0u);
+}
+
+TEST(AtomicWrite, CancelDuringReadBack)
+{
+	// 64 MiB is sixteen chunks: a cancel from another thread while the read-back runs stops it at the next chunk, before
+	// the commit point.
+	using detail::AtomicWriteStage;
+	recto::test::TempDir dir;
+	const auto target = dir.file_path("large.pdf");
+	const std::vector<uint8_t> before{1u, 2u, 3u};
+	recto::test::write_file_bytes(target, before);
+	const std::vector<uint8_t> large(64u << 20u, uint8_t{0x5a});
+	auto source = pdf::CancelSource::create();
+	ASSERT_TRUE(source.has_value());
+	struct Reading {
+		std::atomic<bool> reached{false};
+		std::atomic<int> chunks{0};
+		const pdf::CancelToken* token{nullptr};
+		static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
+		{
+			auto& self = *static_cast<Reading*>(context);
+			if (stage == AtomicWriteStage::ReadBackChunk) {
+				self.chunks.fetch_add(1);
+			}
+			if (stage == AtomicWriteStage::ReadBackChunk && !self.reached.exchange(true)) {
+				while (!self.token->is_cancelled()) {
+					std::this_thread::yield();
+				}
+			}
+		}
+	};
+	const CancelToken token = source->token();
+	Reading reading;
+	reading.token = &token;
+	pdf::PdfResult<void> done{};
+	std::chrono::steady_clock::time_point returned{};
+	std::thread writer([&] {
+		const detail::ScopedAtomicWriteHookForTesting hook(&Reading::hook, &reading);
+		done = atomic_write_file(target, large, token);
+		returned = std::chrono::steady_clock::now();
+	});
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (!reading.reached.load() && std::chrono::steady_clock::now() < until) {
+		std::this_thread::yield();
+	}
+	ASSERT_TRUE(reading.reached.load()) << "the read-back never reached its second chunk";
+	const auto cancelled = std::chrono::steady_clock::now();
+	source->cancel();
+	writer.join();
+	ASSERT_FALSE(done.has_value());
+	EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
+	EXPECT_EQ(reading.chunks.load(), 1) << "the read-back went on reading after the cancel";
+	recto::test::expect_cancel_latency(std::chrono::duration<double, std::milli>(returned - cancelled).count(), "cancelling a save's read-back");
+	EXPECT_EQ(recto::test::read_file_bytes(target), before);
+	EXPECT_EQ(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()), 1) << "a temporary file was left";
+}
+
+TEST(AtomicWrite, KeepsTheDestinationAcl)
+{
+	// A file shared read-only with everyone keeps exactly that after a save over it.
+	recto::test::TempDir dir;
+	const auto target = dir.file_path("shared.pdf");
+	recto::test::write_file_bytes(target, std::vector<uint8_t>{1u, 2u, 3u});
+	PSECURITY_DESCRIPTOR wanted = nullptr;
+	ASSERT_NE(::ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;OW)(A;;FA;;;SY)(A;;FR;;;WD)", SDDL_REVISION_1, &wanted, nullptr), FALSE);
+	BOOL present = FALSE;
+	BOOL defaulted = FALSE;
+	PACL dacl = nullptr;
+	ASSERT_NE(::GetSecurityDescriptorDacl(wanted, &present, &dacl, &defaulted), FALSE);
+	ASSERT_EQ(::SetNamedSecurityInfoW(const_cast<wchar_t*>(target.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+				  nullptr, nullptr, dacl, nullptr),
+		static_cast<DWORD>(ERROR_SUCCESS));
+	::LocalFree(wanted);
+	const auto dacl_of = [](const std::filesystem::path& path) {
+		PSECURITY_DESCRIPTOR descriptor = nullptr;
+		EXPECT_EQ(::GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, nullptr, nullptr, &descriptor),
+			static_cast<DWORD>(ERROR_SUCCESS));
+		LPWSTR text = nullptr;
+		EXPECT_NE(::ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &text, nullptr), FALSE);
+		std::wstring out = text != nullptr ? text : L"";
+		::LocalFree(text);
+		::LocalFree(descriptor);
+		return out;
+	};
+	const std::wstring kept = dacl_of(target);
+	ASSERT_NE(kept.find(L"D:P"), std::wstring::npos) << "the protected DACL was not set";
+	ASSERT_TRUE(atomic_write_file(target, std::vector<uint8_t>{4u, 5u, 6u, 7u}).has_value());
+	EXPECT_EQ(dacl_of(target), kept) << "the save replaced the destination's permissions";
+	EXPECT_EQ(recto::test::read_file_bytes(target), (std::vector<uint8_t>{4u, 5u, 6u, 7u}));
 }
 
 } // namespace

@@ -1096,6 +1096,28 @@ constexpr size_t kMaxU32 = std::numeric_limits<uint32_t>::max();
 
 } // namespace
 
+namespace {
+
+thread_local bool g_fail_list_measure = false;
+
+} // namespace
+
+namespace detail {
+
+void fail_next_list_measure_for_testing() noexcept
+{
+	g_fail_list_measure = true;
+}
+
+bool fail_list_measure_for_testing() noexcept
+{
+	const bool fail = g_fail_list_measure;
+	g_fail_list_measure = false;
+	return fail;
+}
+
+} // namespace detail
+
 int64_t debug_live_display_lists() noexcept
 {
 	return g_live_display_lists.load(std::memory_order_relaxed);
@@ -1402,10 +1424,31 @@ namespace {
 	size_t total = sizeof(DisplayList) + commands.capacity() * sizeof(DisplayCommand) + bounds.capacity() * sizeof(CommandBounds) +
 		paths.capacity() * sizeof(RecordedPath) + verbs.capacity() * sizeof(PathVerb) + points.capacity() * sizeof(PdfPoint) +
 		glyphs.capacity() * sizeof(PositionedGlyph) + dashes.capacity() * sizeof(float);
-	// A logo drawn a thousand times is held once: sorted to find repeats, or counted each time if there is no memory for that.
+	// A logo drawn a thousand times is held once: the distinct ones found by sorting. Without memory for that, every draw is
+	// counted, which can only overstate what is held, so a cache's budget stays a ceiling.
+	size_t image_draws = 0u;
+	size_t sub_draws = 0u;
+	for (const DisplayCommand& command : commands) {
+		if (command.as<DrawImageCommand>() != nullptr) {
+			image_draws += 2u;
+		} else if (const auto* run = command.as<DrawGlyphRunCommand>(); run != nullptr && run->type3_sub_list != nullptr) {
+			++sub_draws;
+		}
+	}
 	std::vector<const DecodedBitmap*> images;
 	std::vector<const DisplayList*> subs;
+	bool distinct = true;
 	try {
+		if (detail::fail_list_measure_for_testing()) {
+			throw std::bad_alloc();
+		}
+		images.reserve(image_draws);
+		subs.reserve(sub_draws);
+	} catch (const std::bad_alloc&) {
+		distinct = false;
+	}
+	if (distinct) {
+		// Reserved above, so these never allocate.
 		for (const DisplayCommand& command : commands) {
 			if (const auto* image = command.as<DrawImageCommand>(); image != nullptr) {
 				images.push_back(image->bitmap.get());
@@ -1418,16 +1461,22 @@ namespace {
 		images.erase(std::unique(images.begin(), images.end()), images.end());
 		std::sort(subs.begin(), subs.end());
 		subs.erase(std::unique(subs.begin(), subs.end()), subs.end());
-	} catch (const std::bad_alloc&) {
-		// `images` and `subs` hold what they got, so the figure is a lower bound for this one list.
-	}
-	for (const DecodedBitmap* image : images) {
-		if (image != nullptr) {
-			total += image->byte_size();
+		for (const DecodedBitmap* image : images) {
+			if (image != nullptr) {
+				total += image->byte_size();
+			}
 		}
+		for (const DisplayList* sub : subs) {
+			total += sub->memory_bytes();
+		}
+		return total;
 	}
-	for (const DisplayList* sub : subs) {
-		total += sub->memory_bytes();
+	for (const DisplayCommand& command : commands) {
+		if (const auto* image = command.as<DrawImageCommand>(); image != nullptr) {
+			total += (image->bitmap != nullptr ? image->bitmap->byte_size() : 0u) + (image->soft_mask != nullptr ? image->soft_mask->byte_size() : 0u);
+		} else if (const auto* run = command.as<DrawGlyphRunCommand>(); run != nullptr && run->type3_sub_list != nullptr) {
+			total += run->type3_sub_list->memory_bytes();
+		}
 	}
 	return total;
 }
