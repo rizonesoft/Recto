@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 107 | Checklist items: 709
+Sections: 107 | Checklist items: 711
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -114,7 +114,7 @@ Sections: 107 | Checklist items: 709
 | [x]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host              | 21    |
 | [x]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 11    |
 | [x]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 8     |
-| [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 7     |
+| [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 9     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 15    |
@@ -927,4 +927,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 100/856 verified sections, 43 ready to run now.
 
-Checklist: 649/6323 items completed (includes Commit items).
+Checklist: 649/6325 items completed (includes Commit items).
