@@ -63,10 +63,16 @@ public:
 	Secret& operator=(Secret&&) = delete;
 	~Secret() noexcept
 	{
+		wipe();
+	}
+	// Once, by whichever comes first: the request that used it, before it answers, or the owner going.
+	void wipe() noexcept
+	{
 		if (bytes_.capacity() != 0u) {
 			if (!bytes_.empty()) {
 				SecureZeroMemory(bytes_.data(), bytes_.size());
 			}
+			std::vector<char>().swap(bytes_);
 			g_wiped_passwords.fetch_add(1u, std::memory_order_relaxed);
 		}
 	}
@@ -129,22 +135,27 @@ struct DocumentHandle::State {
 
 		void run(State& state) noexcept override
 		{
+			// What the work holds (a password, a change set) goes before the answer, so a caller never sees one while it is held.
 			const CancelToken either = CancelToken::either(cancel, state.close_token);
 			if (either.is_cancelled()) {
+				work = nullptr;
 				answer(pdf::detail::cancelled_error());
 				return;
 			}
 			const pdf::detail::ScopedCancelScope scope(either);
+			PdfResult<T> result = make_pdf_error(ErrorCode::InternalError, "A document request failed unexpectedly");
 			try {
 				if (failing(detail::ActorFailure::ActorCopy)) {
 					throw std::bad_alloc();
 				}
-				answer(work(state, either));
+				result = work(state, either);
 			} catch (const std::bad_alloc&) {
-				answer(make_pdf_error(ErrorCode::OutOfMemory, "Out of memory answering a document request"));
+				result = make_pdf_error(ErrorCode::OutOfMemory, "Out of memory answering a document request");
 			} catch (const std::exception&) {
-				answer(make_pdf_error(ErrorCode::InternalError, "A document request failed unexpectedly"));
+				// The InternalError above.
 			}
+			work = nullptr;
+			answer(std::move(result));
 		}
 
 		std::promise<PdfResult<T>> promise;
@@ -270,6 +281,9 @@ struct DocumentHandle::State {
 				queue.pop_front();
 			}
 			message->run(*this);
+			if (options.answered_hook != nullptr) {
+				options.answered_hook(options.answered_hook_context);
+			}
 		}
 		// Answered outside the lock, in order, each `Cancelled`.
 		std::deque<std::unique_ptr<Message>> dropped;
@@ -418,9 +432,11 @@ ActorFuture<void> DocumentHandle::authenticate(std::string_view password) noexce
 	return state_->post<void>([secret = std::move(secret)](State& s, const CancelToken&) -> PdfResult<void> {
 		const DocumentState now = s.document_state.load();
 		if (now != DocumentState::NeedsPassword && now != DocumentState::WrongPassword) {
+			secret->wipe();
 			return make_pdf_error(ErrorCode::InvalidArgument, "This document is not waiting for a password");
 		}
 		auto done = s.document->authenticate(secret->view());
+		secret->wipe(); // before the answer, so no caller sees one while the password is still held
 		if (!done.has_value()) {
 			if (done.error().code == ErrorCode::WrongPassword) {
 				s.document_state.store(DocumentState::WrongPassword);

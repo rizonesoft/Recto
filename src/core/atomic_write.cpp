@@ -8,6 +8,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <sddl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -141,17 +142,54 @@ private:
 	return true;
 }
 
-// A new file beside `destination`, in the same folder so the replace stays on one volume.
-[[nodiscard]] HANDLE create_temporary(const std::filesystem::path& destination, std::wstring& path) noexcept
+// Owner and SYSTEM only, inheriting nothing: what a temporary copy of an existing file carries until `ReplaceFileW` gives
+// it the destination's own ACL, so a file restricted inside a shared folder is never readable through its copy.
+class PrivateSecurity {
+public:
+	PrivateSecurity() noexcept
+	{
+		if (::ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;FA;;;OW)(A;;FA;;;SY)", SDDL_REVISION_1, &descriptor_, nullptr) == FALSE) {
+			descriptor_ = nullptr;
+		}
+	}
+	~PrivateSecurity() noexcept
+	{
+		if (descriptor_ != nullptr) {
+			::LocalFree(descriptor_);
+		}
+	}
+	PrivateSecurity(const PrivateSecurity&) = delete;
+	PrivateSecurity& operator=(const PrivateSecurity&) = delete;
+	[[nodiscard]] PSECURITY_DESCRIPTOR get() const noexcept
+	{
+		return descriptor_;
+	}
+
+private:
+	PSECURITY_DESCRIPTOR descriptor_{nullptr};
+};
+
+// A new file beside `destination`, in the same folder so the replace stays on one volume. A copy of an existing file is
+// private until it replaces it; a new one takes the folder's inherited ACL, which is what the saved file will have. It
+// allocates, so a `std::bad_alloc` reaches the caller's handler.
+[[nodiscard]] HANDLE create_temporary(const std::filesystem::path& destination, std::wstring& path)
 {
 	static std::atomic<uint32_t> counter{0u};
 	std::error_code ignored;
 	const std::filesystem::path folder = destination.has_parent_path() ? destination.parent_path() : std::filesystem::current_path(ignored);
+	const bool replacing = ::GetFileAttributesW(destination.c_str()) != INVALID_FILE_ATTRIBUTES;
+	const PrivateSecurity security;
+	if (replacing && security.get() == nullptr) {
+		::SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+		return INVALID_HANDLE_VALUE; // never a readable copy of a file that may be restricted
+	}
+	SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), security.get(), FALSE};
 	for (int attempt = 0; attempt < 64; ++attempt) {
 		wchar_t name[64];
 		::swprintf_s(name, L".~recto-%08lx-%08x.tmp", ::GetCurrentProcessId(), counter.fetch_add(1u));
 		path = (folder / name).wstring();
-		const HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0u, nullptr, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_HIDDEN, nullptr);
+		const HANDLE handle = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0u, replacing ? &attributes : nullptr, CREATE_NEW,
+			FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_HIDDEN, nullptr);
 		if (handle != INVALID_HANDLE_VALUE || ::GetLastError() != ERROR_FILE_EXISTS) {
 			return handle;
 		}

@@ -52,6 +52,10 @@ struct ActorOptions {
 	// Installed on the actor's thread, for a test to hold or cancel work at a named poll.
 	pdf::detail::CancelPollHook poll_hook{nullptr};
 	void* poll_hook_context{nullptr};
+	// Called on the actor's thread just after a request has answered, before the next is taken, for a test to hold it
+	// there and read what the answer left behind.
+	void (*answered_hook)(void* context) noexcept {nullptr};
+	void* answered_hook_context{nullptr};
 };
 
 struct ActorStats {

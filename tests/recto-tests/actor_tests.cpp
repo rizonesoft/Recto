@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <memory>
 #include <string>
@@ -282,6 +283,47 @@ TEST(Actor, PasswordWiped)
 		before = wiped();
 		ASSERT_TRUE(finish(handle->authenticate("recto-test")).has_value());
 		EXPECT_EQ(wiped(), before + 1u) << "after the right one";
+	}
+	// Wiped before its answer: the actor held just after answering, its request not yet gone, has no password left.
+	{
+		struct Hold {
+			std::atomic<bool> armed{false};
+			std::atomic<bool> holding{false};
+			std::atomic<bool> released{false};
+			static void hook(void* context) noexcept
+			{
+				auto& self = *static_cast<Hold*>(context);
+				if (self.armed.exchange(false)) {
+					self.holding.store(true);
+					while (!self.released.load()) {
+						std::this_thread::yield();
+					}
+				}
+			}
+		} hold;
+		ActorOptions options;
+		options.answered_hook = &Hold::hook;
+		options.answered_hook_context = &hold;
+		const auto handle = started(options);
+		ASSERT_NE(handle, nullptr);
+		expect_code(handle->open(recto::test::corpus_path("render/encrypted-aes-128.pdf")), ErrorCode::NeedsPassword);
+		for (const std::string_view password : {std::string_view("wrong"), std::string_view("recto-test")}) {
+			SCOPED_TRACE(password);
+			hold.released.store(false);
+			hold.armed.store(true);
+			const uint64_t before = wiped();
+			auto answer = handle->authenticate(password);
+			EXPECT_EQ(answer.wait_for(std::chrono::seconds(30)), std::future_status::ready);
+			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (!hold.holding.load() && std::chrono::steady_clock::now() < until) {
+				std::this_thread::yield();
+			}
+			EXPECT_TRUE(hold.holding.load());
+			EXPECT_EQ(wiped(), before + 1u) << "answered while the password was still held";
+			hold.holding.store(false);
+			hold.released.store(true);
+			(void)answer.get();
+		}
 	}
 	// Refused by a full queue, and dropped by a close: never reaching the thread.
 	{
@@ -1256,9 +1298,65 @@ TEST(AtomicWrite, KeepsTheDestinationAcl)
 	};
 	const std::wstring kept = dacl_of(target);
 	ASSERT_NE(kept.find(L"D:P"), std::wstring::npos) << "the protected DACL was not set";
-	ASSERT_TRUE(atomic_write_file(target, std::vector<uint8_t>{4u, 5u, 6u, 7u}).has_value());
+	// While it waits to replace the destination, the copy is the owner's and SYSTEM's alone, inheriting nothing from the
+	// folder, so a restricted file is never readable through it.
+	struct Copy {
+		std::wstring dacl;
+		std::function<std::wstring(const std::filesystem::path&)> read;
+		static void hook(detail::AtomicWriteStage stage, const std::filesystem::path& temporary, void* context) noexcept
+		{
+			if (stage == detail::AtomicWriteStage::ReadBack) {
+				auto& self = *static_cast<Copy*>(context);
+				self.dacl = self.read(temporary);
+			}
+		}
+	} copy{{}, dacl_of};
+	{
+		const detail::ScopedAtomicWriteHookForTesting hook(&Copy::hook, &copy);
+		ASSERT_TRUE(atomic_write_file(target, std::vector<uint8_t>{4u, 5u, 6u, 7u}).has_value());
+	}
+	EXPECT_EQ(copy.dacl.rfind(L"D:P", 0), 0u) << std::filesystem::path(copy.dacl).string();
+	EXPECT_EQ(copy.dacl.find(L";ID;"), std::wstring::npos) << "the copy inherited the folder's permissions";
+	EXPECT_EQ(copy.dacl.find(L"WD)"), std::wstring::npos) << "the copy was readable by everyone";
 	EXPECT_EQ(dacl_of(target), kept) << "the save replaced the destination's permissions";
 	EXPECT_EQ(recto::test::read_file_bytes(target), (std::vector<uint8_t>{4u, 5u, 6u, 7u}));
+	// A new file takes its folder's permissions, as any file made there does.
+	const auto fresh = dir.file_path("fresh.pdf");
+	ASSERT_TRUE(atomic_write_file(fresh, std::vector<uint8_t>{1u}).has_value());
+	EXPECT_NE(dacl_of(fresh).find(L";ID;"), std::wstring::npos) << "a new file did not inherit its folder's permissions";
+}
+
+TEST(AtomicWrite, AllocationFailures)
+{
+	// Memory running out at any step of a save is a typed result, never a terminate, and never a changed destination.
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	recto::test::TempDir dir;
+	const auto target = dir.file_path("target.pdf");
+	const std::vector<uint8_t> before{1u, 2u, 3u};
+	const std::vector<uint8_t> after{4u, 5u, 6u, 7u};
+	size_t refused = 0u;
+	for (uint32_t nth = 1u; nth <= 24u; ++nth) {
+		SCOPED_TRACE(nth);
+		recto::test::write_file_bytes(target, before);
+		pdf::PdfResult<void> done{};
+		{
+			const recto::test::ScopedAllocationFailure fail(nth, 64u);
+			done = atomic_write_file(target, after);
+		}
+		if (done.has_value()) {
+			EXPECT_EQ(recto::test::read_file_bytes(target), after);
+			continue;
+		}
+		++refused;
+		EXPECT_EQ(done.error().code, ErrorCode::OutOfMemory);
+		EXPECT_EQ(recto::test::read_file_bytes(target), before);
+	}
+	EXPECT_GT(refused, 1u) << "no allocation inside the save was reached";
+	for (const auto& entry : std::filesystem::directory_iterator(dir.path())) {
+		EXPECT_NE(entry.path().extension(), ".tmp") << entry.path() << " was left behind";
+	}
 }
 
 } // namespace
