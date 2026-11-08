@@ -291,6 +291,22 @@ private:
 	size_t sightings_count_{0}; // in the current generation
 };
 
+namespace detail {
+
+// Counts the `Document` objects alive, moved-from ones included, so an owner can prove when and where one was destroyed.
+class LiveDocumentCount {
+public:
+	LiveDocumentCount() noexcept;
+	LiveDocumentCount(const LiveDocumentCount&) noexcept;
+	LiveDocumentCount& operator=(const LiveDocumentCount&) noexcept = default;
+	~LiveDocumentCount() noexcept;
+};
+
+} // namespace detail
+
+// `Document` objects alive in this process (the actor's shutdown check, D01 T02 section 8).
+[[nodiscard]] int64_t debug_live_document_objects() noexcept;
+
 class Document {
 public:
 	Document() = default;
@@ -613,6 +629,7 @@ private:
 	std::unordered_map<std::string, ParsedDest> named_dests_{};
 	size_t xmp_entity_scan_steps_{0u};
 	bool structure_loaded_{false};
+	detail::LiveDocumentCount live_{};
 };
 
 } // namespace recto::pdf

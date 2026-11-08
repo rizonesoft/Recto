@@ -16,7 +16,8 @@ namespace recto::core {
 // the replace is retried, since a scanner often holds a new file briefly.
 //
 // By publication state: a failure before the replace leaves the destination unchanged and removes the temporary file; a
-// failed replace with the destination still there does the same; a failed replace after which the destination is gone
+// failed replace with the destination still there, or a failed move to a path that had no file, does the same; a failed
+// replace after which a destination that was there is gone
 // keeps the temporary file, then the only copy, and names it in the error; a read-back after the replace that differs is
 // an error naming the destination. Cancelled before the replace, nothing changed; past it, the file is saved and the
 // call succeeds.
@@ -45,6 +46,22 @@ public:
 private:
 	AtomicWriteStage previous_stage_;
 	uint32_t previous_error_;
+};
+
+// Called on the calling thread just before `ReadBack`, `Replace` (ahead of the last cancel check) and `Verify`, with the
+// temporary file's path, so a test can change the files on disk or cancel at that point.
+using AtomicWriteHook = void (*)(AtomicWriteStage stage, const std::filesystem::path& temporary, void* context) noexcept;
+
+class ScopedAtomicWriteHookForTesting {
+public:
+	ScopedAtomicWriteHookForTesting(AtomicWriteHook hook, void* context) noexcept;
+	~ScopedAtomicWriteHookForTesting() noexcept;
+	ScopedAtomicWriteHookForTesting(const ScopedAtomicWriteHookForTesting&) = delete;
+	ScopedAtomicWriteHookForTesting& operator=(const ScopedAtomicWriteHookForTesting&) = delete;
+
+private:
+	AtomicWriteHook previous_hook_;
+	void* previous_context_;
 };
 
 } // namespace detail

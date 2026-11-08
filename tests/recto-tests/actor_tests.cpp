@@ -469,6 +469,22 @@ TEST(Actor, DocumentOnActorThread)
 	}
 }
 
+TEST(Actor, DocumentDestroyedBeforeClosed)
+{
+	// The handle outlives the close, so a `Document` left to the handle's destructor would still be alive when `closed` is
+	// ready, and would then die on this thread instead of the actor's.
+	recto::test::TempDir dir;
+	const auto path = written(dir, "doc.pdf", pdf_of(1u, "0 0 10 10 re f"));
+	const int64_t before = pdf::debug_live_document_objects();
+	const auto handle = started();
+	ASSERT_NE(handle, nullptr);
+	ASSERT_TRUE(finish(handle->open(path)).has_value());
+	EXPECT_EQ(pdf::debug_live_document_objects(), before + 1) << "the open document is the only one";
+	handle->close().wait();
+	EXPECT_EQ(pdf::debug_live_document_objects(), before) << "the document outlived its actor's close";
+	EXPECT_EQ(handle->state(), DocumentState::Closed);
+}
+
 TEST(Actor, RequestsReturnAtOnce)
 {
 	recto::test::TempDir dir;
@@ -939,8 +955,67 @@ TEST(AtomicWrite, PublicationStates)
 		EXPECT_EQ(recto::test::read_file_bytes(target), before);
 		EXPECT_EQ(temporaries(), 0u);
 	}
-	// A replace after which the destination is gone: the temporary file is the only copy, kept and named.
+	// A temporary file changed on disk before its read-back, by a byte and keeping its size: the real comparison refuses it.
 	{
+		struct Tamper {
+			static void hook(AtomicWriteStage stage, const std::filesystem::path& temporary, void*) noexcept
+			{
+				if (stage == AtomicWriteStage::ReadBack) {
+					const std::vector<uint8_t> other{4u, 5u, 6u, 8u};
+					recto::test::write_file_bytes(temporary, other);
+				}
+			}
+		};
+		const detail::ScopedAtomicWriteHookForTesting hook(&Tamper::hook, nullptr);
+		const auto done = atomic_write_file(target, after);
+		ASSERT_FALSE(done.has_value());
+		EXPECT_EQ(done.error().code, ErrorCode::IoError);
+		EXPECT_EQ(recto::test::read_file_bytes(target), before);
+		EXPECT_EQ(temporaries(), 0u);
+	}
+	// Cancelled after the read-back, at the last check before the commit point: nothing changed.
+	{
+		auto source = pdf::CancelSource::create();
+		ASSERT_TRUE(source.has_value());
+		struct Late {
+			static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
+			{
+				if (stage == AtomicWriteStage::Replace) {
+					static_cast<pdf::CancelSource*>(context)->cancel();
+				}
+			}
+		};
+		const detail::ScopedAtomicWriteHookForTesting hook(&Late::hook, &*source);
+		const auto done = atomic_write_file(target, after, source->token());
+		ASSERT_FALSE(done.has_value());
+		EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
+		EXPECT_EQ(recto::test::read_file_bytes(target), before);
+		EXPECT_EQ(temporaries(), 0u);
+	}
+	// A move to a path that had no file fails: there is nothing to lose, so the temporary file goes too.
+	{
+		const auto absent = dir.file_path("absent.pdf");
+		const ScopedAtomicWriteFailureForTesting failure(AtomicWriteStage::Replace, ERROR_ACCESS_DENIED);
+		const auto done = atomic_write_file(absent, after);
+		ASSERT_FALSE(done.has_value());
+		EXPECT_EQ(done.error().code, ErrorCode::IoError);
+		EXPECT_EQ(std::string(done.error().message.view()).find("is gone"), std::string::npos) << done.error().message.view();
+		EXPECT_FALSE(std::filesystem::exists(absent));
+		EXPECT_EQ(temporaries(), 0u) << "a temporary file was kept although no file had been there";
+	}
+	// A replace after which the destination is gone: the temporary file is the only copy, kept and named. The destination
+	// is moved aside on disk at the commit point, as `ReplaceFileW` leaves it with this error.
+	{
+		struct Aside {
+			static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
+			{
+				if (stage == AtomicWriteStage::Replace) {
+					const auto& from = *static_cast<const std::filesystem::path*>(context);
+					::MoveFileW(from.c_str(), (from.wstring() + L".moved").c_str());
+				}
+			}
+		};
+		const detail::ScopedAtomicWriteHookForTesting hook(&Aside::hook, const_cast<std::filesystem::path*>(&target));
 		const ScopedAtomicWriteFailureForTesting failure(AtomicWriteStage::Replace, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2);
 		const auto done = atomic_write_file(target, after);
 		ASSERT_FALSE(done.has_value());

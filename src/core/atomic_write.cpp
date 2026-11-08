@@ -27,6 +27,19 @@ using pdf::PdfResult;
 
 thread_local detail::AtomicWriteStage g_fail_stage = detail::AtomicWriteStage::None;
 thread_local uint32_t g_fail_error = 0u;
+thread_local detail::AtomicWriteHook g_hook = nullptr;
+thread_local void* g_hook_context = nullptr;
+
+void reached(detail::AtomicWriteStage stage, const std::wstring& temporary) noexcept
+{
+	if (g_hook != nullptr) {
+		try {
+			g_hook(stage, std::filesystem::path(temporary), g_hook_context);
+		} catch (const std::bad_alloc&) {
+			// A path the hook could not be given: the hook is skipped, the write goes on.
+		}
+	}
+}
 
 constexpr DWORD kChunkBytes = 16u << 20u;
 constexpr int kReplaceAttempts = 3;
@@ -156,6 +169,20 @@ ScopedAtomicWriteFailureForTesting::~ScopedAtomicWriteFailureForTesting() noexce
 	g_fail_error = previous_error_;
 }
 
+ScopedAtomicWriteHookForTesting::ScopedAtomicWriteHookForTesting(AtomicWriteHook hook, void* context) noexcept
+	: previous_hook_(g_hook)
+	, previous_context_(g_hook_context)
+{
+	g_hook = hook;
+	g_hook_context = context;
+}
+
+ScopedAtomicWriteHookForTesting::~ScopedAtomicWriteHookForTesting() noexcept
+{
+	g_hook = previous_hook_;
+	g_hook_context = previous_context_;
+}
+
 } // namespace detail
 
 PdfResult<void> atomic_write_file(
@@ -209,20 +236,20 @@ PdfResult<void> atomic_write_file(
 			return write_failure(error, "Could not flush the temporary file; the destination is unchanged");
 		}
 		file.reset();
+		reached(detail::AtomicWriteStage::ReadBack, temporary);
 		DWORD read_error = injected(detail::AtomicWriteStage::ReadBack);
 		if (read_error != 0u || !file_holds(temporary, bytes, read_error)) {
 			return write_failure(read_error, "The temporary file did not read back as written; the destination is unchanged");
 		}
 		::SetFileAttributesW(temporary.c_str(), FILE_ATTRIBUTE_NORMAL);
+		// Whether a file was there decides what a failed replace leaves.
+		const bool had_destination = ::GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES;
+		reached(detail::AtomicWriteStage::Replace, temporary);
 		if (cancel.is_cancelled()) {
 			return pdf::detail::cancelled_error();
 		}
 		// The commit point.
 		DWORD replace_error = injected(detail::AtomicWriteStage::Replace);
-		if (replace_error == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) {
-			// What this error means, for a test: the destination has been moved aside, the replacement not moved in.
-			::MoveFileW(target.c_str(), (target + L".moved").c_str());
-		}
 		for (int attempt = 0; replace_error == 0u && attempt < kReplaceAttempts; ++attempt) {
 			const DWORD existing = ::GetFileAttributesW(target.c_str());
 			const BOOL done = existing != INVALID_FILE_ATTRIBUTES
@@ -243,7 +270,7 @@ PdfResult<void> atomic_write_file(
 			}
 		}
 		if (replace_error != 0u) {
-			if (::GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES && ::GetLastError() != ERROR_ACCESS_DENIED) {
+			if (had_destination && ::GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES && ::GetLastError() != ERROR_ACCESS_DENIED) {
 				// The destination is gone and this is the only copy: it stays, named so it can be found.
 				remove.active = false;
 				const std::string message = "The file could not be put in place, and the destination is gone; your data is in " + std::filesystem::path(temporary).string();
@@ -251,6 +278,7 @@ PdfResult<void> atomic_write_file(
 			}
 			return write_failure(replace_error, "The file could not be put in place; the destination is unchanged");
 		}
+		reached(detail::AtomicWriteStage::Verify, temporary);
 		DWORD verify_error = injected(detail::AtomicWriteStage::Verify);
 		if (verify_error != 0u || !file_holds(target, bytes, verify_error)) {
 			const std::string message = "The saved file did not read back as written: " + destination.string();

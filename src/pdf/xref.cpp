@@ -1049,6 +1049,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 								container_pos);
 						}
 						++candidate_attempts;
+						// Each member is parsed, as a scanned candidate is.
+						if ((candidate_attempts & 0x3Fu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
+							return detail::cancelled_error();
+						}
 						const uint32_t inner_id = recovered_stm.entries[idx].obj_num;
 						// A definition later in the file than this container wins (only a container unpacked after the scan
 						// can meet one).
@@ -1422,6 +1426,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 									pos);
 							}
 							++candidate_attempts;
+							// Each candidate is parsed whole, so 64 KiB of small objects is thousands of parses: the poll
+							// follows that work as well as the bytes.
+							if ((candidate_attempts & 0x3Fu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
+								return detail::cancelled_error();
+							}
 							const uint32_t obj_num = static_cast<uint32_t>(obj_num_u64);
 							const uint16_t gen_num = static_cast<uint16_t>(gen_u64);
 
@@ -1782,6 +1791,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			}
 			if (!dec_stm.has_value() &&
 				(dec_stm.error().code == ErrorCode::OutOfMemory ||
+				 dec_stm.error().code == ErrorCode::Cancelled ||
 				 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
 				return dec_stm.error();
 			}
@@ -1951,13 +1961,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							&chosen);
 						cumulative_decoded_objstm_bytes += std::max<uint64_t>(
 							decode_work.bytes(), decoded.has_value() ? static_cast<uint64_t>(decoded->size()) : 0u);
-						if (!decoded.has_value() && decoded.error().code == ErrorCode::OutOfMemory) {
+						if (!decoded.has_value() && (decoded.error().code == ErrorCode::OutOfMemory || decoded.error().code == ErrorCode::Cancelled)) {
 							return decoded.error();
 						}
 						if (decoded.has_value()) {
 							auto read = unpack_objstm(
 								deferred.obj_num, deferred.pos, view->n, view->first, std::move(*decoded), true);
-							if (!read.has_value() && read.error().code == ErrorCode::OutOfMemory) {
+							if (!read.has_value() && (read.error().code == ErrorCode::OutOfMemory || read.error().code == ErrorCode::Cancelled)) {
 								return read.error();
 							}
 						}

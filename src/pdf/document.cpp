@@ -37,6 +37,36 @@ namespace recto::pdf {
 
 namespace {
 
+std::atomic<int64_t> g_live_document_objects{0};
+
+} // namespace
+
+namespace detail {
+
+LiveDocumentCount::LiveDocumentCount() noexcept
+{
+	g_live_document_objects.fetch_add(1, std::memory_order_relaxed);
+}
+
+LiveDocumentCount::LiveDocumentCount(const LiveDocumentCount&) noexcept
+{
+	g_live_document_objects.fetch_add(1, std::memory_order_relaxed);
+}
+
+LiveDocumentCount::~LiveDocumentCount() noexcept
+{
+	g_live_document_objects.fetch_sub(1, std::memory_order_relaxed);
+}
+
+} // namespace detail
+
+int64_t debug_live_document_objects() noexcept
+{
+	return g_live_document_objects.load(std::memory_order_relaxed);
+}
+
+namespace {
+
 [[nodiscard]] PdfError make_doc_error(
 	ErrorCode code,
 	DiagnosticId /*diag_id*/,
