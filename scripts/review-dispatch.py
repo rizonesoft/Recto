@@ -7,7 +7,7 @@
     python3 scripts/review-dispatch.py --check-pin [--json] [--pin <path>]     the pin's verdict; runs no reviewer
     python3 scripts/review-dispatch.py --list-rounds [--json] [--records <dir>]  recorded rounds; runs no reviewer
 
-`--writer` is the agent whose work is under review. Opus 5.5 through Claude Code (`claude`) is the only writer in this
+`--writer` is the agent whose work is under review. Fable 5.2 through Claude Code (`claude`) is the only writer in this
 repository, and its route in the pin names a panel of 1 to MAX_PANEL reviewers, each of a different model family from
 the writer (owner decision 2026-10-28: GPT-6 Astra alone through the Codex CLI, after a day as a panel with GPT-6.1 Terra).
 Every member reviews every pass of the same candidate at once, each with its own scheduled effort, and each member's
@@ -66,7 +66,7 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / ".conclave" / "reviewers.toml"
-# Opus 5.5 through Claude Code is the only writer (owner decision 2026-10-23); reviewers run through the Codex CLI.
+# Fable 5.2 through Claude Code is the only writer (owner decision 2026-11-10); reviewers run through the Codex CLI.
 WRITERS = ("claude",)
 CLIS = ("codex",)
 # A reviewer is never of the writer's own model family.

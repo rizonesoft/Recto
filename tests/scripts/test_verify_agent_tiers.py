@@ -75,11 +75,11 @@ class AgentFrontmatter(unittest.TestCase):
                 ok, error = read(["name: a", *lines, "model: sonnet"])
                 self.assertTrue(ok, error)
 
-    def test_only_an_opus_5_5_subagent_may_write(self):
-        # Owner decision 2026-10-23: Opus 5.5 is the only writer, so a subagent with edit tools pins claude-opus-5-5;
-        # Sonnet and Haiku subagents, and the floating opus alias, stay read-only.
-        cases = {"claude-opus-5-5": True, "claude-opus-5-5-20261001": True, "opus": False, "claude-opus-5": False,
-                 "claude-opus-6-0": False, "sonnet": False}
+    def test_only_a_fable_5_2_subagent_may_write(self):
+        # Owner decision 2026-11-10: Fable 5.2 is the only writer, so a subagent with edit tools pins claude-fable-5-2;
+        # Sonnet and Haiku subagents, the floating fable alias and the former writer (Opus 5.5) stay read-only.
+        cases = {"claude-fable-5-2": True, "claude-fable-5-2-20261101": True, "fable": False, "claude-fable-5": False,
+                 "claude-fable-6-0": False, "claude-opus-5-5": False, "opus": False, "sonnet": False}
         for model, allowed in cases.items():
             for tools in ("Read, Edit", "Write", "'*'", "Edit(src/**)"):
                 with self.subTest(model=model, tools=tools):

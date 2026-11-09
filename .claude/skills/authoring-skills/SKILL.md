@@ -5,7 +5,7 @@ description: Use when creating, moving, reviewing, or documenting project skills
 
 # Authoring Skills
 
-Follow `docs/agent-skills-and-rules-structure.md` before creating or moving skills or rules. Claude Code is the only agent kit: Opus 5.5 is the sole writer in this repository, and the reviewer (GPT-6 Astra through the Codex CLI) reads `AGENTS.md` and needs no kit (owner decision 2026-10-23).
+Follow `docs/agent-skills-and-rules-structure.md` before creating or moving skills or rules. Claude Code is the only agent kit: Fable 5.2 is the sole writer in this repository (owner decision 2026-11-10), and the reviewer (GPT-6 Astra through the Codex CLI) reads `AGENTS.md` and needs no kit (owner decision 2026-10-23).
 
 ## Required Pattern
 
@@ -15,7 +15,7 @@ Follow `docs/agent-skills-and-rules-structure.md` before creating or moving skil
 4. Put long checklists, conventions, and detailed docs in `references/`.
 5. Put helper scripts in `scripts/` and templates/resources in `assets/`.
 6. Keep `.claude/skills/<skill-name>/` as real files and directories, never symlinks.
-7. Use `.claude/rules/` for agent-scoped rules and `.claude/agents/` for subagents. A subagent that writes code, tests, plan or docs pins `model: claude-opus-5-5`; Sonnet and Haiku subagents are read-only.
+7. Use `.claude/rules/` for agent-scoped rules and `.claude/agents/` for subagents. A subagent that writes code, tests, plan or docs pins `model: claude-fable-5-2`; Sonnet and Haiku subagents are read-only.
 
 ## Validation
 

@@ -4,10 +4,10 @@
 // The rule is in AGENTS.md: mechanical subtasks delegate to subagents on the
 // Sonnet tier; an elevated tier is reserved for work whose verdict quality
 // demands it; Haiku is allowed only for near-mechanical work (at least 90%
-// mechanical) whose output a script or the main loop verifies; and Opus 5.5 is
-// the only writer in this repository (owner decision 2026-10-23), so a subagent
-// that can edit files must pin `claude-opus-5-5`: every other subagent reads and
-// runs, and the main loop or an Opus 5.5 subagent makes every change.
+// mechanical) whose output a script or the main loop verifies; and Fable 5.2 is
+// the only writer in this repository (owner decision 2026-11-10), so a subagent
+// that can edit files must pin `claude-fable-5-2`: every other subagent reads and
+// runs, and the main loop or a Fable 5.2 subagent makes every change.
 //
 // A rule stated in prose is protected by discipline. This makes it protected by
 // a check: an agent with no `model:` line, an agent on any other model that could
@@ -61,11 +61,11 @@ export const HAIKU_REPLAY_FIELD = "haiku_replay";
 export const HAIKU_JUDGMENT_TERMS = /\b(review|audit|research|secur|debug|diagnos|plan|design|architect|judg|verdict)/i;
 
 /**
- * The one model a subagent that writes may run on: Opus 5.5, as an exact pin
- * (optionally with a date suffix). The bare `opus` alias is refused because it
- * follows whatever Opus is newest, and the decision names Opus 5.5.
+ * The one model a subagent that writes may run on: Fable 5.2, as an exact pin
+ * (optionally with a date suffix). The bare `fable` alias is refused because it
+ * follows whatever Fable is newest, and the decision names Fable 5.2.
  */
-export const WRITER_AGENT_MODEL = /^claude-opus-5-5(?:-\d{8})?$/;
+export const WRITER_AGENT_MODEL = /^claude-fable-5-2(?:-\d{8})?$/;
 
 /** Where an elevated pin must record why it is elevated. */
 export const ELEVATION_RATIONALE_FIELD = "model_rationale";
@@ -298,7 +298,7 @@ export function verifyAgentTiers(repoRoot = process.cwd(), relativeRoot = join("
 }
 
 /**
- * Only an Opus 5.5 subagent writes; every other subagent reads and runs. A
+ * Only a Fable 5.2 subagent writes; every other subagent reads and runs. A
  * grant such as `Edit(src/**)` is still Edit, so the rule spec after the name
  * is ignored.
  */
@@ -309,8 +309,8 @@ export function toolProblems(fields, model = null) {
   }
   const names = tools.split(",").map((tool) => tool.replace(/\(.*$/, "").trim().toLowerCase());
   if (names.some((tool) => tool === "*" || EDIT_TOOLS.includes(tool)) && !WRITER_AGENT_MODEL.test(model ?? "")) {
-    return ["grants edit tools (Edit, Write, MultiEdit, NotebookEdit or *) without pinning claude-opus-5-5; "
-      + "Opus 5.5 is the only writer, and every other subagent reads and runs"];
+    return ["grants edit tools (Edit, Write, MultiEdit, NotebookEdit or *) without pinning claude-fable-5-2; "
+      + "Fable 5.2 is the only writer, and every other subagent reads and runs"];
   }
   return [];
 }

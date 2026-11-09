@@ -1,7 +1,7 @@
 # Independent reviewers for this repository, read by scripts/review-dispatch.py.
 #
-# Owner decision 2026-10-23: Opus 5.5 (Claude Code, writer `claude`) is the only
-# writer in this repository. Owner decision 2026-10-28 (later the same day):
+# Owner decision 2026-11-10: Fable 5.2 (Claude Code, writer `claude`) is the only
+# writer in this repository (Opus 5.5 was, from 2026-10-23). Owner decision 2026-10-28:
 # the Astra and Terra panel was more review than the work needed, so the route
 # is GPT-6 Astra alone through the Codex CLI, each of its passes one effort
 # level higher than before the panel (the panel's record is

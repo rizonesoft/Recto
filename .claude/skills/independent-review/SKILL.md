@@ -5,11 +5,11 @@ description: Get an independent review of your own work from the reviewer pinned
 
 # Independent review
 
-Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository, and GPT-6 Astra, through the Codex CLI in its read-only sandbox, reviews every pass (owner decision 2026-10-28: the Astra and GPT-6.1 Terra panel was removed). The pin's `[schedule]` sets each pass's lenses and effort (owner decision 2026-11-06: plan `medium`, completion `low`, round 1 `medium`, then `low` adversarial rounds, a `P1` on a low round escalating to `medium`), with the round prompt's rule that a `P1` names a real path and its consequence. `scripts/review-dispatch.py` writes the review to the `--record` findings file and appends the writer's settled items (`- Filed:`, `- Not taken:`, `- Settled:` lines in that file) to every prompt.
+Your own review is not enough for a nontrivial change: a different model reviews it. Fable 5.2 (writer `claude`) is the only writer in this repository (owner decision 2026-11-10), and GPT-6 Astra, through the Codex CLI in its read-only sandbox, reviews every pass (owner decision 2026-10-28: the Astra and GPT-6.1 Terra panel was removed). The pin's `[schedule]` sets each pass's lenses and effort (owner decision 2026-11-06: plan `medium`, completion `low`, round 1 `medium`, then `low` adversarial rounds, a `P1` on a low round escalating to `medium`), with the round prompt's rule that a `P1` names a real path and its consequence. `scripts/review-dispatch.py` writes the review to the `--record` findings file and appends the writer's settled items (`- Filed:`, `- Not taken:`, `- Settled:` lines in that file) to every prompt.
 
 | Work written by | Reviewers (every pass) | Fallback |
 | --- | --- | --- |
-| Opus 5.5 (`claude`) | GPT-6 Astra (`codex`, at its scheduled effort) | none |
+| Fable 5.2 (`claude`) | GPT-6 Astra (`codex`, at its scheduled effort) | none |
 
 The pin refuses any other writer, an unknown reviewer CLI, a reviewer named twice or more than four, and a reviewer of the writer's own model family (a route of several reviewers, a panel, is still accepted, each writing its own findings file). A loop ends on the first round with no `P1` or `P2`; an outage is no review, so run the round again.
 

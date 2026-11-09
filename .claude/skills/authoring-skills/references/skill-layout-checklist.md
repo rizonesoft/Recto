@@ -14,4 +14,4 @@ Use this checklist whenever adding or changing a skill. Claude Code is the only 
 - [ ] Repo-wide durable instructions are in `AGENTS.md`.
 - [ ] Claude Code wiring and output rules are in `.claude/rules/`.
 - [ ] Markdown reference checklists live in `docs/` or skill `references/`.
-- [ ] A subagent in `.claude/agents/` that writes runs on `claude-opus-5-5`; every other subagent is read-only (`node scripts/verify-agent-tiers.mjs`).
+- [ ] A subagent in `.claude/agents/` that writes runs on `claude-fable-5-2`; every other subagent is read-only (`node scripts/verify-agent-tiers.mjs`).

@@ -1254,7 +1254,7 @@ class RepositoryPin(unittest.TestCase):
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
     def test_the_repository_pin_is_astra_alone_reviewing_claude(self):
-        # Owner decisions: Opus 5.5 is the sole writer (2026-10-23), reviewed by GPT-6 Astra through Codex on every pass;
+        # Owner decisions: Fable 5.2 is the sole writer (2026-11-10; Opus 5.5 from 2026-10-23), reviewed by GPT-6 Astra through Codex on every pass;
         # the Astra and Terra panel was removed on 2026-10-28. The shape as of the owner decision of 2026-11-06: a medium
         # plan review, a low completion review, a medium round 1 across five lenses (design on surface sections only),
         # then low adversarial rounds until one has no P1 or P2, a P1 on a low round making the next one medium.

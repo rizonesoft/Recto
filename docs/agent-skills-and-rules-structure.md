@@ -1,6 +1,6 @@
 # Agent Skills and Rules Structure
 
-Opus 5.5 through Claude Code is the only writer in this repository, so there is one agent kit: `.claude/` (owner decision 2026-10-23). The Antigravity (`.agents/`) and Codex (`.codex/`) writer kits were removed that day. Codex stays only as the reviewer CLI that `scripts/review-dispatch.py` runs read-only; it reads `AGENTS.md` and needs no kit of its own.
+Fable 5.2 through Claude Code is the only writer in this repository (owner decision 2026-11-10; Opus 5.5 before it), so there is one agent kit: `.claude/` (owner decision 2026-10-23). The Antigravity (`.agents/`) and Codex (`.codex/`) writer kits were removed that day. Codex stays only as the reviewer CLI that `scripts/review-dispatch.py` runs read-only; it reads `AGENTS.md` and needs no kit of its own.
 
 ## Skill location
 
@@ -31,7 +31,7 @@ Use the word "rules" carefully:
 - Durable project behavior belongs in `AGENTS.md`, which the writer loads through the `CLAUDE.md` stub and the reviewer reads directly.
 - `.claude/rules/` holds Claude Code wiring and output rules.
 - Markdown checklists or rule references belong in a skill `references/` folder or in `docs/`.
-- Subagent definitions live in `.claude/agents/`. A subagent that writes code, tests, plan or docs runs on Opus 5.5 (`claude-opus-5-5`); Sonnet or Haiku run only read-only helpers whose output the main session verifies. `scripts/verify-agent-tiers.mjs` enforces it.
+- Subagent definitions live in `.claude/agents/`. A subagent that writes code, tests, plan or docs runs on Fable 5.2 (`claude-fable-5-2`); Sonnet or Haiku run only read-only helpers whose output the main session verifies. `scripts/verify-agent-tiers.mjs` enforces it.
 
 ## Adding a New Skill
 

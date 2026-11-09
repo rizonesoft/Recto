@@ -1650,7 +1650,7 @@ class Stamp(Tree):
 class Repository(unittest.TestCase):
     def test_the_authoring_template_copy_is_identical(self):
         # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copy as the same file.
-        # .claude is the only agent kit since 2026-10-23 (Opus 5.5 is the sole writer).
+        # .claude is the only agent kit since 2026-10-23 (one writer through Claude Code).
         canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
         self.assertEqual((tg.ROOT / ".claude/skills/create-todo/todo-template.md").read_bytes(), canonical)
         for kit in (".codex", ".agents"):
