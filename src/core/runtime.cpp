@@ -12,6 +12,7 @@
 #include <new>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace recto::core {
 
@@ -37,6 +38,7 @@ struct Runtime::State {
 	size_t calls{0u}; // calls into the scheduler running now; step 4 waits for none
 	std::unique_ptr<TileScheduler> scheduler;
 	std::map<DocumentId, std::shared_ptr<DocumentHandle>> documents;
+	std::vector<std::shared_ptr<DocumentHandle>> closing; // closed, their threads joined once they have finished
 	std::map<uint64_t, JobHooks> jobs;                                         // by registration order
 	std::map<uint64_t, std::move_only_function<void() noexcept>> presentation; // likewise
 	DocumentId next_document{1u};
@@ -47,6 +49,34 @@ struct Runtime::State {
 	{
 		if (on_step) {
 			on_step(number);
+		}
+	}
+
+	// Joins the closed actors that have already finished, which takes no time; the rest wait for a later call or shutdown.
+	void reap() noexcept
+	{
+		std::vector<std::shared_ptr<DocumentHandle>> finished;
+		{
+			const std::lock_guard lock(mutex);
+			if (stopping) {
+				return; // shutdown joins them
+			}
+			for (auto it = closing.begin(); it != closing.end();) {
+				if ((*it)->state() == DocumentState::Closed) {
+					try {
+						finished.push_back(std::move(*it));
+					} catch (const std::bad_alloc&) {
+						++it;
+						continue;
+					}
+					it = closing.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+		for (const auto& handle : finished) {
+			handle->join(); // already finished: returns at once
 		}
 	}
 
@@ -133,6 +163,7 @@ PdfResult<OpenedDocument> Runtime::open_document(std::filesystem::path path) noe
 		}
 		id = s.next_document++;
 	}
+	s.reap();
 	RECTO_PDF_TRY(std::shared_ptr<DocumentHandle> handle, DocumentHandle::start(s.actor_options));
 	// Recorded before it is attached, so a shutdown that starts now finds it; each failure below undoes what was done.
 	try {
@@ -182,7 +213,7 @@ std::shared_ptr<DocumentHandle> Runtime::document(DocumentId id) const noexcept
 	return found != state_->documents.end() && !state_->stopping ? found->second : nullptr;
 }
 
-PdfResult<void> Runtime::close_document(DocumentId id) noexcept
+PdfResult<std::shared_future<void>> Runtime::close_document(DocumentId id) noexcept
 {
 	State& s = *state_;
 	std::shared_ptr<DocumentHandle> handle;
@@ -192,12 +223,19 @@ PdfResult<void> Runtime::close_document(DocumentId id) noexcept
 		if (found == s.documents.end() || s.stopping) {
 			return make_pdf_error(ErrorCode::InvalidArgument, "That document is not open here");
 		}
+		try {
+			s.closing.reserve(s.closing.size() + 1u); // room first, so recording it below cannot fail
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory closing a document");
+		}
 		handle = std::move(found->second);
 		s.documents.erase(found);
+		s.closing.push_back(handle);
 	}
 	(void)s.with_scheduler([&](TileScheduler& scheduler) { scheduler.detach(id); });
-	handle->join();
-	return {};
+	std::shared_future<void> closed = handle->close(); // never waits: cancels, and the actor finishes on its own
+	s.reap();
+	return closed;
 }
 
 void Runtime::update_viewport(DocumentId id, std::vector<TileRequest> tiles) noexcept
@@ -294,7 +332,13 @@ ShutdownReport Runtime::shutdown() noexcept
 	for (const auto& [id, handle] : s.documents) {
 		(void)handle->close();
 	}
+	for (const auto& handle : s.closing) {
+		(void)handle->close();
+	}
 	for (const auto& [id, handle] : s.documents) {
+		handle->join();
+	}
+	for (const auto& handle : s.closing) {
 		handle->join();
 	}
 
@@ -325,6 +369,7 @@ ShutdownReport Runtime::shutdown() noexcept
 	// 6. What is still alive.
 	s.step(6);
 	s.documents.clear();
+	s.closing.clear();
 	s.jobs.clear();
 	s.presentation.clear();
 	const ShutdownReport report{debug_live_documents(), pdf::debug_live_display_lists(), debug_live_workers()};

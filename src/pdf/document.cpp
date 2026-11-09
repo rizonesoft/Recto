@@ -1133,6 +1133,10 @@ PdfResult<std::vector<uint8_t>> Document::read_file_bytes(
 			nullptr);
 		if (h_file == INVALID_HANDLE_VALUE) {
 			const DWORD err = ::GetLastError();
+			// An open its owner cancelled while the system held it (an oplock break, a stalled share): CancelSynchronousIo.
+			if (err == ERROR_OPERATION_ABORTED || detail::poll_cancel(detail::CancelSite::FileRead)) {
+				return detail::cancelled_error();
+			}
 			if (err == ERROR_FILE_NOT_FOUND ||
 				err == ERROR_PATH_NOT_FOUND ||
 				err == ERROR_INVALID_NAME ||
@@ -1194,6 +1198,10 @@ PdfResult<std::vector<uint8_t>> Document::read_file_bytes(
 			DWORD bytes_read = 0;
 			if (::ReadFile(h_file, buffer.data() + total_read, chunk, &bytes_read, nullptr) == FALSE ||
 				bytes_read == 0) {
+				// A read cancelled while the device held it is the cancel, not a damaged file.
+				if (::GetLastError() == ERROR_OPERATION_ABORTED || detail::poll_cancel(detail::CancelSite::FileRead)) {
+					return detail::cancelled_error();
+				}
 				return make_doc_error(
 					ErrorCode::IoError,
 					DiagnosticId::IoError,

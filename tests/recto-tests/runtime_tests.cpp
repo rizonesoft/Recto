@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 
+#include <winioctl.h>
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -229,7 +231,9 @@ TEST(Runtime, AdmissionFailures)
 			}
 			if (opened.has_value()) {
 				(void)opened->opened.get();
-				EXPECT_TRUE(made->close_document(opened->id).has_value());
+				auto closed = made->close_document(opened->id);
+				ASSERT_TRUE(closed.has_value());
+				closed->wait(); // closing no longer waits, so the count is read once the actor has finished
 			} else {
 				++refused;
 				EXPECT_EQ(opened.error().code, ErrorCode::OutOfMemory);
@@ -353,44 +357,90 @@ TEST(Runtime, AfterShutdown)
 	EXPECT_EQ(made->register_presentation_hook([]() noexcept {}).error().code, ErrorCode::Cancelled);
 }
 
-// Four documents compiling and eight workers rendering, both seen running, then shut down.
-ShutdownReport shutdown_under_load(const std::filesystem::path& path, double& shutdown_ms)
+// Holds every compile and every tile render where it is until it is cancelled, counting those held, so a shutdown is
+// known to meet work running on every thread.
+struct Busy {
+	std::atomic<bool> armed{false};
+	std::atomic<int> compiling{0};
+	std::atomic<int> rendering{0};
+
+	static void hook(CancelSite site, void* context) noexcept
+	{
+		auto& self = *static_cast<Busy*>(context);
+		if (!self.armed.load()) {
+			return;
+		}
+		std::atomic<int>* counter = site == CancelSite::InterpreterOperator ? &self.compiling
+			: site == CancelSite::RasterCommand                          ? &self.rendering
+																		  : nullptr;
+		if (counter == nullptr) {
+			return;
+		}
+		const pdf::CancelToken* const token = pdf::detail::g_cancel_scope;
+		counter->fetch_add(1);
+		while (token != nullptr && !token->is_cancelled()) {
+			std::this_thread::yield();
+		}
+		counter->fetch_sub(1);
+	}
+};
+
+// Four documents compiling and eight workers rendering 512 x 512 tiles, every one of them held there, then shut down by
+// `shutdown()` or by the destructor.
+ShutdownReport shutdown_under_load(const std::filesystem::path& path, double& shutdown_ms, bool by_destructor = false)
 {
-	Polls polls;
+	Busy busy;
 	RuntimeOptions options;
 	options.worker_count = 8u;
-	options.actor_options.poll_hook = &Polls::hook;
-	options.actor_options.poll_hook_context = &polls;
-	options.worker_poll_hook = &Polls::hook;
-	options.worker_poll_hook_context = &polls;
+	options.actor_options.poll_hook = &Busy::hook;
+	options.actor_options.poll_hook_context = &busy;
+	options.worker_poll_hook = &Busy::hook;
+	options.worker_poll_hook_context = &busy;
 	Deliveries deliveries;
 	auto made = runtime(deliveries, std::move(options));
 	EXPECT_NE(made, nullptr);
 	if (made == nullptr) {
 		return {};
 	}
-	for (int doc = 0; doc < 4; ++doc) {
+	std::vector<DocumentId> ids;
+	for (int doc = 0; doc < 5; ++doc) {
 		auto opened = made->open_document(path);
 		EXPECT_TRUE(opened.has_value());
 		if (!opened.has_value()) {
-			continue;
+			return {};
 		}
 		EXPECT_TRUE(opened->opened.get().has_value());
-		std::vector<TileRequest> tiles;
-		for (uint32_t page = 0; page < 6u; ++page) {
-			for (uint32_t x = 0; x < 4u; ++x) {
-				tiles.push_back(tile(opened->id, page, x));
-			}
-		}
-		made->update_viewport(opened->id, std::move(tiles));
+		ids.push_back(opened->id);
 	}
-	EXPECT_TRUE(wait_until([&] { return polls.compiling.load() > 0u && polls.rendering.load() > 0u; })) << "nothing was running";
-	const auto started = std::chrono::steady_clock::now();
-	const ShutdownReport report = made->shutdown();
+	// Document 0's page is compiled before the hold, so its eight tiles reach the workers while documents 1 to 4 compile.
+	auto warm = made->document(ids[0])->get_display_list(0u);
+	EXPECT_TRUE(warm.get().has_value());
+	busy.armed.store(true);
+	std::vector<TileRequest> render;
+	for (uint32_t x = 0; x < 8u; ++x) {
+		TileRequest request = tile(ids[0], 0u, x);
+		request.spec.dpi_scale = 20.0; // a 4,000 pixel page, so each of the eight 512 x 512 tiles draws
+		request.spec.tile_x_px = x * 500u;
+		request.spec.tile_width_px = 512u;
+		request.spec.tile_height_px = 512u;
+		render.push_back(request);
+	}
+	made->update_viewport(ids[0], std::move(render));
+	for (size_t i = 1; i < ids.size(); ++i) {
+		made->update_viewport(ids[i], {tile(ids[i], static_cast<uint32_t>(i), 0u)});
+	}
+	EXPECT_TRUE(wait_until([&] { return busy.compiling.load() == 4 && busy.rendering.load() == 8; }))
+		<< "not every actor was compiling and every worker rendering: " << busy.compiling.load() << " and " << busy.rendering.load();	const auto started = std::chrono::steady_clock::now();
+	ShutdownReport report{};
+	if (by_destructor) {
+		made.reset();
+		report = ShutdownReport{debug_live_documents(), pdf::debug_live_display_lists(), debug_live_workers()};
+	} else {
+		report = made->shutdown();
+	}
 	shutdown_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 	return report;
 }
-
 TEST(Runtime, ShutdownUnderActiveTileLoad)
 {
 	recto::test::TempDir dir;
@@ -399,7 +449,7 @@ TEST(Runtime, ShutdownUnderActiveTileLoad)
 	for (int iteration = 0; iteration < 50; ++iteration) {
 		SCOPED_TRACE(iteration);
 		double ms = 0.0;
-		EXPECT_EQ(shutdown_under_load(path, ms), ShutdownReport{});
+		EXPECT_EQ(shutdown_under_load(path, ms, iteration % 2 == 1), ShutdownReport{});
 		EXPECT_EQ(debug_live_runtimes(), 0);
 	}
 }
@@ -424,5 +474,89 @@ TEST(Runtime, ShutdownLatency)
 #endif
 }
 
+TEST(Runtime, CloseReturnsAtOnce)
+{
+	// A compile that will not stop for a while: closing its document returns at once, and its future is ready later.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("busy.pdf");
+	recto::test::write_file_bytes(path, pdf_of(1u, busy_content()));
+	struct Stuck {
+		std::atomic<bool> reached{false};
+		std::atomic<bool> released{false};
+		static void hook(CancelSite site, void* context) noexcept
+		{
+			auto& self = *static_cast<Stuck*>(context);
+			if (site == CancelSite::InterpreterOperator && !self.released.load()) {
+				self.reached.store(true);
+				while (!self.released.load()) {
+					std::this_thread::yield(); // deaf to the cancel, as a long uninterruptible call would be
+				}
+			}
+		}
+	} stuck;
+	RuntimeOptions options;
+	options.actor_options.poll_hook = &Stuck::hook;
+	options.actor_options.poll_hook_context = &stuck;
+	Deliveries deliveries;
+	auto made = runtime(deliveries, std::move(options));
+	ASSERT_NE(made, nullptr);
+	auto opened = made->open_document(path);
+	ASSERT_TRUE(opened.has_value());
+	ASSERT_TRUE(opened->opened.get().has_value());
+	auto compile = made->document(opened->id)->get_display_list(0u);
+	ASSERT_TRUE(wait_until([&] { return stuck.reached.load(); }));
+	const auto asked = std::chrono::steady_clock::now();
+	auto closed = made->close_document(opened->id);
+	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count();
+	ASSERT_TRUE(closed.has_value());
+	EXPECT_LT(ms, 50.0) << "close_document waited on the actor";
+	EXPECT_EQ(closed->wait_for(std::chrono::milliseconds(0)), std::future_status::timeout) << "the actor was not still busy";
+	stuck.released.store(true);
+	EXPECT_EQ(closed->wait_for(std::chrono::seconds(30)), std::future_status::ready);
+	EXPECT_EQ(compile.get().error().code, ErrorCode::Cancelled);
+	EXPECT_EQ(made->shutdown(), ShutdownReport{});
+}
+
+TEST(Runtime, CloseDuringStalledOpen)
+{
+	// The file is held by a batch oplock this test never lets go: the actor's open waits inside the system, where no poll
+	// reaches it. Closing the document cancels that wait, and shutdown does not hang on it.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("held.pdf");
+	recto::test::write_file_bytes(path, pdf_of(1u, "0 0 10 10 re f"));
+	const HANDLE holder = ::CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+		OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+	ASSERT_NE(holder, INVALID_HANDLE_VALUE);
+	OVERLAPPED oplock{};
+	oplock.hEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+	ASSERT_NE(oplock.hEvent, nullptr);
+	const BOOL granted = ::DeviceIoControl(holder, FSCTL_REQUEST_BATCH_OPLOCK, nullptr, 0u, nullptr, 0u, nullptr, &oplock);
+	if (granted != FALSE || ::GetLastError() != ERROR_IO_PENDING) {
+		::CloseHandle(oplock.hEvent);
+		::CloseHandle(holder);
+		GTEST_SKIP() << "this volume does not grant batch oplocks";
+	}
+	Deliveries deliveries;
+	auto made = runtime(deliveries);
+	ASSERT_NE(made, nullptr);
+	auto opened = made->open_document(path);
+	ASSERT_TRUE(opened.has_value());
+	// The break is signalled when the actor's open reaches the file; from here that open waits for an acknowledgement.
+	EXPECT_EQ(::WaitForSingleObject(oplock.hEvent, 30'000u), static_cast<DWORD>(WAIT_OBJECT_0)) << "the open never reached the file";
+	EXPECT_EQ(opened->opened.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout) << "the open was not held";
+	const auto asked = std::chrono::steady_clock::now();
+	auto closed = made->close_document(opened->id);
+	ASSERT_TRUE(closed.has_value());
+	const ShutdownReport report = made->shutdown(); // joins the actor, cancelling its wait
+	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count();
+	std::printf("[          ] closing during a stalled open: returned in %.3f ms\n", ms);
+	EXPECT_LT(ms, 5'000.0) << "shutdown waited for the system to give the file up";
+	const auto result = opened->opened.get();
+	ASSERT_FALSE(result.has_value());
+	EXPECT_EQ(result.error().code, ErrorCode::Cancelled);
+	EXPECT_EQ(report, ShutdownReport{});
+	::CloseHandle(holder);
+	::CloseHandle(oplock.hEvent);
+}
 } // namespace
 } // namespace recto::core

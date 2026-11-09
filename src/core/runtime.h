@@ -68,8 +68,10 @@ public:
 	[[nodiscard]] pdf::PdfResult<OpenedDocument> open_document(std::filesystem::path path) noexcept;
 	// The document's handle, for its requests; null for an id that is unknown or closed.
 	[[nodiscard]] std::shared_ptr<DocumentHandle> document(DocumentId id) const noexcept;
-	// Cancels its tiles, closes it and joins its actor. `InvalidArgument` for an unknown or closed id.
-	[[nodiscard]] pdf::PdfResult<void> close_document(DocumentId id) noexcept;
+	// Cancels its tiles and closes it, returning at once: the future is ready once its document is destroyed on its own
+	// thread. The actor's thread is joined later, by a later call or by shutdown. `InvalidArgument` for an unknown or closed
+	// id.
+	[[nodiscard]] pdf::PdfResult<std::shared_future<void>> close_document(DocumentId id) noexcept;
 
 	void update_viewport(DocumentId id, std::vector<TileRequest> tiles) noexcept;
 	void cancel_document(DocumentId id) noexcept;

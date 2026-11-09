@@ -15,6 +15,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -418,11 +419,17 @@ PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOpti
 
 void DocumentHandle::join() noexcept
 {
-	(void)close();
+	const std::shared_future<void> closed = close();
 	const std::lock_guard lock(state_->join_mutex);
-	if (state_->thread.joinable() && state_->thread.get_id() != std::this_thread::get_id()) {
-		state_->thread.join();
+	if (!state_->thread.joinable() || state_->thread.get_id() == std::this_thread::get_id()) {
+		return;
 	}
+	// A cancel cannot reach an open or a read the system is holding (an oplock break, a stalled share or device): those
+	// are cancelled where they wait, again until the actor has finished, since one may begin after the first attempt.
+	while (closed.wait_for(std::chrono::milliseconds(5)) != std::future_status::ready) {
+		::CancelSynchronousIo(state_->thread.native_handle());
+	}
+	state_->thread.join();
 }
 
 DocumentHandle::~DocumentHandle() noexcept
@@ -444,12 +451,21 @@ DocumentHandle::~DocumentHandle() noexcept
 std::shared_future<void> DocumentHandle::close() noexcept
 {
 	State& s = *state_;
+	bool first = false;
 	{
 		const std::lock_guard lock(s.mutex);
 		if (!s.closing) {
 			s.closing = true;
 			s.close_source->cancel();
 			s.wake.notify_all();
+			first = true;
+		}
+	}
+	if (first) {
+		// Once, without waiting: an open or a read the system holds is cancelled where it waits; `join` keeps trying.
+		const std::unique_lock lock(s.join_mutex, std::try_to_lock);
+		if (lock.owns_lock() && s.thread.joinable() && s.thread.get_id() != std::this_thread::get_id()) {
+			::CancelSynchronousIo(s.thread.native_handle());
 		}
 	}
 	return s.closed_future;

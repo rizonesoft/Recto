@@ -338,6 +338,9 @@ PdfResult<void> atomic_write_file(
 		reached(detail::AtomicWriteStage::Verify, temporary);
 		DWORD verify_error = injected(detail::AtomicWriteStage::Verify);
 		if (verify_error != 0u || !file_holds(target, bytes, verify_error)) {
+			if (verify_error == ERROR_OPERATION_ABORTED) {
+				return {}; // past the commit point the file is saved; a close aborted only the check of it
+			}
 			const std::string message = "The saved file did not read back as written: " + destination.string();
 			return write_failure(verify_error, message.c_str());
 		}
