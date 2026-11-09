@@ -107,6 +107,7 @@ track: M1
 | 47 | §47 | Optional-content marked content recorded for layer visibility | §3 | [x] |
 | 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [x] |
 | 49 | §49 | Blending in a transparency group's own colour space (`/CS`) | §15, §32 | [ ] |
+| 50 | §50 | A cancelled tile's `EndDraw` bounded by the pixel work it waits on | §7 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -546,15 +547,15 @@ Implement `src/core/runtime.h` and `src/core/runtime.cpp` (`recto::core::Runtime
 1. Implement `src/core/runtime.h` and `src/core/runtime.cpp` with actor management (`open_document`, `close_document`), `TileScheduler` and `RenderPool` access, job/presentation shutdown registration, and the 6-step `shutdown()` sequence. Done when: `runtime.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/runtime_tests.cpp` (`Runtime.OrderedShutdownSequence`, `Runtime.ShutdownUnderActiveTileLoad`, `Runtime.IdempotentShutdown`). Done when: 50 iterations of `Runtime.ShutdownUnderActiveTileLoad` pass under ASan with zero deadlocks, zero leaks, and all live counters at `0`.
 
-- [ ] Implement `Runtime` owning the `DocumentActor` map, `RenderPool`, `TileScheduler`, job thread registry, and presentation hook list. Done when: `Runtime::open_document` and `Runtime::close_document` manage actor lifetimes cleanly.
-- [ ] Execute Step 1 & Step 2 of `Runtime::shutdown()`: trip all active `CancelSource` tokens across `TileScheduler` and actors, then close and `join()` every `DocumentActor` thread. Done when: `debug_live_documents()` reaches `0` at the end of Step 2.
-- [ ] Execute Step 3 & Step 4 of `Runtime::shutdown()`: join registered job threads, then drain and `join()` all `RenderPool` worker threads (releasing all `DisplayList` shared pointers held by in-flight tasks). Done when: `debug_live_workers()` and `debug_live_display_lists()` both reach `0` at the end of Step 4.
-- [ ] Execute Step 5 & Step 6 of `Runtime::shutdown()`: invoke registered presentation shutdown hooks in deterministic order and verify `debug_live_documents() == 0 && debug_live_display_lists() == 0 && debug_live_workers() == 0`. Done when: `Runtime.OrderedShutdownSequence` records `[1, 2, 3, 4, 5, 6]` from `on_step` and, from a real registered job thread and presentation thread, reads at the job's `join` every actor finished and the workers alive, and at the presentation hook the workers gone and the job joined.
-- [ ] Make `Runtime::shutdown()` idempotent so calling `runtime.shutdown()` explicitly before `~Runtime()` runs the teardown once and is a safe no-op on the second call. Done when: `Runtime.IdempotentShutdown` passes under ASan.
-- [ ] Open without waiting, join actors whoever holds them, and roll back a failed admission. Done when: `Runtime.OpenReturnsAtOnce` holds an open at its file read and reads `open_document` returned with the open pending, a password file answering `NeedsPassword` then opening through `authenticate`, a missing file's typed failure, and a close during the open `Cancelled`; `Actor.JoinWithHandlesHeld` joins an actor another holder still references and reads its thread gone; and `Runtime.AdmissionFailures` fails an actor's start (`ActorFailure::ThreadStart`) and, in plain Debug, an allocation at each step of `open_document`, reading a typed error and no actor or id left each time, and an unknown id `InvalidArgument`.
-- [ ] Refuse what arrives after shutdown and register what must stop. Done when: `Runtime.AfterShutdown` reads `open_document` `Cancelled`, a tile request delivered `Cancelled`, a job registered before shutdown cancelled in step 1 and joined in step 3, one unregistered before it not called, and two presentation hooks run in their registration order.
-- [ ] Measure shutdown under load. Done when: `Runtime.ShutdownLatency` shuts down with 4 documents compiling and 8 workers rendering and reads `shutdown()` returning within 100 ms in Release on the Windows host (reported, not held, on CI and on a busy host).
-- [ ] Stress-test `Runtime::~Runtime()` across 50 iterations while 4 `DocumentActor`s and 8 `RenderPool` workers are actively compiling `DisplayList`s and rasterizing tiles (`Runtime.ShutdownUnderActiveTileLoad`). Done when: all 50 iterations exit cleanly with zero ASan findings and zeroed counters.
+- [x] Implement `Runtime` owning the `DocumentActor` map, `RenderPool`, `TileScheduler`, job thread registry, and presentation hook list. Done when: `Runtime::open_document` and `Runtime::close_document` manage actor lifetimes cleanly.
+- [x] Execute Step 1 & Step 2 of `Runtime::shutdown()`: trip all active `CancelSource` tokens across `TileScheduler` and actors, then close and `join()` every `DocumentActor` thread. Done when: `debug_live_documents()` reaches `0` at the end of Step 2.
+- [x] Execute Step 3 & Step 4 of `Runtime::shutdown()`: join registered job threads, then drain and `join()` all `RenderPool` worker threads (releasing all `DisplayList` shared pointers held by in-flight tasks). Done when: `debug_live_workers()` and `debug_live_display_lists()` both reach `0` at the end of Step 4.
+- [x] Execute Step 5 & Step 6 of `Runtime::shutdown()`: invoke registered presentation shutdown hooks in deterministic order and verify `debug_live_documents() == 0 && debug_live_display_lists() == 0 && debug_live_workers() == 0`. Done when: `Runtime.OrderedShutdownSequence` records `[1, 2, 3, 4, 5, 6]` from `on_step` and, from a real registered job thread and presentation thread, reads at the job's `join` every actor finished and the workers alive, and at the presentation hook the workers gone and the job joined.
+- [x] Make `Runtime::shutdown()` idempotent so calling `runtime.shutdown()` explicitly before `~Runtime()` runs the teardown once and is a safe no-op on the second call. Done when: `Runtime.IdempotentShutdown` passes under ASan.
+- [x] Open without waiting, join actors whoever holds them, and roll back a failed admission. Done when: `Runtime.OpenReturnsAtOnce` holds an open at its file read and reads `open_document` returned with the open pending, a password file answering `NeedsPassword` then opening through `authenticate`, a missing file's typed failure, and a close during the open `Cancelled`; `Actor.JoinWithHandlesHeld` joins an actor another holder still references and reads its thread gone; and `Runtime.AdmissionFailures` fails an actor's start (`ActorFailure::ThreadStart`) and, in plain Debug, an allocation at each step of `open_document`, reading a typed error and no actor or id left each time, and an unknown id `InvalidArgument`.
+- [x] Refuse what arrives after shutdown and register what must stop. Done when: `Runtime.AfterShutdown` reads `open_document` `Cancelled`, a tile request delivered `Cancelled`, a job registered before shutdown cancelled in step 1 and joined in step 3, one unregistered before it not called, and two presentation hooks run in their registration order.
+- [x] Measure shutdown under load. Done when: `Runtime.ShutdownLatency` shuts down with 4 documents compiling and 8 workers rendering and reads `shutdown()` returning within 100 ms in Release on the Windows host (reported, not held, on CI and on a busy host).
+- [x] Stress-test `Runtime::~Runtime()` across 50 iterations while 4 `DocumentActor`s and 8 `RenderPool` workers are actively compiling `DisplayList`s and rasterizing tiles (`Runtime.ShutdownUnderActiveTileLoad`). Done when: all 50 iterations exit cleanly with zero ASan findings and zeroed counters.
 - [ ] Commit: `core: implement Runtime coordinator and section 4.8 ordered shutdown sequence`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Runtime.*` passes under ASan across all 50 shutdown-under-load iterations.
@@ -1707,6 +1708,26 @@ Filed 2026-11-09 from `D01 T02 §15`'s plan review (`docs/reviews/01-engine/D01-
 - [ ] Commit: `pdf: blend transparency groups in their own colour space`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.GroupColourSpace:PdfRasterizer.GroupBlendingSpace:Corpus.Provenance` passes under ASan, and blending a CMYK group in sRGB fails `PdfRasterizer.GroupBlendingSpace`.
+## 50. A cancelled tile's `EndDraw` bounded by the pixel work it waits on
+
+Filed 2026-11-09 from the `D01 T02 §10` build: `PdfRasterizer.FlushBoundsEndDraw` (`§7`) took over 10 ms in 11 of 40 Release runs with the host about half busy (1.96 to 35.6 ms, mean 9.3 ms), and 106 ms with other processes at 86%. The cancel lands at a `RasterCommand` poll just after `Flush()`, yet the wait is in `EndDraw`: the software Direct2D target appears to hand each batch to its own rasterizing threads and return from `Flush` before the batch is drawn, so up to 64 full-tile fills are still being drawn when the tile is cancelled, and under contention they take tens of milliseconds. Batching by command count bounds the queued commands, not their cost. Recto bounds what a cancelled tile's `EndDraw` can wait on by the pixel area queued since the last poll (flushing and polling when it passes a budget), and proves whether `Flush` waits, so a cancel returns within `§7`'s 10 ms on a half-busy host. -> XREF: D01 T02 §7
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the rasterizer still reads the `DisplayList` through `const` only, that tile output is unchanged pixel for pixel, and that every clip and layer is still popped before `EndDraw` on a cancel.
+
+**Build order:**
+
+1. Measure where a cancelled tile's time goes in `src/pdf/rasterizer.cpp`. Done when: the findings file records `Flush`, `EndDraw` and the replay's share of a cancelled tile on a quiet and a half-busy host.
+2. Bound the queued work by area in `Rasterizer::State::replay`. Done when: `PdfRasterizer.FlushBoundsEndDraw` holds 10 ms in 40 of 40 Release runs on a half-busy host.
+
+- [ ] Measure whether `ID2D1RenderTarget::Flush` on the software WIC target returns before the batch is drawn, timing `Flush`, `EndDraw` and the replay around a cancel at command 44,800 of 50,000 full-tile fills. Done when: `PdfRasterizer.CancelCostBreakdown` reports the three times on the Windows host, recorded in the findings file.
+- [ ] Count the device-space area of the draws queued since the last flush in `Rasterizer::State::replay` (`src/pdf/rasterizer.cpp`) and flush and poll when it passes a budget of a few tile areas, as well as every 64 commands. Done when: `PdfRasterizer.FlushBoundsEndDraw` returns within 10 ms in 40 of 40 Release runs with the host about half busy, and `PdfRasterizer.TileStitchIdentity` still reads `max_delta = 0`.
+- [ ] Keep the cost of the extra flushes measured. Done when: `PdfRasterizer.FlushCost` renders `render/images-and-vectors.pdf` and the 50,000-fill page uncancelled and reads the time within 5 percent of the 64-command batching, recorded in the findings file.
+- [ ] Commit: `pdf: bound a cancelled tile's EndDraw by the pixel work queued since its last poll`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.FlushBoundsEndDraw --gtest_repeat=40` passes in Release on a half-busy Windows host, and batching by command count alone fails it.
 ## Verification
 
 - `recto-tests.exe --gtest_filter=PdfDisplayList.*:PdfFont.*:PdfInterpreter.*:PdfIncrementalWriter.*:PdfRasterizer.*:Actor.*:Scheduler.*:Runtime.*` passes in Debug, Release, and ASan builds.

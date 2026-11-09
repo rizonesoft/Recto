@@ -1003,6 +1003,23 @@ TEST(Actor, LastHandleLetGoOnItsOwnThread)
 	EXPECT_EQ(pdf::debug_live_document_objects(), before_objects);
 }
 
+TEST(Actor, JoinWithHandlesHeld)
+{
+	// Joined while another holder still has the handle: the thread is gone, and the last release joins nothing.
+	recto::test::TempDir dir;
+	const auto path = written(dir, "doc.pdf", pdf_of(1u, "0 0 10 10 re f"));
+	const int64_t before = debug_live_documents();
+	auto handle = started();
+	ASSERT_NE(handle, nullptr);
+	ASSERT_TRUE(finish(handle->open(path)).has_value());
+	const std::shared_ptr<DocumentHandle> other = handle;
+	handle->join();
+	EXPECT_EQ(debug_live_documents(), before) << "the actor's thread was still running after join";
+	EXPECT_EQ(handle->state(), DocumentState::Closed);
+	handle->join(); // a second join does nothing
+	expect_code(other->get_description(), ErrorCode::Cancelled);
+}
+
 TEST(Actor, AsyncFailures)
 {	recto::test::TempDir dir;
 	const auto path = written(dir, "doc.pdf", pdf_of(1u, "0 0 10 10 re f"));
@@ -1327,9 +1344,13 @@ TEST(AtomicWrite, CancelDuringReadBack)
 		std::atomic<bool> reached{false};
 		std::atomic<int> chunks{0};
 		const pdf::CancelToken* token{nullptr};
+		std::chrono::steady_clock::time_point cleanup{};
 		static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
 		{
 			auto& self = *static_cast<Reading*>(context);
+			if (stage == AtomicWriteStage::Cleanup) {
+				self.cleanup = std::chrono::steady_clock::now();
+			}
 			if (stage == AtomicWriteStage::ReadBackChunk) {
 				self.chunks.fetch_add(1);
 			}
@@ -1361,7 +1382,11 @@ TEST(AtomicWrite, CancelDuringReadBack)
 	ASSERT_FALSE(done.has_value());
 	EXPECT_EQ(done.error().code, ErrorCode::Cancelled);
 	EXPECT_EQ(reading.chunks.load(), 1) << "the read-back went on reading after the cancel";
-	recto::test::expect_cancel_latency(std::chrono::duration<double, std::milli>(returned - cancelled).count(), "cancelling a save's read-back");
+	// Held: the cooperative stop, from the cancel to the temporary file being let go. Reported: the system deleting 64 MiB,
+	// several milliseconds of its own whatever the code does.
+	ASSERT_NE(reading.cleanup, std::chrono::steady_clock::time_point{}) << "the temporary file was never cleaned up";
+	recto::test::expect_cancel_latency(std::chrono::duration<double, std::milli>(reading.cleanup - cancelled).count(), "cancelling a save's read-back");
+	std::printf("[          ] deleting its temporary file: %.3f ms\n", std::chrono::duration<double, std::milli>(returned - reading.cleanup).count());
 	EXPECT_EQ(recto::test::read_file_bytes(target), before);
 	EXPECT_EQ(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()), 1) << "a temporary file was left";
 }

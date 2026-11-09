@@ -104,6 +104,10 @@ public:
 	// its own thread and this future becomes ready. Every call returns the same future.
 	[[nodiscard]] std::shared_future<void> close() noexcept;
 
+	// Closes and waits for the actor's thread to end, from any thread but its own, whoever else still holds this handle.
+	// Once joined, the destructor has nothing to wait for.
+	void join() noexcept;
+
 	[[nodiscard]] DocumentState state() const noexcept;
 	[[nodiscard]] ActorStats stats() const noexcept;
 

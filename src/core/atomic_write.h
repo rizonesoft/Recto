@@ -36,6 +36,7 @@ enum class AtomicWriteStage : uint8_t {
 	Verify,
 	ReadBackChunk, // between chunks of the read-back before the replace
 	Retry,         // before each retry of a replace a sharing violation refused
+	Cleanup,       // just before a temporary file that was not published is deleted
 };
 
 // Makes the calling thread's next atomic write fail at `stage` with `win32_error`, for a test.
@@ -52,7 +53,7 @@ private:
 };
 
 // Called on the calling thread just before `ReadBack`, each later `ReadBackChunk`, `Replace` (ahead of the last cancel
-// check), each `Retry` (ahead of its cancel check) and `Verify`, with the temporary file's path, so a test can change the
+// check), each `Retry` (ahead of its cancel check), `Verify` and `Cleanup`, with the temporary file's path, so a test can change the
 // files on disk or cancel at that point.
 using AtomicWriteHook = void (*)(AtomicWriteStage stage, const std::filesystem::path& temporary, void* context) noexcept;
 

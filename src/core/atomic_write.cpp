@@ -248,7 +248,8 @@ PdfResult<void> atomic_write_file(
 			~Remove() noexcept
 			{
 				if (active) {
-					::DeleteFileW(path.c_str());
+					reached(detail::AtomicWriteStage::Cleanup, path);
+					::DeleteFileW(path.c_str()); // the system's own work: a large file takes milliseconds to let go
 				}
 			}
 		} remove{temporary};

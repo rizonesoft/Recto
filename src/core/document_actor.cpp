@@ -195,7 +195,9 @@ struct DocumentHandle::State {
 			if (failing(detail::ActorFailure::QueueInsert)) {
 				throw std::bad_alloc();
 			}
-			queue.push_back(std::move(request));
+			// The slot first, then the request: a push that throws after moving its argument would leave nothing to answer.
+			queue.emplace_back();
+			queue.back() = std::move(request);
 		} catch (const std::exception&) {
 			request->answer(make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a document request"));
 			return future;
@@ -234,7 +236,8 @@ struct DocumentHandle::State {
 			if (failing(detail::ActorFailure::QueueInsert)) {
 				throw std::bad_alloc();
 			}
-			queue.push_back(std::move(request));
+			queue.emplace_back(); // the slot first, as in `post`, so a failure leaves the request here to answer
+			queue.back() = std::move(request);
 		} catch (const std::exception&) {
 			lock.unlock();
 			request->answer(make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a document request"));
@@ -381,6 +384,7 @@ struct DocumentHandle::State {
 	ActorStats stats;
 
 	std::thread thread;
+	std::mutex join_mutex; // `join()` and the destructor, never both joining
 };
 
 DocumentHandle::DocumentHandle(std::shared_ptr<State> state) noexcept
@@ -412,9 +416,19 @@ PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOpti
 	}
 }
 
+void DocumentHandle::join() noexcept
+{
+	(void)close();
+	const std::lock_guard lock(state_->join_mutex);
+	if (state_->thread.joinable() && state_->thread.get_id() != std::this_thread::get_id()) {
+		state_->thread.join();
+	}
+}
+
 DocumentHandle::~DocumentHandle() noexcept
 {
 	(void)close();
+	const std::lock_guard lock(state_->join_mutex);
 	if (!state_->thread.joinable()) {
 		return;
 	}
