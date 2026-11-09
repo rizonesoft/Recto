@@ -20,6 +20,7 @@ track: M0
 - -> XREF: D00 T02 §3 -- the plan CI gate authored there runs beside the product CI workflow built in §4 here.
 - -> XREF: D99 T01 §2 -- the operator finishes the GitHub repo face (social preview upload, description, branch protection) once §1 here has pushed the initial tree.
 - -> XREF: D10 T01 §2 -- the WinUI scaffold built in §3 here is replaced by the Win32 `Recto.exe` host and the Windows App SDK pins are retired there.
+- -> XREF: D00 T04 §2 -- the x64 and ARM64 one-command build of §3 and the CI build of §4 here: ARM64 moves to CI only until Recto v1, and the build moves to CMake and Ninja in D00 T04 §8.
 - -> XREF: D07 T02 §2 -- the `NOTICE.md` skeleton started in §1 here is completed and audited against the shipped dependency set before Store submission.
 
 ## Outcome

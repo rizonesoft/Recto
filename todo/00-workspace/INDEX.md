@@ -8,8 +8,7 @@ The git repository, the GPL-3.0 repo-face files, the native C++23 `recto-pdf` an
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
-
-(none active)
+| [TODO-04](./TODO-04-build-performance.md) | Build Performance, Repo-Scoped Tools and the Ninja Build | active |
 
 ## Completed
 
