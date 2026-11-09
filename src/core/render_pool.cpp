@@ -21,6 +21,7 @@ using pdf::PdfResult;
 
 std::atomic<int64_t> g_live_workers{0};
 std::atomic<uint32_t> g_fail_worker_start{0u}; // 0: none; n: the nth start from now
+std::atomic<bool> g_fail_worker_start_memory{false};
 std::atomic<bool> g_fail_worker_rasterizer{false};
 
 // The tile `job` asks for, in a buffer of its own.
@@ -137,12 +138,19 @@ PdfResult<std::unique_ptr<RenderPool>> RenderPool::start(
 	for (uint32_t i = 0; i < workers; ++i) {
 		try {
 			if (const uint32_t nth = g_fail_worker_start.load(); nth != 0u && g_fail_worker_start.fetch_sub(1u) == 1u) {
+				if (g_fail_worker_start_memory.exchange(false)) {
+					throw std::bad_alloc();
+				}
 				throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
 			}
-			s.threads.emplace_back([&s] { s.work(); }); // reserved, so only the thread itself can fail
+			s.threads.emplace_back([&s] { s.work(); }); // reserved, so only the thread (and its callable) can fail
 		} catch (const std::system_error&) {
 			s.stop_starting();
 			return make_pdf_error(ErrorCode::InternalError, "A render worker could not start");
+		} catch (const std::bad_alloc&) {
+			// `std::thread` allocates its callable before it starts the thread.
+			s.stop_starting();
+			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory starting a render worker");
 		}
 	}
 	{
@@ -176,8 +184,9 @@ uint32_t RenderPool::size() const noexcept
 
 namespace detail {
 
-void fail_worker_start_for_testing(uint32_t nth) noexcept
+void fail_worker_start_for_testing(uint32_t nth, bool out_of_memory) noexcept
 {
+	g_fail_worker_start_memory.store(out_of_memory);
 	g_fail_worker_start.store(nth);
 }
 

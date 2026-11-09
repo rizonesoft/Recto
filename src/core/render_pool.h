@@ -80,8 +80,9 @@ private:
 
 namespace detail {
 
-// Makes the `nth` worker thread started from now on fail to start, for a test.
-void fail_worker_start_for_testing(uint32_t nth) noexcept;
+// Makes the `nth` worker thread started from now on fail to start, for a test: as the system refusing a thread, or as
+// `std::thread` failing to allocate its callable.
+void fail_worker_start_for_testing(uint32_t nth, bool out_of_memory = false) noexcept;
 // Makes the next worker's `Rasterizer` fail to be made, for a test.
 void fail_next_worker_rasterizer_for_testing() noexcept;
 

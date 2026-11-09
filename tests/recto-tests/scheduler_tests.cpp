@@ -282,6 +282,17 @@ TEST(Scheduler, WorkerStartFailure)
 		EXPECT_EQ(made.error().code, ErrorCode::InternalError);
 	}
 	EXPECT_EQ(debug_live_workers(), before);
+	{
+		// `std::thread` failing to allocate its callable for the third worker.
+		detail::fail_worker_start_for_testing(3u, true);
+		SchedulerOptions options;
+		options.worker_count = 4u;
+		options.deliver = deliveries.sink();
+		const auto made = TileScheduler::create(std::move(options));
+		ASSERT_FALSE(made.has_value());
+		EXPECT_EQ(made.error().code, ErrorCode::OutOfMemory);
+	}
+	EXPECT_EQ(debug_live_workers(), before);
 	EXPECT_EQ(deliveries.count(), 0u);
 }
 
@@ -1078,6 +1089,34 @@ TEST(Scheduler, ShutdownWithoutMemory)
 		EXPECT_EQ(deliveries.count(), 2u);
 		EXPECT_EQ(debug_live_workers(), workers);
 	}
+}
+TEST(Scheduler, StartWithoutMemory)
+{
+	// Memory running out anywhere while a scheduler starts its workers: a typed result, no terminate, no worker left.
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	const int64_t workers = debug_live_workers();
+	size_t refused = 0u;
+	for (uint32_t nth = 1u; nth <= 24u; ++nth) {
+		SCOPED_TRACE(nth);
+		Deliveries deliveries;
+		SchedulerOptions options;
+		options.worker_count = 3u;
+		options.deliver = deliveries.sink();
+		pdf::PdfResult<std::unique_ptr<TileScheduler>> made = pdf::detail::cancelled_error();
+		{
+			const recto::test::ScopedAllocationFailure fail(nth, 32u); // past the Debug STL's 16-byte proxies, made in noexcept constructors
+			made = TileScheduler::create(std::move(options));
+		}
+		if (!made.has_value()) {
+			++refused;
+			EXPECT_EQ(made.error().code, ErrorCode::OutOfMemory);
+		}
+		made = pdf::detail::cancelled_error(); // destroyed here, outside the failure
+		EXPECT_EQ(debug_live_workers(), workers);
+	}
+	EXPECT_GT(refused, 1u) << "no allocation inside create was reached";
 }
 } // namespace
 } // namespace recto::core
