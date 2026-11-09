@@ -1,0 +1,91 @@
+{
+  "ref": "D01 T02 \u00a79",
+  "title": "`RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation",
+  "implementation_sha": "f4496cc46cb1434b7812424ba18407caee82e0af",
+  "date": "2026-11-09",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s9.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build.ps1 -EnableASAN -Configuration Debug -TestFilter Scheduler.*:Actor.* -> [  PASSED  ] 41 tests (AllocationFailures, ShutdownWithoutMemory and StartWithoutMemory skipped: no allocation injection under ASan; they pass in x64 Debug, [  PASSED  ] 44 tests); debug_live_workers() back to its start in WorkerLifecycle and WorkerStartFailure",
+    "not cancelling stale requests in update_viewport -> Scheduler.ViewportJumpCancelsStaleTiles FAILED (mutant killed)",
+    "build.cmd -> 0 Warning(s) 0 Error(s) on x64 and ARM64 Debug and Release; x64 Debug [  PASSED  ] 496 tests, Release [  PASSED  ] 497 tests; first tile after a jump 0.3 to 0.9 ms in Release"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s9.md",
+    "verdict": "filed",
+    "candidate": "6e22857615ddc98afa5361492339a604142d6f41",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 4,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s9.md",
+    "candidate": "6f524d14c462a0321c94c7aef92005f07a3fe576",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

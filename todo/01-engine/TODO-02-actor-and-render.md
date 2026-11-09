@@ -66,7 +66,7 @@ track: M1
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [x] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [x] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [x] |
-| 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [ ] |
+| 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [x] |
 | 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
 | 11 | §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity | §9 | [ ] |
 | 12 | §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur` | §8, D02 T02 §12 | [ ] |
@@ -502,9 +502,12 @@ Implement `src/core/render_pool.h/.cpp` and `src/core/tile_scheduler.h/.cpp` (`r
 - [x] Survive shutdown with a fetch outstanding and start only whole. Done when: `Scheduler.ShutdownDuringFetch` destroys the scheduler while an actor holds its page's compile, reads exactly one `Cancelled` per request and none after the release, clean under ASan; `Scheduler.CallbackAdmission` fetches through a full actor queue, a closed actor and an allocation failure and reads every tile delivered once; and `Scheduler.WorkerStartFailure` fails the third worker's thread and, separately, a worker's `Rasterizer`, reading a typed `create` error and `debug_live_workers()` back to its start.
 - [x] Prove the default count and the override bounds. Done when: `Scheduler.WorkerCount` reads `RenderPool::default_worker_count(cores)` 2 for 0, 1, 2, 3 and 4 cores, 6 for 8, 8 for 10 and 64, and `create` taking 0 (the default), 1 and 16 and refusing 17.
 - [x] Measure the jump. Done when: `Scheduler.JumpLatency` holds every worker on stale tiles, jumps, and reads a worker starting the first new visible tile within 10 ms in Release on the Windows host (reported, not held, on CI runners).
-- [ ] Commit: `core: implement RenderPool and 4-tier priority TileScheduler with viewport cancellation`
+- [x] Commit: `core: implement RenderPool and 4-tier priority TileScheduler with viewport cancellation`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Scheduler.*:Actor.CallbackRequests` passes under ASan with `debug_live_workers() == 0` after each test, and not cancelling stale requests in `update_viewport` fails `Scheduler.ViewportJumpCancelsStaleTiles`.
+
+> **Verified:** 2026-11-09 | §9 | f4496cc46cb1434b7812424ba18407caee82e0af
+> **Review:** `docs/reviews/d01-t02-s9.json`
 
 ## 10. `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters
 
