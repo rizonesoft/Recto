@@ -5,6 +5,7 @@ build/*
 !build/build.ps1
 !build/asan-runtime.ps1
 !build/msbuild-log.ps1
+!build/build-evidence.ps1
 __pycache__/
 *.pyc
 

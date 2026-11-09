@@ -167,7 +167,7 @@ class BuildScript(unittest.TestCase):
 
 
 class AsanCoverage(unittest.TestCase):
-    """-EnableASAN instruments, rebuilds on a state change and stages the runtime for every C++ project in Recto.sln,
+    """-EnableASAN instruments into its own folders and stages the runtime for every C++ project in Recto.sln,
     so a module added to the solution cannot silently stay uninstrumented (D10 T01 §1 and §2)."""
 
     # Projects built with their own sanitizer setup instead, and why.
@@ -178,14 +178,25 @@ class AsanCoverage(unittest.TestCase):
         text = (ROOT / "Recto.sln").read_text(encoding="utf-8-sig")
         return set(re.findall(r'^Project\("\{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942\}"\) = "([^"]+)"', text, re.M))
 
-    def test_every_solution_project_is_instrumented_and_cleaned(self):
+    def test_every_solution_project_is_instrumented(self):
         text = BUILD_PS1.read_text(encoding="utf-8")
-        cleaned = set(re.findall(r"'([^']+)'", re.search(r"\$asanProjects = @\(([^)]*)\)", text).group(1)))
-        targets = set(re.search(r"'-t:([^']+)'", text).group(1).split(";"))
+        instrumented = set(re.findall(r"'([^']+)'", re.search(r"\$asanProjects = @\(([^)]*)\)", text).group(1)))
         projects = self.solution_projects() - set(self.OWN_INSTRUMENTATION)
         self.assertTrue({"recto-ui", "Recto", "recto-tests"} <= projects)
-        self.assertEqual(cleaned, projects)
-        self.assertEqual(targets, projects)
+        self.assertEqual(instrumented, projects)
+        self.assertIn('"-t:$($asanProjects -join \';\')"', text)  # the ASan build is exactly those projects
+
+    def test_switching_modes_deletes_nothing(self):
+        # An ASan build has its own folders (D00 T04 §1): no state file, and no build deletes the other mode's output.
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        self.assertNotIn("asan-state", text)
+        self.assertIsNone(re.search(r"Remove-Item\s+\$(objDir|binDir)", text))
+        props = (ROOT / "Directory.Build.props").read_text(encoding="utf-8-sig")
+        self.assertRegex(props, r"<RectoObjFolder Condition=\"'\$\(EnableASAN\)' == 'true'\">obj-asan</RectoObjFolder>")
+        self.assertRegex(props, r"<RectoBinFolder Condition=\"'\$\(EnableASAN\)' == 'true'\">bin-asan</RectoBinFolder>")
+        self.assertIn(r"build\$(RectoObjFolder)\$(MSBuildProjectName)", props)
+        self.assertIn(r"build\$(RectoBinFolder)\$(Platform)", props)
+        self.assertIn(r'build\$binFolder\x64\$cfg\recto-tests\recto-tests.exe', text)
 
     def test_every_executable_the_tests_launch_gets_the_runtime(self):
         text = BUILD_PS1.read_text(encoding="utf-8")

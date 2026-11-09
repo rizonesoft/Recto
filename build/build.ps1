@@ -87,20 +87,12 @@ if ($EnableASAN) {
 
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
 $asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
+$binFolder = if ($EnableASAN) { 'bin-asan' } else { 'bin' }
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
+        # An ASan build has its own obj and bin folders (Directory.Build.props), so neither build touches the other's.
         $desiredAsanState = if ($EnableASAN) { 'true' } else { 'false' }
-        $stateFile = Join-Path $root "build\asan-state-$cfg-$plat.txt"
-        $prevAsanState = if (Test-Path $stateFile) { (Get-Content $stateFile -Raw).Trim() } else { '' }
-        if ($prevAsanState -ne $desiredAsanState) {
-            foreach ($proj in $asanProjects) {
-                $objDir = Join-Path $root "build\obj\$proj\$plat\$cfg"
-                $binDir = Join-Path $root "build\bin\$plat\$cfg\$proj"
-                if (Test-Path $objDir) { Remove-Item $objDir -Recurse -Force }
-                if (Test-Path $binDir) { Remove-Item $binDir -Recurse -Force }
-            }
-        }
 
         # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
         $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
@@ -119,7 +111,7 @@ foreach ($plat in $Platform) {
             '/nologo'
         )
         if ($EnableASAN) {
-            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-ui;Recto;recto-cli;recto-tests'
+                $msbuildArgs += "-t:$($asanProjects -join ';')"
             Write-Host "=== Recto $cfg|$plat (ASan)"
         } else {
             Write-Host "=== Recto $cfg|$plat"
@@ -139,14 +131,13 @@ foreach ($plat in $Platform) {
         if ($EnableASAN -and $plat -eq 'x64') {
             # Recto.exe too: recto-tests launches it (Ui.App tests).
             foreach ($exeProj in @('recto-tests', 'recto-cli', 'Recto')) {
-                $exe = Join-Path $root "build\bin\x64\$cfg\$exeProj\$exeProj.exe"
+                $exe = Join-Path $root "build\$binFolder\x64\$cfg\$exeProj\$exeProj.exe"
                 if (Test-Path $exe) {
                     $staged = Copy-AsanRuntime -ExePath $exe -AsanBinDir $asanBinDir -Dumpbin (Join-Path $asanBinDir 'dumpbin.exe')
                     Write-Host "Staged for ${exeProj}: $($staged -join ', ')"
                 }
             }
         }
-        Set-Content -Path $stateFile -Value $desiredAsanState -NoNewline
     }
 }
 
@@ -155,7 +146,7 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
     try {
         $env:RECTO_EXPECT_ASAN = if ($EnableASAN) { '1' } else { '0' }
         foreach ($cfg in $Configuration) {
-            $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
+            $tests = Join-Path $root "build\$binFolder\x64\$cfg\recto-tests\recto-tests.exe"
             $xmlDir = if (-not $TestOutputDir) { Join-Path $root 'build' } elseif ([System.IO.Path]::IsPathRooted($TestOutputDir)) { $TestOutputDir } else { Join-Path $root $TestOutputDir }
             New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
             $xmlOut = Join-Path $xmlDir "test-results-x64-$cfg.xml"

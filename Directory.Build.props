@@ -13,7 +13,12 @@
     <!-- Compile flags (warning level, language standards, runtime) are
          ClCompile item metadata in VC projects, not properties; they live
          in Directory.Build.targets next to this file. -->
-    <OutDir>$(MSBuildThisFileDirectory)build\bin\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</OutDir>
-    <IntDir>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+    <!-- An ASan build has folders of its own, so switching between it and the plain build rebuilds nothing (D00 T04 §1). -->
+    <RectoBinFolder Condition="'$(EnableASAN)' == 'true'">bin-asan</RectoBinFolder>
+    <RectoBinFolder Condition="'$(EnableASAN)' != 'true'">bin</RectoBinFolder>
+    <RectoObjFolder Condition="'$(EnableASAN)' == 'true'">obj-asan</RectoObjFolder>
+    <RectoObjFolder Condition="'$(EnableASAN)' != 'true'">obj</RectoObjFolder>
+    <OutDir>$(MSBuildThisFileDirectory)build\$(RectoBinFolder)\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)build\$(RectoObjFolder)\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
 </Project>
