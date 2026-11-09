@@ -511,6 +511,8 @@ Implement `src/core/render_pool.h/.cpp` and `src/core/tile_scheduler.h/.cpp` (`r
 
 ## 10. `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters
 
+> **Started:** 2026-11-09T08:13Z
+
 Implement `src/core/runtime.h` and `src/core/runtime.cpp` (`recto::core::Runtime`, foundation plan sections 4.3, 4.8):
 - Top-level coordinator owning the `DocumentActor` registry, `TileScheduler`, `RenderPool`, registered conversion/background job handles (`register_job_thread`), and presentation shutdown hooks (`register_presentation_hook`).
 - Enforce the exact **6-step ordered shutdown sequence** of foundation plan section 4.8 in `Runtime::shutdown()` / `Runtime::~Runtime()`:
