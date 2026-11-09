@@ -1,4 +1,5 @@
 """Checks on build/build.ps1, the one-command build and test driver, and the ASan runtime staging it loads."""
+import json
 import os
 import pathlib
 import re
@@ -248,6 +249,25 @@ class BuildEvidence(unittest.TestCase):
             self.assertIn(r"appeared build\bin\x64\Debug\recto-tests\new.dll", out)
             self.assertIn(r"gone build\obj\recto-pdf\x64\Debug\b.obj", out)
             self.assertIn(r"rewritten build\obj\recto-pdf\x64\Debug\a.obj", out)
+
+    def test_a_short_form_root_cuts_paths_right(self):
+        # CI's temporary folder comes in 8.3 form (C:\Users\RUNNER~1\...): the paths a record holds must still be
+        # relative to the build folder.
+        import ctypes
+        with tempfile.TemporaryDirectory(dir=os.environ.get("LOCALAPPDATA")) as tmp:
+            long_root = Path(tmp) / "a-folder-name-past-eight"
+            long_root.mkdir()
+            buffer = ctypes.create_unicode_buffer(1024)
+            ctypes.windll.kernel32.GetShortPathNameW(str(long_root), buffer, 1024)
+            short = Path(buffer.value)
+            if not buffer.value or short.name == long_root.name:
+                self.skipTest("this volume keeps no 8.3 names")
+            self.tree(long_root)
+            code, out = self.run_script("-Record", str(short / "one.json"), "-Root", str(short))
+            self.assertEqual(code, 0, out)
+            paths = sorted(entry["path"] for entry in json.loads((long_root / "one.json").read_text(encoding="utf-8-sig")))
+            self.assertEqual(paths, [r"build\bin\x64\Debug\recto-tests\recto-tests.exe", r"build\obj\recto-pdf\x64\Debug\a.obj",
+                                     r"build\obj\recto-pdf\x64\Debug\b.obj"])
 
     def test_refuses_evidence_of_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

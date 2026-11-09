@@ -33,7 +33,9 @@ function Get-Sha256([string]$Path) {
         $sha.Dispose()
     }
 }
-$root = if ($Root) { (Resolve-Path $Root).Path } else { Split-Path -Parent $PSScriptRoot }
+# Get-Item gives the root in the same long form Get-ChildItem gives its files, so cutting a file's path by the root's
+# length is right even when the root was given in 8.3 form (CI's temporary folder is C:\Users\RUNNER~1\...).
+$root = (Get-Item -LiteralPath $(if ($Root) { $Root } else { Split-Path -Parent $PSScriptRoot })).FullName.TrimEnd('\')
 
 if ($PSCmdlet.ParameterSetName -eq 'Record') {
     $obj = Join-Path $root ('build\' + ($(if ($Asan) { 'obj-asan' } else { 'obj' })))
