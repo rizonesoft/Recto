@@ -108,6 +108,12 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		bool started{false};
 		std::optional<CancelSource> cancel;
 		std::shared_ptr<const pdf::DisplayList> list;
+		size_t tier{4u}; // the best tier any live tile of its page wants; worked out afresh by each `plan_fetches`
+	};
+
+	struct Attached {
+		std::shared_ptr<DocumentHandle> handle;
+		size_t in_flight{0u}; // its fetches asked and not yet answered; worked out afresh by each `plan_fetches`
 	};
 
 	struct Start {
@@ -131,10 +137,10 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	bool stopping{false};
 	bool paused{false};
 	size_t delivering{0u}; // answers handed out but not yet returned from `deliver`
-	std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> documents;
+	std::unordered_map<uint64_t, Attached> documents;
 	// Made with the scheduler and swapped with `documents` at shutdown, so letting the handles go allocates nothing (an
 	// MSVC `unordered_map` allocates even when empty).
-	std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> released;
+	std::unordered_map<uint64_t, Attached> released;
 	Entries live;    // every request taken and not yet answered, `again` ones apart
 	Entries waiting; // `again` requests, each behind its cancelled render
 	Entries answered; // answered, until the thread that answered them has delivered them
@@ -284,28 +290,6 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		}
 	}
 
-	// The best tier any live tile of `page` wants.
-	[[nodiscard]] size_t page_tier(const PageKey& page) const noexcept
-	{
-		size_t best = 4u;
-		for (const Entry& entry : live) {
-			if (entry.wanted && page_of(entry.request.key) == page) {
-				best = std::min(best, tier(entry.request.priority));
-			}
-		}
-		return best;
-	}
-
-	// Fetches of `doc_id` asked of its actor and not yet answered.
-	[[nodiscard]] size_t in_flight(uint64_t doc_id) const noexcept
-	{
-		size_t count = 0u;
-		for (const auto& [page, fetch] : fetches) {
-			count += page.doc_id == doc_id && fetch.started && fetch.list == nullptr ? 1u : 0u;
-		}
-		return count;
-	}
-
 	// Answers every tile waiting on `page`'s list with `error` and forgets the fetch, so a later request asks again.
 	void fail_page(const PageKey& page, const pdf::PdfError& error, Out& out) noexcept
 	{
@@ -323,39 +307,67 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	// The page fetches to send now: for each document, the best-placed waiting pages, up to `kFetchesInFlight` asked of
 	// its actor at once, so a thumbnail backlog never stands in a visible page's way at the actor. Choosing allocates
 	// nothing; a page whose fetch cannot be queued for want of memory has its tiles answered, so none is left waiting.
+	// Each page's tier and each document's fetches in flight are worked out once, in one pass over the live tiles and one
+	// over the fetches, so a pick is one scan with constant-time checks: linear in the backlog, never cubic (a
+	// 3,000-page thumbnail backlog refused by a closed actor took minutes on the asking thread before).
 	void plan_fetches(std::vector<Start>& starts, Out& out) noexcept
 	{
+		for (auto& [id, document] : documents) {
+			document.in_flight = 0u;
+		}
+		for (auto& [page, fetch] : fetches) {
+			fetch.tier = 4u;
+			if (!fetch.started) {
+				continue;
+			}
+			if (fetch.list == nullptr) {
+				if (const auto document = documents.find(page.doc_id); document != documents.end()) {
+					++document->second.in_flight;
+				}
+			}
+		}
+		for (const Entry& entry : live) {
+			if (!entry.wanted) {
+				continue;
+			}
+			if (const auto fetch = fetches.find(page_of(entry.request.key)); fetch != fetches.end()) {
+				fetch->second.tier = std::min(fetch->second.tier, tier(entry.request.priority));
+			}
+		}
 		for (;;) {
-			const Fetch* best = nullptr;
+			Fetch* best = nullptr;
 			PageKey best_page{};
-			size_t best_tier = 5u;
-			for (const auto& [page, fetch] : fetches) {
+			Attached* best_document = nullptr;
+			for (auto& [page, fetch] : fetches) {
 				if (fetch.started) {
 					continue;
 				}
-				const size_t t = page_tier(page);
-				if ((t < best_tier || (t == best_tier && fetch.generation < best->generation)) && in_flight(page.doc_id) < kFetchesInFlight) {
+				const auto document = documents.find(page.doc_id);
+				if (document == documents.end()) {
+					fetch.started = true; // detached: its tiles are answered, and the fetch goes with the last of them
+					continue;
+				}
+				if (document->second.in_flight >= kFetchesInFlight) {
+					continue;
+				}
+				if (best == nullptr || fetch.tier < best->tier || (fetch.tier == best->tier && fetch.generation < best->generation)) {
 					best = &fetch;
 					best_page = page;
-					best_tier = t;
+					best_document = &document->second;
 				}
 			}
 			if (best == nullptr) {
 				return;
 			}
-			Fetch& chosen = fetches.at(best_page);
-			const auto document = documents.find(best_page.doc_id);
-			if (document == documents.end()) {
-				chosen.started = true; // detached: its tiles are answered, and the fetch goes with the last of them
-				continue;
-			}
+			Fetch& chosen = *best;
 			try {
-				starts.push_back(Start{best_page, chosen.generation, document->second, chosen.cancel->token()});
+				starts.push_back(Start{best_page, chosen.generation, best_document->handle, chosen.cancel->token()});
 			} catch (const std::bad_alloc&) {
 				fail_page(best_page, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory asking for a page's list"), out);
 				continue;
 			}
 			chosen.started = true;
+			++best_document->in_flight;
 		}
 	}
 	void start_fetches(std::vector<Start>& starts) noexcept
@@ -644,7 +656,7 @@ PdfResult<void> TileScheduler::attach(uint64_t doc_id, std::shared_ptr<DocumentH
 		if (s.stopping) {
 			return pdf::detail::cancelled_error();
 		}
-		if (!s.documents.try_emplace(doc_id, std::move(document)).second) {
+		if (!s.documents.try_emplace(doc_id, State::Attached{std::move(document)}).second) {
 			return make_pdf_error(ErrorCode::InvalidArgument, "That document id is already attached");
 		}
 	} catch (const std::bad_alloc&) {
@@ -660,7 +672,7 @@ void TileScheduler::detach(uint64_t doc_id) noexcept
 	{
 		const std::lock_guard lock(state_->mutex);
 		if (const auto found = state_->documents.find(doc_id); found != state_->documents.end()) {
-			released = std::move(found->second);
+			released = std::move(found->second.handle);
 			state_->documents.erase(found);
 		}
 	}

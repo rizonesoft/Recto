@@ -735,8 +735,12 @@ TEST(Scheduler, CallbackAdmission)
 		for (uint32_t page = 0; page < 3'000u; ++page) {
 			pages.push_back(tile(1u, page, 0u));
 		}
+		// Choosing what to fetch is linear in the backlog: before, each pick rescanned every tile per fetch, and this
+		// drain took about 400 seconds in a Debug build, on the asking (UI) thread.
+		const auto started = std::chrono::steady_clock::now();
 		made->update_viewport(1u, pages);
 		ASSERT_TRUE(deliveries.wait_for(before + 3'000u));
+		EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(30)) << "planning fetches is not linear";
 		const std::lock_guard lock(deliveries.mutex);
 		for (size_t i = before; i < deliveries.all.size(); ++i) {
 			EXPECT_EQ(deliveries.all[i].second.error().code, ErrorCode::Cancelled);
