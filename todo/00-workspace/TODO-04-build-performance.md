@@ -52,6 +52,8 @@ track: M0
 
 `Directory.Build.props` sends every build of a configuration to `build/obj/<project>/<platform>/<configuration>/` and `build/bin/<platform>/<configuration>/<project>/`, whether `EnableASAN` is set or not, so the object files of one overwrite the other's and each switch is a full rebuild (seen many times on 2026-11-09). This section gives ASan builds their own folders and keeps everything that reads the output paths (`build/build.ps1`, `build/asan-runtime.ps1`, the test runner paths, CI) pointed at the right one.
 
+**Corrected 2026-11-09:** plan review (`docs/reviews/00-workspace/D00-T04-s1.md`). `build/build.ps1` does more than share folders: it records the last ASan state per configuration in `build/asan-state-<cfg>-<plat>.txt` and deletes the projects' obj and bin folders whenever it flips, so the cleanup and its state file go, with `tests/scripts/test_build_ps1.py`, which requires them, changed to prove the opposite. Isolation is proven by hashing every artifact of the other build before and after, in both directions; compiler work is counted by object files whose write time changed (`build/build-evidence.ps1`), checked against a run that touches one source and must count exactly that unit, so a count read from nothing cannot pass as zero.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -61,13 +63,15 @@ track: M0
 1. Give ASan builds their own `IntDir` and `OutDir` in `Directory.Build.props`. Done when: an ASan build writes only under `build/obj-asan/` and `build/bin-asan/`.
 2. Point `build/build.ps1` and `build/asan-runtime.ps1` at the folder of the build they ran. Done when: `build.ps1 -EnableASAN` runs the ASan `recto-tests.exe` and a plain build runs the plain one.
 
-- [ ] Set `IntDir` to `build\obj-asan\...` and `OutDir` to `build\bin-asan\...` in `Directory.Build.props` when `EnableASAN` is `true`, leaving the plain paths unchanged. Done when: `build.ps1 -EnableASAN -Configuration Debug -SkipTests` leaves no new file under `build/obj/` and `build/bin/`, read by comparing listings before and after. Cheaper substitute: deleting the plain outputs before each ASan build, which is the full rebuild this section removes.
+- [ ] Set `IntDir` to `build\obj-asan\...` and `OutDir` to `build\bin-asan\...` in `Directory.Build.props` when `EnableASAN` is `true`, leaving the plain paths unchanged. Done when: an ASan build writes under `build/obj-asan/` and `build/bin-asan/` only, every plain artifact keeping its hash. Cheaper substitute: deleting the plain outputs before each ASan build, which is the full rebuild this section removes.
 - [ ] Read the test binary and the ASan runtime copy from the ASan folders in `build/build.ps1` and `build/asan-runtime.ps1`. Done when: `build.ps1 -EnableASAN -Configuration Debug -TestFilter 'PdfError.*'` runs `build\bin-asan\x64\Debug\recto-tests\recto-tests.exe`, and `build.ps1 -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'` runs `build\bin\x64\Debug\recto-tests\recto-tests.exe`.
-- [ ] Prove the switch rebuilds nothing. Done when: a plain x64 Debug build, then an ASan build, then the plain build again, logs `0` compiled translation units on the third (`build\msbuild-Debug-x64.log` counts no `ClCompile` task executions), and the ASan build after it the same.
+- [ ] Retire the ASan-state cleanup in `build/build.ps1` (the `asan-state-*.txt` file and the deletion of obj and bin folders when it flips), and change `tests/scripts/test_build_ps1.py` to require that no build deletes the other mode's folders. Done when: the script holds no `asan-state` code and the test fails if the deletion is put back.
+- [ ] Add `build/build-evidence.ps1`, which records the SHA-256 of every file under a build's obj and bin folders and the write times of its `.obj` files, and compares two records: files changed, removed, and object files rewritten. Done when: a run after touching `src/pdf/error.cpp`'s timestamp reports exactly `error.obj` rewritten in each project that compiles it, and a run with no change reports none.
+- [ ] Prove the switch keeps both builds and rebuilds nothing, in both directions. Done when: plain x64 Debug, ASan, plain, ASan, each succeeding, with `build-evidence.ps1` showing the plain artifacts unchanged across each ASan build, the ASan artifacts unchanged across each plain build, and no object file rewritten on the third and fourth builds.
 - [ ] Update the CI ASan job and any script that names `build\bin\x64\Debug` for an ASan run (`.github/workflows/*.yml`, `scripts/`). Done when: a search for `bin\x64\Debug` in ASan steps finds none left, and the CI ASan job passes on the pushed commit.
 - [ ] Commit: `build: give ASan builds their own output folders`
 
-**Test checkpoint:** `build.ps1 -Platform x64 -Configuration Debug -SkipTests; build.ps1 -EnableASAN -Configuration Debug -SkipTests; build.ps1 -Platform x64 -Configuration Debug -SkipTests` compiles nothing on the third run, and setting the ASan `IntDir` back to the plain one makes it recompile every unit.
+**Test checkpoint:** plain, ASan, plain and ASan x64 Debug builds in turn, each passing, rewrite no object file on the third and fourth and leave the other mode's artifacts byte-identical (`build/build-evidence.ps1`), and setting the ASan `IntDir` back to the plain one makes the fourth rewrite every object file.
 
 ## 2. ARM64 off the local build, built in CI, deferred to after Recto v1
 
