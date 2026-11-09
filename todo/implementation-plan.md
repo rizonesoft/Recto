@@ -65,7 +65,7 @@ Sections: 50 | Checklist items: 284
 
 ### Phase 1: M1 Engine core
 
-Sections: 108 | Checklist items: 721
+Sections: 110 | Checklist items: 742
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -90,6 +90,8 @@ Sections: 108 | Checklist items: 721
 | [x]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 4     |
 | [x]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 4     |
 | [x]    | D01 T02 §37 | Faster, smaller `Default` Flate level, measured against zlib-ng                          | windows-host              | 3     |
+| [ ]    | D01 T02 §51 | `filters.cpp` split into one source per filter family, with no behaviour change          | windows-host              | 13    |
+| [ ]    | D01 T02 §52 | The filter and interpreter test files split by subject, every test name kept             | windows-host              | 8     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host              | 5     |
@@ -939,6 +941,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 102/870 verified sections, 52 ready to run now.
+Progress: 102/872 verified sections, 53 ready to run now.
 
-Checklist: 684/6427 items completed (includes Commit items).
+Checklist: 684/6448 items completed (includes Commit items).

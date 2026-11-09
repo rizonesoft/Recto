@@ -108,6 +108,8 @@ track: M1
 | 48 | §48 | One built CIDFont per shared `/Type0` descendant object | §42, D01 T01 §11 | [x] |
 | 49 | §49 | Blending in a transparency group's own colour space (`/CS`) | §15, §32 | [ ] |
 | 50 | §50 | A cancelled tile's `EndDraw` bounded by the pixel work it waits on | §7 | [ ] |
+| 51 | §51 | `filters.cpp` split into one source per filter family, with no behaviour change | -- | [ ] |
+| 52 | §52 | The filter and interpreter test files split by subject, every test name kept | §51 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1730,6 +1732,66 @@ Filed 2026-11-09 from the `D01 T02 §10` build: `PdfRasterizer.FlushBoundsEndDra
 - [ ] Commit: `pdf: bound a cancelled tile's EndDraw by the pixel work queued since its last poll`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.FlushBoundsEndDraw --gtest_repeat=40` passes in Release on a half-busy Windows host, and batching by command count alone fails it.
+
+## 51. `filters.cpp` split into one source per filter family, with no behaviour change
+
+Filed 2026-11-10 at the owner's request. `src/pdf/filters.cpp` is 436 KB and 11,983 lines, more than twice the next largest source (`document.cpp`, 156 KB), and it holds every stream filter: the Deflate reader and the LZW, predictor, ASCII and run-length decoders (to about line 1,700), CCITTFaxDecode (about 1,000 lines), JBIG2Decode (about 3,800), DCTDecode and JPXDecode through thread-local WIC (about 1,000), the native JPEG 2000 codestream decoder (about 3,400), and the pipeline that chains them (`decode_single_filter`, `decode_stream`, `decode_image_stream`, `decode_external_stream`). Every read, search and edit of one filter pays for all of them, and every change to one recompiles all of them. This section moves each family into its own source, word for word, behind the unchanged public header `src/pdf/filters.h`. It changes no behaviour: nothing is renamed, reordered within a family, rewritten or fixed here, and a defect seen on the way is filed, not folded in.
+
+What the split may add is only what a move needs: an internal header for the helpers more than one family uses (they sit in unnamed namespaces today, so they need one declaration that every family's source can see), the include lines of each new source, and the project entries. A helper that was `inline` or in an unnamed namespace stays inlinable (defined `inline` in the internal header), so no call on a decode loop becomes a call across sources.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `src/pdf/filters.h` is unchanged byte for byte, that every moved function still returns `PdfResult<T>` and still charges the same budgets and polls the same `CancelToken` at the same places, and that each of the 7 `thread_local` objects is still defined in exactly one source, so each thread still has one WIC state and no helper header gives a source its own copy.
+
+**Build order:**
+
+1. Map the file. Done when: the findings file lists each family's line ranges and every symbol that more than one family uses.
+2. Move the families out, one commit each. Done when: each family lives in its own source and `filters.cpp` holds the pipeline alone.
+3. Prove nothing changed. Done when: the same tests pass in Debug, Release and under ASan, the moved text is identical, and the decode timings are unchanged.
+
+- [ ] Map `src/pdf/filters.cpp`: each family's line ranges, the unnamed-namespace and `detail` symbols each family defines, and every one used by more than one family (bit readers, work meters, budget charging, cancel polls, the `thread_local` state). Done when: the map is in the findings file and every line of the file belongs to exactly one family, the pipeline or the shared set.
+- [ ] Record the proof's baseline on the commit before the first move: `recto-tests.exe --gtest_list_tests` for x64 Debug saved to scratch, the suite passing in Debug, Release and under ASan, `python scripts/flate-bench.py`'s figures, and the Release times of `PdfFilters.*`. Done when: all four are recorded in the findings file with the commit.
+- [ ] Add `src/pdf/filters_internal.h` (namespace `recto::pdf::detail`, included only by the filter sources, never by `filters.h`) holding the shared set from the map, each helper `inline` or declared once and defined in one source. Done when: `filters.cpp` builds with the helpers taken from the header, with 0 warnings, and the suite passes.
+- [ ] Move the Deflate reader with zlib framing to `src/pdf/filter_flate.cpp`, and the LZW, predictor, ASCIIHex, ASCII85 and run-length decoders to `src/pdf/filter_basic.cpp`. Done when: both are in `src/pdf/recto-pdf.vcxproj`, `filters.cpp` no longer holds them, and `recto-tests.exe --gtest_filter=PdfFilters.*:PdfXref.*` passes.
+- [ ] Move CCITTFaxDecode to `src/pdf/filter_ccitt.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfFilters.Ccitt*` passes and `filters.cpp` holds no CCITT code.
+- [ ] Move JBIG2Decode to `src/pdf/filter_jbig2.cpp`, cut along its own stages (the arithmetic and MMR decoders, then the segment and region decoders) into a second source if it would pass 2,500 lines. Done when: `recto-tests.exe --gtest_filter=PdfFilters.Jbig2*` passes and no JBIG2 source is over 2,500 lines, or the findings file says which stage could not be cut and why.
+- [ ] Move the WIC DCTDecode and JPXDecode path to `src/pdf/filter_wic.cpp`, each `thread_local` object moving with the code that owns it. Done when: `recto-tests.exe --gtest_filter=PdfFilters.Dct*:PdfFilters.Wic*:PdfFilters.ConcurrentWicDecode` passes, under ASan too.
+- [ ] Move the native JPEG 2000 decoder to `src/pdf/filter_jpx.cpp`, cut along its stages (codestream and tier-2 packet parsing, tier-1 EBCOT block decoding, the inverse wavelet and component transforms) so that no source passes 2,500 lines. Done when: `recto-tests.exe --gtest_filter=PdfFilters.Jpx*` passes and no JPX source is over 2,500 lines, or the findings file says which stage could not be cut and why.
+- [ ] Leave in `src/pdf/filters.cpp` only the pipeline (`decode_single_filter`, `decode_stream`, `decode_image_stream`, `decode_external_stream`) and the parameter resolution they use. Done when: `filters.cpp` is under 2,500 lines and `git diff <baseline> -- src/pdf/filters.h` is empty.
+- [ ] Prove the move is word for word: the non-blank lines of the baseline `filters.cpp`, sorted, against the non-blank lines of the new filter sources and `filters_internal.h` together, sorted. Done when: they differ only by lines listed in the findings file, each one an include, a namespace opening or closing, a banner comment, or a declaration or `inline` added for a shared helper.
+- [ ] Prove nothing changed for a caller: the full suite in x64 Debug and Release and under ASan, the D13 boundary check, the ARM64 build in CI, and the test list against the baseline. Done when: all pass, `--gtest_list_tests` is identical to the baseline, and `python scripts/flate-bench.py` and the Release times of `PdfFilters.*` are within their run-to-run spread of the baseline, both recorded in the findings file.
+- [ ] Point every open TODO item and Markdown document that names a moved function's place in `src/pdf/filters.cpp` at its new source. Done when: a search of `todo/` and `docs/` (review records excluded) for `filters.cpp` finds only lines that mean the pipeline, and `python scripts/todo-graph.py validate` passes.
+- [ ] Commit: `pdf: one source per stream filter family, moved word for word`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*:PdfXref.*:PdfDocument.*:PdfInterpreter.*` passes in x64 Debug, Release and under ASan with the same test list as the baseline; `git diff <baseline> -- src/pdf/filters.h` is empty; and no source under `src/pdf` whose name starts with `filter` is over 2,500 lines unless the findings file names why.
+
+## 52. The filter and interpreter test files split by subject, every test name kept
+
+Filed 2026-11-10 at the owner's request. `tests/recto-tests/pdf_filters_tests.cpp` is 383 KB (8,680 lines, 58 tests) and `tests/recto-tests/pdf_interpreter_tests.cpp` is 320 KB (6,391 lines, 65 tests): the two largest test sources, each read in pieces whenever one of its tests is changed. This section splits each by subject, the filter tests along the families of `§51`. Every test keeps its suite and name (`PdfFilters.CcittGroup4` stays `PdfFilters.CcittGroup4`; GoogleTest lets one suite span sources), so every Test checkpoint, receipt and `Regression-Test:` trailer written against them still names a test that exists. The helpers the tests share move to one header for each of the two files. No test is changed, weakened, merged or dropped.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that no source under `src/` changes in this section, and that every test compiled before it is compiled after it with the same suite, name and body, so each frozen guarantee is still proven by the test that proved it.
+
+**Build order:**
+
+1. Map both files. Done when: the findings file gives each test its new source and lists the helpers more than one new source needs.
+2. Move the tests. Done when: each new source builds and both original files hold only what their name says.
+3. Prove the suite is the same. Done when: the test list is identical and every test passes in Debug, Release and under ASan.
+
+- [ ] Map `pdf_filters_tests.cpp` and `pdf_interpreter_tests.cpp`: each test's subject and new source, and the unnamed-namespace helpers, fixtures and builders used by tests in more than one new source. Done when: the map is in the findings file, every `TEST` in both files appears in it once, and the baseline `--gtest_list_tests` output and passing Debug, Release and ASan runs are recorded with their commit.
+- [ ] Move the helpers the filter tests share to `tests/recto-tests/pdf_filters_test_support.h` and those the interpreter tests share to `tests/recto-tests/pdf_interpreter_test_support.h`, each `inline` and in a named namespace so no source gets a private copy that can drift. Done when: both original files build from the headers with 0 warnings and their tests pass.
+- [ ] Split `pdf_filters_tests.cpp` into `pdf_filter_flate_tests.cpp` (Flate decode and compress), `pdf_filter_basic_tests.cpp` (LZW, predictors, ASCII, run-length), `pdf_filter_ccitt_tests.cpp`, `pdf_filter_jbig2_tests.cpp`, `pdf_filter_dct_tests.cpp` (DCT and the WIC path) and `pdf_filter_jpx_tests.cpp`, leaving the pipeline, parameter resolution, image stream and cancel tests in `pdf_filters_tests.cpp`. Done when: all seven are in `tests/recto-tests/recto-tests.vcxproj`, `recto-tests.exe --gtest_filter=PdfFilters.*` passes, and no filter test source is over 2,500 lines unless the findings file names why.
+- [ ] Split `pdf_interpreter_tests.cpp` by the map's subjects (the graphics state and paths, colour spaces, text and fonts, images and inline images, Form XObjects and optional content, ceilings and refusals), each to `pdf_interpreter_<subject>_tests.cpp`. Done when: every new source is in the project, `recto-tests.exe --gtest_filter=PdfInterpreter.*` passes, and no interpreter test source is over 2,500 lines unless the findings file names why.
+- [ ] Prove the suite is the same: `recto-tests.exe --gtest_list_tests` sorted against the baseline, and the non-blank lines of the two baseline files, sorted, against those of the new sources and the two support headers. Done when: the test lists are identical, and the lines differ only by includes, namespace lines and the `inline` added to shared helpers, each listed in the findings file.
+- [ ] Run the whole suite in x64 Debug and Release and under ASan. Done when: all three pass with the baseline's count of tests, and `git diff <baseline> --stat -- src` is empty.
+- [ ] Point every open TODO item and Markdown document that names a moved test's file at its new source, `D00 T04 §10`'s slow-test items among them. Done when: a search of `todo/` and `docs/` (review records excluded) for `pdf_filters_tests.cpp` and `pdf_interpreter_tests.cpp` finds only lines whose test is still in that file, and `python scripts/todo-graph.py validate` passes.
+- [ ] Commit: `tests: split the filter and interpreter tests by subject, names unchanged`
+
+**Test checkpoint:** `recto-tests.exe --gtest_list_tests` is identical to the baseline; `recto-tests.exe --gtest_filter=PdfFilters.*:PdfInterpreter.*` passes in x64 Debug, Release and under ASan; and deleting one moved test from a new source makes the list comparison fail naming it.
+
 ## Verification
 
 - `recto-tests.exe --gtest_filter=PdfDisplayList.*:PdfFont.*:PdfInterpreter.*:PdfIncrementalWriter.*:PdfRasterizer.*:Actor.*:Scheduler.*:Runtime.*` passes in Debug, Release, and ASan builds.
