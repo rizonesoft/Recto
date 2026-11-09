@@ -39,7 +39,7 @@ track: M0
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | ASan and plain builds in separate output folders | -- | [ ] |
+| 1 | §1 | ASan and plain builds in separate output folders | -- | [x] |
 | 2 | §2 | ARM64 off the local build, built in CI, deferred to after Recto v1 | -- | [ ] |
 | 3 | §3 | MSBuild and compiler parallelism set by free memory | §1 | [ ] |
 | 4 | §4 | Precompiled headers for every project | §3 | [ ] |
@@ -73,9 +73,12 @@ track: M0
 - [x] Add `build/build-evidence.ps1`, which records the SHA-256 of every file under a build's obj and bin folders and the write times of its `.obj` files, and compares two records: files changed, removed, and object files rewritten. Done when: a run after touching `src/pdf/error.cpp`'s timestamp reports exactly `error.obj` rewritten in each project that compiles it, and a run with no change reports none.
 - [x] Prove the switch keeps both builds and rebuilds nothing, in both directions. Done when: plain x64 Debug, ASan, plain, ASan, each succeeding, with `build-evidence.ps1` showing the plain artifacts unchanged across each ASan build, the ASan artifacts unchanged across each plain build, and no object file rewritten on the third and fourth builds.
 - [x] Update the CI ASan job and any script that names `build\bin\x64\Debug` for an ASan run (`.github/workflows/*.yml`, `scripts/`). Done when: a search for `bin\x64\Debug` in ASan steps finds none left, and `.github/workflows/build.yml`'s ASan job names no output path (it runs through `build/build.ps1`, which picks the folder). **Corrected 2026-11-09:** said the CI ASan job passes on the pushed commit, which is read after the stamp's push (`process-phase` step 3), not before it.
-- [ ] Commit: `build: give ASan builds their own output folders`
+- [x] Commit: `build: give ASan builds their own output folders`
 
 **Test checkpoint:** plain, ASan, plain and ASan x64 Debug builds in turn, each passing, rewrite no object file on the third and fourth and leave the other mode's artifacts byte-identical (`build/build-evidence.ps1`), and setting the ASan `IntDir` back to the plain one makes the fourth rewrite every object file.
+
+> **Verified:** 2026-11-09 | §1 | 345146e195fa4db3cf62947c6e7af6e7ef3e5569
+> **Review:** `docs/reviews/d00-t04-s1.json`
 
 ## 2. ARM64 off the local build, built in CI, deferred to after Recto v1
 

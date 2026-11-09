@@ -1,0 +1,74 @@
+{
+  "ref": "D00 T04 \u00a71",
+  "title": "ASan and plain builds in separate output folders",
+  "implementation_sha": "345146e195fa4db3cf62947c6e7af6e7ef3e5569",
+  "date": "2026-11-09",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s1.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build.ps1 x64 Debug plain, ASan, plain, ASan, each with build-evidence.ps1 -> each mode's 1,565 to 1,600 files unchanged across the other's build; 0 object files rewritten on the third and fourth; touching src/pdf/error.cpp -> error.obj rewritten only",
+    "ASan RectoObjFolder set back to obj -> the switch rewrote all 67 object files",
+    "python -m unittest tests.scripts.test_build_ps1 -> Ran 14 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s1.md",
+    "verdict": "completed",
+    "candidate": "fb03caef2b266f48245596b59a899e1aa3e5d1cd",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s1.md",
+    "candidate": "7d88bb242b5a6d3cb45af5973f260ccb12745406",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
