@@ -30,6 +30,7 @@ track: M0
 - `build/bootstrap-tools.ps1` fetches pinned Ninja, CMake, sccache and CPython into `.tools/`, each checked against its SHA-256, and the build, the scripts and the hooks use them; a pin check keeps them current.
 - sccache caches the compiler's output, so a rebuild with nothing changed costs no compiles and a branch switch reuses what was built before.
 - A CMake build driven by Ninja builds every project with compile and link job pools, keeps the D13 boundary checks, runs in CI, and replaces the MSBuild path once it matches its outputs.
+- Every push's CI runs are followed to their end in the background, and a red one is the next work before any new row.
 
 **Adjacency:** all=not-applicable (build tooling, scripts and CI for the developer and CI host; no user-facing surface, document or setting)
 
@@ -47,6 +48,7 @@ track: M0
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [ ] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [ ] |
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4 | [ ] |
+| 9 | §9 | CI watched after every push until it completes | -- | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -226,6 +228,25 @@ MSBuild's scheduler cannot cap compiles and links separately, and its no-change 
 
 **Test checkpoint:** `cmake --build --preset x64-debug` followed by the suite passes with 0 warnings, a no-change `cmake --build` runs no compile, and including a `src/pdf` header from `src/ui` fails the ported boundary check.
 
+## 9. CI watched after every push until it completes
+
+The owner asked on 2026-11-09 that CI never stay red longer than it has to. Today `scripts/ci_status.py` reads the latest completed `build.yml` and `plan.yml` runs only at a section boundary (`process-phase` step 3) and at a heartbeat, so a push whose build fails is noticed only after the next section has started, and a run cancelled by a newer push reads as not red. This section adds a wait mode that follows the runs of one pushed commit to their end, and has `process-phase` start it in the background after every push, so a red is diagnosed and fixed before the next row is claimed.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add the wait mode to `scripts/ci_status.py`. Done when: `ci_status.py --wait <sha>` exits when that commit's runs end, with their verdict.
+2. Use it after every push. Done when: `process-phase` step 3 and the `process-plan` heartbeat name it, and a red it reports is the next work.
+
+- [ ] Add `--wait <sha>` (and `--timeout <minutes>`, default 60) to `scripts/ci_status.py`: it polls `gh run list` for `build.yml` and `plan.yml` runs on that commit every minute until each has completed, prints each run's verdict, URL and failed jobs, and exits 0 green, 1 red, 3 unknown (`gh` missing or failing) and 4 timed out; a run cancelled by a newer push on the same branch reads as superseded, not green and not red. Done when: `tests/scripts/test_ci_status.py` drives it with a fake runner through green, red, cancelled-by-newer, still running then green, and a timeout, each with its exit code.
+- [ ] Have `process-phase` step 3 start `python scripts/ci_status.py --wait <pushed sha>` with the shell's `run_in_background` option after every push (a section's work, a fix or a stamp), and treat its exit 1 as the red-first rule already written there: the failed jobs read, a rerun only for an infrastructure failure, otherwise a fix at the owning layer before the next row. Done when: `.claude/skills/process-phase/SKILL.md` says so and names the command.
+- [ ] Have the heartbeat prompt in `.claude/skills/process-plan/SKILL.md` and the one `CronCreate` installs read `ci_status.py` as today and, when the newest push's runs are still going, leave the watch running rather than starting a second. Done when: the canonical prompt says so and `scripts/tests` still pass.
+- [ ] Commit: `ci: watch every push's runs to their end and act on a red at once`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_ci_status` passes, a red fake run makes `ci_status.py --wait <sha>` exit 1 with its failed job named, and reading a cancelled-by-newer run as green fails the test.
 ## Verification
 
 - A plain and an ASan build of x64 Debug, built one after the other, recompile nothing the second time each, and `.\build.cmd` builds x64 only while CI builds ARM64.
