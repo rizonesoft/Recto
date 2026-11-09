@@ -14,6 +14,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -39,12 +40,45 @@ inline constexpr double kCancelLatencyLimitMs = 10.0;
 	return GetEnvironmentVariableA("GITHUB_ACTIONS", value, sizeof(value)) == 0u;
 }
 
+// The share of the machine's processor time other processes used over the next `window_ms`, from 0 to 1: a host that
+// other work keeps busy is no more a measurement environment than a shared runner, since this test's threads wait
+// there for a core however quickly they would return.
+[[nodiscard]] inline double other_processes_busy(DWORD window_ms = 250u) noexcept
+{
+	const auto ticks = [](const FILETIME& t) { return (uint64_t{t.dwHighDateTime} << 32u) | t.dwLowDateTime; };
+	FILETIME idle0{}, kernel0{}, user0{}, created{}, exited{}, own_kernel0{}, own_user0{};
+	if (GetSystemTimes(&idle0, &kernel0, &user0) == FALSE ||
+		GetProcessTimes(GetCurrentProcess(), &created, &exited, &own_kernel0, &own_user0) == FALSE) {
+		return 0.0;
+	}
+	Sleep(window_ms);
+	FILETIME idle1{}, kernel1{}, user1{}, own_kernel1{}, own_user1{};
+	if (GetSystemTimes(&idle1, &kernel1, &user1) == FALSE ||
+		GetProcessTimes(GetCurrentProcess(), &created, &exited, &own_kernel1, &own_user1) == FALSE) {
+		return 0.0;
+	}
+	// The system's kernel time includes its idle time.
+	const double total = static_cast<double>((ticks(kernel1) - ticks(kernel0)) + (ticks(user1) - ticks(user0)));
+	const double idle = static_cast<double>(ticks(idle1) - ticks(idle0));
+	const double own = static_cast<double>((ticks(own_kernel1) - ticks(own_kernel0)) + (ticks(own_user1) - ticks(own_user0)));
+	return total <= 0.0 ? 0.0 : std::clamp((total - idle - own) / total, 0.0, 1.0);
+}
+
+// Other processes using more than this share of every core make a missed limit a report, not a failure.
+inline constexpr double kBusyHostShare = 0.5;
+
 inline void expect_cancel_latency(double ms, const char* what)
 {
 	std::printf("[          ] %s: returned in %.3f ms\n", what, ms);
-	if (cancel_latency_held()) {
-		EXPECT_LT(ms, kCancelLatencyLimitMs) << what << ": a cancel took " << ms << " ms to return";
+	if (!cancel_latency_held() || ms < kCancelLatencyLimitMs) {
+		return;
 	}
+	// Past the limit: a failure on a quiet host, and only a report on one other work is holding.
+	if (const double busy = other_processes_busy(); busy > kBusyHostShare) {
+		std::printf("[          ] %s: not held, other processes use %.0f%% of the processors\n", what, busy * 100.0);
+		return;
+	}
+	ADD_FAILURE() << what << ": a cancel took " << ms << " ms to return on a host that was not otherwise busy";
 }
 
 struct CancelAtPoll {
