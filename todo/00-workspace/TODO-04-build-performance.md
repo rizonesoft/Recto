@@ -230,6 +230,8 @@ MSBuild's scheduler cannot cap compiles and links separately, and its no-change 
 
 ## 9. CI watched after every push until it completes
 
+> **Started:** 2026-11-09T15:17Z
+
 The owner asked on 2026-11-09 that CI never stay red longer than it has to. Today `scripts/ci_status.py` reads the latest completed `build.yml` and `plan.yml` runs only at a section boundary (`process-phase` step 3) and at a heartbeat, so a push whose build fails is noticed only after the next section has started, and a run cancelled by a newer push reads as not red. This section adds a wait mode that follows the runs of one pushed commit to their end, and has `process-phase` start it in the background after every push, so a red is diagnosed and fixed before the next row is claimed.
 
 **Corrected 2026-11-09:** plan review (`docs/reviews/00-workspace/D00-T04-s9.md`). What decides each case:
