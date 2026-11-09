@@ -2,7 +2,7 @@
 schema_version: 1
 id: todo-system
 domain: 00-workspace
-status: done
+status: active
 title: "TODO-02 -- The TODO Graph System"
 track: M0
 ---
@@ -39,6 +39,7 @@ track: M0
 | 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [x] |
 | 2 | §2 | Skills, rules and the CI gate | §1 | [x] |
 | 3 | §3 | Seeded graph and generated plan | §2 | [x] |
+| 4 | §4 | `resolve --context`: one section with its file context, read in place of the file | §1 | [ ] |
 
 ## 1. Graph engine, CLI and tests
 
@@ -122,8 +123,35 @@ The seed graph translates the foundation plan and the SPEC into executable secti
 > **Verified:** 2026-10-18 | §3 | 99a2c62fc1588025e8cb41efd4bbf80ea8fcfbcc
 > **Review:** `docs/reviews/d00-t02-s3.json`
 
+## 4. `resolve --context`: one section with its file context, read in place of the file
+
+`python scripts/todo-graph.py resolve '<ref>'` already prints one section (its title, phase, dependencies, Needs and body, as JSON), but `process-todo-section` step 2 tells the session to read the entire TODO file as well, because the Goal, Current state, Inputs and Adjacency above the sections carry context a section assumes, and to read the sections it depends on for their stamps and receipts. Measured 2026-11-10: the 47 TODO files total 4,578 KB, and `todo/01-engine/TODO-02-actor-and-render.md` alone is 379 KB, so every section built or reviewed in that file reads about 370 KB of other sections to get a few kilobytes of file context. This section has `resolve` print exactly what the skill needs from the file (the section word for word, the file's context blocks, each dependency's stamp and receipt, and the cross-references that name the section) as Markdown, and changes the skills to read that. Closing a file (`process-todo-file`) and grooming (`groom-plan`) still read whole files: their job is the whole file.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add `--context` to `resolve`. Done when: `python scripts/todo-graph.py resolve 'D01 T02 §10' --context` prints the section and its file context as Markdown with `resolve`'s existing exit codes.
+2. Point the skills at it. Done when: `process-todo-section` and `review-todo-section` read the context output and no longer tell the session to read the entire file.
+3. Measure it. Done when: the bytes read for one section, before and after, are recorded.
+
+- [ ] Add `--context` to the `resolve` command in `scripts/todo-graph.py`, built in `scripts/lib/todo_graph.py`: it prints, as Markdown and in the file's order, the file's title, Goal, Current state with every dated note under it (`Groomed`, `Corrected`), Inputs, Outcome, Adjacency and its rationale, and the Implementation Order table, then the section from its `## N.` heading to the line before the next `## ` heading. Done when: the section part is byte-identical to that slice of the file (`tests/scripts/test_todo_graph.py` compares them on a fixture and on every section of the live tree), and the exit codes are those `resolve` returns without the flag.
+- [ ] After the section, print one line for each section in its `Depends On` (the ref, title, `[x]` or `[ ]`, the `Verified:` date and commit, the receipt path) and each of its waiting Needs. Done when: for a section with one stamped and one open prerequisite, the test reads both lines with the right state, commit and receipt.
+- [ ] Print every cross-reference line and every deferral line in the tree that names the section, with its file and line, and every one in the section's own text that names another section. Done when: the test reads an inbound cross-reference from another file, an inbound deferral and an outbound cross-reference, each with `path:line`, and a section with none prints `none`.
+- [ ] End the output with a size line: the bytes printed, the file's bytes and the share. Done when: `resolve 'D01 T02 §10' --context` ends with a line such as `context 21,400 bytes of 388,000 (5.5%)`, and the test checks the three numbers against the fixture.
+- [ ] Refuse what `resolve` refuses, with the same message and exit code, and print nothing else: no such section (1), no reference in the input (2). Done when: the test reads both refusals with `--context` and an empty standard output.
+- [ ] Change `.claude/skills/process-todo-section/SKILL.md` step 2 and `.claude/skills/review-todo-section/SKILL.md` to read `resolve '<ref>' --context` in place of the entire TODO file, saying when a wider read is still right: a dependency's section when its body (not only its stamp) decides the work, read through `resolve '<dependency>' --context`, and the whole file only in `process-todo-file` and `groom-plan`. Done when: both skills name the command, neither says to read the entire file, and `python -m unittest discover -s scripts/tests` passes.
+- [ ] Document the flag in `todo/README.md`, `docs/todo-workflow.md` and the usage text of `scripts/todo-graph.py`. Done when: all three show the command and say what it prints.
+- [ ] Measure it on `D01 T02 §10` and on the smallest and largest TODO files' first open sections. Done when: the findings file records, for each, the file's bytes, the `--context` bytes and the share, and the largest file's section reads at most a tenth of its file.
+- [ ] Commit: `todo: resolve --context prints a section with its file context`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_todo_graph` passes, including the byte-identical section slice on every section of the live tree; `python scripts/todo-graph.py resolve 'D01 T02 §10' --context` prints that section, its file's Goal and its dependencies' stamps; and changing one character of the printed section in the fixture fails the test.
+
 ## Verification
 
+- `python scripts/todo-graph.py resolve '<ref>' --context` prints any section with its file context, and the section skills read it in place of the whole file.
 - The three sections' stamps land against the first repository commit (D00 T01 §1) with review receipts, after which this file reads `status: done` through the normal stamp path.
 - A cold session, given only a pasted plan row, can resolve, process and stamp a section using the skills without inventing a step.
 - `plan-gates` CI is green on the seeded tree.

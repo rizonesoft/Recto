@@ -33,6 +33,7 @@ track: M0
 - Every push's CI runs are followed to their end in the background, and a red one is the next work before any new row.
 - No test takes longer than its budget: the slow tests are fixed at their cause, the run names its slowest tests, and a test over budget fails the run.
 - The x64 suite runs in parallel shards sized from free memory, every test run exactly once, with its wall time measured against the serial run.
+- Every x64 Debug build writes `build/compile_commands.json`, clangd reads every source with no error, and a session finds definitions, references and compile errors through it.
 
 **Adjacency:** all=not-applicable (build tooling, scripts and CI for the developer and CI host; no user-facing surface, document or setting)
 
@@ -53,6 +54,7 @@ track: M0
 | 9 | §9 | CI watched after every push until it completes | -- | [ ] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
+| 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -232,6 +234,7 @@ MSBuild's scheduler cannot cap compiles and links separately, and its no-change 
 - [ ] Define Ninja job pools `compile` and `link`, sized by `build/build.ps1` from free memory as `§3` does (links at most 2), and assign every compile and link to them. Done when: a build's `ninja -d stats` and a sample of running processes show no more compiles and links than the pools allow.
 - [ ] Port the D13 boundary check from `Directory.Build.targets` to a CMake step that reads each compile's `/sourceDependencies` JSON. Done when: it passes on the tree and refuses a `src/ui` file that includes a `src/pdf` header, as the MSBuild check does.
 - [ ] Run the suite from the CMake build and compare it with the MSBuild build on the same commit. Done when: both list the same tests and both pass, and the clean and no-change build times of each are recorded in the findings file.
+- [ ] Write `build/compile_commands.json` from CMake (`CMAKE_EXPORT_COMPILE_COMMANDS`) and retire `§12`'s MSBuild generator once `build.cmd` uses the CMake build. Done when: `§12`'s `build\clangd.cmd --check=src/pdf/filters.cpp` reports 0 errors against the CMake-written database and `scripts/build-compile-commands.py` is gone with its target.
 - [ ] Move `build.cmd`, `build/build.ps1` and `.github/workflows/build.yml` to the CMake build, keeping the MSBuild solution building in CI until a full milestone has passed on CMake. Done when: CI passes on the CMake build for x64 and ARM64 and `.\build.cmd` uses it locally.
 - [ ] Commit: `build: CMake and Ninja with compile and link job pools`
 
@@ -328,6 +331,36 @@ The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Re
 - [ ] Commit: `tests: run the x64 suite in parallel shards within the memory bound`
 
 **Test checkpoint:** `build.ps1 -Platform x64` passes with the suite in shards and `python scripts/test-times.py coverage` reporting every listed test exactly once; deleting one shard's XML before the coverage check fails the build; and a hung shard is killed with its children at the deadline.
+
+## 12. clangd language server for Claude Code over a compile database from the MSBuild build
+
+A session that needs a symbol's definition, its callers or its type today searches the sources and reads pieces of them, and the sources are large: `src/pdf/filters.cpp` is 436 KB, `tests/recto-tests/pdf_filters_tests.cpp` 383 KB, `pdf_interpreter_tests.cpp` 320 KB and `src/pdf/document.cpp` 156 KB (measured 2026-11-10). A language server answers those questions in a few lines and reports a compile error without a build. Nothing is set up: the repository has no `compile_commands.json`, no `.clangd` and no language server configuration under `.claude/`, and MSBuild writes no compile database. `clangd.exe` is already on this host inside Visual Studio 2026 (`VC\Tools\Llvm\x64\bin\clangd.exe`, the C++ Clang tools component), so no new tool is fetched. This section writes the compile database from the build that ran, points clangd at it, proves clangd reads every source as MSVC compiles it (`/std:c++23preview`, the Windows SDK, the vcpkg and NuGet include folders), connects it to Claude Code, and bounds its memory, because this host runs short of memory. `§8` later writes the same database from CMake.
+
+Two defaults, each with its cost of changing: clangd comes from Visual Studio and is not pinned in `.tools/` (moving it into `§6`'s lock costs one lock entry and one line in `build/clangd.cmd`), and the database is x64 Debug only (another configuration costs one argument to the generator).
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write the compile database from the build. Done when: an x64 Debug build leaves `build/compile_commands.json` with one entry for every source the build compiled.
+2. Prove clangd reads the tree. Done when: `clangd --check` reports 0 errors for every source, within a memory bound.
+3. Connect it to Claude Code and the working rules. Done when: a new session answers a definition and a references query through the language server, and a type error shows without a build.
+
+- [ ] Add a `RectoCompileCommands` target to `Directory.Build.targets`, after `ClCompile` for all eight projects, that writes each compiled item's full path with the include folders, preprocessor definitions, language standard, forced includes, precompiled header and other options `cl.exe` was given, to `build\compile-commands\<platform>\<configuration>\<project>.txt`, read from the items as compiled (as `RectoBoundaryManifest` does), never from a second evaluation. Done when: an x64 Debug build writes eight files that together name every `.cpp` the log shows compiled.
+- [ ] Add `scripts/build-compile-commands.py` (stdlib Python), which turns those files into `build/compile_commands.json` (one `directory`, `file` and `arguments` entry for each source, in `clang-cl` form), written to a temporary file and then renamed, and run it from `build/build.ps1` after the x64 Debug build. Done when: `tests/scripts/test_compile_commands.py` reads a fixture of two projects into the expected JSON, a source with spaces and a quoted definition survive, a project file that is missing or empty is refused by name (exit 2), and a real build's database holds as many entries as the build compiled sources.
+- [ ] Keep the database current: a source added to or removed from a project appears in or leaves the database on the next build. Done when: the test adds and removes a unit in the fixture and reads both, and `build/build.ps1` fails when the generator fails.
+- [ ] Add `build/clangd.cmd`, which finds `clangd.exe` in the Visual Studio installation `build/build.ps1` selects (through `vswhere`, component `Microsoft.VisualStudio.Component.VC.Llvm.Clang`) and runs it with the arguments given, and stops with the missing component's name when it is not installed. Done when: `build\clangd.cmd --version` prints clangd's version, and with the component's folder hidden it exits non-zero naming the component.
+- [ ] Add a tracked `.clangd` at the repository root: the compile database folder (`build`), and the removal or replacement of each `cl.exe` option clangd does not accept, each with a comment saying which option and why. Done when: `build\clangd.cmd --check=src/pdf/error.cpp` reports 0 errors and no unknown-argument warning.
+- [ ] Prove every source reads as MSVC compiles it: run `build\clangd.cmd --check=<file>` over every database entry from `scripts/build-compile-commands.py check`. Done when: every source reports 0 errors, or each one that does not is listed in the findings file with its diagnostic, and its cause is fixed in `.clangd` or the generator (never by editing the source to please clangd); the count checked equals the count of database entries.
+- [ ] Bound clangd's memory: run it with a fixed worker count (`-j=2`), precompiled preambles on disk (`--pch-storage=disk`) and the background index on, and measure its working set while it indexes the tree and while `src/pdf/filters.cpp` is open. Done when: both peaks are recorded in the findings file, and if the indexing peak passes 3,072 MB the background index is turned off in `build/clangd.cmd` and the peak measured again under it.
+- [ ] Connect clangd to Claude Code for this repository through its language server support, with `build\clangd.cmd` as the server command for C and C++ files, in the tracked configuration under `.claude/` if Claude Code reads one there and otherwise by the documented install step written into `CONTRIBUTING.md`; the mechanism is read from Claude Code's own documentation and named in the findings file. Done when: in a new session a definition query on a function declared in `src/pdf/document.h` returns its file and line, a references query on it returns its call sites, and a deliberate type error in a scratch copy of a source is reported without a build.
+- [ ] Tell the writers to use it: one line in `AGENTS.md`'s Working rules and in `.claude/agents/code-explorer.md` (definition, references, type and diagnostics through the language server before searching and reading sources; search stays for text that is not a symbol). Done when: both files carry the line and `python -m unittest discover -s scripts/tests` passes.
+- [ ] Measure the saving on one real lookup: every caller of one function in `src/pdf/filters.cpp`, found once by search and reading and once through the language server. Done when: the bytes of tool output each way, and whether both found the same callers, are recorded in the findings file.
+- [ ] Commit: `build: clangd over a compile database written from the MSBuild build`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_compile_commands` passes; after `build.ps1 -Platform x64 -Configuration Debug -SkipTests`, `python scripts/build-compile-commands.py check` reports every database entry checked by clangd with 0 errors; and removing a project's file from `build\compile-commands\x64\Debug` makes the generator exit 2 naming it.
 
 ## Verification
 

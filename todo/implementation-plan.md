@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 48 | Checklist items: 263
+Sections: 50 | Checklist items: 284
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -20,6 +20,7 @@ Sections: 48 | Checklist items: 263
 | [x]    | D00 T02 §2  | Skills, rules and the CI gate                                                            | none         | 4     |
 | [x]    | D00 T01 §4  | Build CI for x64 and ARM64                                                               | windows-host | 7     |
 | [x]    | D00 T02 §3  | Seeded graph and generated plan                                                          | none         | 4     |
+| [ ]    | D00 T02 §4  | `resolve --context`: one section with its file context, read in place of the file        | none         | 9     |
 | [x]    | D00 T03 §1  | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
 | [x]    | D00 T03 §2  | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
 | [x]    | D00 T03 §3  | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
@@ -33,10 +34,11 @@ Sections: 48 | Checklist items: 263
 | [ ]    | D00 T04 §5  | Tiered gates: touched tests while building, the full suite at stamp                      | windows-host | 4     |
 | [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
-| [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 7     |
+| [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
 | [ ]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 8     |
 | [ ]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
 | [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
+| [ ]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
 | [x]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
 | [x]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
 | [x]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
@@ -937,6 +939,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 102/868 verified sections, 50 ready to run now.
+Progress: 102/870 verified sections, 52 ready to run now.
 
-Checklist: 684/6406 items completed (includes Commit items).
+Checklist: 684/6427 items completed (includes Commit items).
