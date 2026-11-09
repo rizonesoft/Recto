@@ -28,6 +28,9 @@ Read the candidates. A home exists when a section's scope already covers the wor
 | Fits a section | Open section covers it | Add a micro-step or extend body (never edit `[x]`). |
 | Needs a section | New work inside a file | Add `## N.` in order, update table, sync plan. |
 | Needs a file | Subject no file owns | Delegate to `create-todo`. |
+| Home file is full | Its file holds 55 sections | New file in the same domain via `create-todo`. |
+
+A full home file (`validate` refuses a 56th section) is never a reason to ask, to park, to file the work in another domain, or to fold it into an existing section. Group the new work with what will follow it under a subject of its own, author that file through `create-todo` in the same domain, and depend on the full file's sections by reference (`DNN TNN §N`): their numbers never move. In an unattended run this is done inside the run and recorded in the run file, like any other filing.
 
 ### 3. New sections are born complete and granular
 
