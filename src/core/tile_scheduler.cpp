@@ -132,6 +132,9 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	bool paused{false};
 	size_t delivering{0u}; // answers handed out but not yet returned from `deliver`
 	std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> documents;
+	// Made with the scheduler and swapped with `documents` at shutdown, so letting the handles go allocates nothing (an
+	// MSVC `unordered_map` allocates even when empty).
+	std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> released;
 	Entries live;    // every request taken and not yet answered, `again` ones apart
 	Entries waiting; // `again` requests, each behind its cancelled render
 	Entries answered; // answered, until the thread that answered them has delivered them
@@ -559,7 +562,6 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	void shutdown() noexcept
 	{
 		Out out;
-		std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> handles; // released below, outside the lock
 		{
 			const std::lock_guard lock(mutex);
 			stopping = true;
@@ -578,7 +580,7 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 					fetch.cancel->cancel();
 				}
 			}
-			handles.swap(documents);
+			released.swap(documents); // let go below, outside the lock
 			counting(out);
 		}
 		work_ready.notify_all();
@@ -589,7 +591,7 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		drained.wait(lock, [&] { return delivering == 0u; });
 		fetches.clear();
 		lock.unlock();
-		handles.clear(); // a last handle joins its actor here, with no lock held
+		released.clear(); // a last handle joins its actor here, with no lock held
 	}
 };
 

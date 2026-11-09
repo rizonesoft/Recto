@@ -1051,5 +1051,33 @@ TEST(Scheduler, AllocationFailures)
 	ASSERT_TRUE(deliveries.wait_for(asked + 1u));
 	EXPECT_TRUE(deliveries.all.back().second.has_value()) << "the scheduler did not recover";
 }
+TEST(Scheduler, ShutdownWithoutMemory)
+{
+	// Memory running out while the scheduler is destroyed: every tile still answered, workers joined, no terminate.
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("one.pdf");
+	recto::test::write_file_bytes(path, pdf_of(1u, "0 0 10 10 re f"));
+	const auto document = opened(path);
+	ASSERT_NE(document, nullptr);
+	const int64_t workers = debug_live_workers();
+	for (uint32_t nth = 1u; nth <= 8u; ++nth) {
+		SCOPED_TRACE(nth);
+		Deliveries deliveries;
+		auto made = scheduler(deliveries, 2u);
+		ASSERT_NE(made, nullptr);
+		ASSERT_TRUE(made->attach(1u, document).has_value());
+		made->pause();
+		made->update_viewport(1u, {tile(1u, 0u, 0u), tile(1u, 0u, 1u)});
+		{
+			const recto::test::ScopedAllocationFailure fail(nth, 16u);
+			made.reset();
+		}
+		EXPECT_EQ(deliveries.count(), 2u);
+		EXPECT_EQ(debug_live_workers(), workers);
+	}
+}
 } // namespace
 } // namespace recto::core
