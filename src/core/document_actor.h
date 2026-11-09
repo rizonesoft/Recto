@@ -129,6 +129,7 @@ enum class ActorFailure : uint8_t {
 	ActorCopy,
 	HandleCreate,
 	CacheIndex,
+	FirstIoCancel, // the first close's immediate cancel of blocking I/O is skipped, as if it found nothing pending
 };
 
 class ScopedActorFailureForTesting {

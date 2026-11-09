@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -517,10 +518,10 @@ TEST(Runtime, CloseReturnsAtOnce)
 	EXPECT_EQ(made->shutdown(), ShutdownReport{});
 }
 
-TEST(Runtime, CloseDuringStalledOpen)
+// The file is held by a batch oplock this test never lets go: the actor's open waits inside the system, where no poll
+// reaches it. Closing the document cancels that wait, with the runtime still running.
+void close_during_stalled_open(bool first_cancel_missed)
 {
-	// The file is held by a batch oplock this test never lets go: the actor's open waits inside the system, where no poll
-	// reaches it. Closing the document cancels that wait, and shutdown does not hang on it.
 	recto::test::TempDir dir;
 	const auto path = dir.file_path("held.pdf");
 	recto::test::write_file_bytes(path, pdf_of(1u, "0 0 10 10 re f"));
@@ -536,6 +537,12 @@ TEST(Runtime, CloseDuringStalledOpen)
 		::CloseHandle(holder);
 		GTEST_SKIP() << "this volume does not grant batch oplocks";
 	}
+	// As when the close lands just before the open enters the system: the first cancel finds nothing pending, so only the
+	// retries can free it.
+	std::optional<detail::ScopedActorFailureForTesting> missed;
+	if (first_cancel_missed) {
+		missed.emplace(detail::ActorFailure::FirstIoCancel);
+	}
 	Deliveries deliveries;
 	auto made = runtime(deliveries);
 	ASSERT_NE(made, nullptr);
@@ -544,19 +551,30 @@ TEST(Runtime, CloseDuringStalledOpen)
 	// The break is signalled when the actor's open reaches the file; from here that open waits for an acknowledgement.
 	EXPECT_EQ(::WaitForSingleObject(oplock.hEvent, 30'000u), static_cast<DWORD>(WAIT_OBJECT_0)) << "the open never reached the file";
 	EXPECT_EQ(opened->opened.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout) << "the open was not held";
+	// The close alone frees it, with the runtime still running: nothing waits for shutdown to retry the cancel.
 	const auto asked = std::chrono::steady_clock::now();
 	auto closed = made->close_document(opened->id);
 	ASSERT_TRUE(closed.has_value());
-	const ShutdownReport report = made->shutdown(); // joins the actor, cancelling its wait
+	EXPECT_EQ(closed->wait_for(std::chrono::seconds(5)), std::future_status::ready) << "the close left the actor waiting on the file";
 	const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count();
-	std::printf("[          ] closing during a stalled open: returned in %.3f ms\n", ms);
-	EXPECT_LT(ms, 5'000.0) << "shutdown waited for the system to give the file up";
+	std::printf("[          ] closing during a stalled open: finished in %.3f ms\n", ms);
+	const ShutdownReport report = made->shutdown();
 	const auto result = opened->opened.get();
 	ASSERT_FALSE(result.has_value());
 	EXPECT_EQ(result.error().code, ErrorCode::Cancelled);
 	EXPECT_EQ(report, ShutdownReport{});
 	::CloseHandle(holder);
 	::CloseHandle(oplock.hEvent);
+}
+
+TEST(Runtime, CloseDuringStalledOpen)
+{
+	close_during_stalled_open(false);
+}
+
+TEST(Runtime, CloseRetriesTheCancel)
+{
+	close_during_stalled_open(true);
 }
 } // namespace
 } // namespace recto::core

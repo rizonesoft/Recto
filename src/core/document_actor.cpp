@@ -386,6 +386,56 @@ struct DocumentHandle::State {
 
 	std::thread thread;
 	std::mutex join_mutex; // `join()` and the destructor, never both joining
+
+	// The actor thread's own handle, duplicated so the canceller never touches `thread` while it is joined, and the timer
+	// that, from the first `close()` until the actor has finished, cancels whatever blocking I/O its thread is in. A cancel
+	// lands only on I/O already pending, so one that starts just after a single attempt would be missed; the timer keeps
+	// trying until there is nothing left to cancel.
+	HANDLE thread_handle{nullptr};
+	PTP_TIMER canceller{nullptr};
+
+	static void CALLBACK cancel_io(PTP_CALLBACK_INSTANCE, void* context, PTP_TIMER timer) noexcept
+	{
+		State& self = *static_cast<State*>(context);
+		if (self.closed_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+			::SetThreadpoolTimer(timer, nullptr, 0u, 0u); // finished: nothing left to cancel
+			return;
+		}
+		::CancelSynchronousIo(self.thread_handle);
+	}
+
+	void start_cancelling_io() noexcept
+	{
+		if (thread_handle == nullptr) {
+			return; // not duplicated: polls still stop it, a held system call only when the system lets go
+		}
+		if (!failing(detail::ActorFailure::FirstIoCancel)) {
+			::CancelSynchronousIo(thread_handle);
+		}
+		PTP_TIMER timer = ::CreateThreadpoolTimer(&State::cancel_io, this, nullptr);
+		if (timer == nullptr) {
+			return;
+		}
+		FILETIME due{};
+		ULARGE_INTEGER relative{};
+		relative.QuadPart = static_cast<ULONGLONG>(-50'000LL); // 5 ms from now, in 100 ns units
+		due.dwLowDateTime = relative.LowPart;
+		due.dwHighDateTime = relative.HighPart;
+		::SetThreadpoolTimer(timer, &due, 5u, 1u);
+		canceller = timer;
+	}
+
+	~State() noexcept
+	{
+		if (canceller != nullptr) {
+			::SetThreadpoolTimer(canceller, nullptr, 0u, 0u);
+			::WaitForThreadpoolTimerCallbacks(canceller, TRUE);
+			::CloseThreadpoolTimer(canceller);
+		}
+		if (thread_handle != nullptr) {
+			::CloseHandle(thread_handle);
+		}
+	}
 };
 
 DocumentHandle::DocumentHandle(std::shared_ptr<State> state) noexcept
@@ -409,6 +459,10 @@ PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOpti
 		std::shared_ptr<State> kept = handle->state_;
 		State* const raw = kept.get();
 		raw->thread = std::thread([kept = std::move(kept)] { kept->main(); });
+		if (::DuplicateHandle(::GetCurrentProcess(), raw->thread.native_handle(), ::GetCurrentProcess(), &raw->thread_handle, 0u, FALSE,
+				DUPLICATE_SAME_ACCESS) == FALSE) {
+			raw->thread_handle = nullptr;
+		}
 		return handle;
 	} catch (const std::system_error&) {
 		return make_pdf_error(ErrorCode::InternalError, "A document's thread could not start");
@@ -427,7 +481,9 @@ void DocumentHandle::join() noexcept
 	// A cancel cannot reach an open or a read the system is holding (an oplock break, a stalled share or device): those
 	// are cancelled where they wait, again until the actor has finished, since one may begin after the first attempt.
 	while (closed.wait_for(std::chrono::milliseconds(5)) != std::future_status::ready) {
-		::CancelSynchronousIo(state_->thread.native_handle());
+		if (state_->thread_handle != nullptr) {
+			::CancelSynchronousIo(state_->thread_handle);
+		}
 	}
 	state_->thread.join();
 }
@@ -461,12 +517,8 @@ std::shared_future<void> DocumentHandle::close() noexcept
 			first = true;
 		}
 	}
-	if (first) {
-		// Once, without waiting: an open or a read the system holds is cancelled where it waits; `join` keeps trying.
-		const std::unique_lock lock(s.join_mutex, std::try_to_lock);
-		if (lock.owns_lock() && s.thread.joinable() && s.thread.get_id() != std::this_thread::get_id()) {
-			::CancelSynchronousIo(s.thread.native_handle());
-		}
+	if (first && ::GetCurrentThreadId() != ::GetThreadId(s.thread_handle)) {
+		s.start_cancelling_io(); // without waiting: an open or a read the system holds is cancelled where it waits
 	}
 	return s.closed_future;
 }
