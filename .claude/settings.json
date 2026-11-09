@@ -22,6 +22,17 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os, runpy, sys; sys.argv = ['ci_status.py', '--gate', '--brief']; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd(), 'scripts', 'ci_status.py'), run_name='__main__')\"",
+            "timeout": 60
+          }
+        ]
+      }
     ]
   }
 }

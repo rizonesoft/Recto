@@ -45,6 +45,20 @@
         "every_minutes": 360
       },
       "timeout_minutes": 20
+    },
+    {
+      "name": "recto-ci-watch",
+      "description": "Email once for each red build.yml or plan.yml run on main, so a red never waits for the next session (D00 T04 §9)",
+      "command": [
+        "python",
+        "scripts/ci_status.py",
+        "--scheduled"
+      ],
+      "trigger": {
+        "at_logon_delay_minutes": 5,
+        "every_minutes": 15
+      },
+      "timeout_minutes": 5
     }
   ]
 }

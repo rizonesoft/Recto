@@ -183,5 +183,206 @@ class RealProcess(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["error"], "gh is not installed or not on PATH")
 
 
+def wrun(n, workflow, status="completed", conclusion="success", sha=SHA_NEW):
+    entry = run(n, status=status, conclusion=conclusion, sha=sha)
+    entry.update({"workflowName": workflow, "attempt": 1})
+    return entry
+
+
+class WaitGh:
+    """gh for --wait: per workflow, a list of answers, one per poll (the last repeats); jobs per run id."""
+
+    def __init__(self, polls, jobs=None):
+        self.polls, self.jobs, self.count = polls, jobs or {}, {}
+
+    def __call__(self, args):
+        if args[:2] == ["run", "list"]:
+            workflow = args[args.index("--workflow") + 1]
+            assert args[args.index("--commit") + 1] == SHA_NEW
+            answers = self.polls.get(workflow, [[]])
+            i = self.count.get(workflow, 0)
+            self.count[workflow] = i + 1
+            return 0, json.dumps(answers[min(i, len(answers) - 1)]), ""
+        if args[:2] == ["run", "view"]:
+            return 0, json.dumps({"jobs": self.jobs.get(int(args[2]), [])}), ""
+        raise AssertionError(args)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class Wait(unittest.TestCase):
+    """--wait follows one push's runs to their end, reading which workflows the push starts from their own filters
+    (D00 T04 §9): a red anywhere wins, an expected run never seen is unknown, a cancel is not green."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / ".github" / "workflows").mkdir(parents=True)
+        for name in ("build.yml", "plan.yml"):
+            (self.root / ".github" / "workflows" / name).write_text(
+                (REPO / ".github" / "workflows" / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def wait(self, changed, gh, timeout=3600):
+        clock = Clock()
+        lines = []
+        git = lambda args: "\n".join(changed) + "\n"
+        code = ci.wait(SHA_NEW, runner=gh, git=git, root=self.root, timeout=timeout, poll=60, clock=clock,
+                       sleep=clock.sleep, out=lines.append, pid=1)
+        return code, "\n".join(lines), json.loads((self.root / "build" / "ci-watch" / f"{SHA_NEW}.json").read_text(encoding="utf-8"))
+
+    def test_a_stamp_expects_plan_alone(self):
+        code, out, state = self.wait(["todo/00-workspace/TODO-04-build-performance.md", "docs/reviews/x.json"],
+                                     WaitGh({"plan.yml": [[wrun(1, "plan-gates")]]}))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(state["expected"], ["plan.yml"])
+        self.assertEqual(state["exit"], 0)
+
+    def test_code_alone_expects_build_alone(self):
+        code, out, state = self.wait(["src/pdf/error.cpp"], WaitGh({"build.yml": [[wrun(1, "build")]]}))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(state["expected"], ["build.yml"])
+
+    def test_a_run_that_appears_late_is_followed(self):
+        gh = WaitGh({"build.yml": [[], [], [], [wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
+        code, out, _ = self.wait(["src/pdf/error.cpp"], gh)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(gh.count["build.yml"], 5)
+
+    def test_an_expected_run_never_seen_is_unknown(self):
+        code, out, state = self.wait(["src/pdf/error.cpp"], WaitGh({}))
+        self.assertEqual(code, 3, out)
+        self.assertEqual(state["workflows"]["build.yml"]["state"], "unknown")
+        self.assertIn("not seen in 10 minutes", out)
+
+    def test_a_red_beside_a_green_is_red_and_named(self):
+        gh = WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]], "plan.yml": [[wrun(2, "plan-gates")]]},
+                    jobs={1: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "u"}]})
+        code, out, _ = self.wait(["src/pdf/error.cpp", "scripts/ci_status.py"], gh)
+        self.assertEqual(code, 1, out)
+        self.assertIn("failed job: Build x64 (failure)", out)
+
+    def test_a_cancel_never_hides_a_red(self):
+        gh = WaitGh({"build.yml": [[wrun(1, "build", conclusion="cancelled")]],
+                     "plan.yml": [[wrun(2, "plan-gates", conclusion="failure")]]})
+        code, out, _ = self.wait(["src/pdf/error.cpp", "scripts/ci_status.py"], gh)
+        self.assertEqual(code, 1, out)
+
+    def test_a_cancel_alone_is_not_green(self):
+        code, out, _ = self.wait(["src/pdf/error.cpp"], WaitGh({"build.yml": [[wrun(1, "build", conclusion="cancelled")]]}))
+        self.assertEqual(code, 5, out)
+
+    def test_a_rerun_turning_green_is_green(self):
+        gh = WaitGh({"build.yml": [[wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
+        code, out, _ = self.wait(["src/pdf/error.cpp"], gh)
+        self.assertEqual(code, 0, out)
+
+    def test_a_run_past_the_timeout(self):
+        code, out, _ = self.wait(["src/pdf/error.cpp"], WaitGh({"build.yml": [[wrun(1, "build", status="in_progress")]]}),
+                                 timeout=300)
+        self.assertEqual(code, 4, out)
+
+    def test_the_push_range_decides(self):
+        # A stamp whose push also brought code: the range, not the last commit, says build.yml runs.
+        calls = []
+        def git(args):
+            calls.append(args)
+            return "src/core/runtime.cpp\ntodo/x.md\n" if args[2] == "a" * 40 else "todo/x.md\n"
+        clock = Clock()
+        code = ci.wait(SHA_NEW, since="a" * 40, runner=WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}),
+                       git=git, root=self.root, clock=clock, sleep=clock.sleep, out=lambda line: None, pid=1)
+        self.assertEqual(code, 0)
+        state = json.loads((self.root / "build" / "ci-watch" / f"{SHA_NEW}.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["expected"], ["build.yml", "plan.yml"])
+
+
+class Gate(unittest.TestCase):
+    """--gate: a new row or a stamp waits for the watch of origin/main's head to end green (D00 T04 §9)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        (self.root / "build" / "ci-watch").mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def gate(self, head, state):
+        if state is not None:
+            (self.root / "build" / "ci-watch" / f"{state['sha']}.json").write_text(json.dumps(state), encoding="utf-8")
+        lines = []
+        return ci.gate(git=lambda args: head + "\n", root=self.root, out=lines.append), "\n".join(lines)
+
+    def test_a_delayed_red_holds_the_next_row_until_its_fix_is_green(self):
+        red = {"sha": SHA_OLD, "pid": 1, "exit": 1, "workflows": {"build.yml": {"state": "red", "run": {"url": "u1"},
+               "failed_jobs": [{"name": "Build x64", "url": "j"}]}}}
+        code, out = self.gate(SHA_OLD, red)
+        self.assertEqual(code, 1, out)
+        self.assertIn("build.yml red u1", out)
+        self.assertIn("failed job: Build x64", out)
+        # The fix is pushed: no watch of the new head yet holds the gate shut.
+        code, out = self.gate(SHA_NEW, red)
+        self.assertEqual(code, 6, out)
+        green = {"sha": SHA_NEW, "pid": 2, "exit": 0, "workflows": {"build.yml": {"state": "green", "run": {"url": "u2"}}}}
+        code, out = self.gate(SHA_NEW, green)
+        self.assertEqual(code, 0, out)
+
+    def test_no_watch_and_a_dead_watch_hold_it_shut(self):
+        code, out = self.gate(SHA_NEW, None)
+        self.assertEqual(code, 6, out)
+        dead = {"sha": SHA_NEW, "pid": 999_999_9, "exit": None, "workflows": {}}
+        code, out = self.gate(SHA_NEW, dead)
+        self.assertEqual(code, 6, out)
+        self.assertIn("gone before it ended", out)
+
+class Scheduled(unittest.TestCase):
+    """--scheduled, the recto-ci-watch task: each red run is reported once, an outage only after an hour (D00 T04 §9)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def scheduled(self, fake, now=1000.0):
+        lines = []
+        code = ci.scheduled(runner=fake, root=self.root, now=lambda: now, out=lines.append)
+        return code, "\n".join(lines)
+
+    def test_a_red_run_is_reported_once_then_a_new_one_again(self):
+        red = FakeGh({"build.yml": [run(5, conclusion="failure")], "plan.yml": [run(6)]},
+                     jobs={5: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "j"}]})
+        code, out = self.scheduled(red)
+        self.assertEqual(code, 1, out)
+        self.assertIn("main is red: build.yml", out)
+        code, out = self.scheduled(red)
+        self.assertEqual(code, 0, out)  # the same red run: no second email
+        newer = FakeGh({"build.yml": [run(7, conclusion="failure"), run(5, conclusion="failure")], "plan.yml": [run(6)]})
+        code, out = self.scheduled(newer)
+        self.assertEqual(code, 1, out)
+        green = FakeGh({"build.yml": [run(8), run(7, conclusion="failure")], "plan.yml": [run(6)]})
+        code, out = self.scheduled(green)
+        self.assertEqual(code, 0, out)
+
+    def test_an_outage_alerts_once_after_an_hour(self):
+        down = FakeGh(fail=(1, "", "HTTP 502"))
+        self.assertEqual(self.scheduled(down, now=1000.0)[0], 0)
+        self.assertEqual(self.scheduled(down, now=1000.0 + 1800)[0], 0)
+        code, out = self.scheduled(down, now=1000.0 + 3700)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.scheduled(down, now=1000.0 + 7400)[0], 0)
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ Repository pins are not kept here. The daily GitHub workflow `.github/workflows/
 | `recto-python-pin` | Monday 07:00 | `scripts/check-python-pin.py notify --scope local` | this machine's Python is behind the newest stable CPython (once per finding) | python.org cannot be read |
 | `recto-visual-studio` | Monday 07:05 | `scripts/check-visual-studio.py notify` | this machine's Visual Studio is behind its latest servicing release (once per release) | the toolset's Visual Studio is not installed, or vswhere or the release channel cannot be read |
 | `recto-pr-merge` | 15 minutes after logon, then every 6 hours | `scripts/merge_prs.py --scheduled` | never (each merge is a GitHub notification) | a merge fails (the pull request stays open), or the `git pull --ff-only` or `todo-graph.py validate` after a merge fails (that pull request is merged; the rest wait) |
+| `recto-ci-watch` | 5 minutes after logon, then every 15 minutes | `scripts/ci_status.py --scheduled` | `main`'s `build.yml` or `plan.yml` is red (once per red run), or `gh` has been unreachable for an hour | the check cannot run |
 
 A weekly task starts when available: a run missed while this PC was off fires at the next chance, with a five-minute random delay. A start while the task still runs is ignored, and a run is stopped five minutes past its timeout. Tasks run only while the operator is logged on, so no password is stored.
 
