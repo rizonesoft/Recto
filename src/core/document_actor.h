@@ -85,6 +85,11 @@ public:
 	[[nodiscard]] ActorFuture<void> authenticate(std::string_view password) noexcept;
 	[[nodiscard]] ActorFuture<pdf::DocumentDescription> get_description() noexcept;
 	[[nodiscard]] ActorFuture<std::shared_ptr<const pdf::DisplayList>> get_display_list(size_t page_index, const pdf::CancelToken& cancel = {}) noexcept;
+	// The same request answered through `done`, exactly once: on the actor's thread, or at once on the calling thread when
+	// it is refused at admission (closing or closed, a full queue, no memory), so a caller must not hold a lock `done`
+	// takes while it asks.
+	using DisplayListCallback = std::move_only_function<void(pdf::PdfResult<std::shared_ptr<const pdf::DisplayList>>) noexcept>;
+	void get_display_list(size_t page_index, const pdf::CancelToken& cancel, DisplayListCallback done) noexcept;
 	[[nodiscard]] ActorFuture<std::vector<pdf::OutlineNode>> get_outline() noexcept;
 	[[nodiscard]] ActorFuture<std::vector<pdf::PageLink>> get_page_links(size_t page_index) noexcept;
 	[[nodiscard]] ActorFuture<std::vector<pdf::FontSummary>> get_fonts() noexcept;

@@ -41,9 +41,13 @@
     <ClCompile Include="atomic_write.cpp" />
     <ClCompile Include="core.cpp" />
     <ClCompile Include="document_actor.cpp" />
+    <ClCompile Include="render_pool.cpp" />
+    <ClCompile Include="tile_scheduler.cpp" />
     <ClInclude Include="atomic_write.h" />
     <ClInclude Include="cancel_token.h" />
     <ClInclude Include="document_actor.h" />
+    <ClInclude Include="render_pool.h" />
+    <ClInclude Include="tile_scheduler.h" />
     <ClInclude Include="recto_core.h" />
   </ItemGroup>
   <ItemGroup>

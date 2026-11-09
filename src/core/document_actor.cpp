@@ -126,6 +126,12 @@ struct DocumentHandle::State {
 				return;
 			}
 			answered = true;
+			if (callback) {
+				auto done = std::move(callback);
+				callback = nullptr;
+				done(std::move(result));
+				return;
+			}
 			try {
 				promise.set_value(std::move(result));
 			} catch (const std::exception&) {
@@ -159,6 +165,7 @@ struct DocumentHandle::State {
 		}
 
 		std::promise<PdfResult<T>> promise;
+		std::move_only_function<void(PdfResult<T>) noexcept> callback; // answers instead of the promise when set
 		std::move_only_function<PdfResult<T>(State&, const CancelToken&)> work;
 		CancelToken cancel;
 		bool answered{false};
@@ -195,6 +202,46 @@ struct DocumentHandle::State {
 		}
 		wake.notify_one();
 		return future;
+	}
+
+	// As `post`, answering through `done` instead of a future: on the actor thread, or at once on this one when the
+	// request is refused at admission (closing, a full queue, no memory).
+	template <typename T, typename Work>
+	void post_with(Work&& work, const CancelToken& cancel, std::move_only_function<void(PdfResult<T>) noexcept> done) noexcept
+	{
+		std::unique_ptr<Request<T>> request;
+		try {
+			request = std::make_unique<Request<T>>(std::forward<Work>(work), cancel);
+		} catch (const std::exception&) {
+			done(make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a document request"));
+			return;
+		}
+		request->callback = std::move(done);
+		std::unique_lock lock(mutex);
+		if (closing) {
+			lock.unlock();
+			request->answer(pdf::detail::cancelled_error());
+			return;
+		}
+		if (queue.size() >= options.max_queue) {
+			const size_t held = queue.size();
+			lock.unlock();
+			request->answer(pdf::make_refusal_error(ErrorCode::ResourceLimit, pdf::RefusalReason::ActorQueueFull, held + 1u,
+				options.max_queue, "A document's request queue is full; the request was not taken"));
+			return;
+		}
+		try {
+			if (failing(detail::ActorFailure::QueueInsert)) {
+				throw std::bad_alloc();
+			}
+			queue.push_back(std::move(request));
+		} catch (const std::exception&) {
+			lock.unlock();
+			request->answer(make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a document request"));
+			return;
+		}
+		lock.unlock();
+		wake.notify_one();
 	}
 
 	// What the state says a query or a save may do.
@@ -460,6 +507,12 @@ ActorFuture<std::shared_ptr<const pdf::DisplayList>> DocumentHandle::get_display
 {
 	return state_->post<std::shared_ptr<const pdf::DisplayList>>(
 		[page_index](State& s, const CancelToken& token) { return s.display_list(page_index, token); }, cancel);
+}
+
+void DocumentHandle::get_display_list(size_t page_index, const CancelToken& cancel, DisplayListCallback done) noexcept
+{
+	state_->post_with<std::shared_ptr<const pdf::DisplayList>>(
+		[page_index](State& s, const CancelToken& token) { return s.display_list(page_index, token); }, cancel, std::move(done));
 }
 
 ActorFuture<std::vector<pdf::OutlineNode>> DocumentHandle::get_outline() noexcept

@@ -18,12 +18,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -298,6 +300,7 @@ TEST(Actor, PasswordWiped)
 					while (!self.released.load()) {
 						std::this_thread::yield();
 					}
+					self.holding.store(false); // gone, so the next round may arm it again
 				}
 			}
 		} hold;
@@ -320,8 +323,12 @@ TEST(Actor, PasswordWiped)
 			}
 			EXPECT_TRUE(hold.holding.load());
 			EXPECT_EQ(wiped(), before + 1u) << "answered while the password was still held";
-			hold.holding.store(false);
 			hold.released.store(true);
+			const auto gone = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+			while (hold.holding.load() && std::chrono::steady_clock::now() < gone) {
+				std::this_thread::yield();
+			}
+			ASSERT_FALSE(hold.holding.load()) << "the actor never left the hold";
 			(void)answer.get();
 		}
 	}
@@ -903,6 +910,72 @@ TEST(Actor, CancelledRequests)
 		EXPECT_TRUE(reopened.has_value());
 		EXPECT_EQ(std::distance(std::filesystem::directory_iterator(dir.path()), std::filesystem::directory_iterator()), 2) << "a temporary file was left";
 	}
+}
+
+TEST(Actor, CallbackRequests)
+{
+	recto::test::TempDir dir;
+	const auto path = written(dir, "doc.pdf", pdf_of(3u, "0 0 10 10 re f"));
+	struct Answers {
+		std::mutex mutex;
+		std::condition_variable arrived;
+		std::vector<std::pair<std::thread::id, ErrorCode>> all; // ErrorCode::InternalError stands for success here
+		DocumentHandle::DisplayListCallback sink()
+		{
+			return [this](pdf::PdfResult<std::shared_ptr<const DisplayList>> list) noexcept {
+				{
+					const std::lock_guard lock(mutex);
+					all.emplace_back(std::this_thread::get_id(), list.has_value() ? ErrorCode::InternalError : list.error().code);
+				}
+				arrived.notify_all();
+			};
+		}
+		bool wait_for(size_t count)
+		{
+			std::unique_lock lock(mutex);
+			return arrived.wait_for(lock, std::chrono::seconds(60), [&] { return all.size() >= count; });
+		}
+	} answers;
+	Gate gate;
+	const auto handle = started(held_by(gate));
+	ASSERT_NE(handle, nullptr);
+	ASSERT_TRUE(finish(handle->open(path)).has_value());
+	const std::thread::id caller = std::this_thread::get_id();
+	// Answered on the actor: a list, then one cancelled by its token while queued behind it.
+	handle->get_display_list(0u, {}, answers.sink());
+	gate.wait_reached();
+	auto source = CancelSource::create();
+	ASSERT_TRUE(source.has_value());
+	handle->get_display_list(1u, source->token(), answers.sink());
+	handle->get_display_list(2u, {}, answers.sink()); // dropped by the close below
+	source->cancel();
+	const auto closed = handle->close();
+	gate.release();
+	closed.wait();
+	ASSERT_TRUE(answers.wait_for(3u));
+	// After the close: refused at once, on this thread.
+	handle->get_display_list(0u, {}, answers.sink());
+	ASSERT_TRUE(answers.wait_for(4u));
+	std::unique_lock lock(answers.mutex);
+	ASSERT_EQ(answers.all.size(), 4u) << "a callback ran twice";
+	for (size_t i = 0; i < 3u; ++i) {
+		EXPECT_NE(answers.all[i].first, caller) << "answer " << i << " was not on the actor's thread";
+	}
+	EXPECT_EQ(answers.all[0].second, ErrorCode::Cancelled) << "the close cancelled the held compile";
+	EXPECT_EQ(answers.all[1].second, ErrorCode::Cancelled);
+	EXPECT_EQ(answers.all[2].second, ErrorCode::Cancelled);
+	EXPECT_EQ(answers.all[3].first, caller);
+	EXPECT_EQ(answers.all[3].second, ErrorCode::Cancelled);
+	// And a list, delivered on another actor's thread.
+	const auto plain = started();
+	ASSERT_NE(plain, nullptr);
+	ASSERT_TRUE(finish(plain->open(path)).has_value());
+	lock.unlock();
+	plain->get_display_list(1u, {}, answers.sink());
+	ASSERT_TRUE(answers.wait_for(5u));
+	lock.lock();
+	EXPECT_EQ(answers.all[4].second, ErrorCode::InternalError) << "the list was not delivered";
+	EXPECT_NE(answers.all[4].first, caller);
 }
 
 TEST(Actor, AsyncFailures)

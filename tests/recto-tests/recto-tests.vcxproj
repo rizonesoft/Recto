@@ -72,6 +72,7 @@
     <ClCompile Include="pdf_font_tests.cpp" />
     <ClCompile Include="pdf_interpreter_tests.cpp" />
     <ClCompile Include="actor_tests.cpp" />
+    <ClCompile Include="scheduler_tests.cpp" />
     <ClCompile Include="pdf_rasterizer_tests.cpp" />
     <ClCompile Include="pdf_serialize_tests.cpp" />
     <ClCompile Include="pdf_incremental_writer_tests.cpp" />

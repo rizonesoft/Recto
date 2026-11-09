@@ -752,6 +752,8 @@ enum class RefusalReason : uint16_t {
 	DashSegments, // a dash pattern would cut one stroke past the limit
 	// Appended (D01 T02 section 8): the document actor.
 	ActorQueueFull, // a document's request queue past its limit
+	// Appended (D01 T02 section 9): the tile scheduler.
+	SchedulerFull, // more tiles requested than the scheduler holds
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -845,6 +847,8 @@ enum class RefusalReason : uint16_t {
 		return "DashSegments";
 	case RefusalReason::ActorQueueFull:
 		return "ActorQueueFull";
+	case RefusalReason::SchedulerFull:
+		return "SchedulerFull";
 	}
 	return "UnknownReason";
 }
@@ -976,6 +980,9 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::ActorQueueFull:
 		return "A document has more requests waiting than its queue holds (observed and bound count requests); this one was "
 			   "not taken, and asking again later may succeed";
+	case RefusalReason::SchedulerFull:
+		return "More tiles were requested than the scheduler holds (observed and bound count tiles); this one was not taken, "
+			   "and a smaller view or a later request may succeed";
 	case RefusalReason::DashSegments:
 		return "A dash pattern would cut one stroke into more pieces than the limit (observed and bound count pieces); "
 			   "the stroke is drawn solid, and the file may be damaged";
