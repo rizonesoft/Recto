@@ -56,6 +56,8 @@ track: M0
 
 **Corrected 2026-11-09:** plan review (`docs/reviews/00-workspace/D00-T04-s1.md`). `build/build.ps1` does more than share folders: it records the last ASan state per configuration in `build/asan-state-<cfg>-<plat>.txt` and deletes the projects' obj and bin folders whenever it flips, so the cleanup and its state file go, with `tests/scripts/test_build_ps1.py`, which requires them, changed to prove the opposite. Isolation is proven by hashing every artifact of the other build before and after, in both directions; compiler work is counted by object files whose write time changed (`build/build-evidence.ps1`), checked against a run that touches one source and must count exactly that unit, so a count read from nothing cannot pass as zero.
 
+**Corrected 2026-11-09:** completion review. `build-evidence.ps1` refuses a record or a comparison with no object file (exit 2) and takes only a real platform and configuration, lists every changed, appeared, gone and rewritten path, and is tested on a fake build tree (`tests.scripts.test_build_ps1.BuildEvidence`).
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no

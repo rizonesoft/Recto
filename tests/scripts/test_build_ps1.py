@@ -2,6 +2,7 @@
 import os
 import pathlib
 import re
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -203,6 +204,67 @@ class AsanCoverage(unittest.TestCase):
         staged = set(re.findall(r"'([^']+)'", re.search(r"foreach \(\$exeProj in @\(([^)]*)\)\)", text).group(1)))
         self.assertEqual(staged, {"recto-tests", "recto-cli", "Recto"})
 
+
+class BuildEvidence(unittest.TestCase):
+    """build/build-evidence.ps1 against a fake build tree: it records hashes and object write times, lists every change,
+    and refuses a record or a comparison with no object file, which would read as "nothing compiled" (D00 T04 §1)."""
+
+    SCRIPT = ROOT / "build" / "build-evidence.ps1"
+
+    def run_script(self, *args):
+        result = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(self.SCRIPT), *args],
+                                capture_output=True, text=True, timeout=120)
+        return result.returncode, result.stdout + result.stderr
+
+    def tree(self, root):
+        obj = root / "build" / "obj" / "recto-pdf" / "x64" / "Debug"
+        bin_ = root / "build" / "bin" / "x64" / "Debug" / "recto-tests"
+        obj.mkdir(parents=True)
+        bin_.mkdir(parents=True)
+        (obj / "a.obj").write_bytes(b"a")
+        (obj / "b.obj").write_bytes(b"b")
+        (bin_ / "recto-tests.exe").write_bytes(b"exe")
+        return obj, bin_
+
+    def test_lists_every_difference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            obj, bin_ = self.tree(root)
+            code, out = self.run_script("-Record", str(root / "one.json"), "-Root", str(root))
+            self.assertEqual(code, 0, out)
+            code, out = self.run_script("-Compare", str(root / "one.json"), str(root / "one.json"))
+            self.assertEqual(code, 0, out)
+            self.assertIn("changed 0, appeared 0, gone 0, object files rewritten 0", out)
+            (bin_ / "recto-tests.exe").write_bytes(b"other")  # an overwritten binary
+            (bin_ / "new.dll").write_bytes(b"new")
+            (obj / "b.obj").unlink()
+            os.utime(obj / "a.obj", (1_000_000_000, 1_000_000_000))  # rewritten
+            code, out = self.run_script("-Record", str(root / "two.json"), "-Root", str(root))
+            self.assertEqual(code, 0, out)
+            code, out = self.run_script("-Compare", str(root / "one.json"), str(root / "two.json"))
+            self.assertEqual(code, 0, out)
+            self.assertIn("changed 1, appeared 1, gone 1, object files rewritten 1", out)
+            self.assertIn(r"changed build\bin\x64\Debug\recto-tests\recto-tests.exe", out)
+            self.assertIn(r"appeared build\bin\x64\Debug\recto-tests\new.dll", out)
+            self.assertIn(r"gone build\obj\recto-pdf\x64\Debug\b.obj", out)
+            self.assertIn(r"rewritten build\obj\recto-pdf\x64\Debug\a.obj", out)
+
+    def test_refuses_evidence_of_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, out = self.run_script("-Record", str(root / "none.json"), "-Root", str(root))
+            self.assertEqual(code, 2, out)
+            self.assertIn("no object files", out)
+            self.assertFalse((root / "none.json").exists())
+            (root / "empty.json").write_text("[]", encoding="utf-8")
+            self.tree(root)
+            code, _ = self.run_script("-Record", str(root / "one.json"), "-Root", str(root))
+            self.assertEqual(code, 0)
+            code, out = self.run_script("-Compare", str(root / "empty.json"), str(root / "one.json"))
+            self.assertEqual(code, 2, out)
+            self.assertIn("holds no object files", out)
+            code, out = self.run_script("-Record", str(root / "x.json"), "-Root", str(root), "-Configuration", "Debgu")
+            self.assertNotEqual(code, 0, out)
 
 if __name__ == "__main__":
     unittest.main()
