@@ -479,6 +479,8 @@ Implement `src/core/render_pool.h/.cpp` and `src/core/tile_scheduler.h/.cpp` (`r
 - `get_display_list`'s callback form answers on the actor thread, except a request refused at admission (a full queue, a closing or closed actor, no memory), which is answered at once on the calling thread; a caller never holds a lock the callback takes while it asks.
 - The default worker count subtracts without wrapping: `clamp(max(cores, 2) - 2, 2, 8)`, so 0, 1, 2 and 3 reported cores all give 2. `worker_count` 0 means the default; `1..16` is taken; anything else is `InvalidArgument`.
 - `RenderPool::start` waits until every worker has made its `Rasterizer`; a thread that cannot start or a rasterizer that cannot be made stops and joins the workers already running and returns the typed error, so no scheduler exists with a broken worker.
+
+**Corrected 2026-11-09:** completion review (`docs/reviews/01-engine/D01-T02-s9.md`). A replaced viewport lets its old tiles go before it takes new ones. Nothing is allocated for a request once it is taken, so memory running out refuses new requests and never loses, ends or stops one already held. The destructor waits for answers still being delivered from an actor and lets document handles go outside its lock. Page lists are asked for by their tiles' best priority, at most two at one actor at once. Tests: `Scheduler.SaturatedJump`, `Scheduler.AllocationFailures`, `Scheduler.ShutdownWhileDelivering`, `Scheduler.ShutdownOwnsLastHandle`, `Scheduler.CompileFailure`, `Scheduler.FetchPriority`; `Scheduler.JumpLatency` now keeps both workers on stale tiles until they are cancelled. End-to-end timings against Acrobat are `D06 T01 §7`'s.
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no

@@ -286,53 +286,49 @@ TEST(Actor, PasswordWiped)
 		ASSERT_TRUE(finish(handle->authenticate("recto-test")).has_value());
 		EXPECT_EQ(wiped(), before + 1u) << "after the right one";
 	}
-	// Wiped before its answer: the actor held just after answering, its request not yet gone, has no password left.
+	// Wiped before its answer: the count read on the actor's thread just after each request answered, before the request
+	// is destroyed, already holds the password's wipe.
 	{
-		struct Hold {
-			std::atomic<bool> armed{false};
-			std::atomic<bool> holding{false};
-			std::atomic<bool> released{false};
+		struct AtAnswer {
+			std::mutex mutex;
+			std::vector<uint64_t> wiped; // one per answered request
 			static void hook(void* context) noexcept
 			{
-				auto& self = *static_cast<Hold*>(context);
-				if (self.armed.exchange(false)) {
-					self.holding.store(true);
-					while (!self.released.load()) {
-						std::this_thread::yield();
-					}
-					self.holding.store(false); // gone, so the next round may arm it again
-				}
+				auto& self = *static_cast<AtAnswer*>(context);
+				const std::lock_guard lock(self.mutex);
+				self.wiped.push_back(detail::debug_wiped_passwords());
 			}
-		} hold;
+			size_t count()
+			{
+				const std::lock_guard lock(mutex);
+				return wiped.size();
+			}
+			void wait_for(size_t n)
+			{
+				const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+				while (count() < n && std::chrono::steady_clock::now() < until) {
+					std::this_thread::yield();
+				}
+				ASSERT_GE(count(), n);
+			}
+		} at_answer;
 		ActorOptions options;
-		options.answered_hook = &Hold::hook;
-		options.answered_hook_context = &hold;
+		options.answered_hook = &AtAnswer::hook;
+		options.answered_hook_context = &at_answer;
 		const auto handle = started(options);
 		ASSERT_NE(handle, nullptr);
 		expect_code(handle->open(recto::test::corpus_path("render/encrypted-aes-128.pdf")), ErrorCode::NeedsPassword);
+		at_answer.wait_for(1u); // the open's hook has run, so the next entry is the password's
 		for (const std::string_view password : {std::string_view("wrong"), std::string_view("recto-test")}) {
 			SCOPED_TRACE(password);
-			hold.released.store(false);
-			hold.armed.store(true);
+			const size_t answered = at_answer.count();
 			const uint64_t before = wiped();
-			auto answer = handle->authenticate(password);
-			EXPECT_EQ(answer.wait_for(std::chrono::seconds(30)), std::future_status::ready);
-			const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (!hold.holding.load() && std::chrono::steady_clock::now() < until) {
-				std::this_thread::yield();
-			}
-			EXPECT_TRUE(hold.holding.load());
-			EXPECT_EQ(wiped(), before + 1u) << "answered while the password was still held";
-			hold.released.store(true);
-			const auto gone = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-			while (hold.holding.load() && std::chrono::steady_clock::now() < gone) {
-				std::this_thread::yield();
-			}
-			ASSERT_FALSE(hold.holding.load()) << "the actor never left the hold";
-			(void)answer.get();
+			(void)finish(handle->authenticate(password));
+			at_answer.wait_for(answered + 1u);
+			const std::lock_guard lock(at_answer.mutex);
+			EXPECT_EQ(at_answer.wiped[answered], before + 1u) << "answered while the password was still held";
 		}
-	}
-	// Refused by a full queue, and dropped by a close: never reaching the thread.
+	}	// Refused by a full queue, and dropped by a close: never reaching the thread.
 	{
 		Gate gate;
 		recto::test::TempDir dir;

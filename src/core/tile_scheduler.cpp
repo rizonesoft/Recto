@@ -1,15 +1,19 @@
 // Which tiles render first (D01 T02 section 9; tile_scheduler.h has the contract).
+//
+// Nothing is allocated for a request after it is taken: its entry, its index slot and its queue node are made when it
+// arrives, and from then on it only moves between lists by `splice` and between queues by node handle. So memory running
+// out can refuse a new request, never lose one already taken, end a worker, or stop a cancel.
 #include "tile_scheduler.h"
 
 #include <array>
 #include <condition_variable>
 #include <exception>
+#include <list>
 #include <map>
 #include <mutex>
 #include <new>
 #include <optional>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace recto::core {
@@ -22,6 +26,10 @@ using pdf::make_pdf_error;
 using pdf::PdfResult;
 
 using Delivered = PdfResult<std::shared_ptr<const TileImage>>;
+
+// Page lists asked of one document's actor at once. More would sit in its queue, where a visible page cannot overtake
+// them; fewer would leave a worker idle between pages.
+constexpr size_t kFetchesInFlight = 2u;
 
 [[nodiscard]] uint64_t mixed(uint64_t h, uint64_t v) noexcept
 {
@@ -43,6 +51,12 @@ struct PageKeyHash {
 	}
 };
 
+[[nodiscard]] size_t tier(TilePriority priority) noexcept
+{
+	const auto value = static_cast<size_t>(priority);
+	return value >= 1u && value <= 4u ? value - 1u : 3u;
+}
+
 } // namespace
 
 size_t TileKeyHash::operator()(const TileKey& key) const noexcept
@@ -59,30 +73,49 @@ size_t TileKeyHash::operator()(const TileKey& key) const noexcept
 struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<TileScheduler::State> {
 	enum class Stage : uint8_t { Fetching, Queued, Rendering };
 
+	struct Entry;
+	using Entries = std::list<Entry>;
+	using Queue = std::map<uint64_t, Entry*>; // by serial: first come first
+
 	struct Entry {
 		TileRequest request;
 		uint64_t serial{0};
 		Stage stage{Stage::Fetching};
 		std::optional<CancelSource> cancel;
 		bool wanted{true};
-		std::optional<TileRequest> again; // asked for once more while its cancelled render finishes
+		uint64_t seen{0};            // the `update_viewport` round that last named it
+		Queue::node_type queue_node; // made when taken, so queueing it never allocates
+		Entry* again{nullptr};       // asked for once more while its cancelled render finishes (held in `waiting`)
+		std::optional<Delivered> answer;
+		Entry* next_out{nullptr};    // the next answer handed out with it
+		std::list<Entry>::iterator self{}; // where it waits in `answered`, to be erased once delivered
+	};
+
+	// Answers to hand out once the lock is let go: a chain through the entries, so collecting it allocates nothing (an
+	// MSVC `std::list` allocates even when default-constructed).
+	struct Out {
+		Entry* head{nullptr};
+		Entry* tail{nullptr};
+		[[nodiscard]] bool empty() const noexcept
+		{
+			return head == nullptr;
+		}
 	};
 
 	struct Fetch {
 		uint64_t generation{0};
 		size_t users{0};
+		bool started{false};
 		std::optional<CancelSource> cancel;
 		std::shared_ptr<const pdf::DisplayList> list;
 	};
 
-	struct PendingStart {
+	struct Start {
 		PageKey page;
 		uint64_t generation{0};
 		std::shared_ptr<DocumentHandle> document;
 		pdf::CancelToken token;
 	};
-
-	using Out = std::vector<std::pair<TileKey, Delivered>>;
 
 	explicit State(TileDelivery given)
 		: deliver(std::move(given))
@@ -94,45 +127,86 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 
 	std::mutex mutex;
 	std::condition_variable work_ready;
+	std::condition_variable drained;
 	bool stopping{false};
 	bool paused{false};
+	size_t delivering{0u}; // answers handed out but not yet returned from `deliver`
 	std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> documents;
-	std::unordered_map<TileKey, Entry> entries;
+	Entries live;    // every request taken and not yet answered, `again` ones apart
+	Entries waiting; // `again` requests, each behind its cancelled render
+	Entries answered; // answered, until the thread that answered them has delivered them
+	std::unordered_map<TileKey, Entries::iterator> index; // into `live`
 	std::unordered_map<PageKey, Fetch, PageKeyHash> fetches;
-	std::array<std::map<uint64_t, TileKey>, 4> queues; // by tier, first come first
-	std::unordered_map<uint64_t, TileKey> rendering;    // by job ticket
+	std::array<Queue, 4> queues;
 	uint64_t next_serial{1u};
-	uint64_t next_ticket{1u};
 	uint64_t next_generation{1u};
-
-	[[nodiscard]] static size_t tier(TilePriority priority) noexcept
-	{
-		const auto value = static_cast<size_t>(priority);
-		return value >= 1u && value <= 4u ? value - 1u : 3u;
-	}
+	uint64_t round{0u};
 
 	[[nodiscard]] static PageKey page_of(const TileKey& key) noexcept
 	{
 		return PageKey{key.doc_id, key.page_index};
 	}
 
+	// --- Answering. ---------------------------------------------------------------------------------------------
+
+	// Moves `entry` from `from` to `answered`, answered `result`, and chains it on `out`: no allocation, so it cannot fail.
+	void answer(Entries& from, Entries::iterator entry, Delivered result, Out& out) noexcept
+	{
+		entry->answer.emplace(std::move(result));
+		entry->self = entry;
+		entry->next_out = nullptr;
+		answered.splice(answered.end(), from, entry);
+		Entry* const at = &*entry;
+		if (out.tail == nullptr) {
+			out.head = at;
+		} else {
+			out.tail->next_out = at;
+		}
+		out.tail = at;
+	}
+
+	// Hands `out` to `deliver` outside the lock, counted so the destructor waits for the last one. Only this thread
+	// touches the entries on its chain until it erases them.
 	void hand_out(Out& out) noexcept
 	{
-		for (auto& [key, result] : out) {
-			deliver(key, std::move(result));
+		if (out.empty()) {
+			return;
 		}
-		out.clear();
+		for (Entry* entry = out.head; entry != nullptr; entry = entry->next_out) {
+			deliver(entry->request.key, std::move(*entry->answer));
+		}
+		const std::lock_guard lock(mutex);
+		for (Entry* entry = out.head; entry != nullptr;) {
+			Entry* const next = entry->next_out;
+			answered.erase(entry->self);
+			entry = next;
+		}
+		out = Out{};
+		--delivering;
+		if (delivering == 0u) {
+			drained.notify_all();
+		}
 	}
+
+	// Called under the lock before it is released with answers in `out`.
+	void counting(const Out& out) noexcept
+	{
+		if (!out.empty()) {
+			++delivering;
+		}
+	}
+
+	// --- Queues and pages. ----------------------------------------------------------------------------------------
 
 	void enqueue(Entry& entry) noexcept
 	{
 		entry.stage = Stage::Queued;
-		queues[tier(entry.request.priority)].emplace(entry.serial, entry.request.key);
+		queues[tier(entry.request.priority)].insert(std::move(entry.queue_node));
 	}
 
-	void dequeue(const Entry& entry) noexcept
+	void dequeue(Entry& entry) noexcept
 	{
-		queues[tier(entry.request.priority)].erase(entry.serial);
+		entry.queue_node = queues[tier(entry.request.priority)].extract(entry.serial);
 	}
 
 	void release_page(const PageKey& page) noexcept
@@ -152,92 +226,193 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		}
 	}
 
-	// Takes `request` as a new entry: queued when its page's list is here, else waiting on the page's one fetch.
-	void take(const TileRequest& request, Out& out, std::vector<PendingStart>& starts)
+	// Makes `request` an entry in a list of its own, ready to join `live`, or the reason it cannot be taken.
+	[[nodiscard]] std::optional<pdf::PdfError> make(const TileRequest& request, Entries& made)
 	{
-		if (entries.size() >= kMaxScheduledTiles) {
-			out.emplace_back(request.key, pdf::make_refusal_error(ErrorCode::ResourceLimit, pdf::RefusalReason::SchedulerFull,
-				entries.size() + 1u, kMaxScheduledTiles, "More tiles were requested than the scheduler holds"));
-			return;
+		if (index.size() + waiting.size() >= kMaxScheduledTiles) {
+			return pdf::make_refusal_error(ErrorCode::ResourceLimit, pdf::RefusalReason::SchedulerFull,
+				index.size() + waiting.size() + 1u, kMaxScheduledTiles, "More tiles were requested than the scheduler holds");
+		}
+		if (!documents.contains(request.key.doc_id)) {
+			return pdf::detail::cancelled_error(); // detached while it waited
 		}
 		auto cancel = CancelSource::create();
 		if (!cancel.has_value()) {
-			out.emplace_back(request.key, cancel.error());
-			return;
+			return cancel.error();
 		}
-		const auto document = documents.find(request.key.doc_id);
-		if (document == documents.end()) {
-			out.emplace_back(request.key, pdf::detail::cancelled_error()); // detached while it waited
-			return;
-		}
-		const PageKey page = page_of(request.key);
-		auto [fetch, made] = fetches.try_emplace(page);
-		if (made) {
-			auto fetch_cancel = CancelSource::create();
-			if (!fetch_cancel.has_value()) {
-				fetches.erase(fetch);
-				out.emplace_back(request.key, fetch_cancel.error());
-				return;
-			}
-			fetch->second.generation = next_generation++;
-			fetch->second.cancel.emplace(*fetch_cancel);
-			starts.push_back(PendingStart{page, fetch->second.generation, document->second, fetch_cancel->token()});
-		}
-		auto [slot, inserted] = entries.try_emplace(request.key);
-		Entry& entry = slot->second;
+		Entry& entry = made.emplace_back();
 		entry.request = request;
 		entry.serial = next_serial++;
 		entry.cancel.emplace(*cancel);
+		Queue node_maker;
+		node_maker.emplace(entry.serial, &entry);
+		entry.queue_node = node_maker.extract(entry.serial);
+		return std::nullopt;
+	}
+
+	// Takes a made entry into `live`: queued when its page's list is here, else waiting on the page's one fetch.
+	void admit(Entries& made, uint64_t seen)
+	{
+		Entry& entry = made.front();
+		const PageKey page = page_of(entry.request.key);
+		auto [fetch, created] = fetches.try_emplace(page);
+		if (created) {
+			auto fetch_cancel = CancelSource::create();
+			if (!fetch_cancel.has_value()) {
+				fetches.erase(fetch);
+				throw std::bad_alloc();
+			}
+			fetch->second.generation = next_generation++;
+			fetch->second.cancel.emplace(*fetch_cancel);
+		}
+		try {
+			index.emplace(entry.request.key, made.begin());
+		} catch (...) {
+			if (created) {
+				fetches.erase(fetch);
+			}
+			throw;
+		}
+		entry.seen = seen;
 		++fetch->second.users;
+		live.splice(live.end(), made, made.begin());
 		if (fetch->second.list != nullptr) {
 			enqueue(entry);
 		}
 	}
 
-	// No longer wanted: a queued or fetching tile is answered `Cancelled` now; a rendering one is cancelled and answered
-	// when it returns.
-	void drop(Entry& entry, Out& out)
+	// The best tier any live tile of `page` wants.
+	[[nodiscard]] size_t page_tier(const PageKey& page) const noexcept
 	{
-		if (entry.again.has_value()) {
-			out.emplace_back(entry.again->key, pdf::detail::cancelled_error());
-			entry.again.reset();
+		size_t best = 4u;
+		for (const Entry& entry : live) {
+			if (entry.wanted && page_of(entry.request.key) == page) {
+				best = std::min(best, tier(entry.request.priority));
+			}
 		}
-		if (!entry.wanted) {
-			return;
-		}
-		if (entry.stage == Stage::Rendering) {
-			entry.wanted = false;
-			entry.cancel->cancel();
-			return;
-		}
-		if (entry.stage == Stage::Queued) {
-			dequeue(entry);
-		}
-		const TileKey key = entry.request.key;
-		out.emplace_back(key, pdf::detail::cancelled_error());
-		entries.erase(key);
-		release_page(page_of(key));
+		return best;
 	}
 
-	void start_fetches(std::vector<PendingStart>& starts) noexcept
+	// The page fetches to send now: for each document, the best-placed waiting pages, up to `kFetchesInFlight` asked of
+	// its actor at once, so a thumbnail backlog never stands in a visible page's way at the actor.
+	void plan_fetches(std::vector<Start>& starts)
 	{
-		for (PendingStart& start : starts) {
+		std::unordered_map<uint64_t, size_t> in_flight;
+		for (const auto& [page, fetch] : fetches) {
+			if (fetch.started && fetch.list == nullptr) {
+				++in_flight[page.doc_id];
+			}
+		}
+		for (;;) {
+			const Fetch* best = nullptr;
+			PageKey best_page{};
+			size_t best_tier = 5u;
+			for (const auto& [page, fetch] : fetches) {
+				if (fetch.started || in_flight[page.doc_id] >= kFetchesInFlight) {
+					continue;
+				}
+				const size_t t = page_tier(page);
+				if (t < best_tier || (t == best_tier && fetch.generation < best->generation)) {
+					best = &fetch;
+					best_page = page;
+					best_tier = t;
+				}
+			}
+			if (best == nullptr) {
+				return;
+			}
+			Fetch& chosen = fetches.at(best_page);
+			chosen.started = true;
+			const auto document = documents.find(best_page.doc_id);
+			if (document == documents.end()) {
+				continue; // detached: its tiles are answered, and the fetch goes with the last of them
+			}
+			starts.push_back(Start{best_page, chosen.generation, document->second, chosen.cancel->token()});
+			++in_flight[best_page.doc_id];
+		}
+	}
+
+	void start_fetches(std::vector<Start>& starts) noexcept
+	{
+		for (Start& start : starts) {
 			const std::weak_ptr<State> self = weak_from_this();
-			start.document->get_display_list(start.page.page_index, start.token,
-				[self, page = start.page, generation = start.generation](PdfResult<std::shared_ptr<const pdf::DisplayList>> list) noexcept {
+			DocumentHandle::DisplayListCallback done;
+			try {
+				done = [self, page = start.page, generation = start.generation](PdfResult<std::shared_ptr<const pdf::DisplayList>> list) noexcept {
 					if (const auto state = self.lock()) {
 						state->arrived(page, generation, std::move(list));
 					}
-				});
+				};
+			} catch (const std::bad_alloc&) {
+				// No memory for the callback: the page's tiles are answered as its fetch would have failed.
+				arrived(start.page, start.generation, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory asking for a page's list"));
+				continue;
+			}
+			start.document->get_display_list(start.page.page_index, start.token, std::move(done));
 		}
 		starts.clear();
 	}
+
+	// Plans and sends what can go now; called with the lock released.
+	void pump() noexcept
+	{
+		std::vector<Start> starts;
+		{
+			const std::lock_guard lock(mutex);
+			if (stopping) {
+				return;
+			}
+			try {
+				plan_fetches(starts);
+			} catch (const std::bad_alloc&) {
+				// What was planned goes; the rest goes at the next arrival or request.
+			}
+		}
+		start_fetches(starts);
+	}
+
+	// No longer wanted: a queued or fetching tile is answered `Cancelled`; a rendering one is cancelled and answered
+	// when it returns. Its `again` request, if any, is answered `Cancelled` too.
+	void drop(Entries::iterator entry, Out& out) noexcept
+	{
+		if (entry->again != nullptr) {
+			drop_again(*entry, out);
+		}
+		if (!entry->wanted) {
+			return;
+		}
+		if (entry->stage == Stage::Rendering) {
+			entry->wanted = false;
+			entry->cancel->cancel();
+			return;
+		}
+		if (entry->stage == Stage::Queued) {
+			dequeue(*entry);
+		}
+		const TileKey key = entry->request.key;
+		index.erase(key);
+		answer(live, entry, pdf::detail::cancelled_error(), out);
+		release_page(page_of(key));
+	}
+
+	void drop_again(Entry& entry, Out& out) noexcept
+	{
+		for (auto it = waiting.begin(); it != waiting.end(); ++it) {
+			if (&*it == entry.again) {
+				answer(waiting, it, pdf::detail::cancelled_error(), out);
+				break;
+			}
+		}
+		entry.again = nullptr;
+	}
+
+	// --- From actors. ---------------------------------------------------------------------------------------------
 
 	void arrived(const PageKey& page, uint64_t generation, PdfResult<std::shared_ptr<const pdf::DisplayList>> list) noexcept
 	{
 		Out out;
 		bool queued = false;
-		try {
+		{
 			const std::lock_guard lock(mutex);
 			const auto found = fetches.find(page);
 			if (stopping || found == fetches.end() || found->second.generation != generation) {
@@ -246,39 +421,39 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 			if (list.has_value()) {
 				found->second.list = std::move(*list);
 				found->second.cancel.reset();
-				for (auto& [key, entry] : entries) {
-					if (page_of(key) == page && entry.stage == Stage::Fetching) {
+				for (Entry& entry : live) {
+					if (page_of(entry.request.key) == page && entry.stage == Stage::Fetching) {
 						enqueue(entry);
 						queued = true;
 					}
 				}
 			} else {
-				std::vector<TileKey> failed;
-				for (auto& [key, entry] : entries) {
-					if (page_of(key) == page && entry.stage == Stage::Fetching) {
-						failed.push_back(key);
+				for (auto it = live.begin(); it != live.end();) {
+					const auto next = std::next(it);
+					if (page_of(it->request.key) == page && it->stage == Stage::Fetching) {
+						index.erase(it->request.key);
+						answer(live, it, list.error(), out);
 					}
-				}
-				for (const TileKey& key : failed) {
-					out.emplace_back(key, list.error());
-					entries.erase(key);
+					it = next;
 				}
 				fetches.erase(found); // a later request asks again
 			}
-		} catch (const std::bad_alloc&) {
-			// `out` holds what it got; the rest are answered when they leave the view or the scheduler goes.
+			counting(out);
 		}
 		if (queued) {
 			work_ready.notify_all();
 		}
 		hand_out(out);
+		pump();
 	}
+
+	// --- From workers. --------------------------------------------------------------------------------------------
 
 	std::optional<TileJob> next_job() noexcept override
 	{
 		std::unique_lock lock(mutex);
 		const auto any_queued = [&] {
-			for (const auto& queue : queues) {
+			for (const Queue& queue : queues) {
 				if (!queue.empty()) {
 					return true;
 				}
@@ -289,22 +464,16 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		if (stopping) {
 			return std::nullopt;
 		}
-		for (auto& queue : queues) {
+		for (Queue& queue : queues) {
 			if (queue.empty()) {
 				continue;
 			}
-			const TileKey key = queue.begin()->second;
-			queue.erase(queue.begin());
-			Entry& entry = entries.at(key);
+			Entry& entry = *queue.begin()->second;
+			entry.queue_node = queue.extract(queue.begin());
 			entry.stage = Stage::Rendering;
-			const uint64_t ticket = next_ticket++;
-			try {
-				rendering.emplace(ticket, key);
-			} catch (const std::bad_alloc&) {
-				enqueue(entry);
-				return std::nullopt; // this worker stops; the others and the destructor still answer every tile
-			}
-			return TileJob{ticket, fetches.at(page_of(key)).list, entry.request.spec, entry.cancel->token()};
+			// The entry stays in `live` until its result comes back, so its address names the job.
+			return TileJob{reinterpret_cast<uint64_t>(&entry), fetches.at(page_of(entry.request.key)).list, entry.request.spec,
+				entry.cancel->token()};
 		}
 		return std::nullopt;
 	}
@@ -312,82 +481,86 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	void finished(const TileJob& job, Delivered result) noexcept override
 	{
 		Out out;
-		std::vector<PendingStart> starts;
 		bool queued = false;
 		{
 			const std::lock_guard lock(mutex);
-			const auto ticket = rendering.find(job.ticket);
-			if (ticket == rendering.end()) {
+			const auto entry = std::find_if(live.begin(), live.end(), [&](const Entry& e) { return reinterpret_cast<uint64_t>(&e) == job.ticket; });
+			if (entry == live.end()) {
 				return;
 			}
-			const TileKey key = ticket->second;
-			rendering.erase(ticket);
-			const auto found = entries.find(key);
-			if (found == entries.end()) {
-				return;
-			}
-			const bool wanted = found->second.wanted;
-			std::optional<TileRequest> again = std::move(found->second.again);
-			entries.erase(found);
-			try {
-				out.emplace_back(key, wanted ? std::move(result) : Delivered(pdf::detail::cancelled_error()));
-				if (again.has_value() && !stopping) {
-					take(*again, out, starts); // before the page is let go, so its list stays
-					queued = true;
-				} else if (again.has_value()) {
-					out.emplace_back(again->key, pdf::detail::cancelled_error());
+			const TileKey key = entry->request.key;
+			Entry* const again = entry->again;
+			entry->again = nullptr;
+			index.erase(key);
+			answer(live, entry, entry->wanted ? std::move(result) : Delivered(pdf::detail::cancelled_error()), out);
+			if (again != nullptr) {
+				const auto waiting_at = std::find_if(waiting.begin(), waiting.end(), [&](const Entry& e) { return &e == again; });
+				if (waiting_at == waiting.end()) {
+					// Not held: nothing to answer.
+				} else if (stopping) {
+					answer(waiting, waiting_at, pdf::detail::cancelled_error(), out);
+				} else {
+					// Its slot and queue node were made when it was asked for, so taking it now allocates only the index slot;
+					// without that, it is answered.
+					try {
+						index.emplace(key, waiting_at);
+						live.splice(live.end(), waiting, waiting_at);
+						++fetches.at(page_of(key)).users; // the page is still held by the entry just answered
+						if (fetches.at(page_of(key)).list != nullptr) {
+							enqueue(*again);
+							queued = true;
+						}
+					} catch (const std::exception&) {
+						answer(waiting, waiting_at, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a tile again"), out);
+					}
 				}
-			} catch (const std::bad_alloc&) {
-				// Nothing to give back to: the tile is answered through `out` as far as it got.
 			}
 			release_page(page_of(key));
+			counting(out);
 		}
-		start_fetches(starts);
 		if (queued) {
 			work_ready.notify_one();
 		}
 		hand_out(out);
+		pump();
 	}
+
+	// --- Shutdown. ------------------------------------------------------------------------------------------------
 
 	void shutdown() noexcept
 	{
 		Out out;
+		std::unordered_map<uint64_t, std::shared_ptr<DocumentHandle>> handles; // released below, outside the lock
 		{
 			const std::lock_guard lock(mutex);
 			stopping = true;
-			try {
-				std::vector<TileKey> keys;
-				keys.reserve(entries.size());
-				for (const auto& [key, entry] : entries) {
-					keys.push_back(key);
-				}
-				for (const TileKey& key : keys) {
-					if (const auto found = entries.find(key); found != entries.end()) {
-						drop(found->second, out);
-					}
-				}
-			} catch (const std::bad_alloc&) {
-				// What is left is answered by the loop below without allocating more.
+			for (auto it = live.begin(); it != live.end();) {
+				const auto next = std::next(it);
+				drop(it, out);
+				it = next;
+			}
+			for (auto it = waiting.begin(); it != waiting.end();) {
+				const auto next = std::next(it);
+				answer(waiting, it, pdf::detail::cancelled_error(), out);
+				it = next;
 			}
 			for (auto& [page, fetch] : fetches) {
 				if (fetch.cancel.has_value()) {
 					fetch.cancel->cancel();
 				}
 			}
-			documents.clear();
+			handles.swap(documents);
+			counting(out);
 		}
 		work_ready.notify_all();
 		hand_out(out);
 		pool.reset(); // joins: a tile still rendering is answered by `finished` on its way out
-		// Whatever could not be listed above for want of memory.
-		const std::lock_guard lock(mutex);
-		for (auto& [key, entry] : entries) {
-			if (entry.wanted || entry.again.has_value()) {
-				deliver(key, pdf::detail::cancelled_error());
-			}
-		}
-		entries.clear();
+		// An actor's answer may be on its way out of `arrived` still: the caller's `deliver` is not touched after this.
+		std::unique_lock lock(mutex);
+		drained.wait(lock, [&] { return delivering == 0u; });
 		fetches.clear();
+		lock.unlock();
+		handles.clear(); // a last handle joins its actor here, with no lock held
 	}
 };
 
@@ -452,37 +625,72 @@ PdfResult<void> TileScheduler::attach(uint64_t doc_id, std::shared_ptr<DocumentH
 void TileScheduler::detach(uint64_t doc_id) noexcept
 {
 	cancel_document(doc_id);
-	const std::lock_guard lock(state_->mutex);
-	state_->documents.erase(doc_id);
+	std::shared_ptr<DocumentHandle> released; // a last handle joins its actor after the lock is let go
+	{
+		const std::lock_guard lock(state_->mutex);
+		if (const auto found = state_->documents.find(doc_id); found != state_->documents.end()) {
+			released = std::move(found->second);
+			state_->documents.erase(found);
+		}
+	}
 }
 
 void TileScheduler::update_viewport(uint64_t doc_id, std::vector<TileRequest> tiles) noexcept
 {
 	State& s = *state_;
 	State::Out out;
-	std::vector<State::PendingStart> starts;
+	// What could not be taken is answered straight from `tiles`, by position, so refusing needs no memory either.
+	std::vector<std::optional<pdf::PdfError>> refusals;
 	try {
-		const std::lock_guard lock(s.mutex);
-		const bool known = s.documents.contains(doc_id);
-		std::unordered_set<TileKey> wanted;
-		wanted.reserve(tiles.size());
+		refusals.resize(tiles.size());
+	} catch (const std::bad_alloc&) {
 		for (const TileRequest& request : tiles) {
+			s.deliver(request.key, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a tile request"));
+		}
+		return;
+	}
+	bool queued = false;
+	{
+		const std::lock_guard lock(s.mutex);
+		const uint64_t round = ++s.round;
+		const bool known = s.documents.contains(doc_id);
+		// First what is wanted again keeps its place, then what is no longer wanted goes, and only then are new tiles
+		// taken: a full queue being replaced makes room for its replacement in the same call.
+		for (size_t i = 0; i < tiles.size(); ++i) {
+			const TileRequest& request = tiles[i];
 			if (s.stopping || !known || request.key.doc_id != doc_id) {
-				out.emplace_back(request.key, s.stopping ? pdf::PdfError(pdf::detail::cancelled_error())
-														 : make_pdf_error(ErrorCode::InvalidArgument, "That tile's document is not attached here"));
+				refusals[i] = s.stopping ? pdf::PdfError(pdf::detail::cancelled_error())
+										 : make_pdf_error(ErrorCode::InvalidArgument, "That tile's document is not attached here");
 				continue;
 			}
-			if (!wanted.insert(request.key).second) {
-				continue; // a key twice in one set is one request
-			}
-			const auto found = s.entries.find(request.key);
-			if (found == s.entries.end()) {
-				s.take(request, out, starts);
+			const auto found = s.index.find(request.key);
+			if (found == s.index.end()) {
 				continue;
 			}
-			State::Entry& entry = found->second;
+			State::Entry& entry = *found->second;
+			if (entry.seen == round) {
+				refusals[i] = std::nullopt; // the same key twice in one set is one request
+				continue;
+			}
+			entry.seen = round;
 			if (!entry.wanted) {
-				entry.again = request; // its cancelled render finishes first, then it is taken again
+				// Its cancelled render finishes first, then it is taken again.
+				if (entry.again != nullptr) {
+					entry.again->request.priority = request.priority;
+				} else {
+					try {
+						State::Entries made;
+						if (auto refused = s.make(request, made)) {
+							refusals[i] = *refused;
+						} else {
+							made.front().seen = round;
+							entry.again = &made.front();
+							s.waiting.splice(s.waiting.end(), made, made.begin());
+						}
+					} catch (const std::bad_alloc&) {
+						refusals[i] = make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a tile request");
+					}
+				}
 				continue;
 			}
 			if (entry.request.priority != request.priority) {
@@ -495,44 +703,61 @@ void TileScheduler::update_viewport(uint64_t doc_id, std::vector<TileRequest> ti
 				}
 			}
 		}
-		std::vector<TileKey> leaving;
-		for (const auto& [key, entry] : s.entries) {
-			if (key.doc_id == doc_id && !wanted.contains(key)) {
-				leaving.push_back(key);
+		for (auto it = s.live.begin(); it != s.live.end();) {
+			const auto next = std::next(it);
+			if (it->request.key.doc_id == doc_id && it->seen != round) {
+				s.drop(it, out);
+			}
+			it = next;
+		}
+		for (size_t i = 0; i < tiles.size(); ++i) {
+			const TileRequest& request = tiles[i];
+			if (refusals[i].has_value() || s.stopping || !known || request.key.doc_id != doc_id) {
+				continue;
+			}
+			if (const auto found = s.index.find(request.key); found != s.index.end()) {
+				continue; // kept above, or taken earlier in this call
+			}
+			try {
+				State::Entries made;
+				if (auto refused = s.make(request, made)) {
+					refusals[i] = *refused;
+					continue;
+				}
+				s.admit(made, round);
+				queued = queued || s.live.back().stage == State::Stage::Queued;
+			} catch (const std::bad_alloc&) {
+				refusals[i] = make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a tile request");
 			}
 		}
-		for (const TileKey& key : leaving) {
-			if (const auto found = s.entries.find(key); found != s.entries.end()) {
-				s.drop(found->second, out);
-			}
-		}
-	} catch (const std::bad_alloc&) {
-		// What was taken before memory ran out stays taken, and is answered.
+		s.counting(out);
 	}
-	s.start_fetches(starts);
-	s.work_ready.notify_all();
+	if (queued) {
+		s.work_ready.notify_all();
+	}
 	s.hand_out(out);
+	for (size_t i = 0; i < tiles.size(); ++i) {
+		if (refusals[i].has_value()) {
+			s.deliver(tiles[i].key, *refusals[i]);
+		}
+	}
+	s.pump();
 }
 
 void TileScheduler::cancel_document(uint64_t doc_id) noexcept
 {
 	State& s = *state_;
 	State::Out out;
-	try {
+	{
 		const std::lock_guard lock(s.mutex);
-		std::vector<TileKey> leaving;
-		for (const auto& [key, entry] : s.entries) {
-			if (key.doc_id == doc_id) {
-				leaving.push_back(key);
+		for (auto it = s.live.begin(); it != s.live.end();) {
+			const auto next = std::next(it);
+			if (it->request.key.doc_id == doc_id) {
+				s.drop(it, out);
 			}
+			it = next;
 		}
-		for (const TileKey& key : leaving) {
-			if (const auto found = s.entries.find(key); found != s.entries.end()) {
-				s.drop(found->second, out);
-			}
-		}
-	} catch (const std::bad_alloc&) {
-		// The rest are answered when the scheduler goes.
+		s.counting(out);
 	}
 	s.hand_out(out);
 }

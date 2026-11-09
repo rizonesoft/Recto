@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -95,6 +96,11 @@ struct Deliveries {
 	std::condition_variable arrived;
 	std::vector<std::pair<TileKey, Delivered>> all;
 
+	Deliveries()
+	{
+		all.reserve(16'384u); // recording a delivery never allocates, even while a test makes allocation fail
+	}
+
 	TileDelivery sink()
 	{
 		return [this](const TileKey& key, Delivered result) noexcept {
@@ -153,11 +159,17 @@ std::unique_ptr<TileScheduler> scheduler(Deliveries& deliveries, uint32_t worker
 struct Hold {
 	std::atomic<bool> released{false};
 	std::atomic<int> held{0};
+	int limit{1 << 30}; // tiles held at most; later ones run free
+	std::atomic<int> taken{0};
 
 	static void hook(CancelSite site, void* context) noexcept
 	{
 		auto& self = *static_cast<Hold*>(context);
-		if (site != CancelSite::RasterCommand || self.released.load()) {
+		if (site != CancelSite::RasterCommand || self.released.load() || self.taken.load() >= self.limit) {
+			return;
+		}
+		// One hold per tile: its first poll, counted against the limit.
+		if (self.taken.fetch_add(1) >= self.limit) {
 			return;
 		}
 		self.held.fetch_add(1);
@@ -378,6 +390,7 @@ TEST(Scheduler, JumpLatency)
 	ASSERT_NE(document, nullptr);
 	Deliveries deliveries;
 	Hold hold;
+	hold.limit = 2; // the two stale tiles are held until they are cancelled; the new one runs free
 	auto made = scheduler(deliveries, 2u, &Hold::hook, &hold);
 	ASSERT_NE(made, nullptr);
 	ASSERT_TRUE(made->attach(1u, document).has_value());
@@ -385,11 +398,11 @@ TEST(Scheduler, JumpLatency)
 	auto warm = document->get_display_list(1u);
 	ASSERT_TRUE(warm.get().has_value());
 	made->update_viewport(1u, {tile(1u, 0u, 0u), tile(1u, 0u, 1u), tile(1u, 0u, 2u), tile(1u, 0u, 3u)});
-	hold.wait_held(2);
-	hold.released.store(true); // from here a held worker returns as soon as its tile is cancelled
+	hold.wait_held(2); // both workers busy on stale tiles
 	const auto jumped = std::chrono::steady_clock::now();
-	made->update_viewport(1u, {TileRequest{TileKey{1u, 1u, 1'000u, 0, 0u, 0u}, TilePriority::VisibleCurrentPage, tile(1u, 1u, 0u, TilePriority::VisibleCurrentPage, 8u).spec}});
+	made->update_viewport(1u, {tile(1u, 1u, 0u, TilePriority::VisibleCurrentPage, 8u)});
 	std::chrono::steady_clock::time_point first{};
+	bool rendered = false;
 	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 	while (first == std::chrono::steady_clock::time_point{} && std::chrono::steady_clock::now() < until) {
 		{
@@ -397,15 +410,22 @@ TEST(Scheduler, JumpLatency)
 			for (const auto& [key, result] : deliveries.all) {
 				if (key.page_index == 1u) {
 					first = std::chrono::steady_clock::now();
+					rendered = result.has_value();
 				}
 			}
 		}
 		std::this_thread::yield();
 	}
 	ASSERT_NE(first, std::chrono::steady_clock::time_point{}) << "the new page's tile never came";
+	EXPECT_TRUE(rendered) << "the new page's tile was not rendered";
 	recto::test::expect_cancel_latency(std::chrono::duration<double, std::milli>(first - jumped).count(), "the first tile after a jump");
+	ASSERT_TRUE(deliveries.wait_for(5u));
+	for (const auto& [key, result] : deliveries.all) {
+		if (key.page_index == 0u) {
+			EXPECT_FALSE(result.has_value()) << "a stale tile was delivered";
+		}
+	}
 }
-
 TEST(Scheduler, DeliveredPixels)
 {
 	const auto path = recto::test::corpus_path("render/images-and-vectors.pdf");
@@ -653,41 +673,43 @@ TEST(Scheduler, CallbackAdmission)
 			}
 		} compile;
 		ActorOptions options;
-		options.max_queue = 2u;
+		options.max_queue = 1u;
 		options.poll_hook = &Compile::hook;
 		options.poll_hook_context = &compile;
-		compile.released.store(true); // the open compiles nothing, but let it through
 		const auto document = opened(path, options);
 		ASSERT_NE(document, nullptr);
-		compile.released.store(false);
 		auto made = scheduler(deliveries, 1u);
 		ASSERT_NE(made, nullptr);
 		ASSERT_TRUE(made->attach(1u, document).has_value());
+		made->update_viewport(1u, {tile(1u, 0u, 0u)});
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		while (!compile.reached.load() && std::chrono::steady_clock::now() < until) {
+			std::this_thread::yield();
+		}
+		ASSERT_TRUE(compile.reached.load()); // page 0 compiles, held, out of the queue
+		auto occupant = document->get_description(); // the queue's one slot, taken
 		std::vector<TileRequest> pages;
 		for (uint32_t page = 0; page < 6u; ++page) {
 			pages.push_back(tile(1u, page, 0u));
 		}
 		made->update_viewport(1u, pages);
-		// Page 0 compiles and is held there; at most two more wait in the queue, so three or more are refused at once.
-		ASSERT_TRUE(deliveries.wait_for(3u));
-		size_t refused = 0u;
+		// Pages 1 to 5 are each refused at once on this thread, the next sent as each refusal answers its tiles.
+		ASSERT_TRUE(deliveries.wait_for(5u));
 		{
 			const std::lock_guard lock(deliveries.mutex);
+			ASSERT_EQ(deliveries.all.size(), 5u);
 			for (const auto& [key, result] : deliveries.all) {
+				EXPECT_NE(key.page_index, 0u);
 				ASSERT_FALSE(result.has_value());
 				EXPECT_EQ(result.error().refusal_reason, pdf::RefusalReason::ActorQueueFull);
-				++refused;
 			}
 		}
-		EXPECT_GE(refused, 3u);
 		compile.released.store(true);
 		ASSERT_TRUE(deliveries.wait_for(6u));
+		EXPECT_TRUE(occupant.get().has_value());
 		made.reset();
 		EXPECT_EQ(deliveries.count(), 6u) << "a tile was answered twice";
-		std::set<uint32_t> pages_seen;
-		for (const auto& [key, result] : deliveries.all) {
-			EXPECT_TRUE(pages_seen.insert(key.page_index).second);
-		}
+		EXPECT_TRUE(deliveries.all.back().second.has_value()) << "page 0 did not render once released";
 	}	// A closed actor.
 	{
 		const auto document = opened(path);
@@ -718,5 +740,309 @@ TEST(Scheduler, CallbackAdmission)
 	}
 }
 
+// Pages drawing different numbers of fills, so the interpreter's operator count names the page it compiled; a broken page's content nests arrays past the parser's limit.
+std::vector<uint8_t> counted_pages(size_t pages, size_t broken_page = SIZE_MAX)
+{
+	std::vector<std::string> objects;
+	objects.emplace_back("<< /Type /Catalog /Pages 2 0 R >>");
+	std::string kids;
+	for (size_t i = 0; i < pages; ++i) {
+		kids += std::to_string(3u + 2u * i) + " 0 R ";
+	}
+	objects.push_back("<< /Type /Pages /Kids [" + kids + "] /Count " + std::to_string(pages) + " >>");
+	for (size_t i = 0; i < pages; ++i) {
+		std::string content;
+		for (size_t k = 0; k <= i; ++k) {
+			content += "0 0 10 10 re f ";
+		}
+		if (i == broken_page) {
+			content = std::string(4'096u, '[') + std::string(4'096u, ']'); // nested past the parser's limit: a fatal refusal
+		}
+		const std::string box = "[0 0 200 200]";
+		objects.push_back("<< /Type /Page /Parent 2 0 R /MediaBox " + box + " /Resources << >> /Contents " + std::to_string(4u + 2u * i) + " 0 R >>");
+		objects.push_back("<< /Length " + std::to_string(content.size()) + " >>\nstream\n" + content + "\nendstream");
+	}
+	std::string out = "%PDF-1.7\n";
+	std::vector<size_t> offsets;
+	for (size_t i = 0; i < objects.size(); ++i) {
+		offsets.push_back(out.size());
+		out += std::to_string(i + 1u) + " 0 obj\n" + objects[i] + "\nendobj\n";
+	}
+	const size_t xref = out.size();
+	out += "xref\n0 " + std::to_string(objects.size() + 1u) + "\n0000000000 65535 f \n";
+	for (const size_t offset : offsets) {
+		char row[32];
+		std::snprintf(row, sizeof(row), "%010zu 00000 n \n", offset);
+		out += row;
+	}
+	out += "trailer\n<< /Size " + std::to_string(objects.size() + 1u) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref) + "\n%%EOF\n";
+	return std::vector<uint8_t>(out.begin(), out.end());
+}
+
+TEST(Scheduler, SaturatedJump)
+{
+	// A full queue replaced by a small visible set: the old tiles make room, and the new ones render from that one call.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("one.pdf");
+	recto::test::write_file_bytes(path, pdf_of(2u, "0 0 10 10 re f"));
+	const auto document = opened(path);
+	ASSERT_NE(document, nullptr);
+	Deliveries deliveries;
+	auto made = scheduler(deliveries, 2u);
+	ASSERT_NE(made, nullptr);
+	ASSERT_TRUE(made->attach(1u, document).has_value());
+	made->pause();
+	std::vector<TileRequest> full;
+	for (uint32_t x = 0; x < kMaxScheduledTiles; ++x) {
+		full.push_back(tile(1u, 0u, x, TilePriority::Thumbnail, 8u));
+	}
+	made->update_viewport(1u, full);
+	EXPECT_EQ(deliveries.count(), 0u) << "the full set was taken";
+	made->update_viewport(1u, {tile(1u, 1u, 0u, TilePriority::VisibleCurrentPage, 8u), tile(1u, 1u, 1u, TilePriority::VisibleCurrentPage, 8u)});
+	made->resume();
+	ASSERT_TRUE(deliveries.wait_for(kMaxScheduledTiles + 2u));
+	size_t cancelled = 0u;
+	size_t rendered = 0u;
+	for (const auto& [key, result] : deliveries.all) {
+		if (key.page_index == 0u) {
+			cancelled += !result.has_value() && result.error().code == ErrorCode::Cancelled ? 1u : 0u;
+		} else {
+			EXPECT_TRUE(result.has_value()) << "a replacement tile was refused";
+			rendered += result.has_value() ? 1u : 0u;
+		}
+	}
+	EXPECT_EQ(cancelled, kMaxScheduledTiles);
+	EXPECT_EQ(rendered, 2u);
+}
+
+TEST(Scheduler, CompileFailure)
+{
+	// A page whose list cannot be made: its tiles each get that error once, and the page beside it still renders.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("broken.pdf");
+	recto::test::write_file_bytes(path, counted_pages(2u, 1u));
+	const auto document = opened(path);
+	ASSERT_NE(document, nullptr);
+	auto direct = document->get_display_list(1u);
+	const auto refused = direct.get();
+	ASSERT_FALSE(refused.has_value()) << "the broken page compiled";
+	Deliveries deliveries;
+	auto made = scheduler(deliveries, 2u);
+	ASSERT_NE(made, nullptr);
+	ASSERT_TRUE(made->attach(1u, document).has_value());
+	made->update_viewport(1u, {tile(1u, 1u, 0u), tile(1u, 1u, 1u), tile(1u, 1u, 2u), tile(1u, 0u, 0u)});
+	ASSERT_TRUE(deliveries.wait_for(4u));
+	made.reset();
+	EXPECT_EQ(deliveries.count(), 4u);
+	for (const auto& [key, result] : deliveries.all) {
+		if (key.page_index == 1u) {
+			ASSERT_FALSE(result.has_value());
+			EXPECT_EQ(result.error().code, refused.error().code);
+		} else {
+			EXPECT_TRUE(result.has_value());
+		}
+	}
+}
+
+TEST(Scheduler, FetchPriority)
+{
+	// Thumbnails of ten pages, the first compile held: when a visible tile of the last one arrives, and a queued thumbnail
+	// is raised, those pages are compiled next, before the thumbnail backlog. The operator count between answers names
+	// each compile's page (page p draws p + 1 fills).
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("pages.pdf");
+	recto::test::write_file_bytes(path, counted_pages(10u));
+	struct Order {
+		std::mutex mutex;
+		std::atomic<bool> released{false};
+		std::atomic<bool> reached{false};
+		uint32_t operators{0u};
+		std::vector<uint32_t> compiled; // operators per compile, in compile order
+		static void poll(CancelSite site, void* context) noexcept
+		{
+			auto& self = *static_cast<Order*>(context);
+			if (site != CancelSite::InterpreterOperator) {
+				return;
+			}
+			{
+				const std::lock_guard lock(self.mutex);
+				++self.operators;
+			}
+			self.reached.store(true);
+			while (!self.released.load()) {
+				std::this_thread::yield();
+			}
+		}
+		static void answered(void* context) noexcept
+		{
+			auto& self = *static_cast<Order*>(context);
+			const std::lock_guard lock(self.mutex);
+			if (self.operators != 0u) {
+				self.compiled.push_back(self.operators);
+				self.operators = 0u;
+			}
+		}
+	} order;
+	ActorOptions options;
+	options.poll_hook = &Order::poll;
+	options.poll_hook_context = &order;
+	options.answered_hook = &Order::answered;
+	options.answered_hook_context = &order;
+	const auto document = opened(path, options);
+	ASSERT_NE(document, nullptr);
+	Deliveries deliveries;
+	auto made = scheduler(deliveries, 1u);
+	ASSERT_NE(made, nullptr);
+	ASSERT_TRUE(made->attach(1u, document).has_value());
+	std::vector<TileRequest> thumbnails;
+	for (uint32_t page = 0; page < 9u; ++page) {
+		thumbnails.push_back(tile(1u, page, 0u, TilePriority::Thumbnail));
+	}
+	made->update_viewport(1u, thumbnails);
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (!order.reached.load() && std::chrono::steady_clock::now() < until) {
+		std::this_thread::yield();
+	}
+	ASSERT_TRUE(order.reached.load());
+	// Page 0 compiles (held) and page 1 waits at the actor; now page 9 is wanted visibly and page 8's thumbnail is raised.
+	std::vector<TileRequest> next = thumbnails;
+	next[8].priority = TilePriority::VisibleAdjacentPage;
+	next.push_back(tile(1u, 9u, 0u, TilePriority::VisibleCurrentPage));
+	made->update_viewport(1u, next);
+	order.released.store(true);
+	ASSERT_TRUE(deliveries.wait_for(10u));
+	const std::lock_guard lock(order.mutex);
+	ASSERT_GE(order.compiled.size(), 4u);
+	// Pages 0 and 1 go first whatever the priorities (they were the first two asked for); their counts give the cost of a
+	// fill and of a compile, which name every later page.
+	ASSERT_GT(order.compiled[1], order.compiled[0]);
+	const uint32_t per_fill = order.compiled[1] - order.compiled[0];
+	std::vector<uint32_t> pages;
+	for (const uint32_t operators : order.compiled) {
+		pages.push_back((operators - order.compiled[0]) / per_fill);
+	}
+	EXPECT_EQ(pages[1], 1u);
+	EXPECT_EQ(pages[2], 9u) << "the visible page was not compiled next";
+	EXPECT_EQ(pages[3], 8u) << "the raised thumbnail was not compiled next";
+}
+
+TEST(Scheduler, ShutdownWhileDelivering)
+{
+	// An actor's answer is being delivered while the scheduler is destroyed: the destructor waits for it to return.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("broken.pdf");
+	recto::test::write_file_bytes(path, counted_pages(2u, 1u));
+	const auto document = opened(path);
+	ASSERT_NE(document, nullptr);
+	std::atomic<bool> inside{false};
+	std::atomic<bool> leave{false};
+	std::atomic<bool> left{false};
+	SchedulerOptions options;
+	options.worker_count = 1u;
+	options.deliver = [&](const TileKey&, Delivered) noexcept {
+		inside.store(true);
+		while (!leave.load()) {
+			std::this_thread::yield();
+		}
+		left.store(true);
+	};
+	auto made = TileScheduler::create(std::move(options));
+	ASSERT_TRUE(made.has_value());
+	ASSERT_TRUE((*made)->attach(1u, document).has_value());
+	(*made)->update_viewport(1u, {tile(1u, 1u, 0u)}); // the page fails, answered from the actor's thread
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (!inside.load() && std::chrono::steady_clock::now() < until) {
+		std::this_thread::yield();
+	}
+	ASSERT_TRUE(inside.load());
+	std::atomic<bool> destroyed{false};
+	std::thread closer([&] {
+		made->reset();
+		destroyed.store(true);
+	});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	EXPECT_FALSE(destroyed.load()) << "the scheduler was destroyed while it was still delivering";
+	leave.store(true);
+	closer.join();
+	EXPECT_TRUE(left.load());
+	EXPECT_TRUE(destroyed.load());
+}
+
+TEST(Scheduler, ShutdownOwnsLastHandle)
+{
+	// The scheduler holds the only reference to a document whose compile is held: destroying it closes the actor without
+	// joining it under the scheduler's lock, and returns.
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("held.pdf");
+	recto::test::write_file_bytes(path, pdf_of(1u, busy_content()));
+	struct Compile {
+		std::atomic<bool> reached{false};
+		static void hook(CancelSite site, void* context) noexcept
+		{
+			auto& self = *static_cast<Compile*>(context);
+			if (site == CancelSite::InterpreterOperator) {
+				self.reached.store(true);
+				const pdf::CancelToken* const token = pdf::detail::g_cancel_scope;
+				while (token != nullptr && !token->is_cancelled()) {
+					std::this_thread::yield(); // held until the close cancels it
+				}
+			}
+		}
+	} compile;
+	ActorOptions actor_options;
+	actor_options.poll_hook = &Compile::hook;
+	actor_options.poll_hook_context = &compile;
+	auto document = opened(path, actor_options);
+	ASSERT_NE(document, nullptr);
+	Deliveries deliveries;
+	auto made = scheduler(deliveries, 1u);
+	ASSERT_NE(made, nullptr);
+	ASSERT_TRUE(made->attach(1u, std::move(document)).has_value());
+	made->update_viewport(1u, {tile(1u, 0u, 0u)});
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while (!compile.reached.load() && std::chrono::steady_clock::now() < until) {
+		std::this_thread::yield();
+	}
+	ASSERT_TRUE(compile.reached.load());
+	auto destroying = std::async(std::launch::async, [&] { made.reset(); });
+	ASSERT_EQ(destroying.wait_for(std::chrono::seconds(30)), std::future_status::ready) << "destroying the scheduler hung";
+	EXPECT_EQ(deliveries.count(), 1u);
+}
+
+TEST(Scheduler, AllocationFailures)
+{
+	// Memory running out anywhere in a request: every tile still answered once, nothing terminates, and the scheduler
+	// renders the next request.
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	recto::test::TempDir dir;
+	const auto path = dir.file_path("two.pdf");
+	recto::test::write_file_bytes(path, pdf_of(2u, "0 0 10 10 re f"));
+	const auto document = opened(path);
+	ASSERT_NE(document, nullptr);
+	Deliveries deliveries;
+	auto made = scheduler(deliveries, 2u);
+	ASSERT_NE(made, nullptr);
+	ASSERT_TRUE(made->attach(1u, document).has_value());
+	size_t asked = 0u;
+	for (uint32_t nth = 1u; nth <= 12u; ++nth) {
+		SCOPED_TRACE(nth);
+		std::vector<TileRequest> requests{tile(1u, 0u, nth), tile(1u, 1u, nth), tile(1u, 0u, 100u + nth)};
+		asked += requests.size();
+		{
+			// Only the scheduler allocates in here: the requests move in, and the sink's records are reserved.
+			const recto::test::ScopedAllocationFailure fail(nth, 32u);
+			made->update_viewport(1u, std::move(requests));
+		}
+		// The set is replaced by the next one, so each round ends with its tiles answered one way or the other.
+		made->update_viewport(1u, {});
+		ASSERT_TRUE(deliveries.wait_for(asked));
+	}
+	EXPECT_EQ(deliveries.count(), asked) << "a tile was answered twice";
+	made->update_viewport(1u, {tile(1u, 0u, 999u)});
+	ASSERT_TRUE(deliveries.wait_for(asked + 1u));
+	EXPECT_TRUE(deliveries.all.back().second.has_value()) << "the scheduler did not recover";
+}
 } // namespace
 } // namespace recto::core
