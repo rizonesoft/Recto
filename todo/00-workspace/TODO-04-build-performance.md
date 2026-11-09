@@ -31,6 +31,8 @@ track: M0
 - sccache caches the compiler's output, so a rebuild with nothing changed costs no compiles and a branch switch reuses what was built before.
 - A CMake build driven by Ninja builds every project with compile and link job pools, keeps the D13 boundary checks, runs in CI, and replaces the MSBuild path once it matches its outputs.
 - Every push's CI runs are followed to their end in the background, and a red one is the next work before any new row.
+- No test takes longer than its budget: the slow tests are fixed at their cause, the run names its slowest tests, and a test over budget fails the run.
+- The x64 suite runs in parallel shards sized from free memory, every test run exactly once, with its wall time measured against the serial run.
 
 **Adjacency:** all=not-applicable (build tooling, scripts and CI for the developer and CI host; no user-facing surface, document or setting)
 
@@ -49,6 +51,8 @@ track: M0
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [ ] |
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4 | [ ] |
 | 9 | §9 | CI watched after every push until it completes | -- | [ ] |
+| 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
+| 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -106,21 +110,26 @@ The owner decided on 2026-11-09 that the local build is x64 only until Recto v1 
 
 MSBuild `/m` starts one project build per core and `MultiProcessorCompilation` one compiler per core inside each, so on 12 cores a build can run many 1 to 2 GB compilers at once whatever is free; on 2026-11-09 free memory fell to 88 MB during builds. This section has `build/build.ps1` choose both limits from the free memory and cores when it starts, so a build takes what it can without starving the machine.
 
+**Corrected 2026-11-10:** a check of the tree. No project, props or targets file sets `MultiProcessorCompilation` (a search for it, `CL_MPCount` and `UseMultiToolTask` in every `.vcxproj`, `Directory.Build.props`, `Directory.Build.targets` and `build/build.ps1` finds nothing), so the paragraph above is wrong about today's build: each project compiles its sources one at a time (24 in `recto-pdf`, 28 in `recto-tests`), and only MSBuild's `/m` runs projects side by side. This section therefore also turns `MultiProcessorCompilation` on for every project, in `Directory.Build.targets` (the layer that owns the shared `ClCompile` settings), so the limit computed here bounds compilers that really run in parallel, and it measures the clean build before and after.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Compute the limits in `build/build.ps1`. Done when: the script prints the free memory, the cores, and the `/m` and `CL_MPCount` it chose.
-2. Prove the floor holds. Done when: a clean x64 Debug build started with about 6 GB free never reads under 2 GB free, sampled every second.
+1. Turn parallel compilation on for every project. Done when: a clean x64 Debug build's log shows `/MP` on every project's compile line and more than one `cl.exe` compiling `recto-pdf` at once.
+2. Compute the limits in `build/build.ps1`. Done when: the script prints the free memory, the cores, and the `/m` and `CL_MPCount` it chose.
+3. Prove the floor holds. Done when: a clean x64 Debug build started with about 6 GB free never reads under 2 GB free, sampled every second.
 
+- [ ] Set `MultiProcessorCompilation` to `true` in the shared `ClCompile` item definition of `Directory.Build.targets`, for plain and ASan builds, leaving the two precompiled header sources (`/Yc` in `src/app` and `src/ui`) to compile first as MSBuild orders them. Done when: `build\msbuild-Debug-x64.log` shows `/MP` on the compile line of all eight projects, the build passes with 0 warnings, and `tests/scripts/test_build_ps1.py` fails if the setting is removed.
+- [ ] Measure the clean x64 Debug and Release solution builds before and after the setting on the same host, with the free memory at the start of each. Done when: the four wall times and each build's peak count of `cl.exe` processes are recorded in the findings file, and the builds with the setting are faster.
 - [ ] In `build/build.ps1`, read `\Memory\Available MBytes` and the logical processor count, and set the compilers allowed at once to `max(1, min(cores, floor((free_mb - 2048) / 1536)))`, passed as MSBuild `/m:<projects>` (at most 2 when fewer than 6 compilers fit) and `/p:CL_MPCount=<compilers per project>` with `MultiProcessorCompilation` on. Done when: the script's header line reads, for example, `free 9,500 MB, 12 cores: /m:2, CL_MPCount=4`, and the MSBuild log shows the same `CL_MPCount`.
 - [ ] Let `RECTO_BUILD_JOBS` override the computed number for a run, and refuse a value under 1 or over the cores with a clear message. Done when: `RECTO_BUILD_JOBS=2` gives `2` compilers in all and `RECTO_BUILD_JOBS=0` stops the build before MSBuild starts.
 - [ ] Measure it. Done when: a clean x64 Debug build with about 6 GB free samples `Available MBytes` every second and never reads under 2,048, and its wall time, with and without the limit, is recorded in the findings file.
 - [ ] Commit: `build: choose MSBuild and compiler parallelism from free memory`
 
-**Test checkpoint:** a clean `build.ps1 -Platform x64 -Configuration Debug -SkipTests` started with about 6 GB free keeps `Available MBytes` at or above 2,048 throughout, and the same build with the limit removed falls below it.
+**Test checkpoint:** a clean `build.ps1 -Platform x64 -Configuration Debug -SkipTests` started with about 6 GB free shows `/MP` for every project, keeps `Available MBytes` at or above 2,048 throughout, and the same build with the limit removed falls below it.
 
 ## 4. Precompiled headers for every project
 
@@ -264,9 +273,66 @@ The owner asked on 2026-11-09 that CI never stay red longer than it has to. Toda
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_ci_status` passes; a red fake run makes `ci_status.py --wait <sha>` exit 1 with its failed job named, an expected run that never appears makes it exit 3, and `--gate` refuses while the newest watch is red; reading a cancelled or a missing run as green fails the tests.
 
+## 10. Slow tests fixed at their cause and held by a per-test time budget
+
+The suite, not the build, is most of a gate. In the last full local run (2026-11-09, `build/test-results-x64-Debug.xml` and `-Release.xml`, 511 tests) the Debug suite took 950 s and the Release suite 174 s, while the four solution builds took 13 to 53 s each; in CI the two build-and-test steps took 23 and 18 minutes of a 45 minute job that timed out twice (`5963438`, `9b8fb92`). Fourteen tests are 87% of the Debug time: `Scheduler.CallbackAdmission` 344 s (131 s in Release), `PdfDocument.ObjectCacheBudget` 105 s, `PdfStagedRevisions.ManyEdits` 52 s and `.Bounds` 38 s, `PdfInterpreter.SeparationAndDeviceN` 27 s, `PdfIncrementalWriter.RoundOneRegressions` 27 s, `PdfFilters.CancelWhileRunning` 23 s, `PdfInterpreter.FormXObjectRefusals` 22 s, `PdfInterpreter.TextFontCount` 17 s, `PdfSerialize.PayloadLimit` 17 s, `PdfDocument.OpenPageTreeLevelsShareOneBudget` 17 s, `PdfSerialize.Failures` 15 s, `Runtime.ShutdownUnderActiveTileLoad` 15 s and `PdfStagedRevisions.HistoryPastOneEditsLimit` 13 s. That run predates `3da4496`, which made `plan_fetches` linear, so `Scheduler.CallbackAdmission` is measured again first. The first slow test found this way was a cubic loop in the product, not a slow test, so each one is read for its cause before anything is changed: slow product code is fixed in the product, and a test that does more work than its claim needs is cut to what the claim needs, never to less. A budget then keeps the next slow test from arriving unnoticed.
+
+The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Release and 60 s under AddressSanitizer, with any test that truly needs longer named with its reason. Changing it costs one number in `tests/recto-tests/time-budget.json`.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Measure every test and report the slow ones. Done when: `scripts/test-times.py` lists a run's tests by time from its gtest XML and names each one over budget.
+2. Fix the slow tests at their cause. Done when: every test is within the budget or named as an exception with its reason, and each changed test still fails when the behaviour it proves is broken.
+3. Enforce the budget in the build. Done when: `build/build.ps1` fails a run with a test over budget, naming it and its time.
+
+- [ ] Add `scripts/test-times.py` (stdlib Python): `report <xml>...` prints the suite's total, the 15 slowest tests and each suite's time; `check <xml>... --budget <file> --mode debug|release|asan` exits 1 naming every test over its budget and its time, 0 otherwise, and exits 2 on an XML with no tests. Done when: `tests/scripts/test_test_times.py` drives both commands on fixture XML: a run within budget (0), one test over (1, named with its time), a listed exception within its own limit (0) and over it (1), and an empty report (2).
+- [ ] Add `tests/recto-tests/time-budget.json`: the three default limits above and an `exceptions` list of `{test, mode, seconds, reason}`, read by `test-times.py check`, which refuses an exception with no reason or naming a test the XML does not hold. Done when: the file parses, and the tooling test reads an exception without a reason and one naming an unknown test both refused (exit 2) with the entry named.
+- [ ] Measure the suite again on the current tree: `build.ps1 -Platform x64` then `python scripts/test-times.py report` on both XML files, and the same under `-EnableASAN -Configuration Debug`. Done when: the three totals and each mode's tests over budget are recorded in the findings file, with `Scheduler.CallbackAdmission`'s time after `3da4496` beside its 344 s and 131 s before.
+- [ ] For `Scheduler.CallbackAdmission` (`tests/recto-tests/scheduler_tests.cpp`), find what its remaining time is spent on (a profile or timestamps around its phases) and fix that where it lives: in `src/core/tile_scheduler.cpp` if the product is slow, in the test if it waits or repeats beyond what callback admission needs. Done when: it runs within the budget in all three modes, and it still fails when a callback is admitted after its request was cancelled (the mutation named in the findings file).
+- [ ] Do the same for `PdfDocument.ObjectCacheBudget` and `PdfDocument.OpenPageTreeLevelsShareOneBudget` (`tests/recto-tests/pdf_document_tests.cpp`). Done when: both run within the budget, and each still fails when its budget is not charged (one mutation per test, named in the findings file).
+- [ ] Do the same for `PdfStagedRevisions.ManyEdits`, `.Bounds` and `.HistoryPastOneEditsLimit` (`tests/recto-tests/pdf_staged_revisions_tests.cpp`) and `PdfIncrementalWriter.RoundOneRegressions` (`tests/recto-tests/pdf_incremental_writer_tests.cpp`). Done when: all four run within the budget, any cost that grows faster than the edits it handles is fixed in `src/pdf` and not in the test, and each test still fails under its named mutation.
+- [ ] Do the same for `PdfInterpreter.SeparationAndDeviceN`, `.FormXObjectRefusals` and `.TextFontCount` (`tests/recto-tests/pdf_interpreter_tests.cpp`) and `PdfSerialize.PayloadLimit` and `.Failures` (`tests/recto-tests/pdf_serialize_tests.cpp`). Done when: all five run within the budget and each still fails under its named mutation.
+- [ ] Do the same for `PdfFilters.CancelWhileRunning` (`tests/recto-tests/pdf_filters_tests.cpp`) and `Runtime.ShutdownUnderActiveTileLoad` (`tests/recto-tests/runtime_tests.cpp`), keeping the cancel limits they prove (`D01 T02 §7`). Done when: both run within the budget or are exceptions whose reason says what the time is needed for, and each still fails under its named mutation.
+- [ ] Fix or except every other test the new measurement finds over budget, the same way. Done when: `python scripts/test-times.py check` exits 0 for the Debug, Release and ASan runs, and every exception's reason says why the time is needed.
+- [ ] Run `test-times.py report` and `check` from `build/build.ps1` after each configuration's tests (the mode from the configuration and `-EnableASAN`; no check under `-TestFilter`, which runs a part of the suite), failing the build on a test over budget. Done when: a full run prints the total and the slowest tests, a sleep added to one test that takes it past the budget fails `build.ps1` naming that test, and `tests/scripts/test_build_ps1.py` fails if the check is removed.
+- [ ] Record the result. Done when: the findings file holds the Debug, Release and ASan suite totals before and after, the Debug total is at most 300 s and the Release total at most 60 s on this host (or the findings file says which measured cost stands in the way and where it is filed), and the next green `build.yml` run's two build-and-test steps are recorded beside the 23 and 18 minutes before.
+- [ ] Commit: `tests: fix the slow tests at their cause and hold a per-test time budget`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_test_times` passes; `build.ps1 -Platform x64` passes with `python scripts/test-times.py check` at exit 0 for Debug and Release; and a 25 s sleep added to one Debug test fails the build naming it.
+
+## 11. The x64 test suite run in parallel shards within the memory bound
+
+`build/build.ps1` runs `recto-tests.exe` as one process, one test after another, on a host with 12 logical processors. GoogleTest splits a run across processes by itself (`GTEST_TOTAL_SHARDS` and `GTEST_SHARD_INDEX`), so once `§10` has taken the slow tests out, the rest of the suite's wall time is cut by running shards side by side, as many as the free memory `§3` reads allows. This section adds the sharded run, proves every test still runs exactly once, keeps the tests that measure time or own a machine-wide resource in a serial pass of their own, and makes sure no shard outlives the run.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Make the suite safe to run side by side. Done when: two full runs of `recto-tests.exe` started at the same moment both pass, ten times in a row.
+2. Run it in shards from `build/build.ps1`. Done when: a full run starts the shards, then the serial list, and reports every test exactly once.
+3. Measure it. Done when: the sharded and the serial wall times are recorded and the sharded one is shorter.
+
+- [ ] Find every test that cannot share the machine with another test process: a fixed file or folder name outside `TempDir`, a named kernel object, a fixed window class or single-instance check, the clipboard, or a time limit that a busy host breaks (the cancel limits of `D01 T02 §7`, `Ui.*` tests that launch `Recto.exe`). Done when: each is listed in the findings file with its file and line, and each is either fixed to use a name of its own (`TempDir`, a per-process suffix) or entered in `tests/recto-tests/serial-tests.txt`, one gtest filter pattern per line with its reason in a comment.
+- [ ] Prove the rest runs side by side. Done when: two `recto-tests.exe` processes started together with `--gtest_filter` excluding the serial list both pass in 10 consecutive rounds in x64 Debug, and the same under ASan in 3.
+- [ ] In `build/build.ps1`, when no `-TestFilter` is given, run the suite as N shard processes (`GTEST_TOTAL_SHARDS=N`, `GTEST_SHARD_INDEX=i`, the serial list excluded by `--gtest_filter`), then the serial list in one process, each writing `test-results-x64-<cfg>-shard<i>.xml` (or `-serial.xml`) and its console output to `build\test-x64-<cfg>-shard<i>.log`; N is the compiler count `§3` computes, at most 6, halved under `-EnableASAN`, and `RECTO_TEST_SHARDS` overrides it (1 is today's single run). Done when: the script prints the N it chose and why, a run with `RECTO_TEST_SHARDS=1` starts one process, and a failing test fails the build with that shard's log printed.
+- [ ] Prove every test ran exactly once: after the run, compare the test names in all the XML reports with `recto-tests.exe --gtest_list_tests` (in `scripts/test-times.py`, as `coverage <list> <xml>...`), failing on a test missing or reported twice. Done when: `tests/scripts/test_test_times.py` reads a missing test and a duplicated test both refused by name, and a real run with one shard's XML deleted fails the build.
+- [ ] Stop every shard's whole process tree when one shard fails to start, when the run passes a deadline (default 30 minutes, `RECTO_TEST_TIMEOUT_MINUTES`), and when `build.ps1` is interrupted, through a job object that kills on close. Done when: a shard made to hang is gone, with the `Recto.exe` it launched, within 10 seconds of the deadline, and `Get-Process recto-tests, Recto` finds nothing after the run fails.
+- [ ] Feed the per-shard reports to `§10`'s `test-times.py report` and `check`, and keep CI's diagnostics upload (`build/test-results-*.xml` in `.github/workflows/build.yml`, which the new names match) and add `build/test-*.log` to it. Done when: the budget check reads all the reports of a sharded run, and a failed CI run's artifact holds every shard's XML and log.
+- [ ] Measure the full x64 Debug and Release test runs serial (`RECTO_TEST_SHARDS=1`) and sharded on the same host, with the free memory at the start and the lowest `Available MBytes` during each. Done when: the four wall times are recorded in the findings file, the sharded runs are shorter, and free memory never read under 2,048 MB.
+- [ ] Commit: `tests: run the x64 suite in parallel shards within the memory bound`
+
+**Test checkpoint:** `build.ps1 -Platform x64` passes with the suite in shards and `python scripts/test-times.py coverage` reporting every listed test exactly once; deleting one shard's XML before the coverage check fails the build; and a hung shard is killed with its children at the deadline.
+
 ## Verification
 
 - A plain and an ASan build of x64 Debug, built one after the other, recompile nothing the second time each, and `.\build.cmd` builds x64 only while CI builds ARM64.
 - A clean build started with about 6 GB free keeps 2 GB free throughout, every project compiles through a precompiled header, and a warm sccache rebuild hits for every unit.
 - `build/bootstrap-tools.ps1` fills `.tools/` from verified pins, the scripts and hooks run on the pinned CPython, and the CMake and Ninja build passes the suite and the boundary checks in CI.
+- Every project's compile line shows `/MP`, no test runs past its budget (`python scripts/test-times.py check`), and the sharded suite reports every listed test exactly once.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 46 | Checklist items: 241
+Sections: 48 | Checklist items: 263
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -28,13 +28,15 @@ Sections: 46 | Checklist items: 241
 | [x]    | D00 T03 §6  | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
 | [x]    | D00 T04 §1  | ASan and plain builds in separate output folders                                         | windows-host | 7     |
 | [ ]    | D00 T04 §2  | ARM64 off the local build, built in CI, deferred to after Recto v1                       | windows-host | 4     |
-| [ ]    | D00 T04 §3  | MSBuild and compiler parallelism set by free memory                                      | windows-host | 4     |
+| [ ]    | D00 T04 §3  | MSBuild and compiler parallelism set by free memory                                      | windows-host | 6     |
 | [ ]    | D00 T04 §4  | Precompiled headers for every project                                                    | windows-host | 4     |
 | [ ]    | D00 T04 §5  | Tiered gates: touched tests while building, the full suite at stamp                      | windows-host | 4     |
 | [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 7     |
 | [ ]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 8     |
+| [ ]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
+| [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [x]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
 | [x]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
 | [x]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
@@ -935,6 +937,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 102/866 verified sections, 49 ready to run now.
+Progress: 102/868 verified sections, 50 ready to run now.
 
-Checklist: 684/6384 items completed (includes Commit items).
+Checklist: 684/6406 items completed (includes Commit items).
