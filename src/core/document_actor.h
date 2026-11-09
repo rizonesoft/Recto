@@ -73,7 +73,8 @@ public:
 	// Starts the actor's thread; a thread that cannot start is the error.
 	[[nodiscard]] static pdf::PdfResult<std::shared_ptr<DocumentHandle>> start(const ActorOptions& options = {}) noexcept;
 
-	// Closes, then joins: the actor has been cancelled, so the join waits only on its next poll.
+	// Closes, then joins: the actor has been cancelled, so the join waits only on its next poll. Let go on the actor's own
+	// thread (inside one of its callbacks), it cannot join itself and lets the actor finish alone instead.
 	~DocumentHandle() noexcept;
 	DocumentHandle(const DocumentHandle&) = delete;
 	DocumentHandle& operator=(const DocumentHandle&) = delete;
@@ -109,9 +110,9 @@ public:
 	struct State;
 
 private:
-	explicit DocumentHandle(std::unique_ptr<State> state) noexcept;
+	explicit DocumentHandle(std::shared_ptr<State> state) noexcept;
 
-	std::unique_ptr<State> state_;
+	std::shared_ptr<State> state_;
 };
 
 namespace detail {

@@ -383,7 +383,7 @@ struct DocumentHandle::State {
 	std::thread thread;
 };
 
-DocumentHandle::DocumentHandle(std::unique_ptr<State> state) noexcept
+DocumentHandle::DocumentHandle(std::shared_ptr<State> state) noexcept
 	: state_(std::move(state))
 {
 }
@@ -396,12 +396,14 @@ PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOpti
 		if (failing(detail::ActorFailure::HandleCreate)) {
 			throw std::bad_alloc();
 		}
-		std::shared_ptr<DocumentHandle> handle(new DocumentHandle(std::move(state)));
+		std::shared_ptr<DocumentHandle> handle(new DocumentHandle(std::shared_ptr<State>(std::move(state))));
 		if (failing(detail::ActorFailure::ThreadStart)) {
 			throw std::system_error(std::make_error_code(std::errc::resource_unavailable_try_again));
 		}
-		State* const raw = handle->state_.get();
-		raw->thread = std::thread([raw] { raw->main(); });
+		// The thread keeps the state alive, so a handle let go on its own actor thread can leave it running to its end.
+		std::shared_ptr<State> kept = handle->state_;
+		State* const raw = kept.get();
+		raw->thread = std::thread([kept = std::move(kept)] { kept->main(); });
 		return handle;
 	} catch (const std::system_error&) {
 		return make_pdf_error(ErrorCode::InternalError, "A document's thread could not start");
@@ -413,9 +415,16 @@ PdfResult<std::shared_ptr<DocumentHandle>> DocumentHandle::start(const ActorOpti
 DocumentHandle::~DocumentHandle() noexcept
 {
 	(void)close();
-	if (state_->thread.joinable()) {
-		state_->thread.join();
+	if (!state_->thread.joinable()) {
+		return;
 	}
+	if (state_->thread.get_id() == std::this_thread::get_id()) {
+		// Let go from inside one of its own answers (a callback holding the last handle): it cannot join itself, so it
+		// finishes on its own, the document destroyed there as always, and the state goes with its thread.
+		state_->thread.detach();
+		return;
+	}
+	state_->thread.join();
 }
 
 std::shared_future<void> DocumentHandle::close() noexcept

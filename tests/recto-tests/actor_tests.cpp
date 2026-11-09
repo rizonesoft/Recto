@@ -974,9 +974,37 @@ TEST(Actor, CallbackRequests)
 	EXPECT_NE(answers.all[4].first, caller);
 }
 
-TEST(Actor, AsyncFailures)
+TEST(Actor, LastHandleLetGoOnItsOwnThread)
 {
+	// A callback holds the only reference to its handle and lets it go while answering: no self-join, and the actor
+	// still finishes (its document destroyed, the live count back).
 	recto::test::TempDir dir;
+	const auto path = written(dir, "doc.pdf", pdf_of(1u, "0 0 10 10 re f"));
+	const int64_t before = debug_live_documents();
+	const int64_t before_objects = pdf::debug_live_document_objects();
+	std::atomic<bool> answered{false};
+	{
+		auto handle = started();
+		ASSERT_NE(handle, nullptr);
+		ASSERT_TRUE(finish(handle->open(path)).has_value());
+		DocumentHandle* const raw = handle.get();
+		auto holder = std::make_shared<std::shared_ptr<DocumentHandle>>(std::move(handle));
+		raw->get_display_list(0u, {}, [holder, &answered](pdf::PdfResult<std::shared_ptr<const DisplayList>>) noexcept {
+			holder->reset(); // the last reference, released on the actor's own thread
+			answered.store(true);
+		});
+	}
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+	while ((!answered.load() || debug_live_documents() != before) && std::chrono::steady_clock::now() < until) {
+		std::this_thread::yield();
+	}
+	EXPECT_TRUE(answered.load());
+	EXPECT_EQ(debug_live_documents(), before) << "the actor did not finish";
+	EXPECT_EQ(pdf::debug_live_document_objects(), before_objects);
+}
+
+TEST(Actor, AsyncFailures)
+{	recto::test::TempDir dir;
 	const auto path = written(dir, "doc.pdf", pdf_of(1u, "0 0 10 10 re f"));
 	{
 		const detail::ScopedActorFailureForTesting failure(detail::ActorFailure::ThreadStart);

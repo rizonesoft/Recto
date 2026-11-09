@@ -293,26 +293,45 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		return best;
 	}
 
-	// The page fetches to send now: for each document, the best-placed waiting pages, up to `kFetchesInFlight` asked of
-	// its actor at once, so a thumbnail backlog never stands in a visible page's way at the actor.
-	void plan_fetches(std::vector<Start>& starts)
+	// Fetches of `doc_id` asked of its actor and not yet answered.
+	[[nodiscard]] size_t in_flight(uint64_t doc_id) const noexcept
 	{
-		std::unordered_map<uint64_t, size_t> in_flight;
+		size_t count = 0u;
 		for (const auto& [page, fetch] : fetches) {
-			if (fetch.started && fetch.list == nullptr) {
-				++in_flight[page.doc_id];
-			}
+			count += page.doc_id == doc_id && fetch.started && fetch.list == nullptr ? 1u : 0u;
 		}
+		return count;
+	}
+
+	// Answers every tile waiting on `page`'s list with `error` and forgets the fetch, so a later request asks again.
+	void fail_page(const PageKey& page, const pdf::PdfError& error, Out& out) noexcept
+	{
+		for (auto it = live.begin(); it != live.end();) {
+			const auto next = std::next(it);
+			if (page_of(it->request.key) == page && it->stage == Stage::Fetching) {
+				index.erase(it->request.key);
+				answer(live, it, error, out);
+			}
+			it = next;
+		}
+		fetches.erase(page);
+	}
+
+	// The page fetches to send now: for each document, the best-placed waiting pages, up to `kFetchesInFlight` asked of
+	// its actor at once, so a thumbnail backlog never stands in a visible page's way at the actor. Choosing allocates
+	// nothing; a page whose fetch cannot be queued for want of memory has its tiles answered, so none is left waiting.
+	void plan_fetches(std::vector<Start>& starts, Out& out) noexcept
+	{
 		for (;;) {
 			const Fetch* best = nullptr;
 			PageKey best_page{};
 			size_t best_tier = 5u;
 			for (const auto& [page, fetch] : fetches) {
-				if (fetch.started || in_flight[page.doc_id] >= kFetchesInFlight) {
+				if (fetch.started) {
 					continue;
 				}
 				const size_t t = page_tier(page);
-				if (t < best_tier || (t == best_tier && fetch.generation < best->generation)) {
+				if ((t < best_tier || (t == best_tier && fetch.generation < best->generation)) && in_flight(page.doc_id) < kFetchesInFlight) {
 					best = &fetch;
 					best_page = page;
 					best_tier = t;
@@ -322,16 +341,20 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 				return;
 			}
 			Fetch& chosen = fetches.at(best_page);
-			chosen.started = true;
 			const auto document = documents.find(best_page.doc_id);
 			if (document == documents.end()) {
-				continue; // detached: its tiles are answered, and the fetch goes with the last of them
+				chosen.started = true; // detached: its tiles are answered, and the fetch goes with the last of them
+				continue;
 			}
-			starts.push_back(Start{best_page, chosen.generation, document->second, chosen.cancel->token()});
-			++in_flight[best_page.doc_id];
+			try {
+				starts.push_back(Start{best_page, chosen.generation, document->second, chosen.cancel->token()});
+			} catch (const std::bad_alloc&) {
+				fail_page(best_page, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory asking for a page's list"), out);
+				continue;
+			}
+			chosen.started = true;
 		}
 	}
-
 	void start_fetches(std::vector<Start>& starts) noexcept
 	{
 		for (Start& start : starts) {
@@ -353,22 +376,36 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		starts.clear();
 	}
 
-	// Plans and sends what can go now; called with the lock released.
+	// Plans and sends what can go now; called with the lock released. A fetch refused at admission answers at once, on
+	// this thread, and that answer pumps again: the inner call only asks the outer one for another pass, so a backlog of
+	// refusals is drained in a loop, not by recursion.
 	void pump() noexcept
 	{
-		std::vector<Start> starts;
-		{
-			const std::lock_guard lock(mutex);
-			if (stopping) {
-				return;
-			}
-			try {
-				plan_fetches(starts);
-			} catch (const std::bad_alloc&) {
-				// What was planned goes; the rest goes at the next arrival or request.
-			}
+		thread_local State* pumping = nullptr; // the scheduler this thread is pumping, if any
+		thread_local bool again = false;
+		if (pumping == this) {
+			again = true;
+			return;
 		}
-		start_fetches(starts);
+		State* const outer = std::exchange(pumping, this);
+		const bool outer_again = std::exchange(again, false);
+		do {
+			again = false;
+			std::vector<Start> starts;
+			Out out;
+			{
+				const std::lock_guard lock(mutex);
+				if (stopping) {
+					break;
+				}
+				plan_fetches(starts, out);
+				counting(out);
+			}
+			hand_out(out);
+			start_fetches(starts);
+		} while (again);
+		pumping = outer;
+		again = outer_again;
 	}
 
 	// No longer wanted: a queued or fetching tile is answered `Cancelled`; a rendering one is cancelled and answered
@@ -428,15 +465,7 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 					}
 				}
 			} else {
-				for (auto it = live.begin(); it != live.end();) {
-					const auto next = std::next(it);
-					if (page_of(it->request.key) == page && it->stage == Stage::Fetching) {
-						index.erase(it->request.key);
-						answer(live, it, list.error(), out);
-					}
-					it = next;
-				}
-				fetches.erase(found); // a later request asks again
+				fail_page(page, list.error(), out); // a later request asks again
 			}
 			counting(out);
 		}

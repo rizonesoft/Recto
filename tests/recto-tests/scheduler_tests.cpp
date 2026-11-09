@@ -718,10 +718,18 @@ TEST(Scheduler, CallbackAdmission)
 		auto made = scheduler(deliveries, 1u);
 		ASSERT_NE(made, nullptr);
 		ASSERT_TRUE(made->attach(1u, document).has_value());
+		// Every page refused at once, each refusal answering on this thread: drained in a loop, however many there are.
 		const size_t before = deliveries.count();
-		made->update_viewport(1u, {tile(1u, 0u, 0u)});
-		ASSERT_TRUE(deliveries.wait_for(before + 1u));
-		EXPECT_EQ(deliveries.all.back().second.error().code, ErrorCode::Cancelled);
+		std::vector<TileRequest> pages;
+		for (uint32_t page = 0; page < 3'000u; ++page) {
+			pages.push_back(tile(1u, page, 0u));
+		}
+		made->update_viewport(1u, pages);
+		ASSERT_TRUE(deliveries.wait_for(before + 3'000u));
+		const std::lock_guard lock(deliveries.mutex);
+		for (size_t i = before; i < deliveries.all.size(); ++i) {
+			EXPECT_EQ(deliveries.all[i].second.error().code, ErrorCode::Cancelled);
+		}
 	}
 	// No memory to take the fetch.
 	{
@@ -1026,7 +1034,7 @@ TEST(Scheduler, AllocationFailures)
 	ASSERT_NE(made, nullptr);
 	ASSERT_TRUE(made->attach(1u, document).has_value());
 	size_t asked = 0u;
-	for (uint32_t nth = 1u; nth <= 12u; ++nth) {
+	for (uint32_t nth = 1u; nth <= 40u; ++nth) { // every allocation of a request through to its fetch being sent
 		SCOPED_TRACE(nth);
 		std::vector<TileRequest> requests{tile(1u, 0u, nth), tile(1u, 1u, nth), tile(1u, 0u, 100u + nth)};
 		asked += requests.size();
@@ -1035,9 +1043,8 @@ TEST(Scheduler, AllocationFailures)
 			const recto::test::ScopedAllocationFailure fail(nth, 32u);
 			made->update_viewport(1u, std::move(requests));
 		}
-		// The set is replaced by the next one, so each round ends with its tiles answered one way or the other.
-		made->update_viewport(1u, {});
-		ASSERT_TRUE(deliveries.wait_for(asked));
+		// Nothing cancels them: each tile is answered on its own, rendered or refused, or this times out.
+		ASSERT_TRUE(deliveries.wait_for(asked, std::chrono::seconds(20)));
 	}
 	EXPECT_EQ(deliveries.count(), asked) << "a tile was answered twice";
 	made->update_viewport(1u, {tile(1u, 0u, 999u)});
