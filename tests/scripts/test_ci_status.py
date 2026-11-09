@@ -29,8 +29,9 @@ def run(n, status="completed", conclusion="success", sha=SHA_NEW):
 class FakeGh:
     """An in-process gh: runs per workflow, jobs per run id, or a failure for every call."""
 
-    def __init__(self, runs=None, jobs=None, fail=None, missing=False):
+    def __init__(self, runs=None, jobs=None, fail=None, missing=False, annotations=None):
         self.runs, self.jobs, self.fail, self.missing, self.calls = runs or {}, jobs or {}, fail, missing, []
+        self.annotations = annotations or {}
 
     def __call__(self, args):
         self.calls.append(args)
@@ -44,7 +45,21 @@ class FakeGh:
             return 0, json.dumps(self.runs.get(args[args.index("--workflow") + 1], [])), ""
         if args[:2] == ["run", "view"]:
             return 0, json.dumps({"jobs": self.jobs.get(int(args[2]), [])}), ""
+        if args[0] == "api":
+            return 0, json.dumps(annotations_for(self.annotations, args[1])), ""
         raise AssertionError(args)
+
+
+def annotations_for(annotations, path):
+    assert path.startswith("repos/{owner}/{repo}/check-runs/") and path.endswith("/annotations"), path
+    return [{"message": m} for m in annotations.get(int(path.split("/")[-2]), [])]
+
+
+TIMED_OUT = "The job has exceeded the maximum execution time of 45m0s"
+
+
+def cancelled_job(job_id, name="Build x64 & ARM64 and run recto-tests"):
+    return {"databaseId": job_id, "name": name, "status": "completed", "conclusion": "cancelled", "url": f"j{job_id}"}
 
 
 def status(fake, *argv):
@@ -192,8 +207,8 @@ def wrun(n, workflow, status="completed", conclusion="success", sha=SHA_NEW):
 class WaitGh:
     """gh for --wait: per workflow, a list of answers, one per poll (the last repeats); jobs per run id."""
 
-    def __init__(self, polls, jobs=None):
-        self.polls, self.jobs, self.count = polls, jobs or {}, {}
+    def __init__(self, polls, jobs=None, annotations=None):
+        self.polls, self.jobs, self.count, self.annotations = polls, jobs or {}, {}, annotations or {}
 
     def __call__(self, args):
         if args[:2] == ["run", "list"]:
@@ -205,6 +220,8 @@ class WaitGh:
             return 0, json.dumps(answers[min(i, len(answers) - 1)]), ""
         if args[:2] == ["run", "view"]:
             return 0, json.dumps({"jobs": self.jobs.get(int(args[2]), [])}), ""
+        if args[0] == "api":
+            return 0, json.dumps(annotations_for(self.annotations, args[1])), ""
         raise AssertionError(args)
 
 
@@ -345,6 +362,42 @@ class Gate(unittest.TestCase):
         code, out = self.gate(SHA_NEW, dead)
         self.assertEqual(code, 6, out)
         self.assertIn("gone before it ended", out)
+
+class TimedOut(unittest.TestCase):
+    """GitHub reports a job stopped at its timeout-minutes as cancelled: that run is red, never skipped or rerun
+    (main timed out twice on 2026-11-09 while this report read green from the run before)."""
+
+    def test_the_report_reads_a_timed_out_run_red(self):
+        fake = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(8, sha=SHA_OLD)], "plan.yml": [run(7)]},
+                      jobs={9: [cancelled_job(91)]}, annotations={91: [TIMED_OUT, "The operation was canceled."]})
+        code, report = status(fake)
+        self.assertEqual(code, 1)
+        build = report["workflows"][0]
+        self.assertEqual(build["verdict"], "red")
+        self.assertEqual(build["verdict_run"]["databaseId"], 9)
+        self.assertIn("timed out", build["failed_jobs"][0]["conclusion"])
+
+    def test_a_plain_cancel_is_still_passed_over(self):
+        fake = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(8, sha=SHA_OLD)], "plan.yml": [run(7)]},
+                      jobs={9: [cancelled_job(91)]}, annotations={91: ["The operation was canceled."]})
+        code, report = status(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(report["workflows"][0]["verdict_run"]["databaseId"], 8)
+
+    def test_wait_reads_a_timed_out_run_red(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / ".github" / "workflows" / "build.yml").write_text(
+                (REPO / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8"), encoding="utf-8")
+            gh = WaitGh({"build.yml": [[wrun(9, "build", conclusion="cancelled")]]}, jobs={9: [cancelled_job(91)]},
+                        annotations={91: [TIMED_OUT]})
+            clock, lines = Clock(), []
+            code = ci.wait(SHA_NEW, runner=gh, git=lambda args: "src/pdf/error.cpp\n", root=root, workflows=["build.yml"],
+                           clock=clock, sleep=clock.sleep, out=lines.append, pid=1)
+            self.assertEqual(code, 1, lines)
+            self.assertIn("timed out", "\n".join(lines))
+
 
 class Scheduled(unittest.TestCase):
     """--scheduled, the recto-ci-watch task: each red run is reported once, an outage only after an hour (D00 T04 §9)."""

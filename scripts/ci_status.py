@@ -9,7 +9,8 @@ For each workflow (by default `build.yml` and `plan.yml`, the ones in `.github/w
 reads the last 10 runs with `gh run list` and reports the latest completed run (green, red or cancelled), its verdict,
 and how many newer runs are still queued or in progress. A cancelled run carries no verdict (a newer push usually
 superseded it), so the verdict is the latest completed run that was not cancelled; with none in the last 10 runs the
-verdict is `none`. For a red verdict it names the failed jobs from `gh run view <id> --json jobs`.
+verdict is `none`. A job GitHub stopped at its `timeout-minutes` is reported as cancelled, with the reason only in its
+check-run annotation: such a run is red here (the work did not finish), in this report and in `--wait`. For a red verdict it names the failed jobs from `gh run view <id> --json jobs`.
 
 Exit 0: no watched workflow is red. Exit 1: at least one is red (the workflow, the commit, the run's URL and its
 failed jobs are printed). Exit 2: bad usage. Exit 3: `gh` is missing, not authenticated, or failed, so the state is
@@ -96,6 +97,41 @@ def verdict_of(run):
     return "red"
 
 
+TIMEOUT_MARK = "exceeded the maximum execution time"
+
+
+def timed_out_jobs(runner, run):
+    """The jobs of a cancelled run that GitHub stopped at their `timeout-minutes`, as failed jobs. GitHub reports a job
+    timeout as `cancelled` and says why only in the job's check-run annotation; a timeout is a red build (the work did
+    not finish), never a cancel to rerun or skip. Unavailable when the jobs or annotations cannot be read."""
+    view = gh_json(runner, ["run", "view", str(run.get("databaseId")), "--json", "jobs"])
+    jobs = view.get("jobs") if isinstance(view, dict) else None
+    if not isinstance(jobs, list):
+        raise Unavailable("gh run view returned no job list")
+    found = []
+    for job in jobs:
+        if not isinstance(job, dict) or (job.get("conclusion") or "").lower() != "cancelled":
+            continue
+        notes = gh_json(runner, ["api", f"repos/{{owner}}/{{repo}}/check-runs/{job.get('databaseId')}/annotations"])
+        messages = [n.get("message") or "" for n in notes if isinstance(n, dict)] if isinstance(notes, list) else []
+        timeout = next((m for m in messages if TIMEOUT_MARK in m), None)
+        if timeout:
+            found.append({"name": job.get("name"), "conclusion": f"timed out ({timeout.strip()})", "url": job.get("url")})
+    return found[:MAX_JOBS]
+
+
+def settle(runner, run):
+    """A completed run's verdict and failed jobs, a timed-out run counted red."""
+    verdict = verdict_of(run)
+    if verdict == "cancelled":
+        timed_out = timed_out_jobs(runner, run)
+        if timed_out:
+            return "red", timed_out
+    if verdict == "red":
+        return "red", failed_jobs(runner, run.get("databaseId"))
+    return verdict, []
+
+
 def brief(run):
     return None if run is None else {k: run.get(k) for k in ("databaseId", "headSha", "status", "conclusion", "url",
                                                               "createdAt", "event")}
@@ -109,13 +145,24 @@ def workflow_status(runner, workflow, branch):
     runs = sorted(runs, key=lambda r: str(r.get("createdAt") or ""), reverse=True)
     completed = [r for r in runs if r.get("status") == "completed"]
     latest = completed[0] if completed else None
-    decisive = next((r for r in completed if verdict_of(r) != "cancelled"), None)
+    # The decisive run is the latest completed one that was not cancelled; a timed-out run is red, not cancelled.
+    decisive, verdict, jobs = None, "none", []
+    latest_state = verdict_of(latest)
+    for candidate in completed:
+        verdict, jobs = settle(runner, candidate)
+        if candidate is latest:
+            latest_state = verdict
+        if verdict != "cancelled":
+            decisive = candidate
+            break
+    else:
+        verdict, jobs = "none", []
     newer = [r for r in runs if r.get("status") != "completed"
              and (latest is None or str(r.get("createdAt") or "") > str(latest.get("createdAt") or ""))]
-    entry = {"workflow": workflow, "verdict": verdict_of(decisive), "latest_completed": brief(latest),
-             "latest_completed_state": verdict_of(latest), "verdict_run": brief(decisive), "in_progress": len(newer)}
-    if entry["verdict"] == "red":
-        entry["failed_jobs"] = failed_jobs(runner, decisive.get("databaseId"))
+    entry = {"workflow": workflow, "verdict": verdict, "latest_completed": brief(latest),
+             "latest_completed_state": latest_state, "verdict_run": brief(decisive), "in_progress": len(newer)}
+    if verdict == "red":
+        entry["failed_jobs"] = jobs
     return entry
 
 
@@ -326,9 +373,9 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
             if latest.get("status") != "completed":
                 entry["state"] = "pending"
             else:
-                entry["state"] = {"green": "green", "cancelled": "cancelled"}.get(verdict_of(latest), "red")
-                if entry["state"] == "red":
-                    entry["failed_jobs"] = failed_jobs(runner, latest.get("databaseId"))
+                verdict, jobs = settle(runner, latest)
+                entry["state"] = {"green": "green", "cancelled": "cancelled"}.get(verdict, "red")
+                entry["failed_jobs"] = jobs if entry["state"] == "red" else []
             states[workflow] = entry
         finished = all(s["state"] != "pending" for s in states.values())
         if finished or clock() - started >= timeout:
