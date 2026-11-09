@@ -50,6 +50,8 @@ track: M0
 
 ## 1. ASan and plain builds in separate output folders
 
+> **Started:** 2026-11-09T14:46Z
+
 `Directory.Build.props` sends every build of a configuration to `build/obj/<project>/<platform>/<configuration>/` and `build/bin/<platform>/<configuration>/<project>/`, whether `EnableASAN` is set or not, so the object files of one overwrite the other's and each switch is a full rebuild (seen many times on 2026-11-09). This section gives ASan builds their own folders and keeps everything that reads the output paths (`build/build.ps1`, `build/asan-runtime.ps1`, the test runner paths, CI) pointed at the right one.
 
 **Corrected 2026-11-09:** plan review (`docs/reviews/00-workspace/D00-T04-s1.md`). `build/build.ps1` does more than share folders: it records the last ASan state per configuration in `build/asan-state-<cfg>-<plat>.txt` and deletes the projects' obj and bin folders whenever it flips, so the cleanup and its state file go, with `tests/scripts/test_build_ps1.py`, which requires them, changed to prove the opposite. Isolation is proven by hashing every artifact of the other build before and after, in both directions; compiler work is counted by object files whose write time changed (`build/build-evidence.ps1`), checked against a run that touches one source and must count exactly that unit, so a count read from nothing cannot pass as zero.
