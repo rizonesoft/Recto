@@ -1,0 +1,82 @@
+{
+  "ref": "D01 T02 \u00a710",
+  "title": "`Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters",
+  "implementation_sha": "b4d92e5bd07900a9ff9b3e7b2bdb125f8bc85c7b",
+  "date": "2026-11-10",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s10.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s10.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build.ps1 -EnableASAN -Configuration Debug -TestFilter Runtime.*:Actor.*:AtomicWrite.* -> 0 Warning(s) 0 Error(s); [  PASSED  ] 36 tests. (10 Runtime tests, Runtime.ShutdownUnderActiveTileLoad 50 iterations in 44918 ms, no AddressSanitizer report); [  SKIPPED ] AtomicWrite.AllocationFailures (no allocation injection under ASan)",
+    "build.cmd at b4d92e5 -> 0 warnings on all four builds; x64 Debug [  PASSED  ] 507 tests, Release [  PASSED  ] 508 tests",
+    "Runtime.CloseRetriesTheCancel without the retry timer -> hangs (mutant killed)"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s10.md",
+    "verdict": "filed",
+    "candidate": "5bfa16eab143ddf1781dff218ae31b1dba17d2fe",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a750",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s10.md",
+    "candidate": "80e78d99e71ff3c95cdcb020b2c1e52bb2f95445",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

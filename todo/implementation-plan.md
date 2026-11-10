@@ -133,7 +133,7 @@ Sections: 110 | Checklist items: 742
 | [x]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host              | 11    |
 | [x]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host              | 8     |
 | [x]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host              | 12    |
-| [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 10    |
+| [x]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host              | 10    |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host              | 7     |
 | [ ]    | D01 T02 §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer        | windows-host              | 15    |
 | [ ]    | D01 T02 §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer              | windows-host              | 10    |
@@ -944,6 +944,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 102/875 verified sections, 55 ready to run now.
+Progress: 103/875 verified sections, 57 ready to run now.
 
-Checklist: 684/6468 items completed (includes Commit items).
+Checklist: 685/6468 items completed (includes Commit items).

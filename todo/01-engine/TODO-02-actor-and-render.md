@@ -67,7 +67,7 @@ track: M1
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [x] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [x] |
 | 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [x] |
-| 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
+| 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [x] |
 | 11 | §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity | §9 | [ ] |
 | 12 | §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur` | §8, D02 T02 §12 | [ ] |
 | 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5, §18 | [x] |
@@ -560,9 +560,12 @@ Implement `src/core/runtime.h` and `src/core/runtime.cpp` (`recto::core::Runtime
 - [x] Refuse what arrives after shutdown and register what must stop. Done when: `Runtime.AfterShutdown` reads `open_document` `Cancelled`, a tile request delivered `Cancelled`, a job registered before shutdown cancelled in step 1 and joined in step 3, one unregistered before it not called, and two presentation hooks run in their registration order.
 - [x] Measure shutdown under load. Done when: `Runtime.ShutdownLatency` shuts down with 4 documents compiling and 8 workers rendering and reads `shutdown()` returning within 100 ms in Release on the Windows host (reported, not held, on CI and on a busy host).
 - [x] Stress-test `Runtime::~Runtime()` across 50 iterations while 4 `DocumentActor`s and 8 `RenderPool` workers are actively compiling `DisplayList`s and rasterizing tiles (`Runtime.ShutdownUnderActiveTileLoad`). Done when: all 50 iterations exit cleanly with zero ASan findings and zeroed counters.
-- [ ] Commit: `core: implement Runtime coordinator and section 4.8 ordered shutdown sequence`
+- [x] Commit: `core: implement Runtime coordinator and section 4.8 ordered shutdown sequence`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Runtime.*` passes under ASan across all 50 shutdown-under-load iterations.
+
+> **Verified:** 2026-11-10 | §10 | b4d92e5bd07900a9ff9b3e7b2bdb125f8bc85c7b
+> **Review:** `docs/reviews/d01-t02-s10.json`
 
 ## 11. `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity
 
