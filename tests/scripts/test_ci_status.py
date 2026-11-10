@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -1055,6 +1056,39 @@ class Scheduled(unittest.TestCase):
         self.assertEqual(self.scheduled(PlanDown(runs, jobs=RED_JOBS))[0], 0)
         code, out = self.scheduled(FakeGh(runs, jobs=RED_JOBS))
         self.assertEqual(code, 0, out)  # run 4 failed before this task ever read main whole: history, not news
+    def test_an_email_acknowledges_only_the_runs_it_named(self):
+        # Email was down while failures piled up: more are pending than one email's log tail can carry.
+        self.baseline()
+        memory_path = self.root / "build" / "automations" / "ci-watch-reported.json"
+        memory = json.loads(memory_path.read_text(encoding="utf-8"))
+        memory["pending"] = [{"key": f"{n}/1", "workflow": "build.yml", "url": f"https://github.com/o/r/actions/runs/{n}",
+                              "sha": "b" * 12, "failed_jobs": ["Build x64"]} for n in range(100, 161)]
+        memory_path.write_text(json.dumps(memory), encoding="utf-8")
+        green = FakeGh({"build.yml": [run(1)], "plan.yml": [run(2)]})
+        code, out = self.scheduled(green)
+        self.assertEqual(code, 1, out)
+        lines = out.splitlines()
+        named = [line for line in lines if line.startswith("red run on main:")]
+        self.assertEqual(len(named), ci.ALERT_BATCH)
+        # Everything the email must carry is inside the 60 lines the runner sends, and says that more will follow.
+        self.assertEqual(lines[-(ci.ALERT_BATCH + 1):-1], named)
+        sent = int(re.search(r"(?m)^LOG_LINES = (\d+)", (REPO / ".conclave/automations/alert.py").read_text(encoding="utf-8"))[1])
+        self.assertLessEqual(ci.ALERT_BATCH + 1, sent)  # the runner's own number of log lines per email
+        self.assertIn("main has 61 red run(s) not yet reported by email", lines[-1])
+        self.assertIn("21 more follow in the next email", lines[-1])
+        self.assertIn("runs/100;", out)
+        self.assertNotIn("runs/140;", out)
+        # That email is sent: the 40 it named are done, and the 21 it did not name are raised now.
+        self.runner_says("sent")
+        code, out = self.scheduled(green)
+        self.assertEqual(code, 1, out)
+        named = [line for line in out.splitlines() if line.startswith("red run on main:")]
+        self.assertEqual(len(named), 21)
+        self.assertIn("runs/140;", out)
+        self.assertNotIn("runs/100;", out)
+        self.runner_says("sent")
+        self.assertEqual(self.scheduled(green)[0], 0)
+
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},

@@ -741,6 +741,10 @@ def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, 
 REPORTED_FILE = Path("build") / "automations" / "ci-watch-reported.json"
 TASK = "recto-ci-watch"  # its runner writes build/automations/<TASK>/last.json, with whether the alert was sent
 UNKNOWN_ALERT_SECONDS = 3600
+# The runner's email carries the last 60 lines of the task's log (`alert.tail_of` in `.conclave/automations/`). One
+# poll therefore names at most this many pending items, last in its output, and only those are acknowledged by that
+# email; the rest stay pending for the next one.
+ALERT_BATCH = 40
 
 
 def _epoch(stamp):
@@ -779,8 +783,11 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     passed = [r for r in memory.get("passed", []) if isinstance(r, str)]
     pending = [p for p in memory.get("pending", []) if isinstance(p, dict) and isinstance(p.get("key"), str)]
     if pending and isinstance(memory.get("raised_at"), (int, float)) and alert_delivered(root, memory["raised_at"]):
-        reported += [p["key"] for p in pending]
-        pending = []
+        # Only what that email named is acknowledged by it. A memory file from before the names were kept names
+        # none, and its pending items are simply raised once more.
+        named = [k for k in memory.get("raised_keys", []) if isinstance(k, str)]
+        reported += [p["key"] for p in pending if p["key"] in named]
+        pending = [p for p in pending if p["key"] not in named]
     entries, unread, baseline = [], [], []
     for workflow in workflows:
         try:
@@ -840,14 +847,17 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     if whole:
         reported += baseline
     memory.update(reported=reported[-400:], passed=passed[-400:] if whole else [], pending=pending, baselined=whole)
+    shown = pending[:ALERT_BATCH]
     if pending:
-        memory["raised_at"] = now()
+        memory.update(raised_at=now(), raised_keys=[p["key"] for p in shown])
     else:
         memory.pop("raised_at", None)
+        memory.pop("raised_keys", None)
     write_state(path, memory)
     for entry in entries:
         out("\n".join(describe(entry)))
-    for item in pending:
+    # What the email must carry comes last, one line each, so it is inside the part of the log the runner sends.
+    for item in shown:
         if item.get("note"):
             out(f"not yet reported by email: {item['note']}")
             continue
@@ -855,8 +865,10 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         out(f"red run on main: {item['workflow']} at {item.get('sha')} {item.get('url')}{jobs}")
     reds = [p for p in pending if not p.get("note")]
     if reds:
+        later = f"; {len(pending) - len(shown)} more follow in the next email" if len(pending) > len(shown) else ""
         out(f"main has {len(reds)} red run(s) not yet reported by email: "
-            f"{', '.join(sorted({p['workflow'] for p in reds}))} (each is reported until its email is sent, then never again)")
+            f"{', '.join(sorted({p['workflow'] for p in reds}))} (each is reported until its email is sent, then never "
+            f"again{later})")
     return 1 if pending else 0
 
 
