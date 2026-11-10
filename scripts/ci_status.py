@@ -475,10 +475,15 @@ def claim(lock, pid, created):
         handle.close()
         holder = read_state(lock)
         return None, holder if isinstance(holder, dict) else {}
-    handle.seek(0)
-    handle.truncate()
-    handle.write(json.dumps({"pid": pid, "born": created}).encode("utf-8"))
-    handle.flush()
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps({"pid": pid, "born": created}).encode("utf-8"))
+        handle.flush()
+    except OSError as exc:
+        handle.close()  # the claim is given back: a watch that cannot name itself does not hold the commit
+        raise Unavailable(f"cannot write {lock}: {exc}; free disk space or close the program holding the file, "
+                          f"then run the same command again") from None
     return handle, None
 
 
@@ -919,6 +924,21 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
 
 
 def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
+    """The command line. Exit 1 means one thing only, a red CI run, so nothing else may leave as 1: a file or folder
+    this machine cannot read or write, wherever it happens, is unknown (3), with the error."""
+    try:
+        return run(argv, runner, root, git)
+    except OSError as exc:
+        print(f"ci-status unknown: {type(exc).__name__}: {exc}; nothing here says CI is red. Free disk space or close "
+              f"the program holding the file, then run the same command again", flush=True)
+        return 3
+    except Exception as exc:  # exit 1 is a verdict (red CI), so a defect in this script must not produce it
+        print(f"ci-status unknown: this script failed ({type(exc).__name__}: {exc}); nothing here says CI is red. "
+              f"Run `python scripts/ci_status.py` for the plain report, and file the failure", flush=True)
+        return 3
+
+
+def run(argv, runner, root, git):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--json", action="store_true", help="print the report as one JSON object")
     parser.add_argument("--branch", default="main", help="the branch whose runs are read (default main)")

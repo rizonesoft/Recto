@@ -582,6 +582,59 @@ class WaitAtOnce(unittest.TestCase):
         self.assertIsNotNone(handle, holder)
         handle.close()
 
+    def test_a_claim_that_cannot_be_written_is_unknown_never_a_red_and_is_given_back(self):
+        lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
+        real_open = open
+
+        class FullDisk:
+            """The lock file opens and locks, and the volume has no room for its few bytes."""
+
+            def __init__(self, handle):
+                self.handle = handle
+
+            def flush(self):
+                raise OSError(28, "No space left on device")
+
+            def __getattr__(self, name):
+                return getattr(self.handle, name)
+
+        def opening(path, mode="r", *args, **kwargs):
+            handle = real_open(path, mode, *args, **kwargs)
+            return FullDisk(handle) if str(path).endswith(".lock") else handle
+        with unittest.mock.patch.object(ci, "open", opening, create=True):
+            with self.assertRaises(ci.Unavailable) as caught:
+                ci.claim(lock, 1, 5)
+            self.assertIn("No space left on device", str(caught.exception))
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = ci.main(["--wait", SHA_NEW], runner=WaitGh({}), root=self.root,
+                               git=lambda args: SHA_NEW + "\n" if args[0] == "rev-parse" else "x\n")
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertIn("ci-status unknown: cannot write", out.getvalue())
+        handle, holder = ci.claim(lock, 2, 6)  # not left held by the watch that failed
+        self.assertIsNotNone(handle, holder)
+        handle.close()
+
+    def test_no_file_error_anywhere_leaves_as_exit_1(self):
+        for argv, target in ((["--gate"], "gate"), (["--scheduled"], "scheduled"), (["--wait", SHA_NEW], "wait"), ([], "report")):
+            with self.subTest(argv=argv):
+                out = io.StringIO()
+                with unittest.mock.patch.object(ci, target, side_effect=PermissionError(13, "Access is denied")), \
+                        redirect_stdout(out):
+                    code = ci.main(argv, runner=WaitGh({}), root=REPO, git=lambda args: SHA_NEW + "\n")
+                self.assertEqual(code, 3, out.getvalue())
+                self.assertIn("ci-status unknown: PermissionError", out.getvalue())
+                self.assertIn("nothing here says CI is red", out.getvalue())
+                # A defect in the script itself (Python would exit 1 on it) is unknown too, and bad usage stays 2.
+                out = io.StringIO()
+                with unittest.mock.patch.object(ci, target, side_effect=KeyError("workflows")), redirect_stdout(out):
+                    code = ci.main(argv, runner=WaitGh({}), root=REPO, git=lambda args: SHA_NEW + "\n")
+                self.assertEqual(code, 3, out.getvalue())
+                self.assertIn("this script failed (KeyError", out.getvalue())
+        with self.assertRaises(SystemExit) as usage, redirect_stdout(io.StringIO()), unittest.mock.patch("sys.stderr", io.StringIO()):
+            ci.main(["--wait", "not a sha"])
+        self.assertEqual(usage.exception.code, 2)
+
     def test_a_watch_holds_its_claim_while_it_runs_and_gives_it_back_when_it_ends(self):
         lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
         seen, second, lines, root = [], [], [], self.root
