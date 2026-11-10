@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 50 | Checklist items: 284
+Sections: 53 | Checklist items: 304
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -39,6 +39,9 @@ Sections: 50 | Checklist items: 284
 | [ ]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
 | [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [ ]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
+| [ ]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |
+| [ ]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
+| [ ]    | D06 T02 §12 | clang-tidy bug, CERT and concurrency checks over the compile database                    | windows-host | 8     |
 | [x]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
 | [x]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
 | [x]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
@@ -941,6 +944,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 102/872 verified sections, 53 ready to run now.
+Progress: 102/875 verified sections, 55 ready to run now.
 
-Checklist: 684/6448 items completed (includes Commit items).
+Checklist: 684/6468 items completed (includes Commit items).

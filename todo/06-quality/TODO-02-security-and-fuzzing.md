@@ -16,6 +16,7 @@ track: M6
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D12, D13), 3.1 (`recto-pdf` boundary), 3.2 (`fuzz/`), 4.11 (`fuzz_open`, `fuzz_filters`, `fuzz_render`, `fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`), 9 (security and untrusted-input posture), and 11 item 5 (broker process design).
+- -> XREF: D00 T04 §12 -- the compile database and the Visual Studio LLVM tools found there, which `§12` here runs clang-tidy over.
 - -> XREF: D01 T01 §4 -- the 64-level recursive-descent parser and object-graph cycle bounds audited in `§1`.
 - -> XREF: D99 T01 §10 -- the operator runs the FIPS proof script of `§9` on a FIPS-enabled host and records the result in `docs/security-audit.md`.
 - -> XREF: D01 T01 §7 -- the 256 MB stream decompression-bomb ceiling and filter bounds audited in `§1`.
@@ -66,6 +67,9 @@ track: M6
 | 7 | §7 | FIPS mode detection and the algorithm policy in `recto-pdf` | D01 T01 §9, D07 T02 §4 | [ ] |
 | 8 | §8 | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI | §7, D01 T02 §5, D05 T01 §7, D05 T01 §11, D04 T07 §5, D07 T02 §15 | [ ] |
 | 9 | §9 | FIPS mode proof script, tested to refuse on an ordinary host | §8 | [ ] |
+| 10 | §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job | -- | [ ] |
+| 11 | §11 | CodeQL scanning of the C++ sources, with open alerts read by the run | -- | [ ] |
+| 12 | §12 | clang-tidy bug, CERT and concurrency checks over the compile database | D00 T04 §12 | [ ] |
 
 ## 1. Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)
 
@@ -283,8 +287,79 @@ Injected probes prove the logic; only a host with Windows FIPS policy enabled pr
 
 **Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_fips.ps1` exits `2` with "FIPS mode is not enabled on this host" on this machine, and `python -m unittest tests.scripts.test_verify_fips` passes; the exit `0` run on a FIPS-enabled host is quoted by `D99 T01 §10`.
 
+## 10. MSVC code analysis (`/analyze`) over every module, clean, as a CI job
+
+Filed 2026-11-10. Recto's engine parses hostile files, and its only compile-time checks today are `/W4 /WX` and, outside Debug, `/sdl`; nothing in the tree turns on the compiler's own static analyzer (a search of every project, `Directory.Build.props` and `Directory.Build.targets` for `EnablePREfast`, `RunCodeAnalysis` and `/analyze` finds nothing). `/analyze` follows paths through a function and reports buffer overruns, null and uninitialized reads, arithmetic overflow before allocation, leaked handles and misused locks: the defects AddressSanitizer and fuzzing find only when a test or an input reaches them. This section runs it over all eight projects with the recommended native rules and the C++ Core Guidelines lifetime and bounds checks, fixes or justifies every finding, and keeps it clean with a CI job. It runs in CI and on demand, not in the local gate: the analyzer needs far more memory and time than a compile, and this host is short of both.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add an analysis build. Done when: `build.ps1 -Analyze` compiles every project under `/analyze` into folders of its own and writes one SARIF log for each project.
+2. Clear the findings. Done when: the analysis build reports none, each one fixed at its cause or suppressed at its line with the reason.
+3. Hold it in CI. Done when: a CI job fails on a new finding.
+
+- [ ] Add `-Analyze` to `build/build.ps1` (x64 Debug, tests not run) setting `EnableAnalyze`, and in `Directory.Build.props` and `Directory.Build.targets` give that build `obj-analyze` and `bin-analyze` folders (as ASan has its own), `EnablePREfast`, the `NativeRecommendedRules` rule set with the C++ Core Check lifetime, bounds and type rules, findings as warnings that fail the build, and a SARIF log for each project under `build\analyze\`. Done when: `build.ps1 -Analyze` on a source with a planted `int a[4]; a[4] = 0;` fails naming C6386 or its Core Check equal, a plain build afterwards recompiles nothing (`build/build-evidence.ps1`), and `tests/scripts/test_build_ps1.py` fails if the analysis folders are merged with the plain ones.
+- [ ] Record the first full run: every finding by rule, file and line, in the findings file, with the build's wall time and peak memory. Done when: the list is recorded and each finding is marked a defect, a hardening, or a false report with the reason.
+- [ ] Fix every defect and hardening at its cause in `src/` (a bounds check where the bound is missing, a checked multiply before an allocation, an annotation such as `_In_reads_` where the contract was unstated), each defect with a regression test that fails before the fix. Done when: the suite passes in Debug, Release and under ASan, and each fixed finding names its test in the findings file.
+- [ ] Suppress each false report at its line with `#pragma warning(suppress: NNNN)` and a comment giving the reason; no rule is turned off for a file, a project or the build. Done when: `build.ps1 -Analyze` reports 0 findings, and a search finds no `/wd`, `disable:` or rule-set edit that silences an analysis rule more widely than one line.
+- [ ] Add an `analyze` job to `.github/workflows/build.yml` running `build/build.ps1 -Analyze`, uploading the SARIF logs as an artifact, with a timeout set from the measured time. Done when: the job passes on the pushed commit, and a branch with the planted overrun fails it.
+- [ ] Name the command in `AGENTS.md`'s Validation list and in the review skills as a check for sections that touch `src/pdf` parsing or decoding. Done when: both name `build.ps1 -Analyze` and say it runs in CI on every push.
+- [ ] Commit: `build: MSVC code analysis over every module, clean, in CI`
+
+**Test checkpoint:** `build.ps1 -Analyze` exits 0 on the tree with a SARIF log for each of the eight projects, and the same command with `int a[4]; a[4] = 0;` planted in `src/pdf/error.cpp` exits non-zero naming the line.
+
+## 11. CodeQL scanning of the C++ sources, with open alerts read by the run
+
+Filed 2026-11-10. GitHub's CodeQL runs a second, independent static analysis (data flow from untrusted input to a sink across functions and files, which `/analyze` does not follow) at no cost for a public repository and with no load on the development host. The repository has three workflows (`build.yml`, `plan.yml`, `pins.yml`) and none scans code. This section adds the scan and, because an alert that nobody reads fixes nothing, a script that reads the open alerts so a run and the scheduled automations treat a new one as work.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add the scanning workflow. Done when: a run on `main` finishes and its results are in the repository's code scanning alerts.
+2. Read the alerts where work is chosen. Done when: an open alert exits a script non-zero, and the automations run it.
+
+- [ ] Add `.github/workflows/codeql.yml`: on pushes to `main` that change `src/`, `tests/`, `fuzz/` or build files, weekly on a schedule, and on demand; language `c-cpp` with a manual build (`build/build.ps1 -Platform x64 -Configuration Debug -SkipTests`), the `security-extended` query suite, `security-events: write` on that job only, every action pinned as `scripts/check-actions-pins.py` requires, and a timeout. Done when: the workflow passes on the pushed commit, `python scripts/check-actions-pins.py check` exits 0 with the new actions covered, and the run's summary shows the C++ sources extracted (a count of files above zero).
+- [ ] Triage the first run's alerts: each one fixed at its cause in `src/` with a regression test, or dismissed on GitHub as a false positive or as test code with the reason written in the dismissal. Done when: `gh api repos/{owner}/{repo}/code-scanning/alerts?state=open` returns none for `main`, and each fix names its test in the findings file.
+- [ ] Add `scripts/code-scanning.py` (stdlib Python, through `gh`): prints each open alert on `main` (rule, severity, file, line, URL) and exits 1 when there is one, 0 when there is none, 3 when the alerts cannot be read (never 0). Done when: `tests/scripts/test_code_scanning.py` drives it with a fake `gh` through none, one open alert, a dismissed alert (not counted) and a failed call (3).
+- [ ] Run it where work is chosen: a `recto-code-scanning` task in `.conclave/automations/tasks.json` (daily, reporting each alert once, as `recto-ci-watch` does for red runs), and a line in `process-phase` step 3 that an open alert is fixed before a new row is claimed, like a red run. Done when: the task is registered on this machine (`Get-ScheduledTask -TaskPath \Recto\`), the README's task table lists it, and the skill names the command.
+- [ ] Commit: `ci: CodeQL scanning of the C++ sources, with alerts read by the run`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_code_scanning` passes; the `codeql.yml` run on the pushed commit is green with C++ files extracted; and `python scripts/code-scanning.py` exits 0 on `main` after the triage.
+
+## 12. clang-tidy bug, CERT and concurrency checks over the compile database
+
+Filed 2026-11-10. A second compiler front end reads the same sources differently from MSVC, and clang-tidy's `bugprone-*`, `cert-*`, `concurrency-*` and `clang-analyzer-*` checks report use after move, dangling references and views, narrowing in size arithmetic, unchecked return values and lock misuse, several of which neither `/W4` nor `/analyze` reports. `clang-tidy.exe` ships beside `clangd.exe` in Visual Studio's LLVM tools, and `D00 T04 §12` writes the compile database it needs and proves clang reads every source, so this section adds no tool and depends on that one. It chooses the checks, clears the tree, and keeps it clean in CI.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Choose the checks and run them. Done when: a tracked `.clang-tidy` names them and one command runs clang-tidy over every database entry.
+2. Clear the findings. Done when: the run reports none, each fixed at its cause or suppressed at its line with the reason.
+3. Hold it in CI. Done when: a CI job fails on a new finding.
+
+- [ ] Add a tracked `.clang-tidy` at the repository root: `bugprone-*`, `cert-*`, `concurrency-*`, `clang-analyzer-*` and `performance-*`, findings as errors, headers under `src/` included, and each check left out named with the reason (a style rule, or one that contradicts a foundation plan decision). Done when: the file parses (`clang-tidy --verify-config`) and lists every exclusion with its reason.
+- [ ] Add `scripts/run-clang-tidy.py` (stdlib Python): runs the Visual Studio `clang-tidy.exe` (found as `build/clangd.cmd` finds clangd) over every entry of `build/compile_commands.json`, at most as many at once as `D00 T04 §3` allows compilers, prints each finding once, and exits 1 on any, 2 when the database or the tool is missing. Done when: `tests/scripts/test_run_clang_tidy.py` drives it with a fake tool through a clean run, a finding (1), a missing database (2) and a tool that crashes on one file (2, the file named), and a real run checks as many files as the database holds.
+- [ ] Record the first full run by check, file and line in the findings file, each marked a defect, a hardening or a false report with the reason. Done when: the list is recorded with the run's wall time and peak memory.
+- [ ] Fix every defect and hardening at its cause in `src/`, each defect with a regression test that fails before the fix. Done when: the suite passes in Debug, Release and under ASan, and each fixed finding names its test.
+- [ ] Suppress each false report at its line with `// NOLINT(<check>): <reason>`; no check is turned off for a file or a folder beyond the exclusions `.clang-tidy` names with reasons. Done when: `python scripts/run-clang-tidy.py` exits 0, and a search finds no bare `NOLINT` without a check name and a reason.
+- [ ] Add a `clang-tidy` job to `.github/workflows/build.yml` that builds x64 Debug, then runs `scripts/run-clang-tidy.py`, with a timeout set from the measured time. Done when: the job passes on the pushed commit, and a branch with a planted use after `std::move` fails it naming `bugprone-use-after-move`.
+- [ ] Name the command in `AGENTS.md`'s Validation list. Done when: it is there with what it checks.
+- [ ] Commit: `build: clang-tidy bug, CERT and concurrency checks, clean, in CI`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_run_clang_tidy` passes; `python scripts/run-clang-tidy.py` exits 0 on the tree; and a use after `std::move` planted in `src/pdf/error.cpp` makes it exit 1 naming `bugprone-use-after-move` and the line.
+
 ## Verification
 
+- `build.ps1 -Analyze`, `python scripts/run-clang-tidy.py` and `python scripts/code-scanning.py` all exit 0 on `main`, and CI runs the first two on every push and CodeQL on every source change.
 - Foundation plan section 9 is auditable end-to-end from `docs/security-audit.md` and `recto-tests --gtest_filter=SecurityAudit.*` alone.
 - The scheduled fuzz campaign (`scripts/run-fuzz-campaign.ps1`) and crash triage runbook (`fuzz/README.md` + `scripts/triage-fuzz-crash.py`) are proven on the repository and committed.
 - `docs/specs/2026-10-14-broker-process-design.md` is verified against the as-built `src/pdf/` headers by `scripts/inventory-pdf-boundary.py --check`.

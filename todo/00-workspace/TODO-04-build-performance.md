@@ -19,6 +19,7 @@ track: M0
 - `build/build.ps1`, `build.cmd`, `Directory.Build.props`, `Directory.Build.targets` (the D13 boundary checks read MSBuild items), `.github/workflows/build.yml`, `scripts/check-*.py` (the pin checks).
 - -> XREF: D00 T01 §3 -- the solution scaffold this file speeds up; its x64 and ARM64 one-command build is kept, with ARM64 moved to CI by `§2`
 - -> XREF: D00 T01 §4 -- the CI build `§2` keeps building ARM64 and `§8` moves to Ninja
+- -> XREF: D06 T02 §12 -- clang-tidy runs over the compile database `§12` here writes, with the clang-tidy beside the clangd that `build/clangd.cmd` finds
 
 ## Outcome
 
