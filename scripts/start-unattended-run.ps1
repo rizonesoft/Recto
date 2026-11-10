@@ -11,7 +11,8 @@
 # The session signs in with the one-year Claude Code token kept in 1Password (vault Conclave, item "Claude Code OAuth
 # token (1 year, setup-token)", field credential), handed to claude.exe as CLAUDE_CODE_OAUTH_TOKEN in this process's
 # environment only: it is never printed, written or passed as an argument. A run that outlives the stored login's
-# refresh therefore keeps going. When 1Password cannot be read the launcher says so and starts on the stored login.
+# refresh therefore keeps going. When 1Password cannot be read, or nobody approves its prompt within two minutes, the launcher
+# says so and starts on the stored login.
 # The session cannot ask the operator anything: the AskUserQuestion tool is switched off.
 #
 # It starts whatever the checks show: low memory, a dirty tree and a guard left by an earlier run are printed, not
@@ -19,7 +20,8 @@
 # The writer model is the one AGENTS.md names; change it there, in scripts/verify-agent-tiers.mjs and here together.
 param(
     [switch]$PrintOnly,
-    [switch]$InstallShortcut
+    [switch]$InstallShortcut,
+    [int]$TokenTimeoutSeconds = 120
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -76,20 +78,35 @@ if ($dirty.Count -gt 0) { Write-Warning "$($dirty.Count) uncommitted file(s) in 
 if (Test-Path (Join-Path $root 'build\claude-campaign-guard.json')) {
     Write-Warning 'build\claude-campaign-guard.json exists: an earlier run did not end, or another session is running. The run reconciles it.'
 }
-# The token goes from 1Password into this process's environment and nowhere else.
+# The token goes from 1Password into claude.exe's environment and nowhere else: it is set just before claude.exe starts
+# and removed when it ends, so the shell the shortcut leaves open does not keep it. 1Password may ask the operator to
+# approve the read; with nobody there the read is stopped after $TokenTimeoutSeconds and the run starts regardless.
 $token = $null
 $op = (Get-Command op -ErrorAction SilentlyContinue).Source
 if ($op) {
-    $token = & $op item get $tokenItem --vault $tokenVault --fields label=credential --reveal 2>$null
-    if ($LASTEXITCODE -ne 0) { $token = $null }
+    $info = [System.Diagnostics.ProcessStartInfo]::new($op)
+    foreach ($a in @('item', 'get', $tokenItem, '--vault', $tokenVault, '--fields', 'label=credential', '--reveal')) {
+        $info.ArgumentList.Add($a)
+    }
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $read = [System.Diagnostics.Process]::Start($info)
+    $out = $read.StandardOutput.ReadToEndAsync()
+    $null = $read.StandardError.ReadToEndAsync()
+    if ($read.WaitForExit($TokenTimeoutSeconds * 1000)) {
+        if ($read.ExitCode -eq 0) { $token = $out.Result.Trim() }
+    } else {
+        $read.Kill($true)
+        Write-Warning "1Password did not answer within $TokenTimeoutSeconds seconds; its read was stopped."
+    }
+    $read.Dispose()
 }
-if ($token -and "$token".Trim().Length -gt 0) {
-    $env:CLAUDE_CODE_OAUTH_TOKEN = "$token".Trim()
+if ($token) {
     Write-Host 'Sign-in: the one-year token from 1Password.'
 } else {
     Write-Warning "Sign-in: 1Password did not give the token ($tokenItem, vault $tokenVault); starting on the stored Claude Code login."
 }
-$token = $null
 Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
 
 # --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
@@ -99,5 +116,13 @@ if ($PrintOnly) {
     Write-Host $goal
     exit 0
 }
-& $claude @claudeArgs
-exit $LASTEXITCODE
+$before = $env:CLAUDE_CODE_OAUTH_TOKEN
+try {
+    if ($token) { $env:CLAUDE_CODE_OAUTH_TOKEN = $token }
+    $token = $null
+    & $claude @claudeArgs
+    $code = $LASTEXITCODE
+} finally {
+    $env:CLAUDE_CODE_OAUTH_TOKEN = $before
+}
+exit $code

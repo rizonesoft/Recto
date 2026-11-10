@@ -27,18 +27,22 @@ exit 0
 
 @unittest.skipUnless(POWERSHELL, "needs PowerShell 7")
 class Launcher(unittest.TestCase):
-    def run_launcher(self, *switches: str, op_exit: int = 0) -> tuple[subprocess.CompletedProcess, dict | None]:
+    def run_launcher(self, *switches: str, op_exit: int = 0, op_hangs: bool = False,
+                     after: str = "") -> tuple[subprocess.CompletedProcess, dict | None]:
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / "claude.ps1").write_text(FAKE_CLAUDE, encoding="utf-8")
-            (tmp / "op.ps1").write_text(f"if ({op_exit} -eq 0) {{ Write-Output '{TOKEN}' }}\nexit {op_exit}\n",
-                                        encoding="utf-8")
+            # op is started as a process, so the fake is a batch file; a hanging one stands for an unanswered prompt.
+            wait = "ping -n 60 127.0.0.1 >nul\n" if op_hangs else ""
+            say = f"echo {TOKEN}\n" if op_exit == 0 else ""
+            (tmp / "op.cmd").write_text(f"@echo off\n{wait}{say}exit /b {op_exit}\n", encoding="utf-8", newline="\r\n")
             record = tmp / "record.json"
             env = dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ["PATH"], RECTO_TEST_RECORD=str(record),
                        RECTO_TEST_EXPECTED_TOKEN=TOKEN)
             env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
-            run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(LAUNCHER),
-                                  *switches], capture_output=True, text=True, timeout=180, env=env)
+            command = f"& '{LAUNCHER}' {' '.join(switches)}; {after}"
+            run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+                                 capture_output=True, text=True, timeout=180, env=env)
             seen = json.loads(record.read_text(encoding="utf-8-sig")) if record.exists() else None
             return run, seen
 
@@ -67,6 +71,17 @@ class Launcher(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertFalse(seen["token_set"])
         self.assertIn("1Password did not give the token", run.stdout + run.stderr)
+
+    def test_the_shell_left_open_after_the_session_does_not_keep_the_token(self):
+        run, seen = self.run_launcher(after="Write-Output \"TOKEN_LEFT=$([bool]$env:CLAUDE_CODE_OAUTH_TOKEN)\"")
+        self.assertTrue(seen["token_matches"])
+        self.assertIn("TOKEN_LEFT=False", run.stdout)
+
+    def test_an_unanswered_1password_prompt_is_stopped_and_the_run_starts(self):
+        run, seen = self.run_launcher("-TokenTimeoutSeconds", "2", op_hangs=True)
+        self.assertFalse(seen["token_set"])
+        self.assertIn("did not answer within 2 seconds", run.stdout + run.stderr)
+        self.assertIn("starting on the stored Claude Code login", run.stdout + run.stderr)
 
     def test_print_only_starts_nothing_and_prints_no_token(self):
         run, seen = self.run_launcher("-PrintOnly")
