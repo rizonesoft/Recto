@@ -6,25 +6,53 @@
 #
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1            start the run
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -PrintOnly print the checks and the command, start nothing
+#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -InstallShortcut  write the Desktop shortcut for this clone
+#
+# The session signs in with the one-year Claude Code token kept in 1Password (vault Conclave, item "Claude Code OAuth
+# token (1 year, setup-token)", field credential), handed to claude.exe as CLAUDE_CODE_OAUTH_TOKEN in this process's
+# environment only: it is never printed, written or passed as an argument. A run that outlives the stored login's
+# refresh therefore keeps going. When 1Password cannot be read the launcher says so and starts on the stored login.
+# The session cannot ask the operator anything: the AskUserQuestion tool is switched off.
 #
 # It starts whatever the checks show: low memory, a dirty tree and a guard left by an earlier run are printed, not
 # refused, because the process-plan audit decides what to do about each (owner decision 2026-11-10: warn and start).
 # The writer model is the one AGENTS.md names; change it there, in scripts/verify-agent-tiers.mjs and here together.
 param(
-    [switch]$PrintOnly
+    [switch]$PrintOnly,
+    [switch]$InstallShortcut
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $model = 'claude-fable-5-2'
+$shortcutName = 'Recto - Process Plan (Unattended).lnk'
+$tokenVault = 'Conclave'
+$tokenItem = 'Claude Code OAuth token (1 year, setup-token)'
+
+if ($InstallShortcut) {
+    # The shortcut holds this clone's path, so it is rewritten here whenever the clone moves.
+    $icon = Join-Path $root 'resources\ico\recto.ico'
+    if (-not (Test-Path $icon)) { throw "the shortcut's icon is missing: $icon" }
+    $pwsh = (Get-Command pwsh).Source
+    $link = Join-Path ([Environment]::GetFolderPath('Desktop')) $shortcutName
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+    $shortcut.TargetPath = $pwsh
+    $shortcut.Arguments = "-NoExit -NoProfile -File `"$PSCommandPath`""
+    $shortcut.WorkingDirectory = $root
+    $shortcut.IconLocation = "$icon,0"
+    $shortcut.Description = 'Start the unattended Recto plan run in Claude Code'
+    $shortcut.Save()
+    Write-Host "Shortcut written: $link"
+    exit 0
+}
 
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000
 # characters.
 $goal = @'
-/goal Recto's implementation plan (todo/implementation-plan.md in R:\GitHub\Recto) is 100 percent complete: `python scripts/todo-graph.py query stats` shows verified equal to total, with every section built, reviewed by the pinned reviewer and stamped through the stamp command, no partial ships, and CI green on main. The goal is also met when the run has ended the way the process-plan skill allows while rows are still open: every remaining row is blocked here (an unmet dependency, a waiting Need, or a host this session cannot reach), the run file carries its PARKED line and park record, the run was ended through `scripts/campaign_guard.py end`, and the last message lists each leftover row with what blocks it. Nothing else counts as done: not an audit, not a status report, not a finished phase while another phase has a ready row. The work: process the plan through the process-plan skill, starting now, unattended. Follow AGENTS.md, design/SPEC.md and the skills exactly. Never ask the operator a question: take the industry-standard option, record it with its cost of reversing, and carry on. Aim for excellence in every section. Recto must end as the best PDF software in its class, a rival to Adobe Acrobat, Foxit, PDFelement and UPDF that users choose over them: before building a feature, look at how the best competitor does it and make Recto faster, with fewer steps, smarter defaults, better recovery from errors and better accessibility, proven with measurements. No shortcuts, no workarounds, no weakened tests, and no avoiding work because it is hard. This machine is short of memory and shared with other work: run one heavy job at a time, run full builds and full test suites through `bosun run --`, and wait while less than 3,000 MB is free. The operator authorises restarting, alone and once 3,000 MB is free, any review or job that was stopped for low memory, including the stopped review of D01 T02 §10.
+/goal Recto's implementation plan (todo/implementation-plan.md in {ROOT}) is 100 percent complete: `python scripts/todo-graph.py query stats` shows verified equal to total, with every section built, reviewed by the pinned reviewer and stamped through the stamp command, no partial ships, and CI green on main. The goal is also met when the run has ended the way the process-plan skill allows while rows are still open: every remaining row is blocked here (an unmet dependency, a waiting Need, or a host this session cannot reach), the run file carries its PARKED line and park record, the run was ended through `scripts/campaign_guard.py end`, and the last message lists each leftover row with what blocks it. Nothing else counts as done: not an audit, not a status report, not a finished phase while another phase has a ready row. The work: process the plan through the process-plan skill, starting now, unattended. Follow AGENTS.md, design/SPEC.md and the skills exactly. Never ask the operator a question: take the industry-standard option, record it with its cost of reversing, and carry on. Aim for excellence in every section. Recto must end as the best PDF software in its class, a rival to Adobe Acrobat, Foxit, PDFelement and UPDF that users choose over them: before building a feature, look at how the best competitor does it and make Recto faster, with fewer steps, smarter defaults, better recovery from errors and better accessibility, proven with measurements. No shortcuts, no workarounds, no weakened tests, and no avoiding work because it is hard. This machine is short of memory and shared with other work: run one heavy job at a time, run full builds and full test suites through `bosun run --`, and wait while less than 3,000 MB is free. The operator authorises restarting, alone and once 3,000 MB is free, any review or job that was stopped for low memory, including the stopped review of D01 T02 §10.
 '@
-$goal = $goal.Trim()
+$goal = $goal.Trim().Replace('{ROOT}', $root)
 if ($goal.Contains('"') -or $goal.Contains("`n")) { throw 'the goal must be one line with no double quote' }
 if ($goal.Length -gt 4000) { throw "the goal is $($goal.Length) characters; Claude Code allows 4,000" }
 
@@ -48,11 +76,26 @@ if ($dirty.Count -gt 0) { Write-Warning "$($dirty.Count) uncommitted file(s) in 
 if (Test-Path (Join-Path $root 'build\claude-campaign-guard.json')) {
     Write-Warning 'build\claude-campaign-guard.json exists: an earlier run did not end, or another session is running. The run reconciles it.'
 }
-Write-Host "Model: $model, permission prompts off, goal of $($goal.Length) characters."
+# The token goes from 1Password into this process's environment and nowhere else.
+$token = $null
+$op = (Get-Command op -ErrorAction SilentlyContinue).Source
+if ($op) {
+    $token = & $op item get $tokenItem --vault $tokenVault --fields label=credential --reveal 2>$null
+    if ($LASTEXITCODE -ne 0) { $token = $null }
+}
+if ($token -and "$token".Trim().Length -gt 0) {
+    $env:CLAUDE_CODE_OAUTH_TOKEN = "$token".Trim()
+    Write-Host 'Sign-in: the one-year token from 1Password.'
+} else {
+    Write-Warning "Sign-in: 1Password did not give the token ($tokenItem, vault $tokenVault); starting on the stored Claude Code login."
+}
+$token = $null
+Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
 
-$claudeArgs = @('--dangerously-skip-permissions', '--model', $model, $goal)
+# --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
+$claudeArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, $goal)
 if ($PrintOnly) {
-    Write-Host "Would run: $claude --dangerously-skip-permissions --model $model <goal>"
+    Write-Host "Would run: $claude --dangerously-skip-permissions --disallowedTools AskUserQuestion --model $model <goal>"
     Write-Host $goal
     exit 0
 }
