@@ -54,10 +54,10 @@ class Launcher(unittest.TestCase):
         self.assertNotIn(TOKEN, json.dumps(seen["args"]) + seen["goal"])
         self.assertIn("Sign-in: the one-year token from 1Password.", run.stdout)
 
-    def test_the_session_runs_unattended_on_opus_5_5_and_cannot_ask(self):
+    def test_the_session_runs_unattended_on_the_newest_opus_and_cannot_ask(self):
         run, seen = self.run_launcher()
         self.assertEqual(seen["args"], ["--dangerously-skip-permissions", "--disallowedTools", "AskUserQuestion",
-                                        "--model", "claude-opus-5-5"])
+                                        "--model", "opus"])
         self.assertTrue(seen["goal"].startswith("/goal "))
 
     def test_the_goal_names_the_clone_the_launcher_is_in(self):
