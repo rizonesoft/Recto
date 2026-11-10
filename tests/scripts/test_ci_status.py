@@ -1153,6 +1153,24 @@ class Scheduled(unittest.TestCase):
         self.assertIn("left for the next poll", out)
         for n in (6, 7, 9):
             self.assertIn(f"runs/{n}", out.split("latest completed run")[-1])  # in the closing block the email carries
+    def test_the_first_run_reports_a_standing_timeout_and_not_an_old_one(self):
+        timed_out = {"jobs": {9: [cancelled_job(91)], 4: [cancelled_job(41)]}, "annotations": {91: [TIMED_OUT], 41: [TIMED_OUT]}}
+        # Main's newest build ran into its time limit when the task is installed: that is the standing red.
+        standing = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]}, **timed_out)
+        code, out = self.scheduled(standing)
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/9", out)
+        self.assertEqual(self.scheduled(standing)[0], 1)  # pending until its email is sent
+        self.runner_says("sent")
+        self.assertEqual(self.scheduled(standing)[0], 0)
+        # A timeout that a later green run has put behind it is history on a first run.
+        self.tearDown()
+        self.setUp()
+        old = FakeGh({"build.yml": [run(5), run(4, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]}, **timed_out)
+        code, out = self.scheduled(old)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.scheduled(old)[0], 0)
+
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},

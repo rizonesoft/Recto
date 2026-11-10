@@ -811,7 +811,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         if done:
             summary.append(f"{workflow}: latest completed run {done[-1].get('conclusion')} at "
                            f"{str(done[-1].get('headSha') or '')[:12]} {done[-1].get('url')}")
-        for run in done:
+        for position, run in enumerate(done):
             run_id = run["databaseId"]
             key = f"{run_id}/{run.get('attempt') or 1}"
             if key in passed or key in reported or run_id in reported or any(p["key"] == key for p in pending):
@@ -826,6 +826,8 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
                 standing = key
                 reds.append(item)
             else:
+                # Whether a newer run already gave a verdict: on the task's first run that makes this one history.
+                item["superseded"] = any(verdict_of(later) != "cancelled" for later in done[position + 1:])
                 undecided.append(item)
         for item in reds:
             if first_time and item["key"] != standing:
@@ -854,8 +856,8 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
             continue
         if not jobs:
             passed.append(item["key"])
-        elif first_time:
-            baseline.append(item["key"])
+        elif first_time and item["superseded"]:
+            baseline.append(item["key"])  # history, as for a failed run: a newer run has given its verdict since
         else:
             pending.append({**item, "failed_jobs": [str(job.get("name")) for job in jobs]})
     for item in pending:  # the names of the failed jobs, for the email; the run is reported with or without them
