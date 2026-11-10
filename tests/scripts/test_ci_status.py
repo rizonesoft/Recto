@@ -826,6 +826,16 @@ class Scheduled(unittest.TestCase):
         self.assertIn("runs/5;", out)
         self.assertNotIn("runs/4;", out)
 
+    def test_a_first_run_that_could_not_read_everything_still_skips_history_on_the_next(self):
+        class PlanDown(FakeGh):
+            def __call__(self, args):
+                if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "plan.yml":
+                    return 1, "", "HTTP 502: Bad Gateway"
+                return super().__call__(args)
+        runs = {"build.yml": [run(5), run(4, conclusion="failure")], "plan.yml": [run(2)]}
+        self.assertEqual(self.scheduled(PlanDown(runs, jobs=RED_JOBS))[0], 0)
+        code, out = self.scheduled(FakeGh(runs, jobs=RED_JOBS))
+        self.assertEqual(code, 0, out)  # run 4 failed before this task ever read main whole: history, not news
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},
@@ -834,13 +844,47 @@ class Scheduled(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("runs/9", out)
 
-    def test_an_outage_alerts_once_after_an_hour(self):
+    def test_an_outage_alerts_after_an_hour_until_its_email_is_sent_and_never_after(self):
         down = FakeGh(fail=(1, "", "HTTP 502"))
-        self.assertEqual(self.scheduled(down, now=1000.0)[0], 0)
-        self.assertEqual(self.scheduled(down, now=1000.0 + 1800)[0], 0)
-        code, out = self.scheduled(down, now=1000.0 + 3700)
+        start = self.NOW
+        self.assertEqual(self.scheduled(down, now=start)[0], 0)
+        self.assertEqual(self.scheduled(down, now=start + 1800)[0], 0)
+        code, out = self.scheduled(down, now=start + 3700)
         self.assertEqual(code, 1, out)
-        self.assertEqual(self.scheduled(down, now=1000.0 + 7400)[0], 0)
+        self.assertIn("not yet reported by email: GitHub could not be read for over 60 minutes", out)
+        # The outage that hides CI can stop the email too: it is raised again until one is sent.
+        self.runner_says("not sent", at=start + 3700)
+        self.assertEqual(self.scheduled(down, now=start + 4600)[0], 1)
+        self.runner_says("sent", at=start + 4600)
+        self.assertEqual(self.scheduled(down, now=start + 5500)[0], 0)
+        self.assertEqual(self.scheduled(down, now=start + 9000)[0], 0)  # the same outage: one email
+        # GitHub answers again, then goes away again: that is a new outage.
+        self.assertEqual(self.scheduled(FakeGh({"build.yml": [run(1)], "plan.yml": [run(2)]}), now=start + 9900)[0], 0)
+        self.assertEqual(self.scheduled(down, now=start + 10800)[0], 0)
+        self.assertEqual(self.scheduled(down, now=start + 10800 + 3700)[0], 1)
+
+    def test_a_run_that_cannot_be_judged_never_drops_a_red_found_beside_it(self):
+        self.baseline()
+
+        class ViewDown(FakeGh):
+            def __call__(self, args):
+                if args[:3] == ["run", "view", "8"]:
+                    return 1, "", "HTTP 503: Service Unavailable"
+                return super().__call__(args)
+        runs = {"build.yml": [run(9, conclusion="failure"), run(8, conclusion="cancelled"), run(7, conclusion="failure"), run(1)],
+                "plan.yml": [run(2)]}
+        code, out = self.scheduled(ViewDown(runs, jobs=RED_JOBS))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/7; failed jobs: Build x64 #7", out)
+        self.assertIn("runs/9; failed jobs: Build x64 #9", out)  # the run after the unreadable one is still judged
+        self.assertIn("build.yml run 8: gh run view exited 1: HTTP 503", out)
+        # The run that could not be judged is judged on the next poll: here it timed out, so it is a red as well.
+        self.runner_says("sent")
+        code, out = self.scheduled(FakeGh(runs, jobs={**RED_JOBS, 8: [cancelled_job(81)]}, annotations={81: [TIMED_OUT]}))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/8", out)
+        self.assertNotIn("runs/7;", out)
+        self.assertNotIn("runs/9;", out)
 
     def test_memory_that_cannot_be_written_is_unknown_and_never_a_silent_pass(self):
         (self.root / ".github" / "workflows").mkdir(parents=True)

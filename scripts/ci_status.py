@@ -617,65 +617,73 @@ def alert_delivered(root, raised_at):
 
 
 def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", now=time.time, out=print):
-    """The recto-ci-watch task: exits 1 for each red run not yet reported (so the runner's failure email names it), and
-    once when gh has stayed unreachable for an hour; 0 otherwise. Every completed run in the last 10 of each workflow is
-    read, so two reds between two polls are both reported, and a later green hides neither. A run counts as reported
-    only once the runner says its email was sent: until then the next poll raises it again."""
+    """The recto-ci-watch task. One rule: everything it finds worth an email (a red run, or `gh` unreachable for an
+    hour) is kept in `pending` and makes it exit 1 on every poll until the runner records that poll's email as sent;
+    only then is it forgotten, and never raised again. So a red found is never dropped by a later failed read, by
+    another workflow's outage or by an email that did not leave.
+
+    Every completed run in the last 10 of each workflow is judged, per attempt ("<run id>/<attempt>": a rerun keeps
+    its id, and a cancelled or green attempt that is rerun and fails is a new red), so two reds between two polls are
+    both reported and a later green hides neither. On the task's first run only the standing red is news."""
     path = Path(root) / REPORTED_FILE
     memory = read_state(path)
     memory = memory if isinstance(memory, dict) else {}
-    first_time = "reported" not in memory
-    # A run is judged per attempt ("<run id>/<attempt>"): a rerun keeps its id, and a cancelled or green attempt that
-    # is rerun and fails is a new red. A bare id from an older memory file stands for every attempt of that run.
+    # Until one poll has read everything, the task has no baseline: an older memory file with `reported` has one.
+    first_time = not memory.get("baselined", "reported" in memory)
+    # A bare run id from an older memory file stands for every attempt of that run.
     reported = [r for r in memory.get("reported", []) if isinstance(r, (int, str))]
     passed = [r for r in memory.get("passed", []) if isinstance(r, str)]
     pending = [p for p in memory.get("pending", []) if isinstance(p, dict) and isinstance(p.get("key"), str)]
     if pending and isinstance(memory.get("raised_at"), (int, float)) and alert_delivered(root, memory["raised_at"]):
         reported += [p["key"] for p in pending]
         pending = []
-    entries, found, unread = [], [], []
+    entries, unread, baseline = [], [], []
     for workflow in workflows:
-        # Each workflow is read on its own: one that cannot be read never drops a red found in another.
         try:
             entry = workflow_status(runner, workflow, branch)
             runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
                                     "--json", FIELDS])
-            decisive = (entry.get("verdict_run") or {}).get("databaseId")
-            new = []
-            for run in sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or "")):
-                run_id = run.get("databaseId")
-                key = f"{run_id}/{run.get('attempt') or 1}"
-                if (run.get("status") != "completed" or not isinstance(run_id, int) or key in reported
-                        or run_id in reported or key in passed or any(p["key"] == key for p in pending + new)):
-                    continue
-                verdict, jobs = settle(runner, run)
-                if verdict != "red":
-                    passed.append(key)
-                elif first_time and run_id != decisive:
-                    reported.append(key)  # history from before this task first ran: only the standing red is news
-                else:
-                    new.append({"key": key, "workflow": workflow, "url": run.get("url"),
-                                "sha": str(run.get("headSha") or "")[:12],
-                                "failed_jobs": [str(job.get("name")) for job in jobs]})
-            entries.append(entry)
-            found += new
         except Unavailable as exc:
             unread.append(f"{workflow}: {exc}")
-    alert = False
+            continue
+        entries.append(entry)
+        decisive = (entry.get("verdict_run") or {}).get("databaseId")
+        for run in sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or "")):
+            run_id = run.get("databaseId")
+            key = f"{run_id}/{run.get('attempt') or 1}"
+            if (run.get("status") != "completed" or not isinstance(run_id, int) or key in reported or run_id in reported
+                    or key in passed or key in baseline or any(p["key"] == key for p in pending)):
+                continue
+            try:
+                verdict, jobs = settle(runner, run)
+            except Unavailable as exc:
+                unread.append(f"{workflow} run {run_id}: {exc}")  # judged on a later poll; the others still count
+                continue
+            if verdict != "red":
+                passed.append(key)
+            elif first_time and run_id != decisive:
+                baseline.append(key)  # history from before this task first ran: only the standing red is news
+            else:
+                pending.append({"key": key, "workflow": workflow, "url": run.get("url"),
+                                "sha": str(run.get("headSha") or "")[:12],
+                                "failed_jobs": [str(job.get("name")) for job in jobs]})
     if unread:
         first = memory.get("unknown_since") or now()
         memory["unknown_since"] = first
-        alert = now() - first >= UNKNOWN_ALERT_SECONDS and not memory.get("unknown_reported")
-        if alert:
-            memory["unknown_reported"] = True
         out(f"ci-status unknown for {int((now() - first) // 60)} minutes: {'; '.join(unread)}")
+        outage = f"outage/{int(first)}"
+        if (now() - first >= UNKNOWN_ALERT_SECONDS and outage not in reported
+                and not any(p["key"] == outage for p in pending)):
+            pending.append({"key": outage, "workflow": "gh", "url": None, "sha": None, "failed_jobs": [],
+                            "note": f"GitHub could not be read for over {UNKNOWN_ALERT_SECONDS // 60} minutes"})
     else:
         memory.pop("unknown_since", None)
-        memory.pop("unknown_reported", None)
-    pending += found
-    if not unread or "reported" in memory or pending:
-        # The first run's baseline is only written once every workflow was read, so history is skipped once, whole.
-        memory.update(reported=reported[-400:], passed=passed[-400:], pending=pending)
+    memory.pop("unknown_reported", None)  # an older memory file's flag; the outage is a pending item now
+    if not (first_time and unread):
+        # The first run's baseline is kept only once everything was read, so history is skipped once, and whole.
+        reported += baseline
+    memory.update(reported=reported[-400:], passed=passed[-400:], pending=pending,
+                  baselined=not (first_time and unread))
     if pending:
         memory["raised_at"] = now()
     else:
@@ -684,12 +692,16 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     for entry in entries:
         out("\n".join(describe(entry)))
     for item in pending:
+        if item.get("note"):
+            out(f"not yet reported by email: {item['note']}")
+            continue
         jobs = f"; failed jobs: {', '.join(item['failed_jobs'])}" if item.get("failed_jobs") else ""
         out(f"red run on main: {item['workflow']} at {item.get('sha')} {item.get('url')}{jobs}")
-    if pending:
-        out(f"main has {len(pending)} red run(s) not yet reported by email: "
-            f"{', '.join(sorted({p['workflow'] for p in pending}))} (each is reported until its email is sent, then never again)")
-    return 1 if pending or alert else 0
+    reds = [p for p in pending if not p.get("note")]
+    if reds:
+        out(f"main has {len(reds)} red run(s) not yet reported by email: "
+            f"{', '.join(sorted({p['workflow'] for p in reds}))} (each is reported until its email is sent, then never again)")
+    return 1 if pending else 0
 
 
 def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
