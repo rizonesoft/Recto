@@ -17,7 +17,8 @@
 #
 # It starts whatever the checks show: low memory, a dirty tree and a guard left by an earlier run are printed, not
 # refused, because the process-plan audit decides what to do about each (owner decision 2026-11-10: warn and start).
-# The writer model is the one AGENTS.md names; change it there, in scripts/verify-agent-tiers.mjs and here together.
+# The model is Opus 5.5, the writer taking over from Fable 5.2 (owner direction 2026-11-10); AGENTS.md, "Who writes and
+# who reviews", records it. Changing it costs the $model line below, its test and that paragraph.
 param(
     [switch]$PrintOnly,
     [switch]$InstallShortcut,
@@ -27,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$model = 'claude-fable-5-2'
+$model = 'claude-opus-5-5'
 $shortcutName = 'Recto - Process Plan (Unattended).lnk'
 $tokenVault = 'Conclave'
 $tokenItem = 'Claude Code OAuth token (1 year, setup-token)'
