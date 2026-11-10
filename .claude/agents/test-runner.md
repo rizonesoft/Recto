@@ -1,9 +1,7 @@
 ---
 name: test-runner
 description: Run test suites, typecheck, lint, and verification scripts, then report results compactly -- pass/fail counts, the exact failing assertions, and the relevant output tail. Use whenever the main loop needs verification evidence without burning context on full test output.
-model: claude-haiku-5-5
-mechanical_share: 95
-haiku_replay: docs/experiments/2026-11-10-haiku-replay.md
+model: sonnet
 tools: Bash, Read, Glob, Grep
 ---
 

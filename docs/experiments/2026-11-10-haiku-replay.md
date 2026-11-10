@@ -32,10 +32,6 @@ Cost: 18,996 tokens and 7.2 s on Sonnet, 19,371 tokens and 8.2 s on Haiku.
 
 ## Decision
 
-No loss on either agent, so both pin `claude-haiku-5-5`. What the replay covers is what the agents now claim: running named commands and reporting exit codes, counts and failure text, and answering git questions with identifiers (SHAs, counts, file lists). It does not cover reading what a diff means, so `git-runner` no longer offers that: the main session reads a diff itself. The main session checks what these agents return against the exit code or the identifier, which is the condition Haiku runs under.
+Haiku 5.5 lost nothing on either agent, on what the replay covers: running named commands and reporting exit codes, counts and failure text, and answering git questions with identifiers (SHAs, counts, file lists). It does not cover reading what a diff means.
 
-`code-explorer`, `debug-evidence` and `mutation-tester` stay on Sonnet 5.5: each reads code or evidence and chooses what matters, which is not 90 percent mechanical.
-
-There is no Opus subagent. Opus 5.5 sits below the writer (Fable 5.2), so anything too hard for Sonnet (diagnosis, design, a verdict) stays in the main session and gains nothing from a weaker model at a higher price than Sonnet. Reversing this costs one agent file with a `model_rationale:` line.
-
-Reversing the Haiku pins costs the `model:`, `mechanical_share:` and `haiku_replay:` lines in the two agent files.
+Owner decision 2026-11-10: every subagent stays on Sonnet 5.5 for now, because the writer is due to change to Opus and the tiers will be set again then. Both agents were pinned to Haiku for one commit (`a4a35cd`) and moved back. A later move to Haiku starts from this record, costs the `model:`, `mechanical_share:` and `haiku_replay:` lines in the two agent files, and must first narrow `git-runner` to identifier answers, since its diff summaries were not replayed.
