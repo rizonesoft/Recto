@@ -529,60 +529,90 @@ class WaitAtOnce(unittest.TestCase):
     def test_two_watches_started_together_never_both_follow_one_commit(self):
         import threading
         lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
+        # A lock file left by a watch that was killed is no obstacle and nobody deletes it: the claim is the lock the
+        # operating system holds, so eight recoveries started together still yield exactly one watch.
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"pid": 4242, "born": 111}), encoding="utf-8")
         barrier, results = threading.Barrier(8), []
 
         def start(n):
             barrier.wait()
-            results.append((n, ci.claim(lock, n, n * 10, alive=lambda pid: True, born=lambda pid: pid * 10, sleep=lambda s: None)))
+            results.append((n, *ci.claim(lock, n, n * 10)))
         threads = [threading.Thread(target=start, args=(n,)) for n in range(1, 9)]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(timeout=30)
-        winners = [n for n, holder in results if holder is None]
-        self.assertEqual(len(winners), 1, results)
-        self.assertEqual({holder["pid"] for n, holder in results if holder is not None}, set(winners))
-        self.assertEqual(json.loads(lock.read_text(encoding="utf-8")), {"pid": winners[0], "born": winners[0] * 10})
+        try:
+            winners = [n for n, handle, holder in results if handle is not None]
+            self.assertEqual(len(winners), 1, results)
+            self.assertEqual(json.loads(lock.read_text(encoding="utf-8")), {"pid": winners[0], "born": winners[0] * 10})
+            # While it is held, every later claim is refused too, and none of them changed the holder's record.
+            handle, holder = ci.claim(lock, 99, 990)
+            self.assertIsNone(handle)
+            self.assertEqual(holder, {"pid": winners[0], "born": winners[0] * 10})
+        finally:
+            for _, handle, _ in results:
+                if handle is not None:
+                    handle.close()
+        # Given back, it is there for the next watch.
+        handle, holder = ci.claim(lock, 99, 990)
+        self.assertIsNotNone(handle)
+        handle.close()
+
+    def test_a_claim_ends_with_the_process_that_held_it(self):
+        lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
+        code = ("import importlib.util, sys, time\n"
+                f"spec = importlib.util.spec_from_file_location('ci_status', r'{SCRIPT}')\n"
+                "ci = importlib.util.module_from_spec(spec); spec.loader.exec_module(ci)\n"
+                f"handle, holder = ci.claim(r'{lock}', 7, 70)\n"
+                "print('held' if handle else 'refused', flush=True)\n"
+                "time.sleep(60)\n")
+        child = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(child.stdout.readline().strip(), "held")
+            handle, holder = ci.claim(lock, 99, 990)
+            self.assertIsNone(handle)
+            self.assertEqual(holder, {"pid": 7, "born": 70})
+        finally:
+            child.kill()  # the watch is killed without any chance to clean up
+            child.wait(timeout=30)
+            child.stdout.close()
+        handle, holder = ci.claim(lock, 99, 990)
+        self.assertIsNotNone(handle, holder)
+        handle.close()
 
     def test_a_watch_holds_its_claim_while_it_runs_and_gives_it_back_when_it_ends(self):
         lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
-        seen = []
+        seen, second, lines, root = [], [], [], self.root
 
-        class Looking(WaitGh):
-            def __call__(self, args):
-                seen.append(json.loads(lock.read_text(encoding="utf-8")) if lock.exists() else None)
-                return super().__call__(args)
-        # The claim is there before the first call to GitHub, and a watch started meanwhile is refused.
-        second = []
+        class Starting(WaitGh):
+            """On its first call (the watch is already following), it starts a second watch of the same commit."""
 
-        class Starting(Looking):
             def __call__(self, args):
                 if not second:
-                    second.append(None)
+                    seen.append(json.loads(lock.read_text(encoding="utf-8")))
                     inner = Clock()  # its own clock, so a watch that is wrongly let through ends at once here
-                    second[0] = ci.wait(SHA_NEW, runner=WaitGh({}), git=lambda a: "x\n", root=self_root, out=lines.append,
-                                        pid=2, alive=lambda pid: True, born=lambda pid: 5, clock=inner,
-                                        sleep=inner.sleep)
+                    second.append(ci.wait(SHA_NEW, runner=WaitGh({}), git=lambda a: "x\n", root=root, out=lines.append,
+                                          pid=2, born=lambda pid: 5, clock=inner, sleep=inner.sleep))
                 return super().__call__(args)
-        self_root, lines = self.root, []
         code, out, _ = self.run_wait(Starting({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}),
-                                     alive=lambda pid: True, born=lambda pid: 5)
+                                     born=lambda pid: 5)
         self.assertEqual((code, second), (0, [6]), out)
         self.assertIn("already watched by process 1", "\n".join(lines))
-        self.assertEqual(seen[0], {"pid": 1, "born": 5})
-        self.assertFalse(lock.exists())
+        self.assertEqual(seen, [{"pid": 1, "born": 5}])
+
+        def free():
+            handle, _ = ci.claim(lock, 99, 990)
+            if handle is not None:
+                handle.close()
+            return handle is not None
+        self.assertTrue(free())
         # It is given back when the watch ends in an error too.
         with unittest.mock.patch.object(ci, "write_state", side_effect=ci.Unavailable("cannot write x")):
             with self.assertRaises(ci.Unavailable):
                 self.run_wait(WaitGh({}))
-        self.assertFalse(lock.exists())
-        # A claim whose holder is gone, or whose pid is another process now, is taken over.
-        for holder, facts in (({"pid": 4242, "born": 111}, {"alive": lambda pid: False}),
-                              ({"pid": 4242, "born": 111}, {"alive": lambda pid: True, "born": lambda pid: 999})):
-            lock.write_text(json.dumps(holder), encoding="utf-8")
-            code, out, _ = self.run_wait(WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}), **facts)
-            self.assertEqual(code, 0, out)
-            self.assertFalse(lock.exists())
+        self.assertTrue(free())
 
     def test_progress_is_printed_as_it_happens(self):
         gh = WaitGh({"build.yml": [[], [], [wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
@@ -645,7 +675,8 @@ class WaitAtOnce(unittest.TestCase):
         self.assertEqual(asked[:2], [["rev-parse", "--verify", "bbbbbbb^{commit}"], ["rev-parse", "--verify", "aaaaaaa^{commit}"]])
         self.assertEqual(asked[2], ["diff", "--name-only", SHA_OLD, SHA_NEW])
         self.assertEqual((self.state()["sha"], self.state()["since"]), (SHA_NEW, SHA_OLD))
-        self.assertEqual([p.name for p in (self.root / "build" / "ci-watch").iterdir()], [f"{SHA_NEW}.json"])
+        self.assertEqual(sorted(p.name for p in (self.root / "build" / "ci-watch").iterdir()),
+                         [f"{SHA_NEW}.json", f"{SHA_NEW}.lock"])
         with redirect_stdout(io.StringIO()) as refused:
             code = ci.main(["--wait", "ccccccc"], runner=WaitGh({}), root=self.root, git=lambda args: "not a commit\n")
         self.assertEqual(code, 3)

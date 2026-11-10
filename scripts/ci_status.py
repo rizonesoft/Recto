@@ -441,55 +441,57 @@ def pushed_from(runner, sha, branch):
     return None
 
 
-def claim(lock, pid, created, alive=process_alive, born=process_born, sleep=time.sleep):
-    """Take the watch of one commit for process `pid`: create `lock` if no live watch holds it. Returns None when the
-    claim is this process's, or the holder's record when another live watch has it. Creating the file is the claim
-    (it fails if the file exists), so of two watches started together exactly one goes on. A lock whose holder is gone
-    (its pid dead, or given to another process) is removed and claimed."""
+LOCK_BYTE = 1 << 30  # far past the lock file's few bytes of text, so the text stays readable while the byte is locked
+
+
+def claim(lock, pid, created):
+    """Take the watch of one commit for process `pid`. Returns (handle, None) when the claim is this process's, held
+    until `handle` is closed, or (None, the holder's record) when another watch has it.
+
+    The claim is a lock the operating system holds on the open lock file (`msvcrt.locking` on Windows, `flock`
+    elsewhere), not the file's existence: it is given to exactly one of any number of watches that ask together, and
+    it ends by itself when its holder exits or is killed. So there is no stale lock to detect and nothing to delete,
+    and no watch can remove another's claim. The file stays where it is and only names the holder."""
     lock = Path(lock)
-    for _ in range(3):
-        try:
-            lock.parent.mkdir(parents=True, exist_ok=True)
-            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            holder = read_state(lock)
-            if holder is None:
-                sleep(0.5)  # created this instant by another watch that has not written its name yet
-                holder = read_state(lock)
-            if isinstance(holder, dict) and holder.get("pid") != pid and watch_alive(holder, alive, born):
-                return holder
-            try:
-                lock.unlink()  # its holder is gone; the next turn of the loop claims it, or loses to whoever did
-            except OSError:
-                pass
-            continue
-        except OSError as exc:
-            raise Unavailable(f"cannot write {lock}: {exc}; free disk space or close the program holding the file, "
-                              f"then run the same command again") from None
-        with os.fdopen(handle, "w", encoding="utf-8") as out:
-            json.dump({"pid": pid, "born": created}, out)
-        return None
-    raise Unavailable(f"cannot claim {lock}: it keeps being taken; run the same command again")
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock, "a+b")
+    except OSError as exc:
+        raise Unavailable(f"cannot write {lock}: {exc}; free disk space or close the program holding the file, "
+                          f"then run the same command again") from None
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(LOCK_BYTE)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        holder = read_state(lock)
+        return None, holder if isinstance(holder, dict) else {}
+    handle.seek(0)
+    handle.truncate()
+    handle.write(json.dumps({"pid": pid, "born": created}).encode("utf-8"))
+    handle.flush()
+    return handle, None
 
 
-def wait(sha, *, pid=None, alive=process_alive, born=process_born, root=ROOT, out=say, sleep=time.sleep, **options):
+def wait(sha, *, pid=None, born=process_born, root=ROOT, out=say, **options):
     """Follows the watched workflows' runs on `sha` (see `follow`), as the only watch of that commit: it claims
     `build/ci-watch/<sha>.lock` before anything else and holds it until it ends, so a watch started beside it (a second
     session recovering, a heartbeat) exits 6 at once instead of following the same runs and writing the same file."""
     me = pid if pid is not None else os.getpid()
-    lock = watch_file(root, sha).with_suffix(".lock")
-    holder = claim(lock, me, born(me), alive, born, sleep)
-    if holder is not None:
-        out(f"ci watch: {sha[:12]} is already watched by process {holder.get('pid')}; no second watch is started. "
-            f"next: wait for that watch to end")
+    handle, holder = claim(watch_file(root, sha).with_suffix(".lock"), me, born(me))
+    if handle is None:
+        out(f"ci watch: {sha[:12]} is already watched by process {holder.get('pid', 'unknown')}; no second watch is "
+            f"started. next: wait for that watch to end")
         return 6
     try:
-        return follow(sha, pid=me, alive=alive, born=born, root=root, out=out, sleep=sleep, **options)
+        return follow(sha, pid=me, born=born, root=root, out=out, **options)
     finally:
-        try:
-            lock.unlink()
-        except OSError:
-            pass  # already gone; a lock left behind is released by the next watch, which sees its holder is dead
+        handle.close()  # gives the claim back; the operating system does the same if this process dies first
 
 
 def follow(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
