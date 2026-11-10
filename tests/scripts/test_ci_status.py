@@ -690,13 +690,12 @@ class Gate(unittest.TestCase):
         rerun = GateGh({"build.yml": [wrun(2, "build", status="in_progress")]})
         code, out = self.gate(SHA_NEW, self.GREEN, gh=rerun)
         self.assertEqual(code, 6, out)
-        self.assertIn("build.yml is running again on bbbbbbbbbbbb", out)
-        self.assertIn("the recorded green is stale", out)
+        self.assertIn("the recorded green of bbbbbbbbbbbb is stale: build.yml is running again", out)
         failed = GateGh({"build.yml": [wrun(2, "build", conclusion="failure")]},
                         jobs={2: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "u"}]})
         code, out = self.gate(SHA_NEW, self.GREEN, gh=failed)
         self.assertEqual(code, 1, out)
-        self.assertIn("build.yml is red on bbbbbbbbbbbb after a recorded green", out)
+        self.assertIn("ci gate: red at bbbbbbbbbbbb after a recorded green: build.yml is red", out)
         self.assertIn("failed jobs: Build x64", out)
         # GitHub not answering is unknown (3), never the old green.
         with self.assertRaises(ci.Unavailable):
@@ -718,12 +717,40 @@ class Gate(unittest.TestCase):
                      jobs={2: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "u"}]})
         code, out = self.gate(SHA_NEW, plan_only, gh=red)
         self.assertEqual(code, 1, out)
-        self.assertIn("build.yml is red on bbbbbbbbbbbb after a recorded green", out)
+        self.assertIn("after a recorded green: build.yml is red", out)
         running = GateGh({"plan.yml": green_plan, "build.yml": [wrun(2, "build", status="in_progress")]})
         self.assertEqual(self.gate(SHA_NEW, plan_only, gh=running)[0], 6)
         # A workflow this push did not start, and the watch did not expect, holds nothing.
         code, out = self.gate(SHA_NEW, plan_only, gh=GateGh({"plan.yml": green_plan}))
         self.assertEqual(code, 0, out)
+
+    def test_a_red_is_never_hidden_behind_a_workflow_still_running_or_unreadable(self):
+        workflows = self.root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        for name in ("build.yml", "plan.yml"):
+            (workflows / name).write_text("on:\n  push:\n", encoding="utf-8")
+        both = {"sha": SHA_NEW, "pid": 2, "exit": 0, "workflows": {
+            "build.yml": {"state": "green", "run": {"url": "b"}}, "plan.yml": {"state": "green", "run": {"url": "p"}}}}
+        jobs = {3: [{"name": "validate", "status": "completed", "conclusion": "failure", "url": "u"}]}
+        # Both were started again: the build still runs (it is read first), the plan has failed.
+        gh = GateGh({"build.yml": [wrun(2, "build", status="in_progress")],
+                     "plan.yml": [wrun(3, "plan-gates", conclusion="failure")]}, jobs=jobs)
+        code, out = self.gate(SHA_NEW, both, gh=gh)
+        self.assertEqual(code, 1, out)
+        self.assertIn("plan.yml is red", out)
+        self.assertIn("failed jobs: validate", out)
+        self.assertIn("build.yml is running again", out)
+
+        class BuildDown(GateGh):
+            def __call__(self, args):
+                if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "build.yml":
+                    return 1, "", "HTTP 502: Bad Gateway"
+                return super().__call__(args)
+        code, out = self.gate(SHA_NEW, both, gh=BuildDown({"plan.yml": [wrun(3, "plan-gates", conclusion="failure")]}, jobs=jobs))
+        self.assertEqual(code, 1, out)
+        # With no red, a workflow that cannot be read is unknown, never the recorded green.
+        with self.assertRaises(ci.Unavailable):
+            self.gate(SHA_NEW, both, gh=BuildDown({"plan.yml": [wrun(3, "plan-gates")]}))
 
     def test_each_other_end_names_its_own_recovery(self):
         def ended(code, state, watches=1, run_id=7):

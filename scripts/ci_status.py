@@ -603,21 +603,36 @@ def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, 
         # Every watched workflow is read, not only the ones the watch recorded: a watch restarted without its push
         # range can have expected too few, and a run it never saw must not pass on its green.
         directory = Path(root) / ".github" / "workflows"
+        red, running, unread = [], [], []
         for workflow in sorted(set(workflows) | {w for w in watched if (directory / w).is_file()}):
-            runs = runs_of_commit(runner, workflow, head)
-            latest = runs[-1] if runs else None
-            if latest is None and workflow not in workflows:
-                continue  # not started by this push, and the watch did not expect it either
-            if latest is None or latest.get("status") != "completed":
-                out(f"ci gate: {workflow} is running again on {head[:12]} "
-                    f"({(latest or {}).get('url') or 'no run listed'}), so the recorded green is stale. next: start {again}")
-                return 6
-            verdict, jobs = settle(runner, latest)
-            if verdict != "green":
+            # Every workflow is read before the gate answers, so a red is never hidden behind another workflow that
+            # is still running or cannot be read.
+            try:
+                runs = runs_of_commit(runner, workflow, head)
+                latest = runs[-1] if runs else None
+                if latest is None and workflow not in workflows:
+                    continue  # not started by this push, and the watch did not expect it either
+                if latest is None or latest.get("status") != "completed":
+                    running.append(f"{workflow} is running again ({(latest or {}).get('url') or 'no run listed'})")
+                    continue
+                verdict, jobs = settle(runner, latest)
+            except Unavailable as exc:
+                unread.append(f"{workflow}: {exc}")
+                continue
+            if verdict == "red":
                 names = ", ".join(str(job["name"]) for job in jobs)
-                out(f"ci gate: {workflow} is {verdict} on {head[:12]} after a recorded green ({latest.get('url')})"
-                    + (f"; failed jobs: {names}" if names else "") + f". next: start {again}")
-                return 1 if verdict == "red" else 6
+                red.append(f"{workflow} is red ({latest.get('url')})" + (f"; failed jobs: {names}" if names else ""))
+            elif verdict != "green":
+                running.append(f"{workflow} is {verdict} ({latest.get('url')})")
+        if red:
+            out(f"ci gate: red at {head[:12]} after a recorded green: " + "; ".join(red + running)
+                + f". next: red comes first: fix it at its cause, push, and watch the fix; this commit's watch is {again}")
+            return 1
+        if unread:
+            raise Unavailable("; ".join(unread))
+        if running:
+            out(f"ci gate: the recorded green of {head[:12]} is stale: " + "; ".join(running) + f". next: start {again}")
+            return 6
         out(f"ci gate: green at {head[:12]}")
         return 0
     parts = []
