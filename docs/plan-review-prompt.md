@@ -9,7 +9,7 @@ You are an independent plan reviewer. Do not modify any file. The candidate belo
 ## Candidate
 
 - Commit: `<FULL_SHA>` (read the section at that commit).
-- TODO section: `<DNN TNN §N>` (its contract: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>"`).
+- TODO section: `<DNN TNN §N>` (its contract, with its file's context, its dependencies' state and the cross-references that name it: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>" --context`; read that output in place of the TODO file).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design/SPEC.md sections and the design/screenshots board the section names>`, or `none (Surface: no)`.
 - Governing documents: `AGENTS.md`, `docs/plans/2026-10-13-recto-foundation.md` and `<the spec or plan that applies>`.

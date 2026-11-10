@@ -112,12 +112,13 @@ python scripts/todo-graph.py plan --sync         # regenerate todo/implementatio
 python scripts/todo-graph.py plan --check        # fail if the generated plan is stale (CI runs this)
 python scripts/todo-graph.py query ready         # sections that can run now (also: blocked, stats, deferred, adjacency)
 python scripts/todo-graph.py resolve 'D01 T01 §1'  # 0 ready, 1 no such section, 2 no reference, 3 verified, 4 waiting
+python scripts/todo-graph.py resolve 'D01 T01 §1' --context   # same exit codes; the section with its file context, as Markdown
 python scripts/todo-graph.py classify 'D01 T01 §1' 'D02 T01 §1'   # dispositions as JSON
 python scripts/todo-graph.py stamp 'D01 T01 §1' --sha <commit> --plan '<report>' --completion '<report>:complete' --review '1:<report>:clean' --check '<cmd> -> <result>'
 python -m unittest tests.scripts.test_todo_graph   # the tooling's own tests
 ```
 
-`resolve` is the front door for the section skills and takes whatever you already had in front of you: a `DNN TNN §N` reference, a `<path> §N` pair, or a row pasted straight out of the generated plan. So `process todo section: | [ ] | D00 T01 §1 | ... |` is a complete instruction; nobody hand-translates a reference into a filename.
+`resolve` is the front door for the section skills and takes whatever you already had in front of you: a `DNN TNN §N` reference, a `<path> §N` pair, or a row pasted straight out of the generated plan. So `process todo section: | [ ] | D00 T01 §1 | ... |` is a complete instruction; nobody hand-translates a reference into a filename. `resolve '<ref>' --context` is what a session reads to build or review one section, in place of the TODO file: it prints a `- file:` line (path, status, frozen, file dependencies) and a `- state:` line (the exit code and, when waiting, why), then the file from its title to its first section (Goal, Current state, Inputs, Outcome, Adjacency, the Implementation Order table) and the section, both byte for byte, the file's `## Verification` block, a `## Dependencies` list (each prerequisite `[x] settled`, `[ ] open` or `[x] suspect` with the open section underneath, its stamp and receipt; each file dependency with its settled count), `## Waiting Needs`, `## Cross-references in` and `## Cross-references out` (every XREF and deferral line that names the section or that it makes, with `path:line`), and a last line with the bytes printed against the file's size. Refusals print nothing on standard output.
 
 ## Skills
 

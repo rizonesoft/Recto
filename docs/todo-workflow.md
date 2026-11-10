@@ -29,6 +29,9 @@ python3 scripts/todo-graph.py query blocked   # sections waiting, and on what
 python3 scripts/todo-graph.py query stats     # tree health
 python3 scripts/todo-graph.py query deferred  # open and resolved deferrals
 python3 scripts/todo-graph.py query plan      # plan title, phase names and every section's status, as JSON
+python3 scripts/todo-graph.py resolve 'D01 T02 §10' --context   # one section to build or review, read in place of its file
 ```
+
+`resolve '<ref>' --context` prints, as Markdown and with `resolve`'s exit codes (0 ready, 1 no such section, 2 no reference or a refused graph, 3 verified, 4 waiting): the file's state and why the section waits, the file's own context (title, Goal, Current state, Inputs, Outcome, Adjacency, the Implementation Order table) and the section word for word, the file's Verification block, each prerequisite's effective state with its stamp and receipt, the section's waiting Needs, and every cross-reference and deferral that names the section or that it makes, with `path:line`. A session building or reviewing one section reads that output and does not open the TODO file; `process-todo-file` and `groom-plan` still read whole files.
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.

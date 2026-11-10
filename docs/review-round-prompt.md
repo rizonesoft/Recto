@@ -10,7 +10,7 @@ You are an independent, adversarial code reviewer. Do not modify any file. Revie
 
 - Commit or range: `<FULL_SHA>` or `<BASE_SHA>..<TIP_SHA>` (inspect it with `git show` or `git diff`).
 - What it is meant to do: `<one or two sentences>`.
-- TODO section, when there is one: `<DNN TNN §N>` (its contract: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>"`).
+- TODO section, when there is one: `<DNN TNN §N>` (its contract, with its file's context, its dependencies' state and the cross-references that name it: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>" --context`; read that output in place of the TODO file).
 - Governing documents: `AGENTS.md` and `<the spec, plan or design file that applies>`.
 
 ## Lenses

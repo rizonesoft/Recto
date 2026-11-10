@@ -9,6 +9,13 @@
     python scripts/todo-graph.py resolve 'D02 T01 §1'        # exit 0 ready, 1 no such section,
                                                              # 2 no reference in input, 3 verified,
                                                              # 4 waiting; a pasted plan row works too
+    python scripts/todo-graph.py resolve 'D02 T01 §1' --context   # the same exit codes; prints Markdown: the
+                                                             # section word for word, its file's context (title,
+                                                             # Goal, Current state, Inputs, Outcome, Adjacency,
+                                                             # the Implementation Order table), the file's
+                                                             # Verification block, each dependency's effective
+                                                             # state, waiting Needs, cross-references in and out,
+                                                             # and a size line. Read this in place of the file.
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
         --plan '<findings file>' \
@@ -27,7 +34,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
-from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
+from todo_graph import (ROOT, Refused, adjacency_report, atomic, context, deferrals, disposition,  # noqa: E402
                         extract_ref, graph, ordered, plan_config, projections, require, review_rounds, settled, stamp,
                         suspects, unstamp)
 
@@ -63,6 +70,10 @@ def main():
     q.add_argument("kind", choices=["ready", "blocked", "stats", "deferred", "adjacency", "plan", "rounds"])
     r = sub.add_parser("resolve")
     r.add_argument("ref")
+    r.add_argument("--context", action="store_true",
+                   help="print the section as Markdown with its file's context (title to the Implementation Order "
+                        "table), the file's Verification block, its dependencies' effective state, its waiting "
+                        "Needs and the cross-references that name it, in place of the JSON; same exit codes")
     c = sub.add_parser("classify")
     c.add_argument("refs", nargs="+")
     plan = sub.add_parser("plan")
@@ -108,6 +119,13 @@ def main():
             print("TODO refused: no such section: " + ref, file=sys.stderr)
             return 1
         row = rows[ref]
+        if args.context:
+            # Bytes, not text: the file context and the section are slices of the file, and a text stream on
+            # Windows would turn each newline into two bytes.
+            sys.stdout.flush()
+            sys.stdout.buffer.write(context(ROOT, ref, rows))
+            sys.stdout.buffer.flush()
+            return disposition(row, rows)
         unmet = [d for d in row.depends if not settled(d, rows)]
         print(json.dumps({**row.public(), "body": row.body, "unmet_depends": unmet,
                           "skill_arg": ref, "exit": disposition(row, rows)},

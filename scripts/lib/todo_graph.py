@@ -1293,4 +1293,126 @@ def suspects(root, ref):
                 frontier.append(row.ref)
     return [r for r in found if rows[r].done]
 
+
+XREF_MARK = "-> XREF:"
+DEFERRAL_LINE = re.compile(r"> \*\*(?:Deferred|Resolved):\*\*")
+STATE_WORDS = {0: "ready", 3: "verified", 4: "waiting"}
+
+
+def context_index(root=ROOT):
+    """What `context` reads from the whole tree, gathered once so a caller that prints many sections scans the tree
+    once: every line holding a cross-reference, as (path, line number, text, targets, is a deferral), and each
+    file's frontmatter by path."""
+    root = Path(root)
+    xrefs, fronts = [], {}
+    for path in sorted((root / "todo").glob("[0-9][0-9]-*/TODO-*.md")):
+        relative = path.relative_to(root).as_posix()
+        text = read_text(path)
+        fronts[relative] = front_matter(text, relative)[0]
+        d, t = path.parent.name[:2], path.name[5:7]
+        for number, line in enumerate(text.split("\n"), 1):
+            if XREF_MARK in line:
+                targets = [xref_target(tail, d, t) for tail in line.split(XREF_MARK)[1:]]
+                xrefs.append((relative, number, line.strip(), targets, DEFERRAL_LINE.match(line) is not None))
+    return {"xrefs": xrefs, "fronts": fronts}
+
+
+def _unsettled_ancestors(ref, rows):
+    """The open sections under ref, however far back: what keeps a stamped prerequisite from being settled."""
+    stack, seen, found = list(rows[ref].depends), set(), []
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if not rows[current].done:
+            found.append(current)
+        stack.extend(rows[current].depends)
+    return sorted(found)
+
+
+def _dependency_line(ref, rows):
+    row = rows[ref]
+    if not row.done:
+        return f"- {ref} [ ] open: {row.title}"
+    stamp_line = field(row.body, "Verified", False).split(" | ")
+    proof = f"verified {stamp_line[0]} {stamp_line[-1]} | receipt {row.receipt}"
+    if settled(ref, rows):
+        return f"- {ref} [x] settled: {row.title} | {proof}"
+    return (f"- {ref} [x] suspect (open underneath: {', '.join(_unsettled_ancestors(ref, rows))}): {row.title} | "
+            f"{proof}")
+
+
+def context(root, ref, rows=None, index=None):
+    """One section with everything a session needs from its TODO file, as the bytes `resolve --context` prints: the
+    file's own text from its title to its first section (Goal, Current state, Inputs, Outcome, Adjacency and the
+    Implementation Order table), the section, and the file's Verification block, each a slice of the file's bytes,
+    then the section's dependencies with their effective state, its waiting Needs, the cross-references and
+    deferrals that name it or that it makes, and a size line. `ref` must be in the graph."""
+    root = Path(root)
+    rows = graph(root) if rows is None else rows
+    index = context_index(root) if index is None else index
+    row = rows[ref]
+    raw = (root / row.path).read_bytes()
+    text = raw.decode("utf-8")
+    title = re.search(r"^# TODO-\d{2} -- ", text, re.M)
+    first = re.search(r"^## \d+\. ", text, re.M)
+    section = section_text(text, row.number)
+    verification = re.search(r"^## Verification\r?$", text, re.M)
+    require(None not in (title, first, section, verification), f"cannot slice the file context: {row.path}")
+    head = re.search(rf"^## {row.number}\. ", text, re.M)
+    first_line = text.count("\n", 0, head.start()) + 1
+    last_line = first_line + section.count("\n") - 1
+    d, t = ref[1:3], ref[5:7]
+    front = index["fronts"][row.path]
+    file_deps = json.loads(front.get("depends_on", "[]"))
+    table = read_text(root / row.path).split("## Implementation Order\n", 1)[1].split("\n## ", 1)[0]
+    cell = next(m[4].strip() for m in map(ROW.fullmatch, table.splitlines()) if m and int(m[2]) == row.number)
+    own_deps = [] if cell == "--" else [normalize(v, d, t) for v in cell.split(",")]
+    code = disposition(row, rows)
+    unmet = [dep for dep in row.depends if not settled(dep, rows)]
+    state = f"- state: exit {code} ({STATE_WORDS[code]})"
+    if code == 4:
+        reasons = ([f"file status {row.status}"] if row.status != "active" else []) \
+            + [f"waiting Need {need}" for need in row.needs if need in WAITING] \
+            + ([f"unsettled prerequisites {', '.join(unmet)}"] if unmet else [])
+        state += ": " + "; ".join(reasons)
+
+    def block(value):
+        """A slice of the file, unchanged, followed by one blank line when it does not already end with one."""
+        data = value.encode("utf-8")
+        return data + (b"" if data.endswith(b"\n\n") or data.endswith(b"\r\n\r\n") else b"\n")
+
+    lines = [f"- {ref} needs nothing stamped before it"] if not own_deps and not file_deps else []
+    lines += [_dependency_line(dep, rows) for dep in own_deps]
+    ids = {value["id"]: path for path, value in index["fronts"].items()}
+    for dep in file_deps:
+        members = [r for r in ordered(rows) if r.path == ids[dep]]
+        loose = [r.ref for r in members if not settled(r.ref, rows)]
+        lines.append(f"- file {dep} ({ids[dep]}): {len(members) - len(loose)} of {len(members)} sections settled"
+                     + (f"; not settled: {', '.join(loose)}" if loose else ""))
+    waiting = [f"- {need}: a person must answer; `resolve` exits 4 until the answer is recorded in the section and "
+               f"the Need is removed" for need in row.needs if need in WAITING] or ["none"]
+    inbound, outbound = [], []
+    for path, number, line, targets, deferral in index["xrefs"]:
+        entry = f"- {'deferral' if deferral else 'xref'} {path}:{number}: {line}"
+        if path == row.path and first_line <= number <= last_line:
+            if any(target != ref for target in targets):
+                outbound.append(entry)
+        elif ref in targets:
+            inbound.append(entry)
+    inbound, outbound = inbound or ["none"], outbound or ["none"]
+
+    def listing(heading, items):
+        return (f"## {heading}\n\n" + "\n".join(items) + "\n\n").encode("utf-8")
+
+    out = (f"# resolve --context {ref}\n\n"
+           f"- file: `{row.path}` | status {row.status} | frozen {front.get('frozen', 'false')} | depends_on "
+           f"{', '.join(file_deps) or 'none'}\n{state}\n\n").encode("utf-8")
+    out += block(text[title.start():first.start()]) + block(section)
+    out += b"## File verification\n\n" + block(text[verification.start():])
+    out += listing("Dependencies", lines) + listing("Waiting Needs", waiting)
+    out += listing("Cross-references in", inbound) + listing("Cross-references out", outbound)
+    return out + f"context {len(out):,} bytes of {len(raw):,} ({len(out) / len(raw) * 100:.1f}%)\n".encode("utf-8")
+
 M_FLAG = re.M

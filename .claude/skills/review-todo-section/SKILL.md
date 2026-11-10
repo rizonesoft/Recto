@@ -17,7 +17,7 @@ Review is mandatory and independent: the implementing session self-reviews, and 
 
 ## Step 0: resolve the argument
 
-Same front door as `process-todo-section`: `python scripts/todo-graph.py resolve "$ARGUMENTS"`. Exit 3 means the row is already `[x]`: that is the signal for audit stance, not an error.
+Same front door as `process-todo-section`: `python scripts/todo-graph.py resolve "$ARGUMENTS"`. Exit 3 means the row is already `[x]`: that is the signal for audit stance, not an error. For the section's contract and everything it needs from its file (the file's Goal, Outcome and Verification block, each prerequisite's effective state and receipt, the cross-references and deferrals that name it), run `python scripts/todo-graph.py resolve "$ARGUMENTS" --context` and read that output in place of the TODO file; the exit code is the same.
 
 ## The three questions
 

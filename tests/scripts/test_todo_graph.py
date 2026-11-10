@@ -1256,6 +1256,30 @@ class Stamp(Tree):
         path.write_text(path.read_text(encoding="utf-8").replace("> **Unstamped:** ", "> **Note:** "), encoding="utf-8")
         self.refuses("stamped section has open dependency")
 
+    def test_resolve_context_each_prerequisite_shows_its_effective_state_stamp_and_receipt(self):
+        path = self.root / "todo/00-workspace/TODO-02-b.md"
+        path.write_text(todo_file([(1, "Base", 0, "none", "--"), (2, "Mid", 0, "none", "§1"), (3, "Top", 0, "none", "§2"),
+                                   (4, "Open", 0, "none", "--"), (5, "Consumer", 0, "none", "§3, §4")], ident="bravo")
+                        .replace("- [ ] Work.", "- [x] Work.")
+                        .replace("**Test checkpoint:**", STARTED + "**Test checkpoint:**"), encoding="utf-8")
+        self.index("TODO-02-b.md")
+        self.commit("start bravo")
+        for n in (1, 2, 3):
+            self.stamp(f"D00 T02 §{n}", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        proof = f"verified 2026-10-13 {self.sha} | receipt docs/reviews/d00-t02-s3.json"
+        self.assertTrue((self.root / "docs/reviews/d00-t02-s3.json").is_file())
+        out = tg.context(self.root, "D00 T02 §5").decode("utf-8")
+        self.assertIn(f"## Dependencies\n\n- D00 T02 §3 [x] settled: Top | {proof}\n- D00 T02 §4 [ ] open: Open\n\n", out)
+        self.assertIn("- state: exit 4 (waiting): unsettled prerequisites D00 T02 §4\n", out)
+        # A stamped prerequisite over a reopened ancestor still blocks, and the line says which ancestor.
+        tg.unstamp(self.root, "D00 T02 §1", "checkpoint fails", "2026-10-21")
+        rows = tg.graph(self.root)
+        self.assertEqual(tg.disposition(rows["D00 T02 §5"], rows), 4)
+        out = tg.context(self.root, "D00 T02 §5").decode("utf-8")
+        self.assertIn(f"- D00 T02 §3 [x] suspect (open underneath: D00 T02 §1): Top | {proof}\n", out)
+        self.assertIn("- state: exit 4 (waiting): unsettled prerequisites D00 T02 §3, D00 T02 §4\n", out)
+        self.assertIn("- state: exit 3 (verified)\n", tg.context(self.root, "D00 T02 §3").decode("utf-8"))
+
     def test_an_interrupted_unstamp_rolls_back(self):
         self.tick_work()
         tg.projections(self.root, sync=True)
@@ -1647,7 +1671,166 @@ class Stamp(Tree):
         self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["rounds_spent"], 10)
 
 
+def file_slices(raw, number):
+    """The three slices `resolve --context` owes from a TODO file's bytes, cut here without the code under test: the
+    file context (title heading to the first numbered section), section `number`, and the Verification block."""
+    title = re.search(rb"^# TODO-\d{2} -- ", raw, re.M).start()
+    first = re.search(rb"^## \d+\. ", raw, re.M).start()
+    start = re.search(rb"^## %d\. " % number, raw, re.M).start()
+    end = raw.index(b"\n## ", start) + 1
+    return raw[title:first], raw[start:end], raw[re.search(rb"^## Verification\r?$", raw, re.M).start():]
+
+
+class Context(Tree):
+    """`resolve --context` (D00 T02 §4): one section with what a session needs from its file and from the tree."""
+    A = "todo/00-workspace/TODO-01-a.md"
+    B = "todo/00-workspace/TODO-02-b.md"
+
+    def pair(self):
+        """Two files that point at each other: A's Inputs name B §1, and B §1 defers work to A §1."""
+        self.write(todo_file([(1, "Alpha one", 0, "none", "--"), (2, "Alpha two", 0, "owner-decision", "§1")],
+                             inputs="- -> XREF: D00 T02 §1 -- A uses what B §1 builds."))
+        self.write(todo_file([(1, "Bravo one", 0, "none", "--"), (2, "Bravo two é §", 0, "none", "§1")],
+                             ident="bravo", depends_on=["alpha"])
+                   .replace("**Test checkpoint:** `true` exits 0.",
+                            "> **Deferred:** the rest -> XREF: D00 T01 §1\n\n**Test checkpoint:** `true` exits 0.", 1),
+                   name="TODO-02-b.md")
+
+    def line_of(self, relative, fragment):
+        lines = (self.root / relative).read_bytes().decode("utf-8").split("\n")
+        return next(i for i, line in enumerate(lines, 1) if fragment in line)
+
+    def test_the_file_context_the_section_and_the_verification_block_are_the_files_own_bytes(self):
+        self.pair()
+        raw = (self.root / self.B).read_bytes()
+        context, section, verification = file_slices(raw, 2)
+        self.assertIn("Bravo two é §".encode("utf-8"), section)
+        out = tg.context(self.root, "D00 T02 §2")
+        places = [out.find(part) for part in (context, section, b"## File verification\n\n" + verification)]
+        self.assertNotIn(-1, places)
+        self.assertEqual(places, sorted(places), "file context, then the section, then the verification block")
+        # One character of the section changed in the file is one character changed in what is printed.
+        (self.root / self.B).write_bytes(raw.replace("Bravo two é §".encode("utf-8"), "Bravo twO é §".encode("utf-8")))
+        self.assertNotIn(section, tg.context(self.root, "D00 T02 §2"))
+        self.assertIn(file_slices((self.root / self.B).read_bytes(), 2)[1], tg.context(self.root, "D00 T02 §2"))
+
+    def test_the_head_lines_give_the_files_state_and_why_the_section_waits(self):
+        self.pair()
+        out = tg.context(self.root, "D00 T02 §2").decode("utf-8")
+        self.assertTrue(out.startswith(
+            "# resolve --context D00 T02 §2\n\n"
+            f"- file: `{self.B}` | status active | frozen false | depends_on alpha\n"
+            "- state: exit 4 (waiting): unsettled prerequisites D00 T02 §1, D00 T01 §1, D00 T01 §2\n\n"), out[:300])
+        self.assertIn("- state: exit 0 (ready)\n", tg.context(self.root, "D00 T01 §1").decode("utf-8"))
+        self.assertIn("- state: exit 4 (waiting): waiting Need owner-decision; unsettled prerequisites D00 T01 §1\n",
+                      tg.context(self.root, "D00 T01 §2").decode("utf-8"))
+        # A frozen file and a file that is not active say so.
+        path = self.root / self.A
+        path.write_text(path.read_text(encoding="utf-8").replace("status: active", "status: blocked\nfrozen: true")
+                        .replace("**Surface:** no\n", "**Surface:** no\n**Freeze check:** holds.\n"), encoding="utf-8")
+        out = tg.context(self.root, "D00 T01 §1").decode("utf-8")
+        self.assertIn(f"- file: `{self.A}` | status blocked | frozen true | depends_on none\n"
+                      "- state: exit 4 (waiting): file status blocked\n", out)
+
+    def test_waiting_needs_and_file_dependencies_are_listed(self):
+        self.pair()
+        out = tg.context(self.root, "D00 T01 §2").decode("utf-8")
+        self.assertIn("## Waiting Needs\n\n- owner-decision: a person must answer;", out)
+        self.assertIn("## Dependencies\n\n- D00 T01 §1 [ ] open: Alpha one\n\n", out)
+        out = tg.context(self.root, "D00 T02 §1").decode("utf-8")
+        self.assertIn("## Waiting Needs\n\nnone\n\n", out)
+        self.assertIn(f"## Dependencies\n\n- file alpha ({self.A}): 0 of 2 sections settled; not settled: "
+                      "D00 T01 §1, D00 T01 §2\n\n", out)
+        self.assertIn("## Dependencies\n\n- D00 T01 §1 needs nothing stamped before it\n\n",
+                      tg.context(self.root, "D00 T01 §1").decode("utf-8"))
+
+    def test_cross_references_and_deferrals_are_listed_with_their_file_and_line(self):
+        self.pair()
+        xref = f"- xref {self.A}:{self.line_of(self.A, 'A uses what')}: - -> XREF: D00 T02 §1 -- A uses what B §1 builds."
+        deferral = (f"- deferral {self.B}:{self.line_of(self.B, 'the rest')}: "
+                    "> **Deferred:** the rest -> XREF: D00 T01 §1")
+        out = tg.context(self.root, "D00 T02 §1").decode("utf-8")
+        self.assertIn(f"## Cross-references in\n\n{xref}\n\n## Cross-references out\n\n{deferral}\n\n", out)
+        out = tg.context(self.root, "D00 T01 §1").decode("utf-8")
+        self.assertIn(f"## Cross-references in\n\n{deferral}\n\n## Cross-references out\n\nnone\n\n", out)
+        out = tg.context(self.root, "D00 T01 §2").decode("utf-8")
+        self.assertIn("## Cross-references in\n\nnone\n\n## Cross-references out\n\nnone\n\n", out)
+
+    def test_the_size_line_counts_what_was_printed_against_the_file(self):
+        self.pair()
+        out = tg.context(self.root, "D00 T02 §2")
+        body, _, last = out.rstrip(b"\n").rpartition(b"\n")
+        m = re.fullmatch(r"context ([\d,]+) bytes of ([\d,]+) \(([\d.]+)%\)", last.decode("utf-8"))
+        self.assertIsNotNone(m, last)
+        size = (self.root / self.B).stat().st_size
+        self.assertEqual(int(m[1].replace(",", "")), len(body) + 1)
+        self.assertEqual(int(m[2].replace(",", "")), size)
+        self.assertEqual(m[3], f"{(len(body) + 1) / size * 100:.1f}")
+
+    def cli(self, *args):
+        """scripts/todo-graph.py run over this tree: the tool finds its tree from its own path, so a copy of it in the
+        fixture reads the fixture."""
+        for name in ("todo-graph.py", "lib/todo_graph.py"):
+            target = self.root / "scripts" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((REPO / "scripts" / name).read_bytes())
+        return subprocess.run([sys.executable, str(self.root / "scripts/todo-graph.py"), *args], capture_output=True)
+
+    def test_the_command_prints_those_bytes_and_keeps_resolves_exit_codes(self):
+        self.pair()
+        for ref, code in (("D00 T01 §1", 0), ("D00 T02 §2", 4)):
+            run = self.cli("resolve", ref, "--context")
+            self.assertEqual(run.returncode, code, run.stderr)
+            self.assertEqual(run.stdout, tg.context(self.root, ref))
+            self.assertEqual(self.cli("resolve", ref).returncode, code)
+
+    def test_the_command_refuses_what_resolve_refuses_and_prints_nothing(self):
+        self.pair()
+        cases = [("D00 T09 §1", 1, "TODO refused: no such section: D00 T09 §1"),
+                 ("no reference here", 2, "TODO refused: no section reference in input: no reference here")]
+        for ref, code, message in cases:
+            with self.subTest(ref=ref):
+                run, plain = self.cli("resolve", ref, "--context"), self.cli("resolve", ref)
+                self.assertEqual((run.returncode, run.stdout), (code, b""))
+                self.assertEqual(run.stderr.decode("utf-8").strip(), message)
+                self.assertEqual((plain.returncode, plain.stderr), (run.returncode, run.stderr))
+        good = (self.root / self.A).read_bytes()
+        damaged = {"a malformed row": good.replace(b"| 1 | \xc2\xa71 |", b"| 1 | \xc2\xa71", 1),
+                   "a file that is not UTF-8": good + b"\xff\xfe\n"}
+        for name, data in damaged.items():
+            with self.subTest(name=name):
+                (self.root / self.A).write_bytes(data)
+                run, plain = self.cli("resolve", "D00 T01 §1", "--context"), self.cli("resolve", "D00 T01 §1")
+                self.assertEqual((run.returncode, run.stdout), (2, b""))
+                self.assertTrue(run.stderr.decode("utf-8").startswith("TODO refused: "), run.stderr)
+                self.assertEqual((plain.returncode, plain.stderr), (run.returncode, run.stderr))
+
+
 class Repository(unittest.TestCase):
+    def test_every_live_section_prints_its_own_bytes_with_its_files_context_and_verification(self):
+        rows, index = tg.graph(), tg.context_index()
+        files = {}
+        for ref, row in rows.items():
+            raw = files.setdefault(row.path, (tg.ROOT / row.path).read_bytes())
+            out = tg.context(tg.ROOT, ref, rows, index)
+            for name, part in zip(("file context", "section", "verification"), file_slices(raw, row.number)):
+                self.assertIn(part, out, f"{ref}: the {name} is not the file's bytes")
+        self.assertEqual(len(rows), sum(len(re.findall(rb"^## \d+\. ", raw, re.M)) for raw in files.values()))
+
+    def test_the_skills_and_the_review_prompts_read_the_context_command(self):
+        for relative in ("docs/plan-review-prompt.md", "docs/completion-review-prompt.md",
+                         "docs/review-round-prompt.md"):
+            with self.subTest(relative=relative):
+                self.assertIn('resolve "<DNN TNN §N>" --context', (tg.ROOT / relative).read_text(encoding="utf-8"))
+        for skill in ("process-todo-section", "review-todo-section"):
+            with self.subTest(skill=skill):
+                text = (tg.ROOT / ".claude/skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+                self.assertIn("--context", text)
+                self.assertNotIn("entire TODO file", text)
+        for relative in ("todo/README.md", "docs/todo-workflow.md"):
+            with self.subTest(relative=relative):
+                self.assertIn("--context", (tg.ROOT / relative).read_text(encoding="utf-8"))
+
     def test_the_authoring_template_copy_is_identical(self):
         # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copy as the same file.
         # .claude is the only agent kit since 2026-10-23 (one writer through Claude Code).
