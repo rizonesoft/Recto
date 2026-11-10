@@ -77,15 +77,19 @@ class Unavailable(Exception):
     """gh is missing, unauthenticated or failed: the CI state is unknown (exit 3)."""
 
 
-def run_gh(args):
-    """Run gh with args; returns (exit code, stdout, stderr). Raises Unavailable when gh is not installed."""
+GH_SECONDS = 120  # the longest one gh call may take
+
+
+def run_gh(args, timeout=GH_SECONDS):
+    """Run gh with args for at most `timeout` seconds; returns (exit code, stdout, stderr). Raises Unavailable when gh
+    is not installed, cannot run or does not answer in time."""
     # An explicit path: on Windows a bare which() also searches the working directory, where a planted gh could sit.
     executable = shutil.which("gh", path=os.environ.get("PATH", ""))
     if executable is None:
         raise Unavailable("gh is not installed or not on PATH")
     try:
         done = subprocess.run([executable, *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=120)
+                              errors="replace", timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise Unavailable(f"gh could not run: {exc}") from None
     return done.returncode, done.stdout, done.stderr
@@ -747,10 +751,10 @@ UNKNOWN_ALERT_SECONDS = 3600
 # poll therefore names at most this many pending items, last in its output, and only those are acknowledged by that
 # email; the rest stay pending for the next one.
 ALERT_BATCH = 40
-# The task is stopped at 5 minutes (`timeout_minutes` in tasks.json) and one `gh` call may take 2. Calls that only add
-# detail (a failed run's job names, whether a cancelled run timed out) are started only inside this many seconds, so
-# the poll always ends by itself with what it knows saved and printed.
-DETAIL_BUDGET = 150
+# The task is stopped at 5 minutes (`timeout_minutes` in tasks.json). A poll gives itself this many seconds: every gh
+# call it makes, nested ones included, is given only what is left of them, and when none is left the call is not made.
+# So the poll always ends by itself, with what it knows saved and printed and the rest left for the next poll.
+POLL_BUDGET = 240
 
 
 def _epoch(stamp):
@@ -796,6 +800,13 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         reported += [p["key"] for p in pending if p["key"] in named]
         pending = [p for p in pending if p["key"] not in named]
     began, unread, baseline, summary, undecided = clock(), [], [], [], []
+    ask = runner
+
+    def runner(args):  # every call below goes through here, so none can outlast the poll
+        left = POLL_BUDGET - (clock() - began)
+        if left < 1:
+            raise Unavailable(f"not asked: this poll's {POLL_BUDGET} seconds are spent")
+        return ask(args, timeout=min(GH_SECONDS, left))
     for workflow in workflows:
         try:
             runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
@@ -842,9 +853,9 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     write_state(path, memory)
 
     def in_budget(what):
-        if clock() - began < DETAIL_BUDGET:
+        if POLL_BUDGET - (clock() - began) >= 1:
             return True
-        unread.append(f"{what}: left for the next poll, this one's {DETAIL_BUDGET} seconds for details are spent")
+        unread.append(f"{what}: left for the next poll, this one's {POLL_BUDGET} seconds are spent")
         return False
     for item in undecided:  # a cancelled run is a red only when one of its jobs was stopped at its time limit
         if not in_budget(f"{item['workflow']} run {item['run']}"):

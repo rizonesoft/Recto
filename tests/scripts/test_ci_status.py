@@ -34,7 +34,7 @@ class FakeGh:
         self.runs, self.jobs, self.fail, self.missing, self.calls = runs or {}, jobs or {}, fail, missing, []
         self.annotations = annotations or {}
 
-    def __call__(self, args):
+    def __call__(self, args, timeout=None):
         self.calls.append(args)
         if self.missing:
             raise FileNotFoundError("gh")
@@ -212,7 +212,7 @@ class WaitGh:
         self.polls, self.jobs, self.count, self.annotations = polls, jobs or {}, {}, annotations or {}
         self.pushes = pushes  # GitHub's record of the branch's pushes, (before, after); None: it cannot be read
 
-    def __call__(self, args):
+    def __call__(self, args, timeout=None):
         if args[:2] == ["run", "list"]:
             workflow = args[args.index("--workflow") + 1]
             assert args[args.index("--commit") + 1] == SHA_NEW
@@ -337,7 +337,7 @@ class FailingFor:
     def __init__(self, gh, workflow, polls=None):
         self.gh, self.workflow, self.polls, self.seen = gh, workflow, polls, 0
 
-    def __call__(self, args):
+    def __call__(self, args, timeout=None):
         if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == self.workflow:
             self.seen += 1
             if self.polls is None or self.seen <= self.polls:
@@ -379,7 +379,7 @@ class WaitAtOnce(unittest.TestCase):
         asked = []
 
         class Recording(WaitGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "list"]:
                     asked.append(args[args.index("--workflow") + 1])
                 return super().__call__(args)
@@ -412,7 +412,7 @@ class WaitAtOnce(unittest.TestCase):
             def __init__(self, gh, polls):
                 self.gh, self.polls, self.seen = gh, polls, 0
 
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "build.yml":
                     self.seen += 1
                     if self.seen > 1 and (self.polls is None or self.seen <= 1 + self.polls):
@@ -589,7 +589,7 @@ class WaitAtOnce(unittest.TestCase):
         class Starting(WaitGh):
             """On its first call (the watch is already following), it starts a second watch of the same commit."""
 
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if not second:
                     seen.append(json.loads(lock.read_text(encoding="utf-8")))
                     inner = Clock()  # its own clock, so a watch that is wrongly let through ends at once here
@@ -735,7 +735,7 @@ class GateGh:
     def __init__(self, runs=None, jobs=None, fail=False):
         self.runs, self.jobs, self.fail, self.calls = runs or {}, jobs or {}, fail, []
 
-    def __call__(self, args):
+    def __call__(self, args, timeout=None):
         self.calls.append(args)
         if self.fail:
             return 1, "", "HTTP 502: Bad Gateway"
@@ -872,7 +872,7 @@ class Gate(unittest.TestCase):
         self.assertIn("build.yml is running again", out)
 
         class BuildDown(GateGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "build.yml":
                     return 1, "", "HTTP 502: Bad Gateway"
                 return super().__call__(args)
@@ -1026,7 +1026,7 @@ class Scheduled(unittest.TestCase):
         self.baseline()
 
         class PlanDown(FakeGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "plan.yml":
                     return 1, "", "HTTP 502: Bad Gateway"
                 return super().__call__(args)
@@ -1067,7 +1067,7 @@ class Scheduled(unittest.TestCase):
         self.baseline()
 
         class ViewDown(FakeGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:3] == ["run", "view", "9"]:
                     return 1, "", "HTTP 502: Bad Gateway"
                 return super().__call__(args)
@@ -1081,7 +1081,7 @@ class Scheduled(unittest.TestCase):
 
     def test_a_first_run_that_could_not_read_everything_still_skips_history_on_the_next(self):
         class PlanDown(FakeGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "plan.yml":
                     return 1, "", "HTTP 502: Bad Gateway"
                 return super().__call__(args)
@@ -1130,7 +1130,7 @@ class Scheduled(unittest.TestCase):
         class Stalling(FakeGh):
             """Every job-detail call takes two minutes, the longest one gh call may take."""
 
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:2] == ["run", "view"]:
                     if not saved_at_first_detail:
                         saved_at_first_detail.append((json.loads(memory_path.read_text(encoding="utf-8")), list(lines)))
@@ -1149,7 +1149,7 @@ class Scheduled(unittest.TestCase):
         # Detail calls stop once the budget is spent, so the poll ends well inside the task's five minutes.
         details = [call for call in gh.calls if call[:2] == ["run", "view"]]
         self.assertEqual(len(details), 2, details)
-        self.assertLess(clock.now, 300)
+        self.assertLessEqual(clock.now, ci.POLL_BUDGET)
         self.assertIn("left for the next poll", out)
         for n in (6, 7, 9):
             self.assertIn(f"runs/{n}", out.split("latest completed run")[-1])  # in the closing block the email carries
@@ -1170,6 +1170,51 @@ class Scheduled(unittest.TestCase):
         code, out = self.scheduled(old)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.scheduled(old)[0], 0)
+
+    def test_no_call_of_a_poll_is_given_more_time_than_the_poll_has_left(self):
+        self.baseline()
+        clock, given, lines = Clock(), [], []
+
+        class Slow(FakeGh):
+            """A slow network: each run list takes 60 seconds, a job lookup or an annotation read would take 110."""
+
+            def __call__(self, args, timeout=None):
+                cost = 60 if args[:2] == ["run", "list"] else self.detail
+                given.append((args[0:2], timeout))
+                if cost > timeout:
+                    clock.sleep(timeout)
+                    return 1, "", "gh could not run: timed out"
+                clock.sleep(cost)
+                return super().__call__(args)
+        runs = {"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]}
+        slow = Slow(runs, jobs={9: [cancelled_job(91)]}, annotations={91: [TIMED_OUT]})
+        slow.detail = 110
+        code = ci.scheduled(runner=slow, root=self.root, now=lambda: self.NOW, out=lines.append, clock=clock)
+        # The lists took 120 seconds and the job lookup 110: the annotation read got the 10 that were left, not 120.
+        self.assertEqual([limit for _, limit in given], [120, 120, 120, 10])
+        self.assertLessEqual(clock.now, ci.POLL_BUDGET)
+        self.assertEqual(code, 0, lines)
+        memory = json.loads((self.root / "build" / "automations" / "ci-watch-reported.json").read_text(encoding="utf-8"))
+        self.assertNotIn("9/1", memory["passed"] + memory["reported"])  # not judged, so the next poll judges it
+        self.assertIn("build.yml run 9", "\n".join(lines))
+        # When the job lookup uses up everything that was left, the annotation read is not made at all.
+        clock.now, slow.detail = 0.0, 120
+        del given[:]
+        code = ci.scheduled(runner=slow, root=self.root, now=lambda: self.NOW, out=lines.append, clock=clock)
+        self.assertEqual([limit for _, limit in given], [120, 120, 120])
+        self.assertEqual((code, clock.now), (0, 240.0))
+        self.assertIn("not asked: this poll's 240 seconds are spent", "\n".join(lines))
+        code, out = self.scheduled(FakeGh(runs, jobs={9: [cancelled_job(91)]}, annotations={91: [TIMED_OUT]}))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/9", out)
+
+    def test_the_real_gh_runner_takes_the_time_limit_it_is_given(self):
+        with unittest.mock.patch.object(ci.shutil, "which", return_value="gh"), \
+                unittest.mock.patch.object(ci.subprocess, "run", side_effect=subprocess.TimeoutExpired(["gh"], 7)) as ran:
+            with self.assertRaises(ci.Unavailable):
+                ci.run_gh(["run", "list"], timeout=7)
+        self.assertEqual(ran.call_args.kwargs["timeout"], 7)
+        self.assertEqual(ci.run_gh.__defaults__, (ci.GH_SECONDS,))
 
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
@@ -1202,7 +1247,7 @@ class Scheduled(unittest.TestCase):
         self.baseline()
 
         class ViewDown(FakeGh):
-            def __call__(self, args):
+            def __call__(self, args, timeout=None):
                 if args[:3] == ["run", "view", "8"]:
                     return 1, "", "HTTP 503: Service Unavailable"
                 return super().__call__(args)
