@@ -460,6 +460,7 @@ class WaitAtOnce(unittest.TestCase):
 
     def test_progress_lines_are_flushed_as_they_are_printed(self):
         self.assertIs(ci.wait.__kwdefaults__["out"], ci.say)
+        self.assertIs(ci.follow.__kwdefaults__["out"], ci.say)
         with unittest.mock.patch("builtins.print") as printed:
             ci.say("a line")
         printed.assert_called_once_with("a line", flush=True)
@@ -524,6 +525,64 @@ class WaitAtOnce(unittest.TestCase):
             child.kill()
             child.wait(timeout=30)
 
+    def test_two_watches_started_together_never_both_follow_one_commit(self):
+        import threading
+        lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
+        barrier, results = threading.Barrier(8), []
+
+        def start(n):
+            barrier.wait()
+            results.append((n, ci.claim(lock, n, n * 10, alive=lambda pid: True, born=lambda pid: pid * 10, sleep=lambda s: None)))
+        threads = [threading.Thread(target=start, args=(n,)) for n in range(1, 9)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        winners = [n for n, holder in results if holder is None]
+        self.assertEqual(len(winners), 1, results)
+        self.assertEqual({holder["pid"] for n, holder in results if holder is not None}, set(winners))
+        self.assertEqual(json.loads(lock.read_text(encoding="utf-8")), {"pid": winners[0], "born": winners[0] * 10})
+
+    def test_a_watch_holds_its_claim_while_it_runs_and_gives_it_back_when_it_ends(self):
+        lock = self.root / "build" / "ci-watch" / f"{SHA_NEW}.lock"
+        seen = []
+
+        class Looking(WaitGh):
+            def __call__(self, args):
+                seen.append(json.loads(lock.read_text(encoding="utf-8")) if lock.exists() else None)
+                return super().__call__(args)
+        # The claim is there before the first call to GitHub, and a watch started meanwhile is refused.
+        second = []
+
+        class Starting(Looking):
+            def __call__(self, args):
+                if not second:
+                    second.append(None)
+                    inner = Clock()  # its own clock, so a watch that is wrongly let through ends at once here
+                    second[0] = ci.wait(SHA_NEW, runner=WaitGh({}), git=lambda a: "x\n", root=self_root, out=lines.append,
+                                        pid=2, alive=lambda pid: True, born=lambda pid: 5, clock=inner,
+                                        sleep=inner.sleep)
+                return super().__call__(args)
+        self_root, lines = self.root, []
+        code, out, _ = self.run_wait(Starting({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}),
+                                     alive=lambda pid: True, born=lambda pid: 5)
+        self.assertEqual((code, second), (0, [6]), out)
+        self.assertIn("already watched by process 1", "\n".join(lines))
+        self.assertEqual(seen[0], {"pid": 1, "born": 5})
+        self.assertFalse(lock.exists())
+        # It is given back when the watch ends in an error too.
+        with unittest.mock.patch.object(ci, "write_state", side_effect=ci.Unavailable("cannot write x")):
+            with self.assertRaises(ci.Unavailable):
+                self.run_wait(WaitGh({}))
+        self.assertFalse(lock.exists())
+        # A claim whose holder is gone, or whose pid is another process now, is taken over.
+        for holder, facts in (({"pid": 4242, "born": 111}, {"alive": lambda pid: False}),
+                              ({"pid": 4242, "born": 111}, {"alive": lambda pid: True, "born": lambda pid: 999})):
+            lock.write_text(json.dumps(holder), encoding="utf-8")
+            code, out, _ = self.run_wait(WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}), **facts)
+            self.assertEqual(code, 0, out)
+            self.assertFalse(lock.exists())
+
     def test_progress_is_printed_as_it_happens(self):
         gh = WaitGh({"build.yml": [[], [], [wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
         code, out, _ = self.run_wait(gh, changed=["src/pdf/error.cpp"])
@@ -550,7 +609,7 @@ class WaitAtOnce(unittest.TestCase):
                     code = ci.main(["--wait", SHA_NEW], runner=gh, root=self.root, git=git)
                 self.assertEqual(code, 3, out.getvalue())
                 self.assertIn("ci-status unknown: cannot write", out.getvalue())
-                self.assertIn(f"{SHA_NEW}.json", out.getvalue())
+                self.assertRegex(out.getvalue(), rf"ci-watch.{SHA_NEW}\.(json|lock)")  # the file it could not write
                 self.assertIn("run the same command again", out.getvalue())
                 self.assertEqual(list((self.root / "build").rglob("*.tmp")), [])
 

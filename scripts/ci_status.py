@@ -378,7 +378,7 @@ def write_state(path, state):
     """Replace `path` with `state`, whole or not at all. A full disk, a locked file or a refused write is Unavailable
     (the CI state is then unknown, never red or green), naming the path and what to do; the old file stays as it was."""
     path = Path(path)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")  # its own, so two writers never share one
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -441,8 +441,59 @@ def pushed_from(runner, sha, branch):
     return None
 
 
-def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
-         poll=10, clock=time.monotonic, sleep=time.sleep, out=say, pid=None, alive=process_alive, born=process_born):
+def claim(lock, pid, created, alive=process_alive, born=process_born, sleep=time.sleep):
+    """Take the watch of one commit for process `pid`: create `lock` if no live watch holds it. Returns None when the
+    claim is this process's, or the holder's record when another live watch has it. Creating the file is the claim
+    (it fails if the file exists), so of two watches started together exactly one goes on. A lock whose holder is gone
+    (its pid dead, or given to another process) is removed and claimed."""
+    lock = Path(lock)
+    for _ in range(3):
+        try:
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            holder = read_state(lock)
+            if holder is None:
+                sleep(0.5)  # created this instant by another watch that has not written its name yet
+                holder = read_state(lock)
+            if isinstance(holder, dict) and holder.get("pid") != pid and watch_alive(holder, alive, born):
+                return holder
+            try:
+                lock.unlink()  # its holder is gone; the next turn of the loop claims it, or loses to whoever did
+            except OSError:
+                pass
+            continue
+        except OSError as exc:
+            raise Unavailable(f"cannot write {lock}: {exc}; free disk space or close the program holding the file, "
+                              f"then run the same command again") from None
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            json.dump({"pid": pid, "born": created}, out)
+        return None
+    raise Unavailable(f"cannot claim {lock}: it keeps being taken; run the same command again")
+
+
+def wait(sha, *, pid=None, alive=process_alive, born=process_born, root=ROOT, out=say, sleep=time.sleep, **options):
+    """Follows the watched workflows' runs on `sha` (see `follow`), as the only watch of that commit: it claims
+    `build/ci-watch/<sha>.lock` before anything else and holds it until it ends, so a watch started beside it (a second
+    session recovering, a heartbeat) exits 6 at once instead of following the same runs and writing the same file."""
+    me = pid if pid is not None else os.getpid()
+    lock = watch_file(root, sha).with_suffix(".lock")
+    holder = claim(lock, me, born(me), alive, born, sleep)
+    if holder is not None:
+        out(f"ci watch: {sha[:12]} is already watched by process {holder.get('pid')}; no second watch is started. "
+            f"next: wait for that watch to end")
+        return 6
+    try:
+        return follow(sha, pid=me, alive=alive, born=born, root=root, out=out, sleep=sleep, **options)
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass  # already gone; a lock left behind is released by the next watch, which sees its holder is dead
+
+
+def follow(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
+           poll=10, clock=time.monotonic, sleep=time.sleep, out=say, pid=None, alive=process_alive, born=process_born):
     """Follows the watched workflows' runs on `sha` and returns the exit code the moment the verdict is known: 1 at the
     first red seen (the other runs are named as still running), else when every run has ended. See the module
     docstring. Every change of state is printed with the seconds since the watch began."""
