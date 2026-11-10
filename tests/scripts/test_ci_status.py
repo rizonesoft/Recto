@@ -368,6 +368,20 @@ class WaitAtOnce(unittest.TestCase):
         state = self.state()
         self.assertEqual((state["exit"], state["workflows"]["plan.yml"]["state"]), (1, "pending"))
 
+    def test_a_red_is_reported_before_any_other_workflow_is_read(self):
+        asked = []
+
+        class Recording(WaitGh):
+            def __call__(self, args):
+                if args[:2] == ["run", "list"]:
+                    asked.append(args[args.index("--workflow") + 1])
+                return super().__call__(args)
+        gh = Recording({"build.yml": [[wrun(1, "build", conclusion="failure")]],
+                        "plan.yml": [[wrun(2, "plan-gates", status="in_progress")]]}, jobs=self.RED_JOB)
+        code, out, elapsed = self.run_wait(gh)
+        self.assertEqual((code, elapsed, asked), (1, 0.0, ["build.yml"]), out)
+        self.assertIn("still running on this commit: plan.yml", out)
+
     def test_a_failed_read_of_one_workflow_never_hides_anothers_red(self):
         gh = FailingFor(WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB), "plan.yml")
         code, out, elapsed = self.run_wait(gh)

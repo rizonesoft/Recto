@@ -433,6 +433,8 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
                     entry["failed_jobs"] = jobs if entry["state"] == "red" else []
                 states[workflow] = entry
                 outage.pop(workflow, None)
+                if entry["state"] == "red":
+                    break  # reported now: no other workflow's read, which can take minutes on a bad network, delays it
             except Unavailable as exc:
                 # One workflow's failed read never hides what is already known (a red seen stays red), and a short
                 # outage is waited out; only one that lasts as long as a missing run makes the workflow unknown.
