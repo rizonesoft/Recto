@@ -338,6 +338,42 @@ def process_alive(pid):
         kernel32.CloseHandle(handle)
 
 
+def process_born(pid):
+    """When process `pid` was created, as a number that differs for any other process that later gets the same pid
+    (Windows: its creation FILETIME; elsewhere: its start time in clock ticks from /proc), or None when it cannot be
+    read (no such process, or no access)."""
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    if os.name != "nt":
+        try:
+            fields = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+            return int(fields[19])
+        except (OSError, ValueError, IndexError):
+            return None
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return None
+    try:
+        created, ended, kernel, user = (ctypes.c_ulonglong() for _ in range(4))
+        ok = kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(ended), ctypes.byref(kernel),
+                                      ctypes.byref(user))
+        return int(created.value) if ok else None
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def watch_alive(state, alive=process_alive, born=process_born):
+    """Whether the process that wrote this watch file is still running: its pid is alive and was created when the file
+    says. A pid alone is not enough: after a restart or a kill Windows gives the number to another process, and a
+    watch that waited on that one would wait for ever. A file from before the creation time was recorded has none, and
+    is judged by its pid."""
+    pid = state.get("pid")
+    if not alive(pid):
+        return False
+    return state.get("born") is None or born(pid) == state.get("born")
+
+
 def write_state(path, state):
     """Replace `path` with `state`, whole or not at all. A full disk, a locked file or a refused write is Unavailable
     (the CI state is then unknown, never red or green), naming the path and what to do; the old file stays as it was."""
@@ -406,7 +442,7 @@ def pushed_from(runner, sha, branch):
 
 
 def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
-         poll=10, clock=time.monotonic, sleep=time.sleep, out=say, pid=None, alive=process_alive):
+         poll=10, clock=time.monotonic, sleep=time.sleep, out=say, pid=None, alive=process_alive, born=process_born):
     """Follows the watched workflows' runs on `sha` and returns the exit code the moment the verdict is known: 1 at the
     first red seen (the other runs are named as still running), else when every run has ended. See the module
     docstring. Every change of state is printed with the seconds since the watch began."""
@@ -415,7 +451,7 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
     me = pid if pid is not None else os.getpid()
     previous = read_state(state_path)
     previous = previous if isinstance(previous, dict) and previous.get("sha") == sha else {}
-    if previous.get("exit") is None and previous.get("pid") not in (None, me) and alive(previous.get("pid")):
+    if previous.get("exit") is None and previous.get("pid") not in (None, me) and watch_alive(previous, alive, born):
         out(f"ci watch: {sha[:12]} is already watched by process {previous['pid']}; no second watch is started. "
             f"next: wait for that watch to end")
         return 6
@@ -429,7 +465,7 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
     expected = {w for w in workflows if (directory / w).is_file() and starts_on(push_filter(directory / w), branch, changed)}
     started = clock()
     states = {w: {"state": "pending", "run": None, "failed_jobs": []} for w in expected}
-    record = {"sha": sha, "since": since, "pid": me, "watches": int(previous.get("watches") or 0) + 1,
+    record = {"sha": sha, "since": since, "pid": me, "born": born(me), "watches": int(previous.get("watches") or 0) + 1,
               "expected": sorted(expected), "workflows": states, "exit": None}
     write_state(state_path, record)  # nothing is known yet, so a failed write here is Unavailable (exit 3)
     out(f"ci watch: {sha[:12]} expects {', '.join(sorted(expected)) or 'no watched workflow'} "
@@ -570,7 +606,7 @@ def full_sha(git, value):
 
 
 def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, alive=process_alive,
-         watched=WORKFLOWS):
+         watched=WORKFLOWS, born=process_born):
     """0 when the watch of main's head ended green and that is still true on GitHub, 1 red, 6 anything else (no watch,
     a watch not ended, a remote head this clone has not fetched, a rerun in progress, a cancelled, unknown or timed-out
     end). Every refusal says what it found and the next command. Unavailable when git or gh cannot answer."""
@@ -591,7 +627,7 @@ def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, 
     workflows = state.get("workflows")
     workflows = workflows if isinstance(workflows, dict) else {}
     if code is None:
-        if alive(state.get("pid")):
+        if watch_alive(state, alive, born):
             out(f"ci gate: the watch of {head[:12]} is still running (process {state.get('pid')}). "
                 f"next: wait for its notification")
         else:

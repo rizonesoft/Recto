@@ -491,6 +491,39 @@ class WaitAtOnce(unittest.TestCase):
         self.assertIn("already watched by process 4242", out)
         self.assertEqual(path.read_text(encoding="utf-8"), before)
 
+    def test_a_pid_that_now_belongs_to_another_process_is_not_the_watch(self):
+        # The watch died without recording its end and its pid was given to another process, which is alive.
+        path = self.root / "build" / "ci-watch" / f"{SHA_NEW}.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"sha": SHA_NEW, "since": SHA_OLD, "pid": 4242, "born": 111, "watches": 1, "exit": None}),
+                        encoding="utf-8")
+        reused = {"alive": lambda pid: pid == 4242, "born": lambda pid: {4242: 999, 1: 5}.get(pid)}
+        code, out, _ = self.run_wait(WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}), **reused)
+        self.assertEqual(code, 0, out)  # the replacement watch runs
+        self.assertEqual((self.state()["pid"], self.state()["born"], self.state()["watches"]), (1, 5, 2))
+        # The same pid with the same creation time is the watch itself, still running: no second one.
+        path.write_text(json.dumps({"sha": SHA_NEW, "since": SHA_OLD, "pid": 4242, "born": 999, "watches": 1, "exit": None}),
+                        encoding="utf-8")
+        code, out, _ = self.run_wait(WaitGh({}), **reused)
+        self.assertEqual(code, 6, out)
+
+    def test_a_process_is_known_by_its_pid_and_when_it_was_created(self):
+        mine = ci.process_born(os.getpid())
+        self.assertIsInstance(mine, int)
+        self.assertEqual(ci.process_born(os.getpid()), mine)
+        self.assertIsNone(ci.process_born(999_999_9))
+        self.assertTrue(ci.watch_alive({"pid": os.getpid(), "born": mine}))
+        self.assertFalse(ci.watch_alive({"pid": os.getpid(), "born": mine - 10_000_000}))
+        self.assertTrue(ci.watch_alive({"pid": os.getpid()}))  # a file written before the creation time was recorded
+        self.assertFalse(ci.watch_alive({"pid": 999_999_9, "born": mine}))
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.assertNotEqual(ci.process_born(child.pid), None)
+            self.assertFalse(ci.watch_alive({"pid": child.pid, "born": mine}))
+        finally:
+            child.kill()
+            child.wait(timeout=30)
+
     def test_progress_is_printed_as_it_happens(self):
         gh = WaitGh({"build.yml": [[], [], [wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
         code, out, _ = self.run_wait(gh, changed=["src/pdf/error.cpp"])
@@ -642,12 +675,12 @@ class Gate(unittest.TestCase):
             return head + "\n"
         return answer
 
-    def gate(self, head, state, gh=None, remote=None, alive=lambda pid: False):
+    def gate(self, head, state, gh=None, remote=None, alive=lambda pid: False, born=lambda pid: None):
         if state is not None:
             (self.root / "build" / "ci-watch" / f"{state['sha']}.json").write_text(json.dumps(state), encoding="utf-8")
         lines = []
         gh = gh or GateGh({"build.yml": [wrun(2, "build", sha=head)]})
-        code = ci.gate(git=self.git(head, remote), runner=gh, root=self.root, out=lines.append, alive=alive)
+        code = ci.gate(git=self.git(head, remote), runner=gh, root=self.root, out=lines.append, alive=alive, born=born)
         return code, "\n".join(lines)
 
     GREEN = {"sha": SHA_NEW, "pid": 2, "exit": 0, "workflows": {"build.yml": {"state": "green", "run": {"url": "u2"}}}}
@@ -679,6 +712,12 @@ class Gate(unittest.TestCase):
         self.assertEqual(code, 6, out)
         self.assertIn("still running (process 9999999). next: wait for its notification", out)
         self.assertNotIn("--wait", out)
+        # Its pid is alive but belongs to another process now: the watch is gone, and the gate says to start it again.
+        reused = {"sha": SHA_NEW, "pid": 4242, "born": 111, "exit": None, "workflows": {}}
+        code, out = self.gate(SHA_NEW, reused, alive=lambda pid: True, born=lambda pid: 999)
+        self.assertEqual(code, 6, out)
+        self.assertIn("gone before it ended", out)
+        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
 
     def test_a_head_this_clone_has_not_fetched_is_not_judged_by_an_old_green(self):
         code, out = self.gate(SHA_NEW, self.GREEN, remote="c" * 40)
