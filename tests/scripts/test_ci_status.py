@@ -389,6 +389,29 @@ class WaitAtOnce(unittest.TestCase):
         self.assertEqual((code, elapsed, asked), (1, 0.0, ["build.yml"]), out)
         self.assertIn("still running on this commit: plan.yml", out)
 
+    def test_a_red_is_said_and_saved_before_its_job_names_are_asked_for(self):
+        at_lookup, lines, clock, root = [], [], Clock(), self.root
+
+        class SlowNames(WaitGh):
+            """The network stalls on the job lookup: it uses up all the time it is given and returns nothing."""
+
+            def __call__(self, args, timeout=None):
+                if args[:2] == ["run", "view"]:
+                    state = json.loads((root / "build" / "ci-watch" / f"{SHA_NEW}.json").read_text(encoding="utf-8"))
+                    at_lookup.append((timeout, state["exit"], state["workflows"]["build.yml"]["state"], list(lines)))
+                    clock.sleep(timeout)
+                    return 1, "", "gh could not run: timed out"
+                return super().__call__(args)
+        gh = SlowNames({"build.yml": [[wrun(1, "build", conclusion="failure")]]})
+        code = ci.wait(SHA_NEW, runner=gh, git=lambda args: "src/pdf/error.cpp\n", root=root, poll=60, clock=clock,
+                       sleep=clock.sleep, out=lines.append, pid=1)
+        self.assertEqual(code, 1, lines)
+        (limit, saved_exit, saved_state, said), = at_lookup
+        self.assertEqual((limit, saved_exit, saved_state), (ci.NAMES_SECONDS, 1, "red"))
+        self.assertTrue(any("build.yml: red completed" in line for line in said), said)
+        self.assertEqual(clock.now, ci.NAMES_SECONDS)  # the names cost at most their own short limit
+        self.assertIn("jobs unavailable", "\n".join(lines))
+
     def test_a_failed_read_of_one_workflow_never_hides_anothers_red(self):
         gh = FailingFor(WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB), "plan.yml")
         code, out, elapsed = self.run_wait(gh)
@@ -934,6 +957,20 @@ class Gate(unittest.TestCase):
         # With no red, a workflow that cannot be read is unknown, never the recorded green.
         with self.assertRaises(ci.Unavailable):
             self.gate(SHA_NEW, both, gh=BuildDown({"plan.yml": [wrun(3, "plan-gates")]}))
+
+    def test_the_gate_never_waits_long_for_a_red_runs_job_names(self):
+        limits = []
+
+        class Timed(GateGh):
+            def __call__(self, args, timeout=None):
+                if args[:2] == ["run", "view"]:
+                    limits.append(timeout)
+                    return 1, "", "gh could not run: timed out"
+                return super().__call__(args)
+        code, out = self.gate(SHA_NEW, self.GREEN, gh=Timed({"build.yml": [wrun(2, "build", conclusion="failure")]}))
+        self.assertEqual(code, 1, out)  # red with or without the names
+        self.assertEqual(limits, [ci.NAMES_SECONDS])
+        self.assertIn("build.yml is red", out)
 
     def test_each_other_end_names_its_own_recovery(self):
         def ended(code, state, watches=1, run_id=7):

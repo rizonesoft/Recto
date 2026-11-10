@@ -78,6 +78,7 @@ class Unavailable(Exception):
 
 
 GH_SECONDS = 120  # the longest one gh call may take
+NAMES_SECONDS = 30  # the longest a watch waits for a red run's job names, once the red itself is said and saved
 
 
 def run_gh(args, timeout=GH_SECONDS):
@@ -565,6 +566,21 @@ def follow(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=
                 entry = {"run": brief(latest), "failed_jobs": []}
                 if latest.get("status") != "completed":
                     entry["state"] = "pending"
+                elif verdict_of(latest) == "red":
+                    # The list already says it failed: that is said and saved, as the watch's verdict, before the
+                    # names of the failed jobs are asked for, so a slow or dead network delays only the names.
+                    entry["state"] = "red"
+                    states[workflow] = entry
+                    record["exit"] = 1
+                    out(f"[{int(clock() - started):>5} s] {workflow}: red completed {latest.get('url') or ''} "
+                        f"(reading the failed jobs' names)".replace("  ", " "))
+                    said[workflow] = None
+                    try:
+                        write_state(state_path, record)
+                    except Unavailable as exc:
+                        out(f"ci watch: {exc}")
+                    entry["failed_jobs"] = failed_jobs(lambda args: runner(args, timeout=NAMES_SECONDS),
+                                                       latest.get("databaseId"), latest.get("attempt"))
                 else:
                     verdict, jobs = settle(runner, latest)
                     entry["state"] = {"green": "green", "cancelled": "cancelled"}.get(verdict, "red")
@@ -720,7 +736,11 @@ def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, 
                 if latest is None or latest.get("status") != "completed":
                     running.append(f"{workflow} is running again ({(latest or {}).get('url') or 'no run listed'})")
                     continue
-                verdict, jobs = settle(runner, latest)
+                if verdict_of(latest) == "red":  # known from the list; only its job names are asked for, briefly
+                    verdict, jobs = "red", failed_jobs(lambda args: runner(args, timeout=NAMES_SECONDS),
+                                                       latest.get("databaseId"), latest.get("attempt"))
+                else:
+                    verdict, jobs = settle(runner, latest)
             except Unavailable as exc:
                 unread.append(f"{workflow}: {exc}")
                 continue
