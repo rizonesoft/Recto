@@ -20,7 +20,7 @@ Sections: 54 | Checklist items: 326
 | [x]    | D00 T02 §2  | Skills, rules and the CI gate                                                            | none         | 4     |
 | [x]    | D00 T01 §4  | Build CI for x64 and ARM64                                                               | windows-host | 7     |
 | [x]    | D00 T02 §3  | Seeded graph and generated plan                                                          | none         | 4     |
-| [ ]    | D00 T02 §4  | `resolve --context`: one section with its file context, read in place of the file        | none         | 14    |
+| [x]    | D00 T02 §4  | `resolve --context`: one section with its file context, read in place of the file        | none         | 14    |
 | [x]    | D00 T03 §1  | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
 | [x]    | D00 T03 §2  | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
 | [x]    | D00 T03 §3  | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
@@ -945,6 +945,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 103/876 verified sections, 57 ready to run now.
+Progress: 104/876 verified sections, 56 ready to run now.
 
-Checklist: 707/6490 items completed (includes Commit items).
+Checklist: 708/6490 items completed (includes Commit items).

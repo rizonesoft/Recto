@@ -2,7 +2,7 @@
 schema_version: 1
 id: todo-system
 domain: 00-workspace
-status: active
+status: done
 title: "TODO-02 -- The TODO Graph System"
 track: M0
 ---
@@ -39,7 +39,7 @@ track: M0
 | 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [x] |
 | 2 | §2 | Skills, rules and the CI gate | §1 | [x] |
 | 3 | §3 | Seeded graph and generated plan | §2 | [x] |
-| 4 | §4 | `resolve --context`: one section with its file context, read in place of the file | §1 | [ ] |
+| 4 | §4 | `resolve --context`: one section with its file context, read in place of the file | §1 | [x] |
 
 ## 1. Graph engine, CLI and tests
 
@@ -167,9 +167,12 @@ The seed graph translates the foundation plan and the SPEC into executable secti
 - [x] Change `.claude/skills/process-todo-section/SKILL.md` step 1 and `.claude/skills/review-todo-section/SKILL.md` to read `resolve '<ref>' --context` in place of the entire TODO file, saying when a wider read is still right: a dependency's section when its body (not only its stamp) decides the work, read through `resolve '<dependency>' --context`, and the whole file only in `process-todo-file` and `groom-plan`. Done when: both skills name the command, neither says to read the entire file, and `python -m unittest discover -s scripts/tests` passes.
 - [x] Document the flag in `todo/README.md`, `docs/todo-workflow.md` and the usage text of `scripts/todo-graph.py`. Done when: all three show the command and say what it prints.
 - [x] Measure it on `D01 T02 §10` and on the smallest and largest TODO files' first open sections. Done when: the findings file records, for each, the file's bytes, the `--context` bytes and the share, and the largest file's section reads at most a tenth of its file.
-- [ ] Commit: `todo: resolve --context prints a section with its file context`
+- [x] Commit: `todo: resolve --context prints a section with its file context`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_todo_graph` passes, including the byte-identical section slice on every section of the live tree; `python scripts/todo-graph.py resolve 'D01 T02 §10' --context` prints that section, its file's Goal and its dependencies' stamps; and changing one character of the printed section in the fixture fails the test.
+
+> **Verified:** 2026-11-10 | §4 | d9877406c5493346583d9ed36d46c4d195cde712
+> **Review:** `docs/reviews/d00-t02-s4.json`
 
 ## Verification
 
