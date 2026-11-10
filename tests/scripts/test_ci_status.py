@@ -1071,10 +1071,12 @@ class Scheduled(unittest.TestCase):
                 if args[:3] == ["run", "view", "9"]:
                     return 1, "", "HTTP 502: Bad Gateway"
                 return super().__call__(args)
-        runs = {"build.yml": [run(9, conclusion="cancelled"), run(7, conclusion="failure"), run(1)], "plan.yml": [run(2)]}
-        code, out = self.scheduled(ViewDown(runs, jobs=RED_JOBS))
+        runs = {"build.yml": [run(10, conclusion="cancelled"), run(9, conclusion="cancelled"), run(7, conclusion="failure"),
+                              run(1)], "plan.yml": [run(2)]}
+        code, out = self.scheduled(ViewDown(runs, jobs={**RED_JOBS, 10: [cancelled_job(101)]}, annotations={101: [TIMED_OUT]}))
         self.assertEqual(code, 1, out)
         self.assertIn("runs/7; failed jobs: Build x64 #7", out)
+        self.assertIn("runs/10;", out)  # the cancelled run after the unreadable one is still judged: it timed out
         self.assertIn("build.yml run 9: gh run view exited 1: HTTP 502", out)
 
     def test_a_first_run_that_could_not_read_everything_still_skips_history_on_the_next(self):
@@ -1120,6 +1122,37 @@ class Scheduled(unittest.TestCase):
         self.runner_says("sent")
         self.assertEqual(self.scheduled(green)[0], 0)
 
+    def test_known_reds_are_saved_and_said_before_any_slow_detail_call(self):
+        self.baseline()
+        memory_path = self.root / "build" / "automations" / "ci-watch-reported.json"
+        clock, saved_at_first_detail, lines = Clock(), [], []
+
+        class Stalling(FakeGh):
+            """Every job-detail call takes two minutes, the longest one gh call may take."""
+
+            def __call__(self, args):
+                if args[:2] == ["run", "view"]:
+                    if not saved_at_first_detail:
+                        saved_at_first_detail.append((json.loads(memory_path.read_text(encoding="utf-8")), list(lines)))
+                    clock.sleep(120)
+                return super().__call__(args)
+        runs = {"build.yml": [run(9, conclusion="failure"), run(8, conclusion="cancelled"), run(7, conclusion="failure"),
+                              run(6, conclusion="failure"), run(1)], "plan.yml": [run(2)]}
+        gh = Stalling(runs, jobs=RED_JOBS)
+        code = ci.scheduled(runner=gh, root=self.root, now=lambda: self.NOW, out=lines.append, clock=clock)
+        out = "\n".join(lines)
+        self.assertEqual(code, 1, out)
+        # Before the first detail call the three failed runs were already in the memory file and in the output.
+        memory, said = saved_at_first_detail[0]
+        self.assertEqual([p["key"] for p in memory["pending"]], ["6/1", "7/1", "9/1"])
+        self.assertEqual(len([line for line in said if line.startswith("found: red run on main: build.yml")]), 3)
+        # Detail calls stop once the budget is spent, so the poll ends well inside the task's five minutes.
+        details = [call for call in gh.calls if call[:2] == ["run", "view"]]
+        self.assertEqual(len(details), 2, details)
+        self.assertLess(clock.now, 300)
+        self.assertIn("left for the next poll", out)
+        for n in (6, 7, 9):
+            self.assertIn(f"runs/{n}", out.split("latest completed run")[-1])  # in the closing block the email carries
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},

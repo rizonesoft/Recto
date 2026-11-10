@@ -747,6 +747,10 @@ UNKNOWN_ALERT_SECONDS = 3600
 # poll therefore names at most this many pending items, last in its output, and only those are acknowledged by that
 # email; the rest stay pending for the next one.
 ALERT_BATCH = 40
+# The task is stopped at 5 minutes (`timeout_minutes` in tasks.json) and one `gh` call may take 2. Calls that only add
+# detail (a failed run's job names, whether a cancelled run timed out) are started only inside this many seconds, so
+# the poll always ends by itself with what it knows saved and printed.
+DETAIL_BUDGET = 150
 
 
 def _epoch(stamp):
@@ -766,7 +770,8 @@ def alert_delivered(root, raised_at):
     return began is not None and ended is not None and began - 1 <= raised_at <= ended + 1
 
 
-def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", now=time.time, out=print):
+def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", now=time.time, out=say,
+              clock=time.monotonic):
     """The recto-ci-watch task. One rule: everything it finds worth an email (a red run, or `gh` unreachable for an
     hour) is kept in `pending` and makes it exit 1 on every poll until the runner records that poll's email as sent;
     only then is it forgotten, and never raised again. So a red found is never dropped by a later failed read, by
@@ -790,7 +795,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         named = [k for k in memory.get("raised_keys", []) if isinstance(k, str)]
         reported += [p["key"] for p in pending if p["key"] in named]
         pending = [p for p in pending if p["key"] not in named]
-    entries, unread, baseline = [], [], []
+    began, unread, baseline, summary, undecided = clock(), [], [], [], []
     for workflow in workflows:
         try:
             runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
@@ -798,39 +803,65 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         except Unavailable as exc:
             unread.append(f"{workflow}: {exc}")
             continue
-        try:
-            entries.append(workflow_status(runner, workflow, branch))  # the summary lines for the log, nothing more
-        except Unavailable as exc:
-            unread.append(f"{workflow} summary: {exc}")
-        # Every listed run is judged on its own, oldest first: one whose verdict cannot be read (a cancelled run's
-        # jobs, for instance) is left for a later poll and takes nothing else with it.
-        # standing is the newest run with a verdict when it is red: on the task's first run it alone is news.
-        reds, standing = [], None
-        for run in sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or "")):
-            run_id = run.get("databaseId")
+        # First what the list itself says, with no further call: a failed run is red, a green one is not, and a
+        # cancelled one is undecided until its jobs say whether it timed out. Each run stands alone, oldest first.
+        reds, standing = [], None  # `standing`: the newest run with a verdict, when red; on the first run only it is news
+        runs = sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or ""))
+        done = [r for r in runs if r.get("status") == "completed" and isinstance(r.get("databaseId"), int)]
+        if done:
+            summary.append(f"{workflow}: latest completed run {done[-1].get('conclusion')} at "
+                           f"{str(done[-1].get('headSha') or '')[:12]} {done[-1].get('url')}")
+        for run in done:
+            run_id = run["databaseId"]
             key = f"{run_id}/{run.get('attempt') or 1}"
-            if run.get("status") != "completed" or not isinstance(run_id, int):
-                continue
             if key in passed or key in reported or run_id in reported or any(p["key"] == key for p in pending):
                 continue  # judged on an earlier poll
-            try:
-                verdict, jobs = settle(runner, run)
-            except Unavailable as exc:
-                unread.append(f"{workflow} run {run_id}: {exc}")
-                continue
-            if verdict != "red":
+            verdict = verdict_of(run)
+            item = {"key": key, "workflow": workflow, "url": run.get("url"), "sha": str(run.get("headSha") or "")[:12],
+                    "failed_jobs": [], "run": run_id}
+            if verdict == "green":
                 passed.append(key)
-                standing = None if verdict == "green" else standing
-                continue
-            standing = key
-            reds.append({"key": key, "workflow": workflow, "url": run.get("url"),
-                         "sha": str(run.get("headSha") or "")[:12],
-                         "failed_jobs": [str(job.get("name")) for job in jobs]})
+                standing = None
+            elif verdict == "red":
+                standing = key
+                reds.append(item)
+            else:
+                undecided.append(item)
         for item in reds:
             if first_time and item["key"] != standing:
                 baseline.append(item["key"])  # history from before this task first ran: only the standing red is news
             else:
                 pending.append(item)
+                out(f"found: red run on main: {workflow} at {item['sha']} {item['url']}")
+    # Saved before any call that only adds detail, so a poll that is stopped later has lost nothing it found.
+    memory.update(passed=passed[-400:] if not (first_time and unread) else [], pending=pending)
+    if pending:
+        memory.update(raised_at=now(), raised_keys=[p["key"] for p in pending[:ALERT_BATCH]])
+    write_state(path, memory)
+
+    def in_budget(what):
+        if clock() - began < DETAIL_BUDGET:
+            return True
+        unread.append(f"{what}: left for the next poll, this one's {DETAIL_BUDGET} seconds for details are spent")
+        return False
+    for item in undecided:  # a cancelled run is a red only when one of its jobs was stopped at its time limit
+        if not in_budget(f"{item['workflow']} run {item['run']}"):
+            continue
+        try:
+            jobs = timed_out_jobs(runner, {"databaseId": item["run"]})
+        except Unavailable as exc:
+            unread.append(f"{item['workflow']} run {item['run']}: {exc}")
+            continue
+        if not jobs:
+            passed.append(item["key"])
+        elif first_time:
+            baseline.append(item["key"])
+        else:
+            pending.append({**item, "failed_jobs": [str(job.get("name")) for job in jobs]})
+    for item in pending:  # the names of the failed jobs, for the email; the run is reported with or without them
+        if item.get("run") and not item.get("failed_jobs") and not item.get("note") and in_budget(
+                f"{item['workflow']} run {item['run']} job names"):
+            item["failed_jobs"] = [str(job.get("name")) for job in failed_jobs(runner, item["run"])]
     if unread:
         first = memory.get("unknown_since") or now()
         memory["unknown_since"] = first
@@ -856,8 +887,8 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         memory.pop("raised_at", None)
         memory.pop("raised_keys", None)
     write_state(path, memory)
-    for entry in entries:
-        out("\n".join(describe(entry)))
+    for line in summary:
+        out(line)
     # What the email must carry comes last, one line each, so it is inside the part of the log the runner sends.
     for item in shown:
         if item.get("note"):
