@@ -398,6 +398,29 @@ class WaitAtOnce(unittest.TestCase):
         self.assertIn("gh could not read it for 10 minutes", out)
         self.assertIn("HTTP 502", self.state()["workflows"]["build.yml"]["note"])
 
+    def test_a_green_that_cannot_be_read_again_is_not_the_verdict(self):
+        class DownFrom:
+            """build.yml answers its first read, then fails for `polls` reads (None: for good)."""
+
+            def __init__(self, gh, polls):
+                self.gh, self.polls, self.seen = gh, polls, 0
+
+            def __call__(self, args):
+                if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == "build.yml":
+                    self.seen += 1
+                    if self.seen > 1 and (self.polls is None or self.seen <= 1 + self.polls):
+                        return 1, "", "HTTP 503: Service Unavailable"
+                return self.gh(args)
+        # Build is green, plan still runs; the build is started again and its next read fails as plan turns green.
+        polls = {"build.yml": [[wrun(1, "build")], [wrun(1, "build", conclusion="failure")]],
+                 "plan.yml": [[wrun(2, "plan-gates", status="in_progress")], [wrun(2, "plan-gates")]]}
+        code, out, elapsed = self.run_wait(DownFrom(WaitGh(polls, jobs=self.RED_JOB), polls=2))
+        self.assertEqual((code, elapsed), (1, 180.0), out)  # read again once GitHub answers: the rerun is red
+        self.assertIn("gh could not read it again", out)
+        code, out, elapsed = self.run_wait(DownFrom(WaitGh(polls), polls=None))
+        self.assertEqual((code, elapsed), (3, 660.0), out)  # never read again: unknown, not the old green
+        self.assertEqual(self.state()["workflows"]["build.yml"]["state"], "unknown")
+
     def test_a_restarted_watch_keeps_the_first_ones_push_range(self):
         path = self.root / "build" / "ci-watch" / f"{SHA_NEW}.json"
         path.parent.mkdir(parents=True)

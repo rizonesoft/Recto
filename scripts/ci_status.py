@@ -443,6 +443,10 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
                 # given, or its filter changed): until it has been read once, the watch does not call the push green.
                 known = states.setdefault(workflow, {"state": "pending", "run": None, "failed_jobs": [],
                                                      "note": f"gh could not read it: {exc}"})
+                if known["state"] in ("green", "cancelled"):
+                    # A verdict read earlier is not the verdict now (the run may have been started again): it
+                    # stands only while it can be read back, so it waits for the next read that answers.
+                    known = states[workflow] = {**known, "state": "pending", "note": f"gh could not read it again: {exc}"}
                 if known["state"] == "pending" and clock() - first >= APPEAR_SECONDS:
                     states[workflow] = {**known, "state": "unknown",
                                         "note": f"gh could not read it for {APPEAR_SECONDS // 60} minutes: {exc}"}
@@ -450,6 +454,8 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
             run = entry.get("run") or {}
             waiting = "waiting for GitHub to register the run" if entry["state"] == "pending" and not run else ""
             line = f"{workflow}: {entry['state']} {run.get('status') or ''} {run.get('url') or entry.get('note') or waiting}"
+            if run and entry.get("note") and entry["state"] in ("pending", "unknown"):
+                line += f" ({entry['note']})"  # why a run that was read before is being waited on again
             line = " ".join(line.split())
             if said.get(workflow) != line:
                 said[workflow] = line
