@@ -56,6 +56,7 @@ track: M0
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [ ] |
+| 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -257,6 +258,18 @@ The owner asked on 2026-11-09 that CI never stay red longer than it has to. Toda
 **Corrected 2026-11-09:** the build. One state file for every watch let a newer push's watch overwrite an older one still running (two ran at once on the first day), so each watch writes `build/ci-watch/<sha>.json` and `--gate` reads the one of `origin/main`'s head; a push's changed files are the whole push (`--since`, the branch's old head), as GitHub filters it, not the head commit alone.
 
 **Corrected 2026-11-09:** the first watches. GitHub reports a job stopped at its `timeout-minutes` as `cancelled` and says why only in its check-run annotation, so `main`'s build timed out twice (`5963438`, `9b8fb92`) while the snapshot report passed over both and read green from the run before. A cancelled run whose job carries the timeout annotation is now red in the report, `--wait` and `--scheduled` (`TimedOut` in `tests/scripts/test_ci_status.py`); the slow test behind the timeouts, `Scheduler.CallbackAdmission` at 479 s, was a cubic `plan_fetches` in `src/core/tile_scheduler.cpp`, fixed under `D01 T02 §9`.
+
+**Corrected 2026-11-10:** completion review (`docs/reviews/00-workspace/D00-T04-s9.md`), thirteen gaps in scope, all built; what each decides:
+- A red ends the watch the poll it is seen (exit 1, the failed jobs and the workflows still running named), because a red is acted on at once and its fix's push runs every workflow again; before, a red build waited for `plan.yml` or the 60-minute limit. Default taken, with its cost of changing: the `red or finished` condition in `wait()`.
+- A failed read of one workflow is waited out and never hides another's red; a read that keeps failing for 10 minutes makes that workflow `unknown`.
+- `--gate` admits a green only while it is still true: it reads main's head on GitHub (`git ls-remote`) and refuses when this clone has not fetched it, and it reads the commit's runs again and refuses a rerun in progress or one that turned red. Git or `gh` not answering is exit 3, never the recorded green.
+- A watch started again for a commit keeps the first watch's `--since`, counts itself in `watches`, and is refused (exit 6) while the first is alive; every end's last line and every gate refusal carry `next:` with the exact command (wait, start a watch, pull, rerun a cancelled run, a second watch, a Critical event after a second unknown or timed-out end).
+- A state file that cannot be written (full disk, locked file, refused folder) is exit 3 with the path and what to do, never exit 1; the old file stays, no temporary file is left, and a red already seen is still the watch's answer.
+- The session's start line (`--gate --brief`) names the failed jobs on its one line.
+- The scheduled task reports every red run in each workflow's last 10, not only the newest, and counts a run as reported only when `.conclave/automations/run.py` records that the email was sent (`"alert": "sent"` in `build/automations/recto-ci-watch/last.json`, for the run that raised it); until then each poll raises it again. On its first run only the standing red is news.
+- The watch reads every 10 seconds by default (it was 60) and prints what it expects and each change of state with the seconds since it began. Not taken: a 3-second read, since every watch and `gh` call on this machine shares GitHub's 5,000 requests an hour, and three watches at 10 seconds already use about 2,200.
+
+> **Deferred:** an alert that reaches the owner while this workstation is off -> XREF: §13
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -273,6 +286,15 @@ The owner asked on 2026-11-09 that CI never stay red longer than it has to. Toda
 - [x] Tell every session the CI state at its start: a `SessionStart` hook in `.claude/settings.json` runs `python scripts/ci_status.py --gate --brief` and prints one line (green, red with the run and its failed jobs, or a watch still running). Done when: a new session's first context shows that line, and a red `main` reads as red in it.
 - [x] Pick the watch up in a new session: `process-plan`'s audit (`.claude/skills/process-plan/SKILL.md` section 1) reads `build/ci-watch/<sha>.json` and starts `--wait` for `origin/main`'s head when it has no finished green watch. **Corrected 2026-11-09:** owner question, whether a new session watches CI on its own. Done when: the audit names the step, and a session started with a dead watch file for the head restarts it.
 - [x] Watch `main` while no session is open: a `recto-ci-watch` task in `.conclave/automations/tasks.json` every 15 minutes runs `python scripts/ci_status.py --scheduled`, which exits 1 once for each red run it has not reported before (remembered in `build/automations/ci-watch-reported.json`, written atomically) so the runner's failure email names that run once, and 0 otherwise; the README's task table lists it and `install.ps1` registers it. **Corrected 2026-11-09:** owner question, whether session-bound watching is enough; it is not when no session is open. Done when: `tests/scripts/test_ci_status.py` reads a red run reported once and not again on the next run, a new red run reported, and green exiting 0; the task is registered on this machine (`Get-ScheduledTask -TaskPath \Recto\`).
+- [x] Report a red the poll it is seen, keep it through a sibling's failed read, and wait a short outage out, in `wait()` of `scripts/ci_status.py`. Done when: `WaitAtOnce` in `tests/scripts/test_ci_status.py` reads exit 1 at 0 seconds with `plan.yml` still pending and named, exit 1 with `plan.yml` unreadable, exit 0 after three failed reads, and exit 3 with `gh could not read it for 10 minutes` after ten minutes of them.
+- [x] Refuse a stale green in `gate()`: the remote head through `git ls-remote origin refs/heads/main`, and the commit's runs read again. Done when: `Gate` reads exit 6 for a head this clone has not fetched (naming `git pull --ff-only`), exit 6 for a rerun in progress, exit 1 for a rerun gone red with its failed job, and exit 3 when `gh` fails, each on a watch file that says green.
+- [x] Keep the push range and the count across restarts and never double a live watch. Done when: a watch started without `--since` over a state file that has one diffs that range and records `watches` 2, and one started beside a live process exits 6 and leaves the file byte for byte.
+- [x] Name the next command for every end and every refusal (`next_step()`). Done when: `Gate.test_each_other_end_names_its_own_recovery` reads `gh run rerun <id>` for a cancelled end, a second watch for a first unknown or timed-out end, and the Critical event for a second.
+- [x] Make a failed state write unknown, not red (`write_state()`). Done when: a full disk, a locked file and a refused folder each make `--wait` exit 3 naming the path with no `.tmp` left, the old file is unchanged, a watch that saw a red still exits 1, and `--scheduled` exits 3.
+- [x] Put the failed jobs on the session's start line. Done when: `--gate --brief` over a red watch prints one line that names both failed jobs and exits 0.
+- [x] Report every unreported red run, and forget one only after its email is sent: `scheduled()` with `alert_delivered()`, and `"alert"` in `last.json` written by `.conclave/automations/run.py`. Done when: `Scheduled` reads a red raised again with no word from the runner, with `not sent`, and with a `sent` from another moment, then never after this run's `sent`; two reds and a later green between two polls all named; history skipped on the first run; and `scripts/tests/test_automations.py` reads `sent` and `not sent` in `last.json`.
+- [x] Print the watch as it runs, at a 10-second default. Done when: `WaitAtOnce.test_progress_is_printed_as_it_happens` reads the expectation line, the registration wait, each change with its seconds, and the closing `next:` line.
+- [x] Prove the proof: mutate each new behaviour and run the tests. Done when: the findings file lists every mutant of `scripts/ci_status.py` with `killed`, none surviving.
 - [ ] Commit: `ci: watch every push's runs to their end and act on a red at once`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_ci_status` passes; a red fake run makes `ci_status.py --wait <sha>` exit 1 with its failed job named, an expected run that never appears makes it exit 3, and `--gate` refuses while the newest watch is red; reading a cancelled or a missing run as green fails the tests.
@@ -362,6 +384,30 @@ Two defaults, each with its cost of changing: clangd comes from Visual Studio an
 - [ ] Commit: `build: clangd over a compile database written from the MSBuild build`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_compile_commands` passes; after `build.ps1 -Platform x64 -Configuration Debug -SkipTests`, `python scripts/build-compile-commands.py check` reports every database entry checked by clangd with 0 errors; and removing a project's file from `build\compile-commands\x64\Debug` makes the generator exit 2 naming it.
+
+## 13. A red main reported from GitHub itself, with the workstation off
+
+`§9` notices a red `main` from this workstation: the session's watch while a session is open, and the `recto-ci-watch` task every 15 minutes while the operator is logged on. With the machine off or logged out nothing tells the owner, and the task's 15 minutes is slower than GitHub's own notifications. `§9`'s completion review (`docs/reviews/00-workspace/D00-T04-s9.md`, 2026-11-10) filed this: the alert must leave from GitHub within a minute of the run ending, with no workstation involved and no new credential. Decided, as a default with its cost of changing (one job in each workflow): a last job in `build.yml` and `plan.yml` that runs only on a push to `main` whose earlier jobs failed, were cancelled or timed out, and opens (or comments on) one issue labelled `ci-red` assigned to the repository owner through the workflow's own `GITHUB_TOKEN`, so GitHub's notification email reaches the owner; the next green push run closes it. No SMTP secret is stored. The local watch and task of `§9` stay as they are.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add the alert job and its script. Done when: `scripts/ci_red_issue.py` opens, comments on and closes the `ci-red` issue through `gh`, driven by a fake `gh` in its tests.
+2. Wire it into both workflows. Done when: a failed push run on `main` leaves one open `ci-red` issue naming the run, and the next green run closes it.
+
+- [ ] Write `scripts/ci_red_issue.py` (stdlib, `gh` injectable): `report --workflow <file> --run <id> --sha <sha> --jobs <json>` opens an issue titled `main is red: <workflow>` labelled `ci-red` and assigned to the repository owner when none is open for that workflow, and otherwise adds one comment naming the new run; the body names the commit, the run's URL and each failed, cancelled or timed-out job. Done when: `tests/scripts/test_ci_red_issue.py` reads one `gh issue create` for a first red, one `gh issue comment` and no second issue for the next, and the failed jobs in the body.
+- [ ] Add `resolve --workflow <file> --run <id> --sha <sha>`: closes the open `ci-red` issue of that workflow with a comment naming the green run, and does nothing when none is open. Done when: the test reads one `gh issue close` after a red and none on a main that was never red.
+- [ ] Refuse quietly what it must not act on: a pull request run, a branch other than `main`, and a `gh` that fails (exit 3 with the reason, the job red so the failure shows in the run). Done when: the test reads no `gh issue` call for a pull request event and exit 3 for a failing `gh`.
+- [ ] Add a last job `ci-red` to `.github/workflows/build.yml` and `.github/workflows/plan.yml`: `needs` every other job, `if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'`, `permissions: issues: write`, running `report` when any needed job's result is `failure`, `cancelled` or timed out, and `resolve` when all succeeded. Done when: `tests/scripts/test_ci_red_issue.py` reads both workflow files and finds the job, its `needs` covering every other job, its condition and its permission, and `python scripts/check-actions-pins.py check` passes.
+- [ ] Teach `scripts/ci_status.py` that the `ci-red` job is the reporter, not a verdict: a run whose only failed job is `ci-red` is named as an alert failure, and the job is never listed among a red run's failed jobs. Done when: `tests/scripts/test_ci_status.py` reads both cases.
+- [ ] Prove it once on GitHub: push a commit to a scratch branch protected from nothing, or use `workflow_dispatch` with an input that fails one job on purpose, and read the issue opened, then closed by the next green run. Done when: the findings file records the two run URLs, the issue number, the seconds from the run's end to the issue, and the issue closed.
+- [ ] Document it in `.conclave/automations/README.md` beside `recto-ci-watch` and in `scripts/ci_status.py`'s module text. Done when: both say which alert leaves from GitHub and which from this machine.
+- [ ] Commit: `ci: open one issue for a red main from the workflow itself, and close it when green`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_ci_red_issue tests.scripts.test_ci_status` passes; a second red run adds a comment and never a second issue; and removing the `ci-red` job from either workflow fails the test.
 
 ## Verification
 

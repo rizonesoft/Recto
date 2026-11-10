@@ -22,16 +22,32 @@ Stdlib only; the `gh` runner is injectable for tests.
 
 `--wait` reads which watched workflows the push starts from each workflow's own `push` filter (`branches`, `paths`,
 `paths-ignore`) and the files the push brought (`--since`, the branch's old head; else the commit's parent), follows
-each through `gh run list --commit`, and writes its state to `build/ci-watch/<sha>.json` as it goes. The verdict over the commit's runs: any red exits 1 (every failed job named), else an
-expected run not seen within 10 minutes exits 3 (unknown, never green), else a cancelled run exits 5 (main builds are
-never cancelled by a newer push, so this is a manual or infrastructure stop), else running past `--timeout` exits 4,
-else 0. `--gate` reads the file of the head of `origin/main`: 0 when its watch ended green, 1 when it ended red, 6
-when it has not ended or there is none (start `--wait`); `--brief` prints the answer on one line and exits 0, for the
-session's start hook. `--scheduled` (the `recto-ci-watch` task in `.conclave/automations/`) exits 1 once for each red
-run not reported before, and once when `gh` has been unreachable for an hour, so the runner's failure email names it
-once; it remembers what it reported in `build/automations/ci-watch-reported.json`.
+each through `gh run list --commit` every `--poll` seconds (default 10), and writes its state to
+`build/ci-watch/<sha>.json` as it goes. It prints what it expects when it starts and every change of state with the
+seconds since then. The verdict over the commit's runs: a red exits 1 the poll it is seen (every failed job named, and
+the workflows still running named too, since a red is acted on at once), else an expected run not seen within 10
+minutes exits 3 (unknown, never green), else a cancelled run exits 5 (main builds are never cancelled by a newer push,
+so this is a manual or infrastructure stop), else running past `--timeout` exits 4, else 0. A read of one workflow that
+fails is waited out and never hides another's red; one that keeps failing for 10 minutes makes that workflow unknown.
+Its last line names the next action with its command. A watch started again for the same commit keeps the first one's
+`--since`, counts itself (`watches`), and is refused with exit 6 while the first is still alive.
+
+`--gate` asks whether a new row may be claimed or a section stamped: 0 when the watch of main's head ended green and
+GitHub still lists every watched run of that commit as completed and green (a rerun in progress, or one that turned
+red, is not a green); 1 when it is red; 6 for anything else, each with what it found and the next command: no watch, a
+watch still running or gone, a head on GitHub this clone has not fetched (`git ls-remote`), a cancelled, unknown or
+timed-out end. `--brief` prints the answer on one line, failed jobs included, and exits 0, for the session's start hook.
+
+`--scheduled` (the `recto-ci-watch` task in `.conclave/automations/`) exits 1 for every red run in each workflow's last
+10 runs that has not been reported, so the runner's failure email names it, and once when `gh` has been unreachable
+for an hour. A run counts as reported only when the runner's `build/automations/recto-ci-watch/last.json` says that
+email was sent; until then every poll raises it again. Its memory is `build/automations/ci-watch-reported.json`.
+
+A state file that cannot be written (a full disk, a locked file, a refused folder) is exit 3, unknown, with the path
+and what to do: never exit 1, which means red. The file it could not replace stays as it was.
 """
 import argparse
+import calendar
 import ctypes
 import fnmatch
 import json
@@ -316,10 +332,21 @@ def process_alive(pid):
 
 
 def write_state(path, state):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Replace `path` with `state`, whole or not at all. A full disk, a locked file or a refused write is Unavailable
+    (the CI state is then unknown, never red or green), naming the path and what to do; the old file stays as it was."""
+    path = Path(path)
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError as exc:
+        try:
+            temporary.unlink()  # the half-written copy; the error that matters is raised below
+        except OSError:
+            pass
+        raise Unavailable(f"cannot write {path}: {exc}; free disk space or close the program holding the file, "
+                          f"then run the same command again") from None
 
 
 def read_state(path):
@@ -343,45 +370,88 @@ def verdict_of_commit(states):
     return 0
 
 
+def runs_of_commit(runner, workflow, sha):
+    """The push runs of one workflow on `sha`, oldest first (a rerun keeps its run id and raises its attempt)."""
+    runs = gh_json(runner, ["run", "list", "--workflow", workflow, "--commit", sha, "--limit", "20", "--json", WAIT_FIELDS])
+    runs = [r for r in runs if isinstance(r, dict) and r.get("headSha") == sha and r.get("event") == "push"] \
+        if isinstance(runs, list) else []
+    return sorted(runs, key=lambda r: (str(r.get("createdAt") or ""), r.get("attempt") or 0))
+
+
 def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
-         poll=60, clock=time.monotonic, sleep=time.sleep, out=print, pid=None):
-    """Follows the watched workflows' runs on `sha` to their end; returns the exit code. See the module docstring."""
+         poll=10, clock=time.monotonic, sleep=time.sleep, out=print, pid=None, alive=process_alive):
+    """Follows the watched workflows' runs on `sha` and returns the exit code the moment the verdict is known: 1 at the
+    first red seen (the other runs are named as still running), else when every run has ended. See the module
+    docstring. Every change of state is printed with the seconds since the watch began."""
     directory = Path(root) / ".github" / "workflows"
     state_path = watch_file(root, sha)
-    # GitHub filters a push by everything it brought (the branch's old head to its new one), not by its last commit.
+    me = pid if pid is not None else os.getpid()
+    previous = read_state(state_path)
+    previous = previous if isinstance(previous, dict) and previous.get("sha") == sha else {}
+    if previous.get("exit") is None and previous.get("pid") not in (None, me) and alive(previous.get("pid")):
+        out(f"ci watch: {sha[:12]} is already watched by process {previous['pid']}; no second watch is started. "
+            f"next: wait for that watch to end")
+        return 6
+    # A restarted watch keeps the push range the first one was given: GitHub filters a push by everything it brought
+    # (the branch's old head to its new one), not by its last commit.
+    since = since or previous.get("since")
     changed = [line.strip() for line in git(["diff", "--name-only", since or f"{sha}^", sha]).splitlines() if line.strip()]
     expected = {w for w in workflows if (directory / w).is_file() and starts_on(push_filter(directory / w), branch, changed)}
     started = clock()
     states = {w: {"state": "pending", "run": None, "failed_jobs": []} for w in expected}
-    record = {"sha": sha, "since": since, "pid": pid if pid is not None else os.getpid(), "expected": sorted(expected), "workflows": states,
-              "exit": None}
-    write_state(state_path, record)
+    record = {"sha": sha, "since": since, "pid": me, "watches": int(previous.get("watches") or 0) + 1,
+              "expected": sorted(expected), "workflows": states, "exit": None}
+    write_state(state_path, record)  # nothing is known yet, so a failed write here is Unavailable (exit 3)
+    out(f"ci watch: {sha[:12]} expects {', '.join(sorted(expected)) or 'no watched workflow'} "
+        f"({len(changed)} changed file(s)); reading every {poll} s for up to {timeout // 60} min")
+    said, outage, write_warned = {}, {}, False
     while True:
         for workflow in workflows:
             if not (directory / workflow).is_file():
                 continue
-            runs = gh_json(runner, ["run", "list", "--workflow", workflow, "--commit", sha, "--limit", "20", "--json",
-                                    WAIT_FIELDS])
-            runs = [r for r in runs if isinstance(r, dict) and r.get("headSha") == sha and r.get("event") == "push"]
-            if not runs:
-                if workflow in expected and clock() - started >= APPEAR_SECONDS:
-                    states[workflow] = {"state": "unknown", "run": None, "failed_jobs": [],
-                                        "note": f"expected for this push, not seen in {APPEAR_SECONDS // 60} minutes"}
-                continue
-            latest = sorted(runs, key=lambda r: str(r.get("createdAt") or ""))[-1]
-            entry = {"run": brief(latest), "failed_jobs": []}
-            if latest.get("status") != "completed":
-                entry["state"] = "pending"
-            else:
-                verdict, jobs = settle(runner, latest)
-                entry["state"] = {"green": "green", "cancelled": "cancelled"}.get(verdict, "red")
-                entry["failed_jobs"] = jobs if entry["state"] == "red" else []
-            states[workflow] = entry
-        finished = all(s["state"] != "pending" for s in states.values())
-        if finished or clock() - started >= timeout:
+            try:
+                runs = runs_of_commit(runner, workflow, sha)
+                if not runs:
+                    if workflow in expected and clock() - started >= APPEAR_SECONDS:
+                        states[workflow] = {"state": "unknown", "run": None, "failed_jobs": [],
+                                            "note": f"expected for this push, not seen in {APPEAR_SECONDS // 60} minutes"}
+                    outage.pop(workflow, None)
+                    continue
+                latest = runs[-1]
+                entry = {"run": brief(latest), "failed_jobs": []}
+                if latest.get("status") != "completed":
+                    entry["state"] = "pending"
+                else:
+                    verdict, jobs = settle(runner, latest)
+                    entry["state"] = {"green": "green", "cancelled": "cancelled"}.get(verdict, "red")
+                    entry["failed_jobs"] = jobs if entry["state"] == "red" else []
+                states[workflow] = entry
+                outage.pop(workflow, None)
+            except Unavailable as exc:
+                # One workflow's failed read never hides what is already known (a red seen stays red), and a short
+                # outage is waited out; only one that lasts as long as a missing run makes the workflow unknown.
+                first = outage.setdefault(workflow, clock())
+                known = states.get(workflow)
+                if known is not None and known["state"] == "pending" and clock() - first >= APPEAR_SECONDS:
+                    states[workflow] = {**known, "state": "unknown",
+                                        "note": f"gh could not read it for {APPEAR_SECONDS // 60} minutes: {exc}"}
+        for workflow, entry in sorted(states.items()):
+            run = entry.get("run") or {}
+            waiting = "waiting for GitHub to register the run" if entry["state"] == "pending" and not run else ""
+            line = f"{workflow}: {entry['state']} {run.get('status') or ''} {run.get('url') or entry.get('note') or waiting}"
+            line = " ".join(line.split())
+            if said.get(workflow) != line:
+                said[workflow] = line
+                out(f"[{int(clock() - started):>5} s] {line}")
+        red = any(entry["state"] == "red" for entry in states.values())
+        finished = all(entry["state"] != "pending" for entry in states.values())
+        if red or finished or clock() - started >= timeout:
             code = verdict_of_commit(states)
             record["exit"] = code
-            write_state(state_path, record)
+            try:
+                write_state(state_path, record)
+            except Unavailable as exc:
+                out(f"ci watch: {exc}")  # the verdict below still stands; the gate will ask for a new watch
             for workflow, entry in sorted(states.items()):
                 run = entry.get("run") or {}
                 out(f"{workflow}: {entry['state']} {run.get('url') or entry.get('note') or ''}".rstrip())
@@ -389,47 +459,166 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
                     out(f"  failed job: {job['name']} ({job['conclusion']}) {job['url'] or ''}".rstrip())
             if not states:
                 out(f"no watched workflow starts on {sha[:12]} (its files match no push filter)")
+            still = sorted(w for w, entry in states.items() if entry["state"] == "pending")
+            if red and still:
+                out(f"red is reported at once; still running on this commit: {', '.join(still)} "
+                    f"(read them with `python scripts/ci_status.py`)")
+            out(f"ci watch: exit {code} for {sha[:12]}. {next_step(record)}")
             return code
-        write_state(state_path, record)
+        try:
+            write_state(state_path, record)
+        except Unavailable as exc:
+            if not write_warned:
+                out(f"ci watch: {exc}")
+                write_warned = True
         sleep(poll)
 
 
-def gate(*, git=run_git, root=ROOT, brief_line=False, out=print):
-    """0 when the watch of origin/main's head ended green, 1 red, 6 not ended or none."""
+def next_step(state):
+    """The one next action for a watch's recorded end, as `process-phase` step 3 decides it, with its command."""
+    sha, code = state.get("sha") or "", state.get("exit")
+    again = f"`python scripts/ci_status.py --wait {sha}`"
+    workflows = state.get("workflows") or {}
+    if code == 0:
+        return "next: nothing, CI is green for this push"
+    if code == 1:
+        ids = [str((e.get("run") or {}).get("databaseId")) for _, e in sorted(workflows.items())
+               if e.get("state") == "red" and (e.get("run") or {}).get("databaseId")]
+        return ("next: red comes first, before any new row or stamp: read "
+                + (" and ".join(f"`gh run view {i} --log-failed`" for i in ids) or "the failed run's log")
+                + ", fix it at its cause, push, and watch the fix")
+    if code == 5:
+        ids = [str((e.get("run") or {}).get("databaseId")) for _, e in sorted(workflows.items())
+               if e.get("state") == "cancelled" and (e.get("run") or {}).get("databaseId")]
+        return ("next: a cancelled run is not green: "
+                + (" and ".join(f"`gh run rerun {i}`" for i in ids) or "rerun the cancelled run") + f", then {again}")
+    kind = {3: "unknown", 4: "still running at the watch's time limit"}.get(code, "not ended")
+    if int(state.get("watches") or 1) >= 2 and code in (3, 4):
+        return (f"next: the second watch also ended {kind}: record a Critical event in the run file naming the "
+                f"workflow, never treat it as green, and start {again} once GitHub or gh answers again")
+    return f"next: {kind} is not green: start a second watch, {again}"
+
+
+def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, alive=process_alive):
+    """0 when the watch of main's head ended green and that is still true on GitHub, 1 red, 6 anything else (no watch,
+    a watch not ended, a remote head this clone has not fetched, a rerun in progress, a cancelled, unknown or timed-out
+    end). Every refusal says what it found and the next command. Unavailable when git or gh cannot answer."""
     head = git(["rev-parse", "origin/main"]).strip()
+    remote = git(["ls-remote", "origin", "refs/heads/main"]).split()
+    if not remote:
+        raise Unavailable("git ls-remote returned no head for main")
+    if remote[0] != head:
+        out(f"ci gate: main moved on GitHub to {remote[0][:12]} and this clone still has {head[:12]}, so no watch here "
+            f"judged it. next: `git pull --ff-only`, then `python scripts/ci_status.py --wait {remote[0]} --since {head}`")
+        return 6
+    again = f"`python scripts/ci_status.py --wait {head}`"
     state = read_state(watch_file(root, head))
-    if not state or state.get("sha") != head:
-        out(f"ci gate: no watch for origin/main {head[:12]}; start `python scripts/ci_status.py --wait {head}`")
+    if not isinstance(state, dict) or state.get("sha") != head:
+        out(f"ci gate: no watch for origin/main {head[:12]}. next: start {again}")
         return 6
     code = state.get("exit")
+    workflows = state.get("workflows")
+    workflows = workflows if isinstance(workflows, dict) else {}
     if code is None:
-        alive = process_alive(state.get("pid"))
-        out(f"ci gate: the watch of {head[:12]} is {'still running' if alive else 'gone before it ended; start it again'}")
+        if alive(state.get("pid")):
+            out(f"ci gate: the watch of {head[:12]} is still running (process {state.get('pid')}). "
+                f"next: wait for its notification")
+        else:
+            out(f"ci gate: the watch of {head[:12]} is gone before it ended; start it again. next: start {again}")
         return 6
     if code == 0:
+        # A green recorded earlier is admitted only while it is still the truth: a rerun of the same commit, or a run
+        # that started after the watch ended, is read from GitHub now.
+        for workflow in sorted(workflows):
+            runs = runs_of_commit(runner, workflow, head)
+            latest = runs[-1] if runs else None
+            if latest is None or latest.get("status") != "completed":
+                out(f"ci gate: {workflow} is running again on {head[:12]} "
+                    f"({(latest or {}).get('url') or 'no run listed'}), so the recorded green is stale. next: start {again}")
+                return 6
+            verdict, jobs = settle(runner, latest)
+            if verdict != "green":
+                names = ", ".join(str(job["name"]) for job in jobs)
+                out(f"ci gate: {workflow} is {verdict} on {head[:12]} after a recorded green ({latest.get('url')})"
+                    + (f"; failed jobs: {names}" if names else "") + f". next: start {again}")
+                return 1 if verdict == "red" else 6
         out(f"ci gate: green at {head[:12]}")
         return 0
-    reds = [f"{w} {e.get('state')} {(e.get('run') or {}).get('url') or ''}".strip()
-            for w, e in sorted(state.get("workflows", {}).items()) if e.get("state") != "green"]
-    out(f"ci gate: {'red' if code == 1 else 'not green'} at {head[:12]}: " + "; ".join(reds))
+    parts = []
+    for workflow, entry in sorted(workflows.items()):
+        if entry.get("state") == "green":
+            continue
+        names = ", ".join(str(job.get("name")) for job in entry.get("failed_jobs") or [])
+        parts.append(f"{workflow} {entry.get('state')} {(entry.get('run') or {}).get('url') or entry.get('note') or ''}".strip()
+                     + (f" (failed jobs: {names})" if names else ""))
+    label = {1: "red", 3: "unknown", 4: "not ended at the watch's time limit", 5: "cancelled"}.get(code, f"exit {code}")
+    out(f"ci gate: {label} at {head[:12]}: " + "; ".join(parts) + f". {next_step(state)}")
     if not brief_line:
-        for w, e in sorted(state.get("workflows", {}).items()):
-            for job in e.get("failed_jobs", []):
-                out(f"  {w} failed job: {job['name']} {job['url'] or ''}".rstrip())
+        for workflow, entry in sorted(workflows.items()):
+            for job in entry.get("failed_jobs") or []:
+                out(f"  {workflow} failed job: {job['name']} {job['url'] or ''}".rstrip())
     return 1 if code == 1 else 6
 
+
 REPORTED_FILE = Path("build") / "automations" / "ci-watch-reported.json"
+TASK = "recto-ci-watch"  # its runner writes build/automations/<TASK>/last.json, with whether the alert was sent
 UNKNOWN_ALERT_SECONDS = 3600
 
 
-def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", now=time.time, out=print):
-    """The recto-ci-watch task: exits 1 once for each red run not reported before (so the runner's failure email names
-    it once), and once when gh has stayed unreachable for an hour; 0 otherwise."""
-    path = Path(root) / REPORTED_FILE
-    memory = read_state(path) or {}
-    reported = [r for r in memory.get("reported", []) if isinstance(r, int)]
+def _epoch(stamp):
     try:
-        result, code = report(runner, workflows, branch)
+        return calendar.timegm(time.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ"))
+    except (TypeError, ValueError):
+        return None
+
+
+def alert_delivered(root, raised_at):
+    """Whether the runner (`.conclave/automations/run.py`) sent the failure email for the run of this task that raised
+    at `raised_at`: its `last.json` covers that moment, exited 1 and says the alert was sent."""
+    last = read_state(Path(root) / "build" / "automations" / TASK / "last.json")
+    if not isinstance(last, dict) or last.get("alert") != "sent" or last.get("exit") != 1:
+        return False
+    began, ended = _epoch(last.get("started")), _epoch(last.get("finished"))
+    return began is not None and ended is not None and began - 1 <= raised_at <= ended + 1
+
+
+def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", now=time.time, out=print):
+    """The recto-ci-watch task: exits 1 for each red run not yet reported (so the runner's failure email names it), and
+    once when gh has stayed unreachable for an hour; 0 otherwise. Every completed run in the last 10 of each workflow is
+    read, so two reds between two polls are both reported, and a later green hides neither. A run counts as reported
+    only once the runner says its email was sent: until then the next poll raises it again."""
+    path = Path(root) / REPORTED_FILE
+    memory = read_state(path)
+    memory = memory if isinstance(memory, dict) else {}
+    first_time = "reported" not in memory
+    reported = [r for r in memory.get("reported", []) if isinstance(r, int)]
+    passed = [r for r in memory.get("passed", []) if isinstance(r, int)]
+    pending = [p for p in memory.get("pending", []) if isinstance(p, dict) and isinstance(p.get("id"), int)]
+    if pending and isinstance(memory.get("raised_at"), (int, float)) and alert_delivered(root, memory["raised_at"]):
+        reported += [p["id"] for p in pending]
+        pending = []
+    try:
+        entries, found = [], []
+        for workflow in workflows:
+            entry = workflow_status(runner, workflow, branch)
+            entries.append(entry)
+            runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
+                                    "--json", FIELDS])
+            decisive = (entry.get("verdict_run") or {}).get("databaseId")
+            for run in sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or "")):
+                run_id = run.get("databaseId")
+                if (run.get("status") != "completed" or not isinstance(run_id, int) or run_id in reported
+                        or run_id in passed or any(p["id"] == run_id for p in pending)):
+                    continue
+                verdict, jobs = settle(runner, run)
+                if verdict != "red":
+                    passed.append(run_id)
+                elif first_time and run_id != decisive:
+                    reported.append(run_id)  # history from before this task first ran: only the standing red is news
+                else:
+                    found.append({"id": run_id, "workflow": workflow, "url": run.get("url"),
+                                  "sha": str(run.get("headSha") or "")[:12],
+                                  "failed_jobs": [str(job.get("name")) for job in jobs]})
     except Unavailable as exc:
         first = memory.get("unknown_since") or now()
         memory["unknown_since"] = first
@@ -441,18 +630,21 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         return 1 if alert else 0
     memory.pop("unknown_since", None)
     memory.pop("unknown_reported", None)
-    new = []
-    for entry in result["workflows"]:
-        run = entry.get("verdict_run") or {}
-        if entry["verdict"] == "red" and isinstance(run.get("databaseId"), int) and run["databaseId"] not in reported:
-            new.append(entry)
-            reported.append(run["databaseId"])
-    memory["reported"] = reported[-200:]
+    pending += found
+    memory.update(reported=reported[-200:], passed=passed[-200:], pending=pending)
+    if pending:
+        memory["raised_at"] = now()
+    else:
+        memory.pop("raised_at", None)
     write_state(path, memory)
-    for entry in result["workflows"]:
+    for entry in entries:
         out("\n".join(describe(entry)))
-    if new:
-        out(f"main is red: {', '.join(e['workflow'] for e in new)} (reported once)")
+    for item in pending:
+        jobs = f"; failed jobs: {', '.join(item['failed_jobs'])}" if item.get("failed_jobs") else ""
+        out(f"red run on main: {item['workflow']} at {item.get('sha')} {item.get('url')}{jobs}")
+    if pending:
+        out(f"main has {len(pending)} red run(s) not yet reported by email: "
+            f"{', '.join(sorted({p['workflow'] for p in pending}))} (each is reported until its email is sent, then never again)")
         return 1
     return 0
 
@@ -466,14 +658,14 @@ def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
     parser.add_argument("--wait", metavar="SHA", help="follow this pushed commit's runs to their end (exit 0, 1, 3, 4 or 5)")
     parser.add_argument("--since", metavar="SHA", help="with --wait, the branch's head before the push (default the commit's parent)")
     parser.add_argument("--timeout", type=int, default=60, help="minutes --wait follows the runs (default 60)")
-    parser.add_argument("--poll", type=int, default=60, help="seconds between --wait's reads (default 60)")
+    parser.add_argument("--poll", type=int, default=10, help="seconds between --wait's reads (default 10)")
     parser.add_argument("--gate", action="store_true", help="may a new row be claimed: the watch of origin/main's head")
     parser.add_argument("--brief", action="store_true", help="with --gate, one line")
     parser.add_argument("--scheduled", action="store_true", help="the recto-ci-watch task: exit 1 once per new red run")
     args = parser.parse_args(argv)
     if args.gate:
         try:
-            code = gate(git=git, root=root, brief_line=args.brief)
+            code = gate(git=git, runner=runner, root=root, brief_line=args.brief)
         except Unavailable as exc:
             print(f"ci gate: unknown: {exc}")
             code = 3
@@ -481,7 +673,13 @@ def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
         return 0 if args.brief else code
     if args.scheduled:
         directory = Path(root) / ".github" / "workflows"
-        return scheduled(runner=runner, root=root, workflows=[w for w in WORKFLOWS if (directory / w).is_file()], branch=args.branch)
+        try:
+            return scheduled(runner=runner, root=root, workflows=[w for w in WORKFLOWS if (directory / w).is_file()],
+                             branch=args.branch)
+        except Unavailable as exc:
+            # Its own memory could not be written: unknown (3), which the runner emails like any failed run.
+            print(f"ci-status unknown: {exc}")
+            return 3
     if args.wait:
         if (not re.fullmatch(r"[0-9a-f]{7,40}", args.wait) or (args.since and not re.fullmatch(r"[0-9a-f]{7,40}", args.since))
                 or args.timeout < 1 or args.poll < 1):

@@ -324,8 +324,166 @@ class Wait(unittest.TestCase):
         self.assertEqual(state["expected"], ["build.yml", "plan.yml"])
 
 
+class FailingFor:
+    """gh that fails for one workflow (always, or for its first `polls` reads) and answers the others through `gh`."""
+
+    def __init__(self, gh, workflow, polls=None):
+        self.gh, self.workflow, self.polls, self.seen = gh, workflow, polls, 0
+
+    def __call__(self, args):
+        if args[:2] == ["run", "list"] and args[args.index("--workflow") + 1] == self.workflow:
+            self.seen += 1
+            if self.polls is None or self.seen <= self.polls:
+                return 1, "", "HTTP 502: Bad Gateway"
+        return self.gh(args)
+
+
+class WaitAtOnce(unittest.TestCase):
+    """What the completion review of D00 T04 §9 found: a red is reported the poll it is seen, one failed read never
+    hides it, a restart keeps the push range, a live watch is never doubled, and a failed state write is not a red."""
+
+    BOTH = ["src/pdf/error.cpp", "scripts/ci_status.py"]
+    RED_JOB = {1: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "u"}]}
+
+    setUp, tearDown = Wait.setUp, Wait.tearDown
+
+    def run_wait(self, gh, changed=None, **kw):
+        clock, lines = Clock(), []
+        kw.setdefault("git", lambda args: "\n".join(changed or self.BOTH) + "\n")
+        code = ci.wait(SHA_NEW, runner=gh, root=self.root, poll=60, clock=clock, sleep=clock.sleep, out=lines.append,
+                       **{"pid": 1, **kw})
+        return code, "\n".join(lines), clock.now
+
+    def state(self):
+        return json.loads((self.root / "build" / "ci-watch" / f"{SHA_NEW}.json").read_text(encoding="utf-8"))
+
+    def test_a_red_is_reported_the_poll_it_is_seen_while_another_workflow_still_runs(self):
+        gh = WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]],
+                     "plan.yml": [[wrun(2, "plan-gates", status="in_progress")]]}, jobs=self.RED_JOB)
+        code, out, elapsed = self.run_wait(gh)
+        self.assertEqual((code, elapsed), (1, 0.0), out)
+        self.assertIn("failed job: Build x64 (failure)", out)
+        self.assertIn("still running on this commit: plan.yml", out)
+        self.assertIn("`gh run view 1 --log-failed`", out)
+        state = self.state()
+        self.assertEqual((state["exit"], state["workflows"]["plan.yml"]["state"]), (1, "pending"))
+
+    def test_a_failed_read_of_one_workflow_never_hides_anothers_red(self):
+        gh = FailingFor(WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB), "plan.yml")
+        code, out, elapsed = self.run_wait(gh)
+        self.assertEqual((code, elapsed), (1, 0.0), out)
+        self.assertEqual(self.state()["exit"], 1)
+
+    def test_a_short_outage_is_waited_out_and_a_long_one_is_unknown(self):
+        short = FailingFor(WaitGh({"build.yml": [[wrun(1, "build")]]}), "build.yml", polls=3)
+        code, out, elapsed = self.run_wait(short, changed=["src/pdf/error.cpp"])
+        self.assertEqual((code, elapsed), (0, 180.0), out)
+        long = FailingFor(WaitGh({}), "build.yml")
+        code, out, elapsed = self.run_wait(long, changed=["src/pdf/error.cpp"])
+        self.assertEqual((code, elapsed), (3, 600.0), out)
+        self.assertIn("gh could not read it for 10 minutes", out)
+        self.assertIn("HTTP 502", self.state()["workflows"]["build.yml"]["note"])
+
+    def test_a_restarted_watch_keeps_the_first_ones_push_range(self):
+        path = self.root / "build" / "ci-watch" / f"{SHA_NEW}.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"sha": SHA_NEW, "since": SHA_OLD, "pid": 4242, "watches": 1, "exit": None}),
+                        encoding="utf-8")
+        asked = []
+
+        def git(args):
+            asked.append(args)
+            return "src/core/runtime.cpp\ntodo/x.md\n" if args[2] == SHA_OLD else "todo/x.md\n"
+        gh = WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]})
+        code, out, _ = self.run_wait(gh, git=git, alive=lambda pid: False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(asked, [["diff", "--name-only", SHA_OLD, SHA_NEW]])
+        state = self.state()
+        self.assertEqual((state["since"], state["expected"], state["watches"]), (SHA_OLD, ["build.yml", "plan.yml"], 2))
+
+    def test_a_second_watch_is_never_started_beside_a_live_one(self):
+        path = self.root / "build" / "ci-watch" / f"{SHA_NEW}.json"
+        path.parent.mkdir(parents=True)
+        before = json.dumps({"sha": SHA_NEW, "since": None, "pid": 4242, "watches": 1, "exit": None})
+        path.write_text(before, encoding="utf-8")
+        code, out, _ = self.run_wait(WaitGh({}), alive=lambda pid: pid == 4242)
+        self.assertEqual(code, 6, out)
+        self.assertIn("already watched by process 4242", out)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+
+    def test_progress_is_printed_as_it_happens(self):
+        gh = WaitGh({"build.yml": [[], [], [wrun(1, "build", status="in_progress")], [wrun(1, "build")]]})
+        code, out, _ = self.run_wait(gh, changed=["src/pdf/error.cpp"])
+        self.assertEqual(code, 0, out)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "ci watch: bbbbbbbbbbbb expects build.yml (1 changed file(s)); reading every 60 s "
+                                   "for up to 60 min")
+        self.assertEqual(lines[1], "[    0 s] build.yml: pending waiting for GitHub to register the run")
+        self.assertEqual(lines[2], "[  120 s] build.yml: pending in_progress https://github.com/o/r/actions/runs/1")
+        self.assertEqual(lines[3], "[  180 s] build.yml: green completed https://github.com/o/r/actions/runs/1")
+        self.assertEqual(lines[-1], "ci watch: exit 0 for bbbbbbbbbbbb. next: nothing, CI is green for this push")
+
+    def test_a_state_file_that_cannot_be_written_is_unknown_and_never_a_red(self):
+        gh = WaitGh({"build.yml": [[wrun(1, "build")]]})
+        def git(args):
+            return "src/pdf/error.cpp\n"
+        failures = {"a full disk": unittest.mock.patch.object(Path, "write_text", side_effect=OSError(28, "No space left on device")),
+                    "a locked file": unittest.mock.patch.object(ci.os, "replace", side_effect=PermissionError(13, "locked")),
+                    "a refused folder": unittest.mock.patch.object(Path, "mkdir", side_effect=PermissionError(13, "denied"))}
+        for name, failure in failures.items():
+            with self.subTest(name=name):
+                out = io.StringIO()
+                with failure, redirect_stdout(out):
+                    code = ci.main(["--wait", SHA_NEW], runner=gh, root=self.root, git=git)
+                self.assertEqual(code, 3, out.getvalue())
+                self.assertIn("ci-status unknown: cannot write", out.getvalue())
+                self.assertIn(f"{SHA_NEW}.json", out.getvalue())
+                self.assertIn("run the same command again", out.getvalue())
+                self.assertEqual(list((self.root / "build").rglob("*.tmp")), [])
+
+    def test_a_failed_write_keeps_the_old_file_and_a_verdict_already_known(self):
+        target = self.root / "build" / "x.json"
+        ci.write_state(target, {"kept": True})
+        with unittest.mock.patch.object(ci.os, "replace", side_effect=PermissionError(13, "locked")):
+            with self.assertRaises(ci.Unavailable):
+                ci.write_state(target, {"kept": False})
+        self.assertEqual(json.loads(target.read_text(encoding="utf-8")), {"kept": True})
+        self.assertEqual(list(target.parent.glob("*.tmp")), [])
+        # The watch's first write succeeds and its last one fails: the red it saw is still its answer.
+        real, calls = ci.os.replace, []
+
+        def replace(source, destination):
+            calls.append(destination)
+            if len(calls) > 1:
+                raise PermissionError(13, "locked")
+            return real(source, destination)
+        gh = WaitGh({"build.yml": [[wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB)
+        with unittest.mock.patch.object(ci.os, "replace", side_effect=replace):
+            code, out, _ = self.run_wait(gh, changed=["src/pdf/error.cpp"])
+        self.assertEqual(code, 1, out)
+        self.assertIn("cannot write", out)
+
+
+class GateGh:
+    """gh for --gate: the runs GitHub lists for the head commit now, per workflow."""
+
+    def __init__(self, runs=None, jobs=None, fail=False):
+        self.runs, self.jobs, self.fail, self.calls = runs or {}, jobs or {}, fail, []
+
+    def __call__(self, args):
+        self.calls.append(args)
+        if self.fail:
+            return 1, "", "HTTP 502: Bad Gateway"
+        if args[:2] == ["run", "list"]:
+            return 0, json.dumps(self.runs.get(args[args.index("--workflow") + 1], [])), ""
+        if args[:2] == ["run", "view"]:
+            return 0, json.dumps({"jobs": self.jobs.get(int(args[2]), [])}), ""
+        raise AssertionError(args)
+
+
 class Gate(unittest.TestCase):
-    """--gate: a new row or a stamp waits for the watch of origin/main's head to end green (D00 T04 §9)."""
+    """--gate: a new row or a stamp waits for the watch of main's head to end green, and for that green to still be
+    true on GitHub (D00 T04 §9)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -335,33 +493,111 @@ class Gate(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def gate(self, head, state):
+    def git(self, head, remote=None):
+        def answer(args):
+            if args[0] == "ls-remote":
+                self.assertEqual(args, ["ls-remote", "origin", "refs/heads/main"])
+                return f"{remote or head}\trefs/heads/main\n"
+            return head + "\n"
+        return answer
+
+    def gate(self, head, state, gh=None, remote=None, alive=lambda pid: False):
         if state is not None:
             (self.root / "build" / "ci-watch" / f"{state['sha']}.json").write_text(json.dumps(state), encoding="utf-8")
         lines = []
-        return ci.gate(git=lambda args: head + "\n", root=self.root, out=lines.append), "\n".join(lines)
+        gh = gh or GateGh({"build.yml": [wrun(2, "build", sha=head)]})
+        code = ci.gate(git=self.git(head, remote), runner=gh, root=self.root, out=lines.append, alive=alive)
+        return code, "\n".join(lines)
+
+    GREEN = {"sha": SHA_NEW, "pid": 2, "exit": 0, "workflows": {"build.yml": {"state": "green", "run": {"url": "u2"}}}}
 
     def test_a_delayed_red_holds_the_next_row_until_its_fix_is_green(self):
-        red = {"sha": SHA_OLD, "pid": 1, "exit": 1, "workflows": {"build.yml": {"state": "red", "run": {"url": "u1"},
+        red = {"sha": SHA_OLD, "pid": 1, "exit": 1, "workflows": {"build.yml": {"state": "red", "run": {"url": "u1", "databaseId": 7},
                "failed_jobs": [{"name": "Build x64", "url": "j"}]}}}
         code, out = self.gate(SHA_OLD, red)
         self.assertEqual(code, 1, out)
-        self.assertIn("build.yml red u1", out)
+        self.assertIn("build.yml red u1 (failed jobs: Build x64)", out)
         self.assertIn("failed job: Build x64", out)
+        self.assertIn("next: red comes first, before any new row or stamp: read `gh run view 7 --log-failed`", out)
         # The fix is pushed: no watch of the new head yet holds the gate shut.
         code, out = self.gate(SHA_NEW, red)
         self.assertEqual(code, 6, out)
-        green = {"sha": SHA_NEW, "pid": 2, "exit": 0, "workflows": {"build.yml": {"state": "green", "run": {"url": "u2"}}}}
-        code, out = self.gate(SHA_NEW, green)
+        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
+        code, out = self.gate(SHA_NEW, self.GREEN)
         self.assertEqual(code, 0, out)
 
-    def test_no_watch_and_a_dead_watch_hold_it_shut(self):
+    def test_no_watch_a_dead_watch_and_a_live_watch_hold_it_shut_and_say_what_to_do(self):
         code, out = self.gate(SHA_NEW, None)
         self.assertEqual(code, 6, out)
         dead = {"sha": SHA_NEW, "pid": 999_999_9, "exit": None, "workflows": {}}
         code, out = self.gate(SHA_NEW, dead)
         self.assertEqual(code, 6, out)
         self.assertIn("gone before it ended", out)
+        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
+        code, out = self.gate(SHA_NEW, dead, alive=lambda pid: True)
+        self.assertEqual(code, 6, out)
+        self.assertIn("still running (process 9999999). next: wait for its notification", out)
+        self.assertNotIn("--wait", out)
+
+    def test_a_head_this_clone_has_not_fetched_is_not_judged_by_an_old_green(self):
+        code, out = self.gate(SHA_NEW, self.GREEN, remote="c" * 40)
+        self.assertEqual(code, 6, out)
+        self.assertIn("main moved on GitHub to cccccccccccc", out)
+        self.assertIn(f"`git pull --ff-only`, then `python scripts/ci_status.py --wait {'c' * 40} --since {SHA_NEW}`", out)
+
+    def test_a_recorded_green_is_refused_once_the_commit_runs_again(self):
+        rerun = GateGh({"build.yml": [wrun(2, "build", status="in_progress")]})
+        code, out = self.gate(SHA_NEW, self.GREEN, gh=rerun)
+        self.assertEqual(code, 6, out)
+        self.assertIn("build.yml is running again on bbbbbbbbbbbb", out)
+        self.assertIn("the recorded green is stale", out)
+        failed = GateGh({"build.yml": [wrun(2, "build", conclusion="failure")]},
+                        jobs={2: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "u"}]})
+        code, out = self.gate(SHA_NEW, self.GREEN, gh=failed)
+        self.assertEqual(code, 1, out)
+        self.assertIn("build.yml is red on bbbbbbbbbbbb after a recorded green", out)
+        self.assertIn("failed jobs: Build x64", out)
+        # GitHub not answering is unknown (3), never the old green.
+        with self.assertRaises(ci.Unavailable):
+            self.gate(SHA_NEW, self.GREEN, gh=GateGh(fail=True))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = ci.main(["--gate"], runner=GateGh(fail=True), root=self.root, git=self.git(SHA_NEW))
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertIn("ci gate: unknown:", out.getvalue())
+
+    def test_each_other_end_names_its_own_recovery(self):
+        def ended(code, state, watches=1, run_id=7):
+            return {"sha": SHA_NEW, "pid": 1, "exit": code, "watches": watches, "workflows": {
+                "build.yml": {"state": state, "run": {"url": "u", "databaseId": run_id}, "failed_jobs": []}}}
+        again = f"`python scripts/ci_status.py --wait {SHA_NEW}`"
+        cases = [(ended(5, "cancelled"), f"ci gate: cancelled at bbbbbbbbbbbb: build.yml cancelled u. next: a cancelled "
+                                         f"run is not green: `gh run rerun 7`, then {again}"),
+                 (ended(3, "unknown"), f"next: unknown is not green: start a second watch, {again}"),
+                 (ended(4, "pending"), f"next: still running at the watch's time limit is not green: start a second "
+                                       f"watch, {again}"),
+                 (ended(3, "unknown", watches=2), "next: the second watch also ended unknown: record a Critical event"),
+                 (ended(4, "pending", watches=2), "next: the second watch also ended still running at the watch's time "
+                                                  "limit: record a Critical event")]
+        for state, expected in cases:
+            with self.subTest(expected=expected):
+                code, out = self.gate(SHA_NEW, state)
+                self.assertEqual(code, 6, out)
+                self.assertIn(expected, out)
+
+    def test_the_session_start_line_names_the_failed_jobs_on_one_line(self):
+        red = {"sha": SHA_NEW, "pid": 1, "exit": 1, "workflows": {
+            "build.yml": {"state": "red", "run": {"url": "u1", "databaseId": 7},
+                          "failed_jobs": [{"name": "Build x64", "url": "j"}, {"name": "Tests", "url": "k"}]}}}
+        (self.root / "build" / "ci-watch" / f"{SHA_NEW}.json").write_text(json.dumps(red), encoding="utf-8")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = ci.main(["--gate", "--brief"], runner=GateGh(), root=self.root, git=self.git(SHA_NEW))
+        self.assertEqual(code, 0)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("ci gate: red at bbbbbbbbbbbb: build.yml red u1 (failed jobs: Build x64, Tests)", lines[0])
+
 
 class TimedOut(unittest.TestCase):
     """GitHub reports a job stopped at its timeout-minutes as cancelled: that run is red, never skipped or rerun
@@ -399,8 +635,14 @@ class TimedOut(unittest.TestCase):
             self.assertIn("timed out", "\n".join(lines))
 
 
+RED_JOBS = {n: [{"name": f"Build x64 #{n}", "status": "completed", "conclusion": "failure", "url": "j"}] for n in range(1, 10)}
+
+
 class Scheduled(unittest.TestCase):
-    """--scheduled, the recto-ci-watch task: each red run is reported once, an outage only after an hour (D00 T04 §9)."""
+    """--scheduled, the recto-ci-watch task: every red run is reported until its email is sent and never after, an
+    outage only after an hour (D00 T04 §9)."""
+
+    NOW = 1_794_300_000.0  # 2026-11-10T09:20:00Z
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -409,25 +651,80 @@ class Scheduled(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def scheduled(self, fake, now=1000.0):
+    def scheduled(self, fake, now=None):
         lines = []
-        code = ci.scheduled(runner=fake, root=self.root, now=lambda: now, out=lines.append)
+        code = ci.scheduled(runner=fake, root=self.root, now=lambda: self.NOW if now is None else now, out=lines.append)
         return code, "\n".join(lines)
 
-    def test_a_red_run_is_reported_once_then_a_new_one_again(self):
-        red = FakeGh({"build.yml": [run(5, conclusion="failure")], "plan.yml": [run(6)]},
-                     jobs={5: [{"name": "Build x64", "status": "completed", "conclusion": "failure", "url": "j"}]})
+    def runner_says(self, alert, at=None, exit_code=1):
+        """What .conclave/automations/run.py leaves after the run that raised at `at`: whether its email was sent."""
+        def stamp(seconds):
+            return ci.time.strftime("%Y-%m-%dT%H:%M:%SZ", ci.time.gmtime(seconds))
+        at = self.NOW if at is None else at
+        folder = self.root / "build" / "automations" / "recto-ci-watch"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "last.json").write_text(json.dumps({"name": "recto-ci-watch", "started": stamp(at - 2), "finished": stamp(at + 3),
+                                                      "exit": exit_code, "alert": alert}), encoding="utf-8")
+
+    def baseline(self):
+        """The task has run before, on a green main, so later reds are news."""
+        self.assertEqual(self.scheduled(FakeGh({"build.yml": [run(1)], "plan.yml": [run(2)]}))[0], 0)
+
+    def test_a_red_run_is_reported_until_its_email_is_sent_and_never_after(self):
+        self.baseline()
+        red = FakeGh({"build.yml": [run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
         code, out = self.scheduled(red)
         self.assertEqual(code, 1, out)
-        self.assertIn("main is red: build.yml", out)
+        self.assertIn("red run on main: build.yml at bbbbbbbbbbbb https://github.com/o/r/actions/runs/5; failed jobs: "
+                      "Build x64 #5", out)
+        # No word from the runner, then an email that could not be sent: the run is raised again each time.
+        self.assertEqual(self.scheduled(red)[0], 1)
+        self.runner_says("not sent")  # the runner keeps the task's own exit (1) beside it
+        self.assertEqual(self.scheduled(red)[0], 1)
+        # A sent email from another moment is not this run's.
+        self.runner_says("sent", at=self.NOW - 900)
+        self.assertEqual(self.scheduled(red)[0], 1)
+        self.runner_says("sent")
         code, out = self.scheduled(red)
-        self.assertEqual(code, 0, out)  # the same red run: no second email
-        newer = FakeGh({"build.yml": [run(7, conclusion="failure"), run(5, conclusion="failure")], "plan.yml": [run(6)]})
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("red run on main", out)
+        self.assertEqual(self.scheduled(red)[0], 0)
+        newer = FakeGh({"build.yml": [run(7, conclusion="failure"), run(5, conclusion="failure"), run(1)],
+                        "plan.yml": [run(2)]}, jobs=RED_JOBS)
         code, out = self.scheduled(newer)
         self.assertEqual(code, 1, out)
-        green = FakeGh({"build.yml": [run(8), run(7, conclusion="failure")], "plan.yml": [run(6)]})
-        code, out = self.scheduled(green)
-        self.assertEqual(code, 0, out)
+        self.assertIn("runs/7", out)
+        self.assertNotIn("runs/5;", out)
+
+    def test_two_reds_between_two_polls_are_both_reported_and_a_later_green_hides_neither(self):
+        self.baseline()
+        gh = FakeGh({"build.yml": [run(9), run(8, conclusion="failure"), run(7, conclusion="failure"), run(1)],
+                     "plan.yml": [run(6, conclusion="failure"), run(2)]}, jobs=RED_JOBS)
+        code, out = self.scheduled(gh)
+        self.assertEqual(code, 1, out)
+        for n in (6, 7, 8):
+            self.assertIn(f"runs/{n}; failed jobs: Build x64 #{n}", out)
+        self.assertIn("main has 3 red run(s) not yet reported by email: build.yml, plan.yml", out)
+
+    def test_the_first_run_reports_the_standing_red_and_not_history(self):
+        old = FakeGh({"build.yml": [run(5), run(4, conclusion="failure")], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        self.assertEqual(self.scheduled(old)[0], 0)
+        self.tearDown()
+        self.setUp()
+        standing = FakeGh({"build.yml": [run(5, conclusion="failure"), run(4, conclusion="failure")], "plan.yml": [run(2)]},
+                          jobs=RED_JOBS)
+        code, out = self.scheduled(standing)
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/5;", out)
+        self.assertNotIn("runs/4;", out)
+
+    def test_a_timed_out_run_is_a_red_run_here_too(self):
+        self.baseline()
+        gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},
+                    jobs={9: [cancelled_job(91)]}, annotations={91: [TIMED_OUT]})
+        code, out = self.scheduled(gh)
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/9", out)
 
     def test_an_outage_alerts_once_after_an_hour(self):
         down = FakeGh(fail=(1, "", "HTTP 502"))
@@ -436,6 +733,18 @@ class Scheduled(unittest.TestCase):
         code, out = self.scheduled(down, now=1000.0 + 3700)
         self.assertEqual(code, 1, out)
         self.assertEqual(self.scheduled(down, now=1000.0 + 7400)[0], 0)
+
+    def test_memory_that_cannot_be_written_is_unknown_and_never_a_silent_pass(self):
+        (self.root / ".github" / "workflows").mkdir(parents=True)
+        (self.root / ".github" / "workflows" / "build.yml").write_text("on:\n  push:\n", encoding="utf-8")
+        gh = FakeGh({"build.yml": [run(5, conclusion="failure")]}, jobs=RED_JOBS)
+        out = io.StringIO()
+        with unittest.mock.patch.object(ci.os, "replace", side_effect=PermissionError(13, "locked")), redirect_stdout(out):
+            code = ci.main(["--scheduled"], runner=gh, root=self.root)
+        self.assertEqual(code, 3, out.getvalue())
+        self.assertIn("ci-status unknown: cannot write", out.getvalue())
+        self.assertIn("ci-watch-reported.json", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 53 | Checklist items: 309
+Sections: 54 | Checklist items: 326
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -35,10 +35,11 @@ Sections: 53 | Checklist items: 309
 | [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
-| [ ]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 8     |
+| [ ]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 17    |
 | [ ]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
 | [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [ ]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
+| [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
 | [ ]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |
 | [ ]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
 | [ ]    | D06 T02 §12 | clang-tidy bug, CERT and concurrency checks over the compile database                    | windows-host | 8     |
@@ -944,6 +945,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 103/875 verified sections, 57 ready to run now.
+Progress: 103/876 verified sections, 57 ready to run now.
 
-Checklist: 698/6473 items completed (includes Commit items).
+Checklist: 707/6490 items completed (includes Commit items).

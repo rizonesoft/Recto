@@ -160,6 +160,8 @@ class Runner(unittest.TestCase):
         self.assertEqual((name, outcome["exit"], task["description"], folder),
                          ("demo-fail", 3, "fixture demo-fail", "\\Demo\\"))
         self.assertIn("it broke", tail)
+        self.assertEqual(self.last("demo-fail")["alert"], "sent")
+        self.assertNotIn("alert", self.main("demo-pass") or self.last("demo-pass"))
 
     def test_a_timeout_stops_the_run_and_alerts(self):
         killed = []
@@ -187,6 +189,7 @@ class Runner(unittest.TestCase):
         self.assertEqual(self.main("demo-fail", alerter=refuse), 3)
         log = (self.root / self.last("demo-fail")["log"]).read_text(encoding="utf-8")
         self.assertIn("alert not sent: Refused: vault field credential is unavailable", log)
+        self.assertEqual((self.last("demo-fail")["alert"], self.last("demo-fail")["exit"]), ("not sent", 5))
 
     def test_only_the_newest_logs_are_kept(self):
         folder = self.root / "build" / "automations" / "demo-pass"

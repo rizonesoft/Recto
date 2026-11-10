@@ -7,7 +7,7 @@
 Windows Task Scheduler starts this through `pythonw.exe` (install.ps1 registers every task in tasks.json with it),
 and on Linux and WSL a systemd user timer starts it (install.sh). It runs the task's command from the repository
 root with the task's timeout, writes the combined output to `build/automations/<name>/<UTC>.log` (the newest 20
-kept) and the outcome to `build/automations/<name>/last.json`, and on a non-zero exit, a timeout, or a command that
+kept) and the outcome to `build/automations/<name>/last.json` (after a failed run with `"alert": "sent"` or `"not sent"`, so a task that reports a finding once can tell whether its email left), and on a non-zero exit, a timeout, or a command that
 cannot start (126) sends the failure email through alert.py. Every process it starts, and every nested launch in
 the tasks, carries CREATE_NO_WINDOW on Windows, so a scheduled run never opens a console on the desktop. This
 wrapper is the one place a failure is reported on both schedulers. Its own exit is the command's (124 on a timeout,
@@ -160,11 +160,16 @@ def execute(name: str, task: dict, root: str, popen=subprocess.Popen, killer=_ki
     logs = sorted(f for f in os.listdir(folder) if f.endswith(".log"))
     for old in logs[:-KEEP_LOGS]:
         os.unlink(os.path.join(folder, old))
+    _record(folder, outcome)
+    return outcome
+
+
+def _record(folder: str, outcome: dict) -> None:
+    """last.json, replaced whole: the run's outcome, and after a failed run whether its alert was sent."""
     tmp = os.path.join(folder, "last.json.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(outcome, fh, indent=2)
     os.replace(tmp, os.path.join(folder, "last.json"))
-    return outcome
 
 
 def _quote(arg: str) -> str:
@@ -263,7 +268,10 @@ def main(argv: list[str], root: str = REPO, popen=subprocess.Popen, alerter=None
     except Exception as error:  # the run already failed; an unsent alert must still show, as exit 3
         with open(os.path.join(root, outcome["log"]), "a", encoding="utf-8") as fh:
             fh.write(f"\nrun.py: alert not sent: {type(error).__name__}: {error}\n")
+        _record(os.path.join(root, "build", "automations", argv[0]), {**outcome, "alert": "not sent"})
         return 3
+    # A task that reports each finding once (scripts/ci_status.py --scheduled) reads this before it forgets one.
+    _record(os.path.join(root, "build", "automations", argv[0]), {**outcome, "alert": "sent"})
     return outcome["exit"]
 
 
