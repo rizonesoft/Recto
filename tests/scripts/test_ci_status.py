@@ -499,6 +499,30 @@ class WaitAtOnce(unittest.TestCase):
             code, out, _ = self.run_wait(gh, changed=["src/pdf/error.cpp"])
         self.assertEqual(code, 1, out)
         self.assertIn("cannot write", out)
+        self.assertIn("`gh run view 1 --log-failed`", out)
+        # The same failure on a push that ended green is unknown, never a green that nobody can read back: the file
+        # still says the watch has not ended.
+        calls.clear()
+        with unittest.mock.patch.object(ci.os, "replace", side_effect=replace):
+            code, out, _ = self.run_wait(WaitGh({"build.yml": [[wrun(1, "build")]]}), changed=["src/pdf/error.cpp"])
+        self.assertEqual(code, 3, out)
+        self.assertNotIn("next: nothing", out)
+        self.assertIn("next: the watch's state could not be saved", out)
+        self.assertIsNone(self.state()["exit"])
+
+    def test_a_git_that_cannot_run_or_does_not_answer_is_unknown_and_never_a_red(self):
+        failures = [subprocess.TimeoutExpired(["git", "ls-remote"], 60), FileNotFoundError("git")]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                with unittest.mock.patch.object(ci.subprocess, "run", side_effect=failure):
+                    with self.assertRaises(ci.Unavailable) as caught:
+                        ci.run_git(["ls-remote", "origin", "refs/heads/main"])
+                    self.assertIn("git ls-remote origin could not run", str(caught.exception))
+                    out = io.StringIO()
+                    with redirect_stdout(out):
+                        code = ci.main(["--gate"], runner=GateGh(), root=self.root)
+                self.assertEqual(code, 3, out.getvalue())
+                self.assertIn("ci gate: unknown: git rev-parse origin/main could not run", out.getvalue())
 
 
 class GateGh:

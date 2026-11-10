@@ -303,8 +303,12 @@ def starts_on(filter_, branch, changed):
 
 
 def run_git(args):
-    done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=60)
+    try:
+        done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # A git that cannot run or does not answer (ls-remote with the network down) is unknown, never a red.
+        raise Unavailable(f"git {' '.join(args[:2])} could not run: {exc}") from None
     if done.returncode != 0:
         raise Unavailable(f"git {' '.join(args[:2])} exited {done.returncode}: {done.stderr.strip()[:MAX_MESSAGE]}")
     return done.stdout
@@ -451,12 +455,18 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
         red = any(entry["state"] == "red" for entry in states.values())
         finished = all(entry["state"] != "pending" for entry in states.values())
         if red or finished or clock() - started >= timeout:
-            code = verdict_of_commit(states)
+            code, unsaved = verdict_of_commit(states), False
             record["exit"] = code
             try:
                 write_state(state_path, record)
             except Unavailable as exc:
-                out(f"ci watch: {exc}")  # the verdict below still stands; the gate will ask for a new watch
+                # The file still says the watch has not ended, so the gate would wait on it for ever: a red seen is
+                # still reported as red, and anything else is unknown (3), with the reason, never a green nobody
+                # can read back.
+                out(f"ci watch: {exc}")
+                unsaved = True
+                if code != 1:
+                    record["exit"] = code = 3
             for workflow, entry in sorted(states.items()):
                 run = entry.get("run") or {}
                 out(f"{workflow}: {entry['state']} {run.get('url') or entry.get('note') or ''}".rstrip())
@@ -468,7 +478,12 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
             if red and still:
                 out(f"red is reported at once; still running on this commit: {', '.join(still)} "
                     f"(read them with `python scripts/ci_status.py`)")
-            out(f"ci watch: exit {code} for {sha[:12]}. {next_step(record)}")
+            if unsaved and code != 1:
+                out(f"ci watch: exit {code} for {sha[:12]}. next: the watch's state could not be saved: free disk "
+                    f"space or close the program holding {state_path}, then start "
+                    f"`python scripts/ci_status.py --wait {sha}` again")
+            else:
+                out(f"ci watch: exit {code} for {sha[:12]}. {next_step(record)}")
             return code
         try:
             write_state(state_path, record)
