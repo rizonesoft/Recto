@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 53 | Checklist items: 304
+Sections: 53 | Checklist items: 309
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -20,7 +20,7 @@ Sections: 53 | Checklist items: 304
 | [x]    | D00 T02 §2  | Skills, rules and the CI gate                                                            | none         | 4     |
 | [x]    | D00 T01 §4  | Build CI for x64 and ARM64                                                               | windows-host | 7     |
 | [x]    | D00 T02 §3  | Seeded graph and generated plan                                                          | none         | 4     |
-| [ ]    | D00 T02 §4  | `resolve --context`: one section with its file context, read in place of the file        | none         | 9     |
+| [ ]    | D00 T02 §4  | `resolve --context`: one section with its file context, read in place of the file        | none         | 14    |
 | [x]    | D00 T03 §1  | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
 | [x]    | D00 T03 §2  | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
 | [x]    | D00 T03 §3  | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
@@ -946,4 +946,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 103/875 verified sections, 57 ready to run now.
 
-Checklist: 685/6468 items completed (includes Commit items).
+Checklist: 685/6473 items completed (includes Commit items).
