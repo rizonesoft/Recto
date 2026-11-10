@@ -840,6 +840,20 @@ class Scheduled(unittest.TestCase):
         self.assertIn("runs/5;", out)
         self.assertNotIn("runs/4;", out)
 
+    def test_a_newest_run_whose_verdict_cannot_be_read_never_drops_an_older_red(self):
+        self.baseline()
+
+        class ViewDown(FakeGh):
+            def __call__(self, args):
+                if args[:3] == ["run", "view", "9"]:
+                    return 1, "", "HTTP 502: Bad Gateway"
+                return super().__call__(args)
+        runs = {"build.yml": [run(9, conclusion="cancelled"), run(7, conclusion="failure"), run(1)], "plan.yml": [run(2)]}
+        code, out = self.scheduled(ViewDown(runs, jobs=RED_JOBS))
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/7; failed jobs: Build x64 #7", out)
+        self.assertIn("build.yml run 9: gh run view exited 1: HTTP 502", out)
+
     def test_a_first_run_that_could_not_read_everything_still_skips_history_on_the_next(self):
         class PlanDown(FakeGh):
             def __call__(self, args):

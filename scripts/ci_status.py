@@ -642,33 +642,44 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     entries, unread, baseline = [], [], []
     for workflow in workflows:
         try:
-            entry = workflow_status(runner, workflow, branch)
             runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
                                     "--json", FIELDS])
         except Unavailable as exc:
             unread.append(f"{workflow}: {exc}")
             continue
-        entries.append(entry)
-        decisive = (entry.get("verdict_run") or {}).get("databaseId")
+        try:
+            entries.append(workflow_status(runner, workflow, branch))  # the summary lines for the log, nothing more
+        except Unavailable as exc:
+            unread.append(f"{workflow} summary: {exc}")
+        # Every listed run is judged on its own, oldest first: one whose verdict cannot be read (a cancelled run's
+        # jobs, for instance) is left for a later poll and takes nothing else with it.
+        # standing is the newest run with a verdict when it is red: on the task's first run it alone is news.
+        reds, standing = [], None
         for run in sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or "")):
             run_id = run.get("databaseId")
             key = f"{run_id}/{run.get('attempt') or 1}"
-            if (run.get("status") != "completed" or not isinstance(run_id, int) or key in reported or run_id in reported
-                    or key in passed or key in baseline or any(p["key"] == key for p in pending)):
+            if run.get("status") != "completed" or not isinstance(run_id, int):
                 continue
+            if key in passed or key in reported or run_id in reported or any(p["key"] == key for p in pending):
+                continue  # judged on an earlier poll
             try:
                 verdict, jobs = settle(runner, run)
             except Unavailable as exc:
-                unread.append(f"{workflow} run {run_id}: {exc}")  # judged on a later poll; the others still count
+                unread.append(f"{workflow} run {run_id}: {exc}")
                 continue
             if verdict != "red":
                 passed.append(key)
-            elif first_time and run_id != decisive:
-                baseline.append(key)  # history from before this task first ran: only the standing red is news
+                standing = None if verdict == "green" else standing
+                continue
+            standing = key
+            reds.append({"key": key, "workflow": workflow, "url": run.get("url"),
+                         "sha": str(run.get("headSha") or "")[:12],
+                         "failed_jobs": [str(job.get("name")) for job in jobs]})
+        for item in reds:
+            if first_time and item["key"] != standing:
+                baseline.append(item["key"])  # history from before this task first ran: only the standing red is news
             else:
-                pending.append({"key": key, "workflow": workflow, "url": run.get("url"),
-                                "sha": str(run.get("headSha") or "")[:12],
-                                "failed_jobs": [str(job.get("name")) for job in jobs]})
+                pending.append(item)
     if unread:
         first = memory.get("unknown_since") or now()
         memory["unknown_since"] = first
@@ -681,11 +692,12 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     else:
         memory.pop("unknown_since", None)
     memory.pop("unknown_reported", None)  # an older memory file's flag; the outage is a pending item now
-    if not (first_time and unread):
-        # The first run's baseline is kept only once everything was read, so history is skipped once, and whole.
+    # The first run's baseline (the history it skips, and the runs it found not red) is kept only once everything was
+    # read; until then the next poll judges main from the start again, so history is skipped once, and whole.
+    whole = not (first_time and unread)
+    if whole:
         reported += baseline
-    memory.update(reported=reported[-400:], passed=passed[-400:], pending=pending,
-                  baselined=not (first_time and unread))
+    memory.update(reported=reported[-400:], passed=passed[-400:] if whole else [], pending=pending, baselined=whole)
     if pending:
         memory["raised_at"] = now()
     else:
