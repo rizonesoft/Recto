@@ -21,7 +21,10 @@ Stdlib only; the `gh` runner is injectable for tests.
     python scripts/ci_status.py --gate [--brief] # may a new row be claimed, or a section stamp?
 
 `--wait` reads which watched workflows the push starts from each workflow's own `push` filter (`branches`, `paths`,
-`paths-ignore`) and the files the push brought (`--since`, the branch's old head; else the commit's parent), follows
+`paths-ignore`) and the files the push brought: from `--since` (the branch's old head), else from the earlier watch of
+the same commit, else from GitHub's own record of the branch's pushes. When none of the three gives the range, the
+commit's own files are only a lower bound, and every watched workflow gets 10 minutes to show a run before it is taken
+as not started. It follows
 each through `gh run list --commit` every `--poll` seconds (default 10), and writes its state to
 `build/ci-watch/<sha>.json` as it goes. It prints what it expects when it starts and every change of state with the
 seconds since then. The verdict over the commit's runs: a red exits 1 the poll it is seen (every failed job named, and
@@ -382,8 +385,28 @@ def runs_of_commit(runner, workflow, sha):
     return sorted(runs, key=lambda r: (str(r.get("createdAt") or ""), r.get("attempt") or 0))
 
 
+def say(line):
+    """Print now: a watch runs in the background, and a line held in a buffer until it ends tells nobody anything."""
+    print(line, flush=True)
+
+
+def pushed_from(runner, sha, branch):
+    """The branch's head before the push that made `sha` its head, read from GitHub's record of the branch's pushes,
+    or None when `sha` was never a pushed head there or GitHub cannot say. This is the range GitHub itself filtered
+    the push's workflows by."""
+    try:
+        pushes = gh_json(runner, ["api", f"repos/{{owner}}/{{repo}}/activity?ref=refs/heads/{branch}"
+                                         f"&activity_type=push&per_page=100"])
+    except Unavailable:
+        return None
+    for push in pushes if isinstance(pushes, list) else []:
+        if isinstance(push, dict) and push.get("after") == sha and re.fullmatch(r"[0-9a-f]{40}", str(push.get("before"))):
+            return None if set(push["before"]) == {"0"} else push["before"]
+    return None
+
+
 def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WORKFLOWS, branch="main", timeout=3600,
-         poll=10, clock=time.monotonic, sleep=time.sleep, out=print, pid=None, alive=process_alive):
+         poll=10, clock=time.monotonic, sleep=time.sleep, out=say, pid=None, alive=process_alive):
     """Follows the watched workflows' runs on `sha` and returns the exit code the moment the verdict is known: 1 at the
     first red seen (the other runs are named as still running), else when every run has ended. See the module
     docstring. Every change of state is printed with the seconds since the watch began."""
@@ -398,7 +421,10 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
         return 6
     # A restarted watch keeps the push range the first one was given: GitHub filters a push by everything it brought
     # (the branch's old head to its new one), not by its last commit.
-    since = since or previous.get("since")
+    since = since or previous.get("since") or pushed_from(runner, sha, branch)
+    # With no range from the caller, an earlier watch or GitHub, the commit's own files are only a lower bound: a
+    # workflow they do not start is then given the same ten minutes to show a run before it is taken as not started.
+    ranged = since is not None
     changed = [line.strip() for line in git(["diff", "--name-only", since or f"{sha}^", sha]).splitlines() if line.strip()]
     expected = {w for w in workflows if (directory / w).is_file() and starts_on(push_filter(directory / w), branch, changed)}
     started = clock()
@@ -408,6 +434,9 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
     write_state(state_path, record)  # nothing is known yet, so a failed write here is Unavailable (exit 3)
     out(f"ci watch: {sha[:12]} expects {', '.join(sorted(expected)) or 'no watched workflow'} "
         f"({len(changed)} changed file(s)); reading every {poll} s for up to {timeout // 60} min")
+    if not ranged:
+        out(f"ci watch: the push that brought {sha[:12]} is not known (no --since, no earlier watch, not in GitHub's "
+            f"push record), so every watched workflow gets {APPEAR_SECONDS // 60} minutes to show a run")
     said, outage, write_warned = {}, {}, False
     while True:
         for workflow in workflows:
@@ -417,7 +446,11 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
                 runs = runs_of_commit(runner, workflow, sha)
                 if not runs:
                     if workflow not in expected:
-                        states.pop(workflow, None)  # read, and it has no run on this commit: nothing to wait for
+                        if ranged or clock() - started >= APPEAR_SECONDS:
+                            states.pop(workflow, None)  # read, and it has no run on this commit: nothing to wait for
+                        else:
+                            states[workflow] = {"state": "pending", "run": None, "failed_jobs": [],
+                                                "note": "the push range is not known: waiting to see whether it starts"}
                     elif clock() - started >= APPEAR_SECONDS:
                         states[workflow] = {"state": "unknown", "run": None, "failed_jobs": [],
                                             "note": f"expected for this push, not seen in {APPEAR_SECONDS // 60} minutes"}
@@ -453,6 +486,7 @@ def wait(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=WO
         for workflow, entry in sorted(states.items()):
             run = entry.get("run") or {}
             waiting = "waiting for GitHub to register the run" if entry["state"] == "pending" and not run else ""
+            waiting = entry.get("note") or waiting if workflow not in expected else waiting
             line = f"{workflow}: {entry['state']} {run.get('status') or ''} {run.get('url') or entry.get('note') or waiting}"
             if run and entry.get("note") and entry["state"] in ("pending", "unknown"):
                 line += f" ({entry['note']})"  # why a run that was read before is being waited on again

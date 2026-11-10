@@ -207,8 +207,9 @@ def wrun(n, workflow, status="completed", conclusion="success", sha=SHA_NEW):
 class WaitGh:
     """gh for --wait: per workflow, a list of answers, one per poll (the last repeats); jobs per run id."""
 
-    def __init__(self, polls, jobs=None, annotations=None):
+    def __init__(self, polls, jobs=None, annotations=None, pushes=((SHA_OLD, SHA_NEW),)):
         self.polls, self.jobs, self.count, self.annotations = polls, jobs or {}, {}, annotations or {}
+        self.pushes = pushes  # GitHub's record of the branch's pushes, (before, after); None: it cannot be read
 
     def __call__(self, args):
         if args[:2] == ["run", "list"]:
@@ -220,6 +221,11 @@ class WaitGh:
             return 0, json.dumps(answers[min(i, len(answers) - 1)]), ""
         if args[:2] == ["run", "view"]:
             return 0, json.dumps({"jobs": self.jobs.get(int(args[2]), [])}), ""
+        if args[0] == "api" and "/activity?" in args[1]:
+            assert args[1] == "repos/{owner}/{repo}/activity?ref=refs/heads/main&activity_type=push&per_page=100", args
+            if self.pushes is None:
+                return 1, "", "HTTP 502: Bad Gateway"
+            return 0, json.dumps([{"before": b, "after": a, "activity_type": "push"} for b, a in self.pushes]), ""
         if args[0] == "api":
             return 0, json.dumps(annotations_for(self.annotations, args[1])), ""
         raise AssertionError(args)
@@ -421,6 +427,43 @@ class WaitAtOnce(unittest.TestCase):
         self.assertEqual((code, elapsed), (3, 660.0), out)  # never read again: unknown, not the old green
         self.assertEqual(self.state()["workflows"]["build.yml"]["state"], "unknown")
 
+    def test_the_push_range_is_read_from_github_when_nobody_gave_it(self):
+        # A code commit and a docs-only commit pushed together, and a session that died before it recorded a watch:
+        # the watch started again with the head alone must still expect the build.
+        asked = []
+
+        def git(args):
+            asked.append(args)
+            return "src/core/runtime.cpp\ndocs/experiments/x.md\n" if args[2] == SHA_OLD else "docs/experiments/x.md\n"
+        gh = WaitGh({"build.yml": [[], [], [wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB)
+        code, out, elapsed = self.run_wait(gh, git=git)
+        self.assertEqual((code, elapsed), (1, 120.0), out)
+        self.assertEqual(asked, [["diff", "--name-only", SHA_OLD, SHA_NEW]])
+        self.assertEqual((self.state()["since"], self.state()["expected"]), (SHA_OLD, ["build.yml"]))
+
+    def test_an_unknown_push_range_proves_no_workflow_unnecessary(self):
+        def git(args):
+            return "docs/experiments/x.md\n"  # the head commit alone starts nothing
+        for pushes in (None, ((SHA_OLD, "c" * 40),)):  # GitHub cannot be read; or it never saw this head pushed
+            with self.subTest(pushes=pushes):
+                # Nothing is registered yet: the watch waits, and the build that then appears red is reported.
+                late = WaitGh({"build.yml": [[], [], [], [wrun(1, "build", conclusion="failure")]]}, jobs=self.RED_JOB,
+                              pushes=pushes)
+                code, out, elapsed = self.run_wait(late, git=git)
+                self.assertEqual((code, elapsed), (1, 180.0), out)
+                self.assertIn("the push that brought bbbbbbbbbbbb is not known", out)
+                self.assertIn("build.yml: pending the push range is not known: waiting to see whether it starts", out)
+                # A push that really starts nothing is green once every workflow had its ten minutes.
+                code, out, elapsed = self.run_wait(WaitGh({}, pushes=pushes), git=git)
+                self.assertEqual((code, elapsed), (0, 600.0), out)
+                self.assertEqual(self.state()["workflows"], {})
+
+    def test_progress_lines_are_flushed_as_they_are_printed(self):
+        self.assertIs(ci.wait.__kwdefaults__["out"], ci.say)
+        with unittest.mock.patch("builtins.print") as printed:
+            ci.say("a line")
+        printed.assert_called_once_with("a line", flush=True)
+
     def test_a_restarted_watch_keeps_the_first_ones_push_range(self):
         path = self.root / "build" / "ci-watch" / f"{SHA_NEW}.json"
         path.parent.mkdir(parents=True)
@@ -431,7 +474,7 @@ class WaitAtOnce(unittest.TestCase):
         def git(args):
             asked.append(args)
             return "src/core/runtime.cpp\ntodo/x.md\n" if args[2] == SHA_OLD else "todo/x.md\n"
-        gh = WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]})
+        gh = WaitGh({"build.yml": [[wrun(1, "build")]], "plan.yml": [[wrun(2, "p")]]}, pushes=None)  # GitHub cannot say
         code, out, _ = self.run_wait(gh, git=git, alive=lambda pid: False)
         self.assertEqual(code, 0, out)
         self.assertEqual(asked, [["diff", "--name-only", SHA_OLD, SHA_NEW]])
