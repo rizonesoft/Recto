@@ -1269,6 +1269,32 @@ class Scheduled(unittest.TestCase):
         self.assertEqual(ran.call_args.kwargs["timeout"], 7)
         self.assertEqual(ci.run_gh.__defaults__, (ci.GH_SECONDS,))
 
+    def test_a_runs_jobs_are_read_for_the_attempt_that_was_listed(self):
+        self.baseline()
+
+        class ByAttempt(FakeGh):
+            """The build was started again after it was listed: attempt 1 timed out, attempt 2 (the newest, which a
+            plain `gh run view` answers for) has no cancelled job."""
+
+            def __call__(self, args, timeout=None):
+                if args[:3] == ["run", "view", "9"]:
+                    self.calls.append(args)
+                    attempt = args[args.index("--attempt") + 1] if "--attempt" in args else "newest"
+                    return 0, json.dumps({"jobs": [cancelled_job(91)] if attempt == "1" else []}), ""
+                return super().__call__(args)
+        listed = dict(run(9, conclusion="cancelled"), attempt=1)
+        gh = ByAttempt({"build.yml": [listed, run(1)], "plan.yml": [run(2)]}, annotations={91: [TIMED_OUT]})
+        code, out = self.scheduled(gh)
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/9", out)
+        self.assertIn(["run", "view", "9", "--attempt", "1", "--json", "jobs"], gh.calls)
+        # The same for a failed run's job names, in the report and in the watch.
+        self.assertEqual(ci.view_jobs(7, 3), ["run", "view", "7", "--attempt", "3", "--json", "jobs"])
+        self.assertEqual(ci.view_jobs(7), ["run", "view", "7", "--json", "jobs"])
+        failed = FakeGh({"build.yml": [dict(run(5, conclusion="failure"), attempt=2)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        self.assertEqual(status(failed)[0], 1)
+        self.assertIn(["run", "view", "5", "--attempt", "2", "--json", "jobs"], failed.calls)
+
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},

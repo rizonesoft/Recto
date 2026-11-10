@@ -123,11 +123,17 @@ def verdict_of(run):
 TIMEOUT_MARK = "exceeded the maximum execution time"
 
 
+def view_jobs(run_id, attempt=None):
+    """The gh arguments that read one run's jobs: of the attempt that was listed when it is known, because a run that
+    is started again keeps its id and `gh run view` would otherwise answer for the newest attempt."""
+    return ["run", "view", str(run_id), *(["--attempt", str(attempt)] if attempt else []), "--json", "jobs"]
+
+
 def timed_out_jobs(runner, run):
     """The jobs of a cancelled run that GitHub stopped at their `timeout-minutes`, as failed jobs. GitHub reports a job
     timeout as `cancelled` and says why only in the job's check-run annotation; a timeout is a red build (the work did
     not finish), never a cancel to rerun or skip. Unavailable when the jobs or annotations cannot be read."""
-    view = gh_json(runner, ["run", "view", str(run.get("databaseId")), "--json", "jobs"])
+    view = gh_json(runner, view_jobs(run.get("databaseId"), run.get("attempt")))
     jobs = view.get("jobs") if isinstance(view, dict) else None
     if not isinstance(jobs, list):
         raise Unavailable("gh run view returned no job list")
@@ -151,7 +157,7 @@ def settle(runner, run):
         if timed_out:
             return "red", timed_out
     if verdict == "red":
-        return "red", failed_jobs(runner, run.get("databaseId"))
+        return "red", failed_jobs(runner, run.get("databaseId"), run.get("attempt"))
     return verdict, []
 
 
@@ -189,10 +195,11 @@ def workflow_status(runner, workflow, branch):
     return entry
 
 
-def failed_jobs(runner, run_id):
-    """The failed jobs of one run, or a one-line note when they cannot be read (the run is still red)."""
+def failed_jobs(runner, run_id, attempt=None):
+    """The failed jobs of one run (of `attempt` when given), or a one-line note when they cannot be read (the run is
+    still red)."""
     try:
-        view = gh_json(runner, ["run", "view", str(run_id), "--json", "jobs"])
+        view = gh_json(runner, view_jobs(run_id, attempt))
     except Unavailable as exc:
         return [{"name": f"jobs unavailable: {exc}", "conclusion": None, "url": None}]
     jobs = view.get("jobs") if isinstance(view, dict) else None
@@ -834,7 +841,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
                 continue  # judged on an earlier poll
             verdict = verdict_of(run)
             item = {"key": key, "workflow": workflow, "url": run.get("url"), "sha": str(run.get("headSha") or "")[:12],
-                    "failed_jobs": [], "run": run_id}
+                    "failed_jobs": [], "run": run_id, "attempt": run.get("attempt")}
             if verdict == "green":
                 passed.append(key)
                 standing = None
@@ -866,7 +873,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         if not in_budget(f"{item['workflow']} run {item['run']}"):
             continue
         try:
-            jobs = timed_out_jobs(runner, {"databaseId": item["run"]})
+            jobs = timed_out_jobs(runner, {"databaseId": item["run"], "attempt": item.get("attempt")})
         except Unavailable as exc:
             unread.append(f"{item['workflow']} run {item['run']}: {exc}")
             continue
@@ -879,7 +886,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     for item in pending:  # the names of the failed jobs, for the email; the run is reported with or without them
         if item.get("run") and not item.get("failed_jobs") and not item.get("note") and in_budget(
                 f"{item['workflow']} run {item['run']} job names"):
-            item["failed_jobs"] = [str(job.get("name")) for job in failed_jobs(runner, item["run"])]
+            item["failed_jobs"] = [str(job.get("name")) for job in failed_jobs(runner, item["run"], item.get("attempt"))]
     if unread:
         first = memory.get("unknown_since") or now()
         memory["unknown_since"] = first
