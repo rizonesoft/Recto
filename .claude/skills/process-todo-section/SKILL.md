@@ -20,10 +20,10 @@ Processing a section is two jobs, in order. First establish that the plan is sou
 Never hand-translate a reference into a filename. Ask the graph:
 
 ```powershell
-python scripts/todo-graph.py resolve "$ARGUMENTS"
+python scripts/todo-graph.py resolve "$ARGUMENTS" --context
 ```
 
-It prints the path, title, phase, needs, dependencies (met and unmet) and the section body. Its exit code is the instruction:
+Run it once: this one call resolves the reference and prints everything step 1 reads, so the section is never fetched twice. Its first line is `# resolve --context DNN TNN §N` (the canonical reference), its `- state:` line repeats the exit code with the reason when the section waits, and the rest is the section with its file context (step 1 says what each part is). A refusal (exit 1 or 2) prints only a `TODO refused:` line on standard error. Its exit code is the instruction:
 
 | Exit | Meaning | Do this |
 | :-: | --- | --- |
@@ -33,7 +33,7 @@ It prints the path, title, phase, needs, dependencies (met and unmet) and the se
 | 3 | The section is already `[x]` | Hand to `review-todo-section` in audit stance. |
 | 4 | Waiting on deps, file status, or person Need | Stop at the gate and name what it waits on. |
 
-Use the printed `skill_arg` (`DNN TNN §N`) as the canonical form for the rest of the run, including the commit message and the review call.
+Use the reference in the output's first line (`DNN TNN §N`) as the canonical form for the rest of the run, including the commit message and the review call.
 
 If the section carries `windows-host`, `arm64-host`, `display-session`, `office`, `libreoffice` or `attended` in Needs, confirm that environment is actually reachable before writing `Started:`. If it is not, stop and say what the section waits on: starting an environment-bound section without the environment burns a session producing nothing committable.
 
@@ -55,7 +55,7 @@ Before the first edit in a session, read `todo/README.md` (the format every TODO
 
 ### 1. Read the whole contract
 
-Run `python scripts/todo-graph.py resolve '<ref>' --context` and read all of its output. It prints, as Markdown and with `resolve`'s exit codes: the file's state (status, frozen, file dependencies) and why the section waits if it does; the file's own context word for word (title, Goal, Current state and its dated notes, Inputs, Outcome, Adjacency, the Implementation Order table), which the section assumes; the section word for word; the file's Verification block (gates the section may owe); one line per prerequisite with its effective state (`[x] settled`, `[ ] open`, or `[x] suspect` with the open section underneath), its `Verified:` date and commit and its receipt, which tell you what shipped; its waiting Needs; and every cross-reference and deferral in the tree that names the section or that it makes, with `path:line`. That output replaces reading the TODO file: do not open the file to read other sections. Read wider only in two cases: when a prerequisite's body (not only its stamp) decides the work, run `resolve '<prerequisite>' --context` on it; and when a cross-reference line needs its surroundings, read around that `path:line`. The whole file is read only by `process-todo-file` and `groom-plan`. Then read the governing excerpts named in Inputs (foundation plan sections, SPEC sections).
+Read all of the output step 0's command printed (do not run it again; run it again only after the TODO file changes). It holds, as Markdown: the file's state (status, frozen, file dependencies) and why the section waits if it does; the file's own context word for word (title, Goal, Current state and its dated notes, Inputs, Outcome, Adjacency, the Implementation Order table), which the section assumes; the section word for word; the file's Verification block (gates the section may owe); one line per prerequisite with its effective state (`[x] settled`, `[ ] open`, or `[x] suspect` with the open section underneath), its `Verified:` date and commit and its receipt, which tell you what shipped; its waiting Needs; and every cross-reference and deferral in the tree that names the section or that it makes, with `path:line`. That output replaces reading the TODO file: do not open the file to read other sections. Read wider only in two cases: when a prerequisite's body (not only its stamp) decides the work, run `resolve '<prerequisite>' --context` on it; and when a cross-reference line needs its surroundings, read around that `path:line`. The whole file is read only by `process-todo-file` and `groom-plan`. Then read the governing excerpts named in Inputs (foundation plan sections, SPEC sections).
 
 ### 2. Validate the plan before building it
 

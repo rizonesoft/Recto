@@ -1827,6 +1827,10 @@ class Repository(unittest.TestCase):
                 text = (tg.ROOT / ".claude/skills" / skill / "SKILL.md").read_text(encoding="utf-8")
                 self.assertIn("--context", text)
                 self.assertNotIn("entire TODO file", text)
+                # One call per section read: the front door is the context call, never a plain resolve beside it.
+                self.assertEqual(re.findall(r'resolve "\$ARGUMENTS"(?! --context)', text), [])
+                self.assertEqual(len(re.findall(r'resolve "\$ARGUMENTS" --context', text)), 1)
+                self.assertNotIn("skill_arg", text)
         for relative in ("todo/README.md", "docs/todo-workflow.md"):
             with self.subTest(relative=relative):
                 self.assertIn("--context", (tg.ROOT / relative).read_text(encoding="utf-8"))
