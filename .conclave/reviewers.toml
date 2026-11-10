@@ -1,7 +1,10 @@
 # Independent reviewers for this repository, read by scripts/review-dispatch.py.
 #
 # Owner decision 2026-11-10: Fable 5.2 (Claude Code, writer `claude`) is the only
-# writer in this repository (Opus 5.5 was, from 2026-10-23). Owner decision 2026-10-28:
+# writer in this repository (Opus 5.5 was, from 2026-10-23). Owner decision 2026-11-10:
+# the reviewer is GPT-6 Astra always, whichever of Claude Code (`claude`),
+# Antigravity (`agy`) or Muse Code (`muse`) wrote the work, so each of the three
+# routes names it alone. Owner decision 2026-10-28:
 # the Astra and Terra panel was more review than the work needed, so the route
 # is GPT-6 Astra alone through the Codex CLI, each of its passes one effort
 # level higher than before the panel (the panel's record is
@@ -26,6 +29,8 @@ effort = "high"
 
 [routes]
 claude = ["astra"]
+agy = ["astra"]
+muse = ["astra"]
 
 # The review schedule (owner decision 2026-10-23; simplified with these efforts by the owner on 2026-11-06). The
 # dispatcher picks each pass's effort and lenses, so the loop runs the same way every time: a medium plan review before

@@ -206,13 +206,41 @@ class Dispatch(Harness):
         self.assertIsNone(summary["reviewer"])
         self.assertIn("not an approval", record.read_text())
 
-    def test_only_claude_is_a_writer(self):
-        # Codex and Gemini no longer write in this repository, so neither is a writer the dispatcher accepts.
+    def test_only_claude_agy_and_muse_are_writers(self):
+        # Codex is the reviewer's CLI and Gemini is reached through `agy`, so neither is a writer the dispatcher accepts.
         for writer in ("codex", "gemini"):
             with self.subTest(writer):
                 result, _ = self.dispatch("--writer", writer, "--prompt", str(self.prompt))
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("invalid choice", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_agy_and_muse_work_goes_to_the_same_reviewer(self):
+        # Owner decision 2026-11-10: whichever of Claude Code, Antigravity (`agy`) or Muse Code (`muse`) wrote the
+        # work, its route names the one reviewer, and the round records who wrote it.
+        pin = self.repo / ".conclave/reviewers.toml"
+        pin.write_text(FIXTURE_PIN + 'agy = ["sol"]\nmuse = ["sol"]\n', encoding="utf-8")
+        for writer in ("agy", "muse"):
+            with self.subTest(writer):
+                self.clear_log()
+                record = self.repo / f"docs/reviews/{writer}.md"
+                result, summary = self.dispatch("--writer", writer, "--prompt", str(self.prompt), "--record",
+                                                str(record))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((summary["writer"], summary["reviewer"], summary["skipped"]), (writer, "sol", []))
+                (call,) = self.calls()
+                self.assertEqual(call["argv"][:3], ["exec", "-m", "gpt-6.1-sol"])
+                self.assertIn(f"- Writer: {writer}", record.read_text())
+                module = self.module()
+                (entry,) = module.read_rounds(record.read_text())
+                self.assertEqual(entry["writer"], writer)
+                self.assertTrue(module.returned_review({**entry, "review": "OVERALL: approve"}),
+                                "an approving round on this writer's work must count as a review")
+
+    def test_a_writer_the_pin_does_not_route_is_refused(self):
+        result, _ = self.dispatch("--writer", "muse", "--prompt", str(self.prompt))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("the reviewer pin has no route for writer 'muse'", result.stderr)
         self.assertEqual(self.calls(), [])
 
     def test_rounds_are_numbered_and_appended(self):
@@ -269,8 +297,8 @@ class Dispatch(Harness):
                      "route 'claude' must list 1 to 4 distinct reviewers",
                  good.replace('claude = ["sol"]', 'claude = []'):
                      "route 'claude' must list 1 to 4 distinct reviewers",
-                 good + 'codex = ["sol"]\n': "[routes] may only name the writers claude",
-                 good + 'gemini = ["sol"]\n': "[routes] may only name the writers claude",
+                 good + 'codex = ["sol"]\n': "[routes] may only name the writers claude, agy, muse",
+                 good + 'gemini = ["sol"]\n': "[routes] may only name the writers claude, agy, muse",
                  good.replace('effort = "xhigh"', 'effort = "xhigh"\nsandbox = "workspace-write"'):
                      "reviewer 'sol' has unknown keys: sandbox"}
         for text, message in cases.items():
@@ -281,8 +309,8 @@ class Dispatch(Harness):
                 self.assertEqual(str(refused.exception), message)
 
     def test_a_reviewer_of_the_writers_own_family_is_refused(self):
-        # Only the Codex CLI reviews and only Claude writes, so no pin can name a same-family reviewer today; the rule
-        # still holds in load_pin, proved by giving the writer the reviewer's family.
+        # Only the Codex CLI reviews and no writer is of its family, so no pin can name a same-family reviewer today;
+        # the rule still holds in load_pin, proved by giving the writer the reviewer's family.
         module = self.module()
         with unittest.mock.patch.dict(module.WRITER_FAMILY, {"claude": "openai"}):
             with self.assertRaises(module.Refused) as refused:
@@ -1253,15 +1281,20 @@ class RepositoryPin(unittest.TestCase):
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
-    def test_the_repository_pin_is_astra_alone_reviewing_claude(self):
-        # Owner decisions: Fable 5.2 is the sole writer (2026-11-10; Opus 5.5 from 2026-10-23), reviewed by GPT-6 Astra through Codex on every pass;
+    def test_the_repository_pin_is_astra_alone_reviewing_every_writer(self):
+        # Owner decisions: GPT-6 Astra through Codex reviews every pass, whichever of Claude Code, Antigravity (`agy`)
+        # or Muse Code (`muse`) wrote it (2026-11-10; Fable 5.2 through Claude Code is the repository's writer);
         # the Astra and Terra panel was removed on 2026-10-28. The shape as of the owner decision of 2026-11-06: a medium
         # plan review, a low completion review, a medium round 1 across five lenses (design on surface sections only),
         # then low adversarial rounds until one has no P1 or P2, a P1 on a low round making the next one medium.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
         self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "high"}})
-        self.assertEqual(pin["routes"], {"claude": ["astra"]})
+        spec = importlib.util.spec_from_file_location("dispatch_writers", SCRIPTS / "review-dispatch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.WRITERS, ("claude", "agy", "muse"))
+        self.assertEqual(pin["routes"], {writer: ["astra"] for writer in module.WRITERS})
         schedule = pin["schedule"]
         self.assertNotIn("efforts", schedule)
         self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})

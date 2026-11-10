@@ -7,9 +7,10 @@
     python3 scripts/review-dispatch.py --check-pin [--json] [--pin <path>]     the pin's verdict; runs no reviewer
     python3 scripts/review-dispatch.py --list-rounds [--json] [--records <dir>]  recorded rounds; runs no reviewer
 
-`--writer` is the agent whose work is under review. Fable 5.2 through Claude Code (`claude`) is the only writer in this
-repository, and its route in the pin names a panel of 1 to MAX_PANEL reviewers, each of a different model family from
-the writer (owner decision 2026-10-28: GPT-6 Astra alone through the Codex CLI, after a day as a panel with GPT-6.1 Terra).
+`--writer` is the agent whose work is under review: `claude` (Claude Code, the repository's writer, Fable 5.2), `agy`
+(Antigravity) or `muse` (Muse Code). Each writer's route in the pin names a panel of 1 to MAX_PANEL reviewers, each of a
+different model family from the writer (owner decision 2026-10-28: GPT-6 Astra alone through the Codex CLI, after a day
+as a panel with GPT-6.1 Terra; owner decision 2026-11-10: the same one reviewer whichever of the three wrote the work).
 Every member reviews every pass of the same candidate at once, each with its own scheduled effort, and each member's
 review goes to its own findings file: the `--record` file for the route's first reviewer, `<stem>.<reviewer>.md` beside
 it for each other (`panel_record`). The writer's settled items in those files (`- Filed:`, `- Not taken:` and
@@ -66,12 +67,14 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / ".conclave" / "reviewers.toml"
-# Fable 5.2 through Claude Code is the only writer (owner decision 2026-11-10); reviewers run through the Codex CLI.
-WRITERS = ("claude",)
+# The agents whose work a review may be dispatched for: Claude Code (Fable 5.2, the repository's writer), Antigravity
+# and Muse Code (owner decision 2026-11-10: GPT-6 Astra reviews whichever of them wrote). Reviewers run through the
+# Codex CLI.
+WRITERS = ("claude", "agy", "muse")
 CLIS = ("codex",)
 # A reviewer is never of the writer's own model family.
 FAMILY = {"codex": "openai"}
-WRITER_FAMILY = {"claude": "anthropic"}
+WRITER_FAMILY = {"claude": "anthropic", "agy": "google", "muse": "meta"}
 EFFORTS = {"codex": ("low", "medium", "high", "xhigh", "max")}
 # The reviewers one route may name: each runs every pass (a panel), so more multiplies every section's review cost.
 MAX_PANEL = 4
