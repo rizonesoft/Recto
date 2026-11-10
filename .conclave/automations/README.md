@@ -54,7 +54,7 @@ A notice email ("is available") is recorded as the git ref `refs/recto-notice/<k
 ## Install and inspect
 
 ```powershell
-pwsh .conclave/automations/install.ps1              # idempotent; re-run after editing tasks.json
+pwsh .conclave/automations/install.ps1              # idempotent; re-run after editing tasks.json, and after moving or renaming the clone
 pwsh .conclave/automations/install.ps1 -Uninstall   # remove every \Recto\ task
 Get-ScheduledTask -TaskPath '\Recto\' | Get-ScheduledTaskInfo | Format-Table TaskName, NextRunTime, LastRunTime, LastTaskResult
 Start-ScheduledTask -TaskPath '\Recto\' -TaskName <name>   # run one now

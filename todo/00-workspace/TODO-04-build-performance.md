@@ -57,6 +57,7 @@ track: M0
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [ ] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
+| 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -408,6 +409,29 @@ Two defaults, each with its cost of changing: clangd comes from Visual Studio an
 - [ ] Commit: `ci: open one issue for a red main from the workflow itself, and close it when green`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_ci_red_issue tests.scripts.test_ci_status` passes; a second red run adds a comment and never a second issue; and removing the `ci-red` job from either workflow fails the test.
+
+## 14. Scheduled tasks that follow the clone when it moves, and say so when they do not
+
+Found on 2026-11-10 while proving `§9` end to end: every task under `\Recto\` in Windows Task Scheduler still ran `D:\GitHub\Recto\.conclave\automations\run.py` after the clone moved to `D:\Recto`, so each start failed with `0x8007010B` (the directory name is invalid) and `recto-ci-watch`, `recto-pr-merge`, `recto-python-pin` and `recto-visual-studio` had done nothing since 2026-11-09T20:25Z. Nothing reported it: the runner that emails a failure is the thing that could not start. The tasks were registered again for this clone by hand (`pwsh .conclave/automations/install.ps1`), and a real `recto-ci-watch` run then exited 0. `scripts/start-unattended-run.ps1 -InstallShortcut` already rewrites the Desktop shortcut after a move; the tasks have no such check. This section adds one that runs where a session already looks at the machine, and repairs the registration when it is stale.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add a check to the installer. Done when: `pwsh .conclave/automations/install.ps1 -Check` exits 0 when every task in `tasks.json` is registered for this clone and its last result is not a start failure, and 1 with one line per stale task otherwise.
+2. Run it where a session starts. Done when: a session opened on a clone whose tasks point elsewhere is told so in its first context, with the command that repairs it.
+
+- [ ] Add `-Check` to `.conclave/automations/install.ps1`: for each task in `tasks.json`, compare the registered action's script path and working directory with this clone, and read `LastTaskResult`; print `stale: <task>: registered for <path>, this clone is <path>` or `failing: <task>: last result <hex>` and exit 1, or `automations: <n> task(s) registered for this clone` and exit 0; a task that is not registered at all is `missing: <task>`. It changes nothing. Done when: `scripts/tests/test_automations.py` drives the check through a function that takes the registered tasks as data (so the test needs no Task Scheduler) and reads each of the three lines and exit codes.
+- [ ] Share the comparison between `-Check` and the install path, so a task registered for another clone is replaced by an install and never left beside a new one. Done when: the test reads an install over a stale registration producing one task per name, registered for this clone.
+- [ ] Print the check at a session's start: a `SessionStart` hook entry in `.claude/settings.json` beside the CI line runs `pwsh -NoProfile -File .conclave/automations/install.ps1 -Check` (on Windows only), bounded to 20 seconds, and its one-line result is the session's first context; it never fails the hook. Done when: a session started with a task registered for another path shows the `stale:` line and `next: pwsh .conclave/automations/install.ps1`.
+- [ ] Have `scripts/start-unattended-run.ps1` print the same check with its other start-up lines, as a warning when it exits 1. Done when: `tests/scripts/test_start_unattended_run.py` reads the warning with a fake check that exits 1 and no warning with one that exits 0.
+- [ ] Give Linux and WSL the same: `install.sh --check` compares each unit's `ExecStart` and `WorkingDirectory` with this clone. Done when: `scripts/tests/test_automations.py` reads a stale unit reported through the units `run.py --units` writes.
+- [ ] Document it in `.conclave/automations/README.md` ("Install and inspect") and in `AGENTS.md`'s Validation block. Done when: both show the check command and say what a stale registration looks like (`LastTaskResult` `0x8007010B` on every task).
+- [ ] Commit: `automations: check that the scheduled tasks are registered for this clone`
+
+**Test checkpoint:** `python -m unittest discover -s scripts/tests` passes; `pwsh .conclave/automations/install.ps1 -Check` exits 0 on this machine; and registering one task for another folder (in the test's data) makes the check exit 1 naming it.
 
 ## Verification
 
