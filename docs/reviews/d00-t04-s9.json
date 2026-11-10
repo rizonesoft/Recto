@@ -1,0 +1,172 @@
+{
+  "ref": "D00 T04 \u00a79",
+  "title": "CI watched after every push until it completes",
+  "implementation_sha": "2f838d200748f253583467b7437270061e1caf1e",
+  "date": "2026-11-10",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 15,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 16,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 17,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 18,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 19,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 20,
+      "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_ci_status -> Ran 76 tests, OK (a red fake run exits 1 with its failed job named, an expected run never seen exits 3, the gate refuses while the newest watch is red, and a cancelled or missing run read as green fails)",
+    "python -m unittest discover -s scripts/tests -> Ran 111 tests, OK (skipped=5)",
+    "77 mutants of scripts/ci_status.py against tests.scripts.test_ci_status -> all killed, the file restored byte for byte",
+    "real runs: ci_status.py --wait on 818545346ec6 and 4925b348d0e6 -> ci watch: exit 0, progress printed live; the recto-ci-watch task through Task Scheduler after re-registration -> last.json exit 0, LastTaskResult 0"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+    "verdict": "filed",
+    "candidate": "8bef185ffd8bbdab15f2ba8f407bdb357acb1f9d",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D00 T04 \u00a713"
+    ]
+  },
+  "rounds_spent": 20,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s9.md",
+    "candidate": "78b6860e2e4712fa22bfc08cf7325a89c1af0c1f",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 0,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "low"
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery",
+          "design"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "adversarial"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}

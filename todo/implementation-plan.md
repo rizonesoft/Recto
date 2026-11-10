@@ -35,7 +35,7 @@ Sections: 55 | Checklist items: 333
 | [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
-| [ ]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 17    |
+| [x]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 17    |
 | [ ]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
 | [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [ ]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
@@ -946,6 +946,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 104/877 verified sections, 57 ready to run now.
+Progress: 105/877 verified sections, 57 ready to run now.
 
-Checklist: 708/6497 items completed (includes Commit items).
+Checklist: 709/6497 items completed (includes Commit items).

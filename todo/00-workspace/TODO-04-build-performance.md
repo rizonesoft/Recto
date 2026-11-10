@@ -52,7 +52,7 @@ track: M0
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [ ] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [ ] |
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4 | [ ] |
-| 9 | §9 | CI watched after every push until it completes | -- | [ ] |
+| 9 | §9 | CI watched after every push until it completes | -- | [x] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [ ] |
@@ -296,9 +296,12 @@ The owner asked on 2026-11-09 that CI never stay red longer than it has to. Toda
 - [x] Report every unreported red run, and forget one only after its email is sent: `scheduled()` with `alert_delivered()`, and `"alert"` in `last.json` written by `.conclave/automations/run.py`. Done when: `Scheduled` reads a red raised again with no word from the runner, with `not sent`, and with a `sent` from another moment, then never after this run's `sent`; two reds and a later green between two polls all named; history skipped on the first run; and `scripts/tests/test_automations.py` reads `sent` and `not sent` in `last.json`.
 - [x] Print the watch as it runs, at a 10-second default. Done when: `WaitAtOnce.test_progress_is_printed_as_it_happens` reads the expectation line, the registration wait, each change with its seconds, and the closing `next:` line.
 - [x] Prove the proof: mutate each new behaviour and run the tests. Done when: the findings file lists every mutant of `scripts/ci_status.py` with `killed`, none surviving.
-- [ ] Commit: `ci: watch every push's runs to their end and act on a red at once`
+- [x] Commit: `ci: watch every push's runs to their end and act on a red at once`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_ci_status` passes; a red fake run makes `ci_status.py --wait <sha>` exit 1 with its failed job named, an expected run that never appears makes it exit 3, and `--gate` refuses while the newest watch is red; reading a cancelled or a missing run as green fails the tests.
+
+> **Verified:** 2026-11-10 | §9 | 2f838d200748f253583467b7437270061e1caf1e
+> **Review:** `docs/reviews/d00-t04-s9.json`
 
 ## 10. Slow tests fixed at their cause and held by a per-test time budget
 
