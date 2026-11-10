@@ -859,7 +859,12 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
                 pending.append(item)
                 out(f"found: red run on main: {workflow} at {item['sha']} {item['url']}")
     # Saved before any call that only adds detail, so a poll that is stopped later has lost nothing it found.
-    memory.update(passed=passed[-400:] if not (first_time and unread) else [], pending=pending)
+    # The acknowledgements made above are saved here with what they removed from pending, so a poll stopped after this
+    # point never raises again what an email already carried. The baseline itself is decided at the end.
+    # On the first run nothing but the pending reds is kept yet: what it found not red is part of the baseline too, and
+    # a first poll that is stopped must leave the next one to judge main from the start.
+    memory.update(reported=reported[-400:], passed=[] if first_time else passed[-400:], pending=pending,
+                  baselined=not first_time)
     if pending:
         memory.update(raised_at=now(), raised_keys=[p["key"] for p in pending[:ALERT_BATCH]])
     write_state(path, memory)

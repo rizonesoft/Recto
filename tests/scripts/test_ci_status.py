@@ -1295,6 +1295,48 @@ class Scheduled(unittest.TestCase):
         self.assertEqual(status(failed)[0], 1)
         self.assertIn(["run", "view", "5", "--attempt", "2", "--json", "jobs"], failed.calls)
 
+    def test_a_poll_stopped_after_its_checkpoint_keeps_the_acknowledgements_it_made(self):
+        self.baseline()
+        first = FakeGh({"build.yml": [run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        self.assertEqual(self.scheduled(first)[0], 1)
+        self.runner_says("sent")  # the email for run 5 left
+
+        class Killed(BaseException):
+            """The task is stopped (its time limit, or Windows shutting down) while a detail is being read."""
+
+        class StoppedAtDetail(FakeGh):
+            def __call__(self, args, timeout=None):
+                if args[:2] == ["run", "view"]:
+                    raise Killed()
+                return super().__call__(args)
+        both = {"build.yml": [run(6, conclusion="failure"), run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}
+        with self.assertRaises(Killed):
+            self.scheduled(StoppedAtDetail(both, jobs=RED_JOBS), now=self.NOW + 900)  # the next poll, 15 minutes on
+        memory = json.loads((self.root / "build" / "automations" / "ci-watch-reported.json").read_text(encoding="utf-8"))
+        self.assertIn("5/1", memory["reported"])
+        self.assertEqual([p["key"] for p in memory["pending"]], ["6/1"])
+        # The next poll raises run 6 alone: run 5 was emailed once and is not emailed again.
+        code, out = self.scheduled(FakeGh(both, jobs=RED_JOBS), now=self.NOW + 1800)
+        self.assertEqual(code, 1, out)
+        self.assertIn("runs/6;", out)
+        self.assertNotIn("runs/5", out.split("latest completed run")[-1])
+
+    def test_a_first_poll_that_is_stopped_is_not_the_baseline(self):
+        class Killed(BaseException):
+            pass
+
+        class StoppedAtDetail(FakeGh):
+            def __call__(self, args, timeout=None):
+                if args[:2] == ["run", "view"]:
+                    raise Killed()
+                return super().__call__(args)
+        runs = {"build.yml": [run(6, conclusion="cancelled"), run(5), run(4, conclusion="failure")], "plan.yml": [run(2)]}
+        with self.assertRaises(Killed):
+            self.scheduled(StoppedAtDetail(runs))
+        # Run 4 failed before this task ever finished a poll: still history when the next poll runs whole.
+        code, out = self.scheduled(FakeGh(runs, jobs={6: [cancelled_job(61)]}, annotations={61: ["The operation was canceled."]}),
+                                   now=self.NOW + 900)
+        self.assertEqual(code, 0, out)
     def test_a_timed_out_run_is_a_red_run_here_too(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9, conclusion="cancelled"), run(1)], "plan.yml": [run(2)]},
