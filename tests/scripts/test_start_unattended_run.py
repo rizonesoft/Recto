@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "scripts" / "start-unattended-run.ps1"
@@ -23,6 +24,12 @@ $record = @{
 $record | ConvertTo-Json | Set-Content -Encoding utf8 $env:RECTO_TEST_RECORD
 exit 0
 """
+
+
+def no_window() -> int:
+    """The creation flags for every process this file starts: no console window on Windows, where a parent without a
+    console of its own would otherwise open a visible one for each child; nothing elsewhere."""
+    return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
 @unittest.skipUnless(POWERSHELL, "needs PowerShell 7")
@@ -42,7 +49,7 @@ class Launcher(unittest.TestCase):
             env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
             command = f"& '{LAUNCHER}' {' '.join(switches)}; {after}"
             run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-                                 capture_output=True, text=True, timeout=180, env=env)
+                                 capture_output=True, text=True, timeout=180, env=env, creationflags=no_window())
             seen = json.loads(record.read_text(encoding="utf-8-sig")) if record.exists() else None
             return run, seen
 
@@ -89,6 +96,17 @@ class Launcher(unittest.TestCase):
         self.assertIsNone(seen)
         self.assertNotIn(TOKEN, run.stdout + run.stderr)
         self.assertIn("--disallowedTools AskUserQuestion", run.stdout)
+
+    def test_every_process_this_file_starts_opens_no_window(self):
+        self.assertEqual(no_window(), 0x08000000 if os.name == "nt" else 0)
+        with mock.patch.object(subprocess, "run", wraps=subprocess.run) as run, \
+                mock.patch.object(subprocess, "Popen", wraps=subprocess.Popen) as popen:
+            self.run_launcher("-PrintOnly")
+        # subprocess.run starts its process through Popen, so Popen sees every start, however it was asked for.
+        self.assertTrue(run.call_args_list)
+        # The message names the program only: the call carries the whole environment, which is never printed.
+        for call in run.call_args_list + popen.call_args_list:
+            self.assertEqual(call.kwargs.get("creationflags"), no_window(), Path(call.args[0][0]).name)
 
 
 if __name__ == "__main__":
