@@ -1,13 +1,20 @@
-# Starts Recto's unattended plan run in Claude Code (the Desktop shortcut "Recto - Process Plan (Unattended)" runs
-# this file). It prints the state of the machine and the tree, then starts an interactive Claude Code session on the
+# Starts Recto's unattended plan run in Claude Code or Google Antigravity. The Desktop shortcuts "Recto Claude
+# campaign" (-Runner claude, the default) and "Recto Carbon campaign" (-Runner agy, Antigravity on Gemini 4 Carbon)
+# run this file. It prints the state of the machine and the tree, then starts an interactive session on the runner's
 # writer model with permission prompts off and the session goal below. Setting the goal starts the work: the goal's
 # text is the first directive, and Claude Code checks it after every turn, beside the run guard of the process-plan
-# skill (the Stop hook and the heartbeat).
+# skill (the Stop hook and the heartbeat). That run guard is Claude Code's: an Antigravity session is held by the
+# goal alone.
 #
-#   pwsh -NoProfile -File scripts\start-unattended-run.ps1            start the run
+#   pwsh -NoProfile -File scripts\start-unattended-run.ps1            start the run in Claude Code
+#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -Runner agy  start it in Antigravity on Gemini 4 Carbon
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -PrintOnly print the checks and the command, start nothing
-#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -InstallShortcut  write the Desktop shortcut for this clone
+#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -InstallShortcut  write both Desktop shortcuts for this clone
 #
+# A run starts only when the owner starts it, from one of the shortcuts or this file (owner, 2026-11-12): nothing
+# here starts a second session after the first one ends.
+#
+# Antigravity signs in with its own account on this PC and never gets Claude's token.
 # The session signs in with the one-year Claude Code token kept in 1Password (vault Conclave, item "Claude Code OAuth
 # token (1 year, setup-token)", field credential), handed to claude.exe as CLAUDE_CODE_OAUTH_TOKEN in this process's
 # environment only: it is never printed, written or passed as an argument. A run that outlives the stored login's
@@ -17,38 +24,73 @@
 #
 # It starts whatever the checks show: low memory, a dirty tree and a guard left by an earlier run are printed, not
 # refused, because the process-plan audit decides what to do about each (owner decision 2026-11-10: warn and start).
-# The model is the alias opus, the newest Opus (owner direction 2026-11-10), taking over from Fable 5.2; AGENTS.md, "Who writes and
-# who reviews", records it. Changing it costs the $model line below, its test and that paragraph.
+# The Claude Code model is the alias opus, the newest Opus (owner direction 2026-11-10), taking over from Fable 5.2;
+# Antigravity runs Gemini 4 Carbon at medium, whose model name carries its effort (owner direction 2026-11-12).
+# AGENTS.md, "Who writes and who reviews", records both. Changing one costs its line below, its test and that paragraph.
 param(
+    # The campaign runner: Claude Code (`claude`) or Google Antigravity on Gemini 4 Carbon (`agy`).
+    [ValidateSet('claude', 'agy')][string]$Runner = 'claude',
     [switch]$PrintOnly,
     [switch]$InstallShortcut,
-    [int]$TokenTimeoutSeconds = 120
+    [int]$TokenTimeoutSeconds = 120,
+    # Where -InstallShortcut writes the shortcuts and their icons. Only the tests pass other folders.
+    [string]$ShortcutFolder = [Environment]::GetFolderPath('Desktop'),
+    [string]$IconFolder = (Join-Path $env:LOCALAPPDATA 'Recto')
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $model = 'opus'
-$shortcutName = 'Recto - Process Plan (Unattended).lnk'
+$carbon = 'gemini-4-carbon-medium'
 $tokenVault = 'Conclave'
 $tokenItem = 'Claude Code OAuth token (1 year, setup-token)'
 
 if ($InstallShortcut) {
-    # The shortcut holds this clone's path, so it is rewritten here whenever the clone moves.
-    $icon = Join-Path $root 'resources\ico\recto.ico'
-    if (-not (Test-Path $icon)) { throw "the shortcut's icon is missing: $icon" }
-    $pwsh = (Get-Command pwsh).Source
-    $link = Join-Path ([Environment]::GetFolderPath('Desktop')) $shortcutName
-    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
-    $shortcut.TargetPath = $pwsh
-    $shortcut.Arguments = "-NoExit -NoProfile -File `"$PSCommandPath`""
-    $shortcut.WorkingDirectory = $root
-    $shortcut.IconLocation = "$icon,0"
-    $shortcut.Description = 'Start the unattended Recto plan run in Claude Code'
-    $shortcut.Save()
-    Write-Host "Shortcut written: $link"
+    # One shortcut for each runner, named and shaped like the Office and Isotone campaign shortcuts (owner,
+    # 2026-11-12). The shortcuts hold this clone's path, so they are rewritten here whenever the clone moves. Each
+    # carries Recto's icon with its runner's badge in the corner, rendered for this PC by scripts/campaign-icon.py
+    # into the user's own application data folder. A runner's mark is its company's trademark and is not kept in this
+    # repository: when marks\<name>.svg exists in that folder it is drawn in the badge, and without it the badge
+    # carries the runner's colour alone.
+    $plain = Join-Path $root 'resources\ico\recto.ico'
+    if (-not (Test-Path -LiteralPath $plain)) { throw "the shortcut's icon is missing: $plain" }
+    New-Item -ItemType Directory -Force -Path $IconFolder | Out-Null
+    $shortcuts = @(
+        @{ Runner = 'claude'; Name = 'Recto Claude campaign'; Icon = 'recto-campaign-claude.ico'; Fill = '#D97757'; Mark = 'claude.svg'
+           Description = 'Start the unattended Recto campaign in Claude Code' },
+        @{ Runner = 'agy'; Name = 'Recto Carbon campaign'; Icon = 'recto-campaign-carbon.ico'; Fill = '#4C8DF6'; Mark = 'gemini.svg'
+           Description = 'Start the unattended Recto campaign in Google Antigravity on Gemini 4 Carbon' }
+    )
+    foreach ($s in $shortcuts) {
+        $icon = Join-Path $IconFolder $s.Icon
+        python (Join-Path $PSScriptRoot 'campaign-icon.py') $icon $s.Fill (Join-Path $IconFolder "marks\$($s.Mark)")
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "The badged icon for '$($s.Name)' could not be rendered (python -m pip install pillow resvg_py, then this again); the shortcut carries Recto's plain icon."
+            $icon = $plain
+        }
+        $link = Join-Path $ShortcutFolder "$($s.Name).lnk"
+        $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($link)
+        $shortcut.TargetPath = (Get-Process -Id $PID).Path
+        $shortcut.Arguments = "-NoLogo -NoExit -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Runner $($s.Runner)"
+        $shortcut.WorkingDirectory = $root
+        $shortcut.IconLocation = "$icon,0"
+        $shortcut.Description = $s.Description
+        $shortcut.WindowStyle = 1  # a normal window
+        $shortcut.Save()
+        Write-Host "Shortcut written: $link"
+    }
+    # The one shortcut this file wrote before the runners had one each started Claude Code without saying so.
+    $old = Join-Path $ShortcutFolder 'Recto - Process Plan (Unattended).lnk'
+    if (Test-Path -LiteralPath $old) {
+        Remove-Item -LiteralPath $old
+        Write-Host "Removed the earlier shortcut: $old"
+    }
     exit 0
 }
+
+$runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Gemini 4 Carbon)' }[$Runner]
+$Host.UI.RawUI.WindowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
 
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000
 # characters.
@@ -59,10 +101,10 @@ $goal = $goal.Trim().Replace('{ROOT}', $root)
 if ($goal.Contains('"') -or $goal.Contains("`n")) { throw 'the goal must be one line with no double quote' }
 if ($goal.Length -gt 4000) { throw "the goal is $($goal.Length) characters; Claude Code allows 4,000" }
 
-$claude = (Get-Command claude -ErrorAction SilentlyContinue).Source
-if (-not $claude) { throw 'claude is not on PATH: install Claude Code, or open a new terminal after installing it' }
+$program = (Get-Command $Runner -ErrorAction SilentlyContinue).Source
+if (-not $program) { throw "$Runner is not on PATH: install $runnerName, or open a new terminal after installing it" }
 
-Write-Host "Recto unattended run: $root"
+Write-Host "Recto unattended run in ${runnerName}: $root"
 $freeMb = [int](Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue
 Write-Host ("Free memory: {0:N0} MB" -f $freeMb)
 if ($freeMb -lt 3000) {
@@ -83,7 +125,8 @@ if (Test-Path (Join-Path $root 'build\claude-campaign-guard.json')) {
 # and removed when it ends, so the shell the shortcut leaves open does not keep it. 1Password may ask the operator to
 # approve the read; with nobody there the read is stopped after $TokenTimeoutSeconds and the run starts regardless.
 $token = $null
-$op = (Get-Command op -ErrorAction SilentlyContinue).Source
+# Antigravity signs in with its own account on this PC: 1Password is not read and Claude's token never reaches it.
+$op = if ($Runner -eq 'claude') { (Get-Command op -ErrorAction SilentlyContinue).Source } else { $null }
 if ($op) {
     $info = [System.Diagnostics.ProcessStartInfo]::new($op)
     foreach ($a in @('item', 'get', $tokenItem, '--vault', $tokenVault, '--fields', 'label=credential', '--reveal')) {
@@ -103,25 +146,35 @@ if ($op) {
     }
     $read.Dispose()
 }
-if ($token) {
+if ($Runner -ne 'claude') {
+    Write-Host "Sign-in: $runnerName's own account on this PC."
+} elseif ($token) {
     Write-Host 'Sign-in: the one-year token from 1Password.'
 } else {
     Write-Warning "Sign-in: 1Password did not give the token ($tokenItem, vault $tokenVault); starting on the stored Claude Code login."
 }
-Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
 
-# --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
-$claudeArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, $goal)
+if ($Runner -eq 'claude') {
+    Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
+    # --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
+    $runArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, $goal)
+} else {
+    Write-Host "Model: $carbon, permission prompts off, goal of $($goal.Length) characters."
+    # -i runs the opening prompt and keeps the conversation open, as Claude Code does with its prompt argument.
+    $runArgs = @('--model', $carbon, '--dangerously-skip-permissions', '-i', $goal)
+}
 if ($PrintOnly) {
-    Write-Host "Would run: $claude --dangerously-skip-permissions --disallowedTools AskUserQuestion --model $model <goal>"
+    Write-Host "Would run: $program $(($runArgs | Select-Object -SkipLast 1) -join ' ') <goal>"
     Write-Host $goal
     exit 0
 }
 $before = $env:CLAUDE_CODE_OAUTH_TOKEN
 try {
-    if ($token) { $env:CLAUDE_CODE_OAUTH_TOKEN = $token }
+    # A token this shell inherited is dropped for Antigravity, and replaced by the 1Password one for Claude Code.
+    if ($Runner -ne 'claude') { Remove-Item Env:CLAUDE_CODE_OAUTH_TOKEN -ErrorAction SilentlyContinue }
+    elseif ($token) { $env:CLAUDE_CODE_OAUTH_TOKEN = $token }
     $token = $null
-    & $claude @claudeArgs
+    & $program @runArgs
     $code = $LASTEXITCODE
 } finally {
     $env:CLAUDE_CODE_OAUTH_TOKEN = $before
