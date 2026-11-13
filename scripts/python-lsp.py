@@ -72,24 +72,30 @@ class StdlibPythonLsp:
         self._ast_cache: dict[Path, tuple[int, str, ast.Module | None]] = {}
         self.running = True
 
+    MAX_FRAME_BYTES = 16 * 1024 * 1024
+
     def _read_msg(self) -> dict | None:
         headers: dict[str, str] = {}
+        saw_any = False
         while True:
-            line = sys.stdin.buffer.readline()
+            line = sys.stdin.buffer.readline(65536)
             if not line:
                 return None
+            saw_any = True
             if line in (b"\r\n", b"\n"):
                 break
             decoded = line.decode("ascii", "replace").strip()
             if ":" in decoded:
                 k, v = decoded.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
+        if not headers:
+            return None if not saw_any else {"_malformed": "missing Content-Length"}
         try:
             length = int(headers.get("content-length", "0"))
         except ValueError:
             return {"_malformed": "invalid Content-Length"}
-        if length <= 0:
-            return {"_malformed": "missing Content-Length"}
+        if length <= 0 or length > self.MAX_FRAME_BYTES:
+            return {"_malformed": "invalid or oversized Content-Length"}
         body = sys.stdin.buffer.read(length)
         if not body:
             return None
@@ -483,34 +489,75 @@ class StdlibPythonLsp:
         return None
 
     @staticmethod
-    def _enclosing_scopes(tree: ast.Module, line1: int, col: int) -> list[ast.AST]:
+    def _node_contains(node: ast.AST, line1: int, col: int) -> bool:
+        s_ln = getattr(node, "lineno", 0)
+        if not s_ln:
+            return False
+        s_col = getattr(node, "col_offset", 0)
+        e_ln = getattr(node, "end_lineno", s_ln)
+        e_col = getattr(node, "end_col_offset", s_col)
+        return (s_ln, s_col) <= (line1, col) <= (e_ln, e_col)
+
+    @classmethod
+    def _enclosing_scopes(cls, tree: ast.Module, line1: int, col: int) -> list[ast.AST]:
         scopes: list[ast.AST] = [tree]
 
-        def walk_body(stmts: list[ast.stmt]) -> None:
-            for stmt in stmts:
-                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    s_ln = getattr(stmt, "lineno", 1)
-                    s_col = getattr(stmt, "col_offset", 0)
-                    e_ln = getattr(stmt, "end_lineno", s_ln)
-                    e_col = getattr(stmt, "end_col_offset", s_col)
-                    if (s_ln, s_col) <= (line1, col) <= (e_ln, e_col):
-                        scopes.append(stmt)
-                        walk_body(stmt.body)
+        def walk_node(node: ast.AST) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if cls._node_contains(child, line1, col):
+                        scopes.append(child)
+                        walk_node(child)
+                        return
+                elif isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                    if cls._node_contains(child, line1, col):
+                        # PEP 289: the outermost iterable `generators[0].iter` is evaluated in the enclosing scope.
+                        first_iter = child.generators[0].iter if child.generators else None
+                        if first_iter is not None and cls._node_contains(first_iter, line1, col):
+                            walk_node(first_iter)
+                        else:
+                            scopes.append(child)
+                            walk_node(child)
+                        return
+                elif isinstance(child, ast.Lambda):
+                    if cls._node_contains(child, line1, col):
+                        in_default = any(
+                            d is not None and cls._node_contains(d, line1, col)
+                            for d in (*child.args.defaults, *child.args.kw_defaults)
+                        )
+                        if not in_default:
+                            scopes.append(child)
+                        walk_node(child)
                         return
                 else:
-                    for attr in ("body", "orelse", "finalbody"):
-                        sub = getattr(stmt, attr, None)
-                        if isinstance(sub, list) and sub and isinstance(sub[0], ast.stmt):
-                            walk_body(sub)
-                    handlers = getattr(stmt, "handlers", None)
-                    if isinstance(handlers, list):
-                        for h in handlers:
-                            h_body = getattr(h, "body", None)
-                            if isinstance(h_body, list):
-                                walk_body(h_body)
+                    walk_node(child)
 
-        walk_body(tree.body)
+        walk_node(tree)
         return scopes
+
+    @classmethod
+    def _extract_target_names(cls, target: ast.AST) -> list[ast.Name]:
+        if isinstance(target, ast.Name):
+            return [target]
+        if isinstance(target, (ast.Tuple, ast.List)):
+            names: list[ast.Name] = []
+            for elt in target.elts:
+                names.extend(cls._extract_target_names(elt))
+            return names
+        if isinstance(target, ast.Starred):
+            return cls._extract_target_names(target.value)
+        return []
+
+    @classmethod
+    def _iter_shallow_exprs(cls, node: ast.AST) -> list[ast.AST]:
+        """Collect expressions inside `node` without crossing into nested function, class, or lambda scopes."""
+        out: list[ast.AST] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+                continue
+            out.append(child)
+            out.extend(cls._iter_shallow_exprs(child))
+        return out
 
     def _top_level_defs_in_module(
         self, mod_path: Path, name: str, visited: set[Path]
@@ -528,10 +575,13 @@ class StdlibPythonLsp:
                 matches.append((mod_path, stmt))
             elif isinstance(stmt, ast.Assign):
                 for t in stmt.targets:
-                    if isinstance(t, ast.Name) and t.id == name:
-                        matches.append((mod_path, t))
-            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == name:
-                matches.append((mod_path, stmt.target))
+                    for nm in self._extract_target_names(t):
+                        if nm.id == name:
+                            matches.append((mod_path, nm))
+            elif isinstance(stmt, ast.AnnAssign):
+                for nm in self._extract_target_names(stmt.target):
+                    if nm.id == name:
+                        matches.append((mod_path, nm))
             elif isinstance(stmt, ast.ImportFrom):
                 for alias in stmt.names:
                     bound = alias.asname or alias.name
@@ -554,10 +604,13 @@ class StdlibPythonLsp:
                 matches.append((cls_path, stmt))
             elif isinstance(stmt, ast.Assign):
                 for t in stmt.targets:
-                    if isinstance(t, ast.Name) and t.id == attr:
-                        matches.append((cls_path, t))
-            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == attr:
-                matches.append((cls_path, stmt.target))
+                    for nm in self._extract_target_names(t):
+                        if nm.id == attr:
+                            matches.append((cls_path, nm))
+            elif isinstance(stmt, ast.AnnAssign):
+                for nm in self._extract_target_names(stmt.target):
+                    if nm.id == attr:
+                        matches.append((cls_path, nm))
         if matches:
             return matches
         # Check `self.<attr> = ...` assignments inside `__init__`.
@@ -585,7 +638,7 @@ class StdlibPythonLsp:
         str_consts: dict[str, str],
     ) -> tuple[list[tuple[Path, ast.AST]], Path | None, bool, str | None]:
         """Return `(definitions, module_path, is_external_import, constructed_class_expr)` for `ident` in `scope`."""
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             all_args = [
                 *scope.args.posonlyargs,
                 *scope.args.args,
@@ -597,6 +650,21 @@ class StdlibPythonLsp:
                 if a.arg == ident:
                     ann_cls = ast.unparse(a.annotation) if isinstance(a.annotation, (ast.Name, ast.Attribute)) else None
                     return [(path, a)], None, False, ann_cls
+            if isinstance(scope, ast.Lambda):
+                lam_defs: list[tuple[Path, ast.AST]] = [
+                    (path, sub.target)
+                    for sub in self._iter_shallow_exprs(scope.body)
+                    if isinstance(sub, ast.NamedExpr) and isinstance(sub.target, ast.Name) and sub.target.id == ident
+                ]
+                return lam_defs, None, False, None
+
+        if isinstance(scope, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            comp_defs: list[tuple[Path, ast.AST]] = []
+            for gen in scope.generators:
+                for nm in self._extract_target_names(gen.target):
+                    if nm.id == ident:
+                        comp_defs.append((path, nm))
+            return comp_defs, None, False, None
 
         body = getattr(scope, "body", None)
         if not isinstance(body, list):
@@ -653,22 +721,64 @@ class StdlibPythonLsp:
                             is_ext = True
             elif isinstance(stmt, ast.Assign):
                 for t in stmt.targets:
-                    if isinstance(t, ast.Name) and t.id == ident:
-                        defs.append((path, t))
-                        if isinstance(stmt.value, ast.Call):
+                    for nm in self._extract_target_names(t):
+                        if nm.id == ident:
+                            defs.append((path, nm))
+                            if isinstance(t, ast.Name) and isinstance(stmt.value, ast.Call):
+                                dyn = self._resolve_dynamic_module_call(stmt.value, tree, path, path_consts, str_consts)
+                                if dyn is not None:
+                                    mod_target = dyn
+                                elif isinstance(stmt.value.func, (ast.Name, ast.Attribute)):
+                                    cls_expr = ast.unparse(stmt.value.func)
+            elif isinstance(stmt, ast.AnnAssign):
+                for nm in self._extract_target_names(stmt.target):
+                    if nm.id == ident:
+                        defs.append((path, nm))
+                        if isinstance(stmt.target, ast.Name) and isinstance(stmt.annotation, (ast.Name, ast.Attribute)):
+                            cls_expr = ast.unparse(stmt.annotation)
+                        if isinstance(stmt.target, ast.Name) and isinstance(stmt.value, ast.Call):
                             dyn = self._resolve_dynamic_module_call(stmt.value, tree, path, path_consts, str_consts)
                             if dyn is not None:
                                 mod_target = dyn
-                            elif isinstance(stmt.value.func, (ast.Name, ast.Attribute)):
-                                cls_expr = ast.unparse(stmt.value.func)
-            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == ident:
-                defs.append((path, stmt.target))
-                if isinstance(stmt.annotation, (ast.Name, ast.Attribute)):
-                    cls_expr = ast.unparse(stmt.annotation)
-                if isinstance(stmt.value, ast.Call):
-                    dyn = self._resolve_dynamic_module_call(stmt.value, tree, path, path_consts, str_consts)
-                    if dyn is not None:
-                        mod_target = dyn
+            elif isinstance(stmt, ast.AugAssign):
+                if isinstance(stmt.target, ast.Name) and stmt.target.id == ident:
+                    defs.append((path, stmt.target))
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                for nm in self._extract_target_names(stmt.target):
+                    if nm.id == ident:
+                        defs.append((path, nm))
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                for item in stmt.items:
+                    if item.optional_vars is not None:
+                        for nm in self._extract_target_names(item.optional_vars):
+                            if nm.id == ident:
+                                defs.append((path, nm))
+            elif isinstance(stmt, (ast.Try, ast.TryStar)):
+                for handler in stmt.handlers:
+                    if isinstance(handler, ast.ExceptHandler) and handler.name == ident:
+                        defs.append((path, handler))
+            elif isinstance(stmt, ast.Match):
+                for case in stmt.cases:
+                    for pnode in ast.walk(case.pattern):
+                        if isinstance(pnode, (ast.MatchAs, ast.MatchStar)) and pnode.name == ident:
+                            defs.append((path, pnode))
+                        elif isinstance(pnode, ast.MatchMapping) and pnode.rest == ident:
+                            defs.append((path, pnode))
+
+            # PEP 572: `:=` walrus expressions bind in the containing function/module scope.
+            if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                     ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith,
+                                     ast.Try, ast.TryStar, ast.Match)):
+                for expr in self._iter_shallow_exprs(stmt):
+                    if isinstance(expr, ast.NamedExpr) and isinstance(expr.target, ast.Name) and expr.target.id == ident:
+                        defs.append((path, expr.target))
+            elif isinstance(stmt, (ast.If, ast.While)):
+                test_expr = stmt.test
+                if isinstance(test_expr, ast.NamedExpr) and isinstance(test_expr.target, ast.Name) and test_expr.target.id == ident:
+                    defs.append((path, test_expr.target))
+                for expr in self._iter_shallow_exprs(test_expr):
+                    if isinstance(expr, ast.NamedExpr) and isinstance(expr.target, ast.Name) and expr.target.id == ident:
+                        defs.append((path, expr.target))
 
         return defs, mod_target, is_ext, cls_expr
 
@@ -903,7 +1013,11 @@ class StdlibPythonLsp:
                 return None
             enc = self._enclosing_scopes(tree, getattr(dn, "lineno", 1), getattr(dn, "col_offset", 0))
             binding_scope = enc[-2] if (len(enc) >= 2 and enc[-1] is dn) else enc[-1]
-            if not isinstance(binding_scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not isinstance(
+                binding_scope,
+                (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                 ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+            ):
                 return None
             s0 = max(0, getattr(binding_scope, "lineno", 1) - 1)
             e0 = max(s0, getattr(binding_scope, "end_lineno", s0 + 1) - 1)
@@ -968,7 +1082,11 @@ class StdlibPythonLsp:
                         and (
                             getattr(dn, "col_offset", -1) == tok_utf8
                             or (
-                                isinstance(dn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                                isinstance(
+                                    dn,
+                                    (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                     ast.ExceptHandler, ast.MatchAs, ast.MatchStar),
+                                )
                                 and dn.name == ident
                             )
                         )

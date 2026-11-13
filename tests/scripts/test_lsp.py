@@ -191,6 +191,13 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
         assert hover is not None
         self.assertIn("def windowless()", hover["contents"]["value"])
 
+        # Loop-variable binding on live `scripts/run-tests.py:133` (`triggers = HEAVY_MODULES.get(mod)` -> line 132 `for mod`).
+        run_tests_py = (ROOT / "scripts" / "run-tests.py").resolve()
+        mod_defs = lsp._definitions(run_tests_py, 132, 41)
+        self.assertEqual(len(mod_defs), 1, mod_defs)
+        self.assertEqual(mod_defs[0]["uri"], run_tests_py.as_uri())
+        self.assertEqual(mod_defs[0]["range"]["start"]["line"], 131)
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             pkg = ws / "scripts"
@@ -231,6 +238,41 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
             self.assertEqual(len(top_defs), 1)
             self.assertEqual(top_defs[0]["uri"], mod_a.resolve().as_uri())
             self.assertEqual(top_defs[0]["range"]["start"]["line"], 0)
+
+            bindings_file = pkg / "bindings.py"
+            bindings_file.write_text(
+                "def demo(pairs, ctx):\n"
+                "    first_k, *rest_v = pairs[0]\n"
+                "    for k, v in pairs:\n"
+                "        _ = k + v + first_k + len(rest_v)\n"
+                "    with ctx as handle:\n"
+                "        _ = handle\n"
+                "    try:\n"
+                "        pass\n"
+                "    except ValueError as err:\n"
+                "        _ = str(err)\n"
+                "    vals = [item * 2 for item in pairs]\n"
+                "    fn = lambda arg_x: arg_x + len(vals)\n"
+                "    if (walrus := fn(1)):\n"
+                "        return walrus\n",
+                encoding="utf-8",
+            )
+            # `k` at line 3 col 12 -> `for k, v` at line 2; `first_k` at line 3 col 20 -> line 1;
+            # `handle` at line 5 col 12 -> line 4; `err` at line 9 col 16 -> line 8;
+            # `item` at line 10 col 12 -> line 10; `arg_x` at line 11 col 23 -> line 11; `walrus` at line 13 col 15 -> line 12.
+            for use_ln, use_col, expected_ln in (
+                (3, 12, 2),
+                (3, 20, 1),
+                (5, 12, 4),
+                (9, 16, 8),
+                (10, 12, 10),
+                (11, 23, 11),
+                (13, 15, 12),
+            ):
+                with self.subTest(binding_at=(use_ln, use_col)):
+                    b_defs = scoped._definitions(bindings_file, use_ln, use_col)
+                    self.assertEqual(len(b_defs), 1, b_defs)
+                    self.assertEqual(b_defs[0]["range"]["start"]["line"], expected_ln)
 
     def test_builtin_lsp_indentation_errors_scoped_references_and_utf16_positions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -392,27 +434,50 @@ class LspMcpBridge(unittest.TestCase):
                 self.assertIsNotNone(py_proc.poll())
 
     def test_mcp_stdio_survives_malformed_json_and_non_dict_requests(self):
+        ping_frame_body = b'{"jsonrpc":"2.0","id":9,"method":"ping"}'
         stdin_payload = (
-            "[]\n"
-            "not-json\n"
-            '{"jsonrpc":"2.0","id":7,"method":"initialize","params":[]}\n'
-            '{"jsonrpc":"2.0","id":8,"method":"ping"}\n'
+            b"[]\n"
+            b"not-json\n"
+            b'{"jsonrpc":"2.0","id":7,"method":"initialize","params":[]}\n'
+            b"Content-Length: 9223372036854775808\r\n\r\n"
+            + f"Content-Length: {len(ping_frame_body)}\r\n\r\n".encode("ascii")
+            + ping_frame_body
+            + b'\n{"jsonrpc":"2.0","id":8,"method":"ping"}\n'
         )
         proc = subprocess.run(
             [sys.executable, "-B", str(SCRIPTS / "lsp_mcp.py")],
             input=stdin_payload,
             capture_output=True,
-            text=True,
             timeout=15,
         )
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-        self.assertEqual(len(replies), 4, replies)
-        self.assertEqual(replies[0]["error"]["code"], -32600)
-        self.assertEqual(replies[1]["error"]["code"], -32700)
-        self.assertEqual(replies[2]["id"], 7)
-        self.assertEqual(replies[2]["error"]["code"], -32602)
-        self.assertEqual(replies[3], {"jsonrpc": "2.0", "id": 8, "result": {}})
+        self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+        out_text = proc.stdout.decode("utf-8")
+        self.assertIn('"code": -32600', out_text)
+        self.assertIn('"code": -32700', out_text)
+        self.assertIn('"code": -32602', out_text)
+        self.assertIn('"id": 9', out_text)
+        self.assertIn('"id": 8', out_text)
+
+        # Oversized Content-Length also must not raise OverflowError in `python-lsp.py --builtin`.
+        shutdown_body = b'{"jsonrpc":"2.0","id":1,"method":"shutdown"}'
+        exit_body = b'{"jsonrpc":"2.0","method":"exit"}'
+        py_lsp_stdin = (
+            b"Content-Length: 9223372036854775808\r\n\r\n"
+            + f"Content-Length: {len(shutdown_body)}\r\n\r\n".encode("ascii")
+            + shutdown_body
+            + f"Content-Length: {len(exit_body)}\r\n\r\n".encode("ascii")
+            + exit_body
+        )
+        py_proc = subprocess.run(
+            [sys.executable, "-B", str(SCRIPTS / "python-lsp.py"), "--builtin"],
+            input=py_lsp_stdin,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertEqual(py_proc.returncode, 0, py_proc.stderr.decode("utf-8", "replace"))
+        py_out = py_proc.stdout.decode("utf-8")
+        self.assertIn('"code": -32700', py_out)
+        self.assertIn('"id": 1', py_out)
 
     def test_clangd_lsp_check_is_read_only_when_database_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

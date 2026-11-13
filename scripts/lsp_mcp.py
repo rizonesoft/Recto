@@ -156,12 +156,16 @@ class LspClient:
                 if ":" in text:
                     k, v = text.split(":", 1)
                     headers[k.strip().lower()] = v.strip()
-            length = int(headers.get("content-length", "0"))
-            if length <= 0:
+            try:
+                length = int(headers.get("content-length", "0"))
+            except ValueError:
                 continue
+            if length <= 0 or length > 16 * 1024 * 1024:
+                self._fail_all(f"invalid language server frame length: {length}")
+                return
             try:
                 body = stream.read(length)
-            except ValueError:
+            except (OverflowError, ValueError):
                 body = b""
             if not body:
                 self._fail_all("language server stream closed")
@@ -169,6 +173,8 @@ class LspClient:
             try:
                 msg = json.loads(body.decode("utf-8", "replace"))
             except ValueError:
+                continue
+            if not isinstance(msg, dict):
                 continue
             if "id" in msg and ("result" in msg or "error" in msg):
                 q = self._pending.pop(msg["id"], None)
@@ -587,13 +593,21 @@ class LspMcpServer:
             sys.stdout.buffer.write(encoded + b"\n")
         sys.stdout.buffer.flush()
 
+    MAX_FRAME_BYTES = 16 * 1024 * 1024
+
     def serve_stdio(self) -> int:
         """Support both newline-delimited JSON-RPC (MCP 2024-11-05 / 2025-03-26 stdio) and Content-Length framing."""
         try:
             while True:
-                first = sys.stdin.buffer.readline()
+                first = sys.stdin.buffer.readline(self.MAX_FRAME_BYTES + 1)
                 if not first:
                     break
+                if len(first) > self.MAX_FRAME_BYTES:
+                    self._write_stdio_reply(
+                        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "message exceeds 16 MiB limit"}},
+                        framed=False,
+                    )
+                    continue
                 stripped = first.strip()
                 if not stripped:
                     continue
@@ -603,12 +617,16 @@ class LspMcpServer:
                     except ValueError:
                         length = -1
                     while True:
-                        hdr = sys.stdin.buffer.readline()
+                        hdr = sys.stdin.buffer.readline(65536)
                         if not hdr or hdr in (b"\r\n", b"\n"):
                             break
-                    if length <= 0:
+                    if length <= 0 or length > self.MAX_FRAME_BYTES:
                         self._write_stdio_reply(
-                            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "invalid Content-Length"}},
+                            {
+                                "jsonrpc": "2.0",
+                                "id": None,
+                                "error": {"code": -32700, "message": "invalid or oversized Content-Length"},
+                            },
                             framed=True,
                         )
                         continue
