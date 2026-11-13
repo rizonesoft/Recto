@@ -609,7 +609,7 @@ _FORBIDDEN_ENV_PREFIXES = (
     "RECTO_UPDATE_",
 )
 _SKIPPED_GTEST_DEBUG_EXTS = frozenset({
-    ".exp", ".ilk", ".iobj", ".ipdb", ".lastbuildstate", ".lib", ".obj", ".pdb", ".tlog",
+    ".exp", ".idb", ".ilk", ".iobj", ".ipdb", ".lastbuildstate", ".lib", ".obj", ".pdb", ".tlog",
 })
 
 
@@ -627,19 +627,25 @@ def _sanitized_hydrogen_env(base_env: Mapping[str, str] | None = None) -> dict[s
     return clean
 
 
-def _stage_gtest_binary_dir(exe: Path, staged_exe: Path) -> None:
-    """Copy `exe` and companion runtime files (skipping large debug/import artifacts) into `staged_exe.parent`."""
+def _stage_gtest_binary_tree(root: Path, exe: Path, staged_exe: Path) -> None:
+    """Copy `<Plat>/<Cfg>` runtime outputs (including sibling `Recto/Recto.exe` and `recto-cli`) without debug/lib files."""
     def copy_dir(src_dir: Path, dst_dir: Path) -> None:
-        dst_dir.mkdir(parents=True, exist_ok=True)
+        if not src_dir.is_dir():
+            return
         for item in src_dir.iterdir():
             if item.is_symlink():
                 continue
             if item.is_dir():
                 copy_dir(item, dst_dir / item.name)
             elif item.is_file() and item.suffix.lower() not in _SKIPPED_GTEST_DEBUG_EXTS:
+                dst_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, dst_dir / item.name)
 
-    copy_dir(exe.parent, staged_exe.parent)
+    cfg_dir = exe.parent.parent
+    if cfg_dir != root and cfg_dir.is_relative_to(root):
+        copy_dir(cfg_dir, staged_exe.parent.parent)
+    else:
+        copy_dir(exe.parent, staged_exe.parent)
     if not staged_exe.is_file():
         staged_exe.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(exe, staged_exe)
@@ -751,7 +757,7 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
             tmp_path = Path(tmp)
             stage_isolated_repo(root, tmp_path)
             staged_exe = tmp_path / rel_bin
-            _stage_gtest_binary_dir(exe, staged_exe)
+            _stage_gtest_binary_tree(root, exe, staged_exe)
             return subprocess.run(
                 [str(staged_exe), *tokens[1:]],
                 cwd=tmp_path,

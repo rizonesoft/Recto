@@ -370,10 +370,18 @@ class DispatchHook(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo), "commit", "-qm", "add-sln-and-goldens"],
                            check=True, capture_output=True)
 
-            bin_dir = repo / "build" / "bin" / "x64" / "Debug" / "recto-tests"
+            cfg_dir = repo / "build" / "bin" / "x64" / "Debug"
+            bin_dir = cfg_dir / "recto-tests"
             bin_dir.mkdir(parents=True, exist_ok=True)
             (bin_dir / "gtest.dll").write_bytes(b"companion-dll")
             (bin_dir / "recto-tests.pdb").write_bytes(b"debug-symbols")
+            app_bin_dir = cfg_dir / "Recto"
+            app_bin_dir.mkdir(parents=True, exist_ok=True)
+            (app_bin_dir / "Recto.exe").write_bytes(b"sibling-app-binary")
+            (app_bin_dir / "Recto.pdb").write_bytes(b"sibling-app-pdb")
+            lib_bin_dir = cfg_dir / "recto-pdf"
+            lib_bin_dir.mkdir(parents=True, exist_ok=True)
+            (lib_bin_dir / "recto-pdf.idb").write_bytes(b"static-lib-idb")
             fake_exe = bin_dir / "recto-tests.exe"
             if os.name == "nt":
                 csc_candidates = [
@@ -400,8 +408,12 @@ class DispatchHook(unittest.TestCase):
                     "        }\n"
                     "        string exePath = Assembly.GetExecutingAssembly().Location;\n"
                     "        string binDir = Path.GetDirectoryName(exePath);\n"
+                    "        string cfgDir = Directory.GetParent(binDir).FullName;\n"
                     "        if (!File.Exists(Path.Combine(binDir, \"gtest.dll\"))) return 12;\n"
                     "        if (File.Exists(Path.Combine(binDir, \"recto-tests.pdb\"))) return 13;\n"
+                    "        if (!File.Exists(Path.Combine(cfgDir, \"Recto\", \"Recto.exe\"))) return 15;\n"
+                    "        if (File.Exists(Path.Combine(cfgDir, \"Recto\", \"Recto.pdb\"))) return 16;\n"
+                    "        if (File.Exists(Path.Combine(cfgDir, \"recto-pdf\", \"recto-pdf.idb\"))) return 17;\n"
                     "        DirectoryInfo cur = new DirectoryInfo(binDir);\n"
                     "        while (cur != null) {\n"
                     "            if (File.Exists(Path.Combine(cur.FullName, \"Recto.sln\")) &&\n"
@@ -433,10 +445,17 @@ class DispatchHook(unittest.TestCase):
                     "    if os.environ.get(k):\n"
                     "        sys.exit(11)\n"
                     "exe_dir = pathlib.Path(__file__).resolve().parent\n"
+                    "cfg_dir = exe_dir.parent\n"
                     "if not (exe_dir / 'gtest.dll').is_file():\n"
                     "    sys.exit(12)\n"
                     "if (exe_dir / 'recto-tests.pdb').exists():\n"
                     "    sys.exit(13)\n"
+                    "if not (cfg_dir / 'Recto' / 'Recto.exe').is_file():\n"
+                    "    sys.exit(15)\n"
+                    "if (cfg_dir / 'Recto' / 'Recto.pdb').exists():\n"
+                    "    sys.exit(16)\n"
+                    "if (cfg_dir / 'recto-pdf' / 'recto-pdf.idb').exists():\n"
+                    "    sys.exit(17)\n"
                     "for parent in [exe_dir, *exe_dir.parents]:\n"
                     "    if (parent / 'Recto.sln').is_file() and (parent / 'tests' / 'recto-tests').is_dir():\n"
                     "        (parent / 'AGENTS.md').write_text('clobbered', encoding='utf-8')\n"
