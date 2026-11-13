@@ -36,6 +36,22 @@ def agy_call(name: str, args: dict, conversation_id: str = "conv-1", workspace: 
     return payload
 
 
+def _read_probe_json(path: Path) -> dict[str, object] | None:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(data, dict) and isinstance(data.get("pid"), int) and isinstance(data.get("cwd"), str):
+        return data
+    return None
+
+
 class DispatchHook(unittest.TestCase):
     def test_a_review_through_the_background_option_runs(self):
         for tool in ("Bash", "PowerShell"):
@@ -584,13 +600,16 @@ class DispatchHook(unittest.TestCase):
             pid_file = tmp_path / "grandchild.pid"
             spawner = tmp_path / "spawner.py"
             spawner.write_text(
-                "import pathlib, subprocess, sys, time\n"
+                "import os, pathlib, subprocess, sys, time\n"
                 f"child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
-                f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+                f"dst = pathlib.Path({str(pid_file)!r})\n"
+                "tmp = dst.with_suffix('.tmp')\n"
+                "tmp.write_text(str(child.pid), encoding='utf-8')\n"
+                "os.replace(tmp, dst)\n"
                 "time.sleep(30)\n",
                 encoding="utf-8",
             )
-            code, tail = mutate_mod.run_cmd([sys.executable, str(spawner)], tmp_path, timeout_s=0.6)
+            code, tail = mutate_mod.run_cmd([sys.executable, str(spawner)], tmp_path, timeout_s=2.0)
             self.assertIsNone(code)
             self.assertIn("timed out", tail)
             self.assertTrue(pid_file.is_file(), "spawner did not record grandchild PID before timeout")
@@ -665,18 +684,20 @@ class DispatchHook(unittest.TestCase):
                 "    def test_hang(self):\n"
                 "        held = pathlib.Path.cwd() / 'held_open.lock'\n"
                 "        code = (\n"
-                "            'import pathlib, sys, time; '\n"
+                "            'import os, pathlib, sys, time; '\n"
                 "            'f = open(sys.argv[1], \"wb\"); f.write(b\"lock\"); f.flush(); '\n"
-                "            'pathlib.Path(sys.argv[2]).write_text(\"1\", encoding=\"utf-8\"); time.sleep(30)'\n"
+                "            'r = pathlib.Path(sys.argv[2]); rt = r.with_suffix(\".tmp\"); '\n"
+                "            'rt.write_text(\"1\", encoding=\"utf-8\"); os.replace(rt, r); time.sleep(30)'\n"
                 "        )\n"
                 "        ready = pathlib.Path.cwd() / 'grandchild.ready'\n"
                 "        child = subprocess.Popen([sys.executable, '-c', code, str(held), str(ready)])\n"
-                "        for _ in range(200):\n"
+                "        for _ in range(400):\n"
                 "            if ready.is_file(): break\n"
                 "            time.sleep(0.02)\n"
-                f"        pathlib.Path({str(py_probe)!r}).write_text(\n"
-                "            json.dumps({'pid': child.pid, 'cwd': os.getcwd()}), encoding='utf-8'\n"
-                "        )\n"
+                f"        dst = pathlib.Path({str(py_probe)!r})\n"
+                "        tmp = dst.with_suffix('.tmp')\n"
+                "        tmp.write_text(json.dumps({'pid': child.pid, 'cwd': os.getcwd()}), encoding='utf-8')\n"
+                "        os.replace(tmp, dst)\n"
                 "        time.sleep(30)\n",
                 encoding="utf-8",
             )
@@ -712,7 +733,10 @@ class DispatchHook(unittest.TestCase):
                     "class App {\n"
                     "    static int Main(string[] args) {\n"
                     "        using (FileStream fs = new FileStream(args[0], FileMode.Create, FileAccess.ReadWrite, FileShare.None)) {\n"
-                    "            File.WriteAllText(args[1], \"1\");\n"
+                    "            string tmp = args[1] + \".tmp\";\n"
+                    "            File.WriteAllText(tmp, \"1\");\n"
+                    "            if (File.Exists(args[1])) File.Delete(args[1]);\n"
+                    "            File.Move(tmp, args[1]);\n"
                     "            Thread.Sleep(30000);\n"
                     "        }\n"
                     "        return 0;\n"
@@ -733,9 +757,13 @@ class DispatchHook(unittest.TestCase):
                     "        string lockFile = Path.Combine(cwd, \"app_held.lock\");\n"
                     "        string readyFile = Path.Combine(cwd, \"app.ready\");\n"
                     "        Process p = Process.Start(new ProcessStartInfo(appExe, \"\\\"\" + lockFile + \"\\\" \\\"\" + readyFile + \"\\\"\") { UseShellExecute = false });\n"
-                    "        for (int i = 0; i < 200 && !File.Exists(readyFile); i++) Thread.Sleep(20);\n"
+                    "        for (int i = 0; i < 400 && !File.Exists(readyFile); i++) Thread.Sleep(20);\n"
                     "        string json = \"{\\\"pid\\\": \" + p.Id + \", \\\"cwd\\\": \\\"\" + cwd.Replace(\"\\\\\", \"\\\\\\\\\") + \"\\\"}\";\n"
-                    f"        File.WriteAllText(\"{probe_escaped}\", json);\n"
+                    f"        string dst = \"{probe_escaped}\";\n"
+                    "        string tmp = dst + \".tmp\";\n"
+                    "        File.WriteAllText(tmp, json);\n"
+                    "        if (File.Exists(dst)) File.Delete(dst);\n"
+                    "        File.Move(tmp, dst);\n"
                     "        Thread.Sleep(30000);\n"
                     "        return 0;\n"
                     "    }\n"
@@ -749,9 +777,12 @@ class DispatchHook(unittest.TestCase):
             else:
                 recto_exe.write_text(
                     "#!/usr/bin/env python3\n"
-                    "import pathlib, sys, time\n"
+                    "import os, pathlib, sys, time\n"
                     "f = open(sys.argv[1], 'wb')\n"
-                    "pathlib.Path(sys.argv[2]).write_text('1', encoding='utf-8')\n"
+                    "dst = pathlib.Path(sys.argv[2])\n"
+                    "tmp = dst.with_suffix('.tmp')\n"
+                    "tmp.write_text('1', encoding='utf-8')\n"
+                    "os.replace(tmp, dst)\n"
                     "time.sleep(30)\n",
                     encoding="utf-8",
                 )
@@ -763,12 +794,13 @@ class DispatchHook(unittest.TestCase):
                     "cwd = pathlib.Path.cwd()\n"
                     "ready = cwd / 'app.ready'\n"
                     "p = subprocess.Popen([str(app), str(cwd / 'app_held.lock'), str(ready)])\n"
-                    "for _ in range(200):\n"
+                    "for _ in range(400):\n"
                     "    if ready.is_file(): break\n"
                     "    time.sleep(0.02)\n"
-                    f"pathlib.Path({str(gtest_probe)!r}).write_text(\n"
-                    "    json.dumps({'pid': p.pid, 'cwd': os.getcwd()}), encoding='utf-8'\n"
-                    ")\n"
+                    f"dst = pathlib.Path({str(gtest_probe)!r})\n"
+                    "tmp = dst.with_suffix('.tmp')\n"
+                    "tmp.write_text(json.dumps({'pid': p.pid, 'cwd': os.getcwd()}), encoding='utf-8')\n"
+                    "os.replace(tmp, dst)\n"
                     "time.sleep(30)\n",
                     encoding="utf-8",
                 )
@@ -788,8 +820,8 @@ class DispatchHook(unittest.TestCase):
                         def interrupt_once_grandchild_holds_lock(timeout=None):
                             if timeout is not None:
                                 return real_wait(timeout=timeout)
-                            deadline = time.monotonic() + 10.0
-                            while time.monotonic() < deadline and not _probe.is_file():
+                            deadline = time.monotonic() + 15.0
+                            while time.monotonic() < deadline and _read_probe_json(_probe) is None:
                                 time.sleep(0.02)
                             raise KeyboardInterrupt()
 
@@ -802,10 +834,33 @@ class DispatchHook(unittest.TestCase):
                     ):
                         hexec.execute_hydrogen_argv(argv, root=repo)
 
-                    self.assertTrue(probe_path.is_file(), f"{label} did not launch grandchild before interrupt")
-                    info = json.loads(probe_path.read_text(encoding="utf-8"))
-                    assert_pid_dead(int(info["pid"]))
-                    self.assertFalse(Path(info["cwd"]).exists(), f"{label} leaked staged temp dir {info['cwd']}")
+                    info = _read_probe_json(probe_path)
+                    self.assertIsNotNone(info, f"{label} did not atomically write valid probe JSON before interrupt")
+                    assert info is not None
+                    assert_pid_dead(int(info["pid"]))  # type: ignore[arg-type]
+                    self.assertFalse(Path(str(info["cwd"])).exists(), f"{label} leaked staged temp dir {info['cwd']}")
+
+    def test_read_probe_json_ignores_zero_byte_and_truncated_json_until_atomically_replaced(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.json"
+            self.assertIsNone(_read_probe_json(probe))
+            # A zero-byte file created before payload flush must not trigger cancellation.
+            probe.write_text("", encoding="utf-8")
+            self.assertIsNone(_read_probe_json(probe))
+            # A half-flushed JSON object must not trigger cancellation either.
+            probe.write_text('{"pid": 4242, "cwd": ', encoding="utf-8")
+            self.assertIsNone(_read_probe_json(probe))
+            # Missing required keys or wrong types stay unready.
+            probe.write_text('{"pid": "4242"}', encoding="utf-8")
+            self.assertIsNone(_read_probe_json(probe))
+            # Atomic temp-file-then-replace produces a complete ready payload.
+            tmp_probe = probe.with_suffix(".tmp")
+            tmp_probe.write_text(json.dumps({"pid": 4242, "cwd": str(Path(tmp))}), encoding="utf-8")
+            os.replace(tmp_probe, probe)
+            parsed = _read_probe_json(probe)
+            self.assertEqual(parsed, {"pid": 4242, "cwd": str(Path(tmp))})
 
 
 if __name__ == "__main__":
