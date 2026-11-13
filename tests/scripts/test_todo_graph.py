@@ -1938,8 +1938,10 @@ class Repository(unittest.TestCase):
             body = texts[rel]
             if iter_cmd not in body:
                 raise AssertionError(f"{rel} is missing exact iteration gate command: {iter_cmd}")
-            if stamp_cmd not in body:
-                raise AssertionError(f"{rel} is missing stamp gate command: {stamp_cmd}")
+            if r"`.\build.cmd`" not in body:
+                raise AssertionError(f"{rel} is missing standalone backticked stamp gate command: ` .\\build.cmd `")
+            if "x64 Debug and Release, every test" not in body:
+                raise AssertionError(f"{rel} is missing full-build stamp gate scope (x64 Debug and Release, every test)")
             if re.search(r"(?<!build\.cmd )(?:\.\\build\\)?build\.ps1 -Platform x64 -Configuration Debug -TestFilter", body):
                 raise AssertionError(f"{rel} invokes build.ps1 directly instead of .\\build.cmd wrapper")
         for rel in skills:
@@ -1984,6 +1986,13 @@ class Repository(unittest.TestCase):
         mutations = (
             ("direct_ps1", "AGENTS.md", iter_cmd, r".\build\build.ps1 -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'"),
             ("missing_iter", ".claude/skills/review-todo-section/SKILL.md", iter_cmd, "affected test suites"),
+            (
+                "missing_process_phase_stamp",
+                ".claude/skills/process-phase/SKILL.md",
+                r" and run the stamp gate (`.\build.cmd`, x64 Debug and Release, every test, alongside the section's own Test checkpoint commands) once on the final candidate tip that stamps, quoted in `--check`,",
+                "",
+            ),
+            ("missing_agents_prose_stamp", "AGENTS.md", r"run `.\build.cmd` once on the final candidate tip at stamp", "run the stamp check"),
             ("missing_python_only", ".claude/skills/process-todo-section/SKILL.md", "Python-only", "script-only"),
             ("missing_unrelated_cpp_guard", ".claude/skills/review-todo-section/SKILL.md", "unrelated C++ tests", "other checks"),
             ("missing_stamp_quote", ".claude/skills/review-todo-section/SKILL.md", r"--check '.\build.cmd ->", "--note 'build ->"),

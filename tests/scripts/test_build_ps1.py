@@ -11,7 +11,23 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.lib.proc_group import spawn_managed_process  # noqa: E402
+
 BUILD_PS1 = ROOT / "build" / "build.ps1"
+
+
+def _run_managed(cmd: list[str], *, cwd: Path, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
+    managed = spawn_managed_process(cmd, cwd=cwd, env=env, capture_output=True)
+    try:
+        stdout, stderr = managed.proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, managed.proc.returncode, stdout or "", stderr or "")
+    except subprocess.TimeoutExpired:
+        out, err = managed.drain_after_terminate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err)
+    finally:
+        managed.terminate_and_close()
 PARALLELISM_PS1 = ROOT / "build" / "parallelism.ps1"
 ASAN_RUNTIME_PS1 = ROOT / "build" / "asan-runtime.ps1"
 MSBUILD_LOG_PS1 = ROOT / "build" / "msbuild-log.ps1"
@@ -738,8 +754,14 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 "}\n",
                 encoding="utf-8",
             )
-            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{msbuild_dir / 'MSBuild.exe'}", str(msbuild_cs)],
-                           check=True, capture_output=True, text=True, timeout=30)
+            compile_env = os.environ.copy()
+            r1 = _run_managed(
+                [str(csc), "/nologo", "/target:exe", f"/out:{msbuild_dir / 'MSBuild.exe'}", str(msbuild_cs)],
+                cwd=base,
+                env=compile_env,
+                timeout=30,
+            )
+            self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
 
             gtest_dir = ws / "build" / "bin" / "x64" / "Debug" / "recto-tests"
             gtest_dir.mkdir(parents=True)
@@ -762,8 +784,13 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 "}\n",
                 encoding="utf-8",
             )
-            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{gtest_dir / 'recto-tests.exe'}", str(gtest_cs)],
-                           check=True, capture_output=True, text=True, timeout=30)
+            r2 = _run_managed(
+                [str(csc), "/nologo", "/target:exe", f"/out:{gtest_dir / 'recto-tests.exe'}", str(gtest_cs)],
+                cwd=base,
+                env=compile_env,
+                timeout=30,
+            )
+            self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
 
             env = os.environ.copy()
             env["ProgramFiles(x86)"] = str(pf86)
@@ -778,7 +805,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                         msbuild_calls.unlink()
                     if gtest_calls.exists():
                         gtest_calls.unlink()
-                    run = subprocess.run(cmd, cwd=ws, env=env, capture_output=True, text=True, timeout=60)
+                    run = _run_managed(cmd, cwd=ws, env=env, timeout=60)
                     self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
                     m_lines = msbuild_calls.read_text(encoding="utf-8").splitlines()
                     # Restore runs on first invocation; only Debug|x64 builds (never Release|x64).
@@ -788,6 +815,33 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     self.assertEqual(len(g_lines), 1, g_lines)
                     self.assertIn("--gtest_filter=PdfError.*", g_lines[0])
                     self.assertNotIn("'PdfError.*'", g_lines[0])
+
+    def test_run_managed_timeout_reaps_descendant_holding_temp_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            locked = base / "locked.txt"
+            ready = base / "ready.txt"
+            grandchild = (
+                "import pathlib, time; "
+                f"f = open({str(locked)!r}, 'w', encoding='utf-8'); "
+                f"tmp = pathlib.Path({str(ready) + '.tmp'!r}); "
+                "tmp.write_text('1', encoding='utf-8'); "
+                f"tmp.replace({str(ready)!r}); "
+                "time.sleep(30)"
+            )
+            parent = (
+                "import pathlib, subprocess, sys, time; "
+                f"p = subprocess.Popen([sys.executable, '-c', {grandchild!r}]); "
+                f"r = pathlib.Path({str(ready)!r}); "
+                "deadline = time.monotonic() + 10.0\n"
+                "while not r.is_file() and time.monotonic() < deadline:\n"
+                "    time.sleep(0.02)\n"
+                "time.sleep(30)"
+            )
+            with self.assertRaises(subprocess.TimeoutExpired):
+                _run_managed([sys.executable, "-c", parent], cwd=base, env=os.environ.copy(), timeout=1.5)
+            self.assertTrue(ready.is_file())
+            locked.unlink()
 
 
 @unittest.skipUnless(MSBUILD, "needs MSBuild (Windows with Visual Studio)")
