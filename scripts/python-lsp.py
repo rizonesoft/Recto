@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tokenize
+import unicodedata
 from urllib.parse import unquote, urlparse
 import warnings
 
@@ -267,9 +268,10 @@ class StdlibPythonLsp:
             return ""
         row = lines[line]
         cp_col, _ = cls._utf16_to_codepoint_and_utf8(row, character)
-        for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", row):
-            if m.start() <= cp_col <= m.end():
-                return m.group(0)
+        for m in re.finditer(r"\w+", row):
+            tok = m.group(0)
+            if m.start() <= cp_col <= m.end() and tok.isidentifier():
+                return unicodedata.normalize("NFKC", tok)
         return ""
 
     @classmethod
@@ -280,17 +282,22 @@ class StdlibPythonLsp:
             return None, "", False, 0
         row = lines[line]
         cp_col, utf8_col = cls._utf16_to_codepoint_and_utf8(row, character)
-        for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", row):
-            if m.start() <= cp_col <= m.end():
+        for m in re.finditer(r"\w+", row):
+            raw_tok = m.group(0)
+            if m.start() <= cp_col <= m.end() and raw_tok.isidentifier():
+                ident = unicodedata.normalize("NFKC", raw_tok)
                 prefix = row[:m.start()]
                 is_attr = prefix.rstrip().endswith(".")
                 recv_match = re.search(
-                    r"([A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\.\s*$",
+                    r"([^\W\d]\w*(?:\s*\.\s*[^\W\d]\w*)*)\s*\.\s*$",
                     prefix,
                 )
                 if recv_match:
-                    return re.sub(r"\s+", "", recv_match.group(1)), m.group(0), True, utf8_col
-                return None, m.group(0), is_attr, utf8_col
+                    raw_chain = re.sub(r"\s+", "", recv_match.group(1))
+                    segs = [unicodedata.normalize("NFKC", s) for s in raw_chain.split(".")]
+                    if all(s.isidentifier() for s in segs):
+                        return ".".join(segs), ident, True, utf8_col
+                return None, ident, is_attr, utf8_col
         return None, "", False, utf8_col
 
     def _parse_file(self, path: Path) -> ast.Module | None:
@@ -1226,8 +1233,10 @@ class StdlibPythonLsp:
         try:
             for tok in tokenize.generate_tokens(lambda: next(it)):
                 last_line0 = max(last_line0, tok.start[0] - 1)
-                if tok.type == tokenize.NAME and tok.string in names:
-                    tokens.append((tok.start[0] - 1, tok.start[1], tok.end[1], tok.string))
+                if tok.type == tokenize.NAME:
+                    norm_tok = tok.string if tok.string.isascii() else unicodedata.normalize("NFKC", tok.string)
+                    if norm_tok in names:
+                        tokens.append((tok.start[0] - 1, tok.start[1], tok.end[1], norm_tok))
             return tokens
         except (tokenize.TokenError, IndentationError, SyntaxError):
             pass
@@ -1373,7 +1382,8 @@ class StdlibPythonLsp:
         refs: list[dict] = []
         for cand_file in cand_files:
             src = self._text(cand_file)
-            present_names = {n for n in candidate_names if n in src}
+            norm_src = src if src.isascii() else unicodedata.normalize("NFKC", src)
+            present_names = {n for n in candidate_names if n in norm_src}
             if not present_names:
                 continue
             src_lines = src.splitlines()

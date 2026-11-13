@@ -80,6 +80,7 @@ class LspClient:
         self._diagnostics: dict[str, tuple[int, int | None, list[dict]]] = {}
         self._closed_reason: str | None = None
         self._opened: dict[str, int] = {}
+        self._opened_files: dict[str, tuple[Path, str, str]] = {}
         self.last_used = time.monotonic()
 
     def ensure_started(self) -> None:
@@ -94,6 +95,7 @@ class LspClient:
                     pass
             with self._diag_cond:
                 self._opened.clear()
+                self._opened_files.clear()
                 self._diagnostics.clear()
                 self._closed_reason = None
             proc = subprocess.Popen(
@@ -229,17 +231,53 @@ class LspClient:
             raise RuntimeError(err.get("message", str(err)) if isinstance(err, dict) else str(err))
         return reply.get("result")
 
+    def refresh_opened_files(self, *, exclude_key: str | None = None) -> None:
+        """Synchronize any previously-opened documents whose on-disk contents changed or were deleted."""
+        self.ensure_started()
+        with self._diag_cond:
+            tracked = list(self._opened_files.items())
+        watched_events: list[dict] = []
+        for k, (prev_path, prev_uri, prev_text) in tracked:
+            if k == exclude_key:
+                continue
+            if not prev_path.is_file():
+                with self._diag_cond:
+                    self._opened.pop(k, None)
+                    self._opened_files.pop(k, None)
+                    self._diagnostics.pop(k, None)
+                self.notify("textDocument/didClose", {"textDocument": {"uri": prev_uri}})
+                watched_events.append({"uri": prev_uri, "type": 3})
+                continue
+            cur_text = prev_path.read_text(encoding="utf-8", errors="replace")
+            if cur_text == prev_text:
+                continue
+            with self._diag_cond:
+                self._sync_seq += 1
+                ver = self._opened.get(k, 0) + 1
+                self._opened[k] = ver
+                self._opened_files[k] = (prev_path, prev_uri, cur_text)
+            self.notify("textDocument/didChange", {
+                "textDocument": {"uri": prev_uri, "version": ver},
+                "contentChanges": [{"text": cur_text}],
+            })
+            watched_events.append({"uri": prev_uri, "type": 2})
+        if watched_events:
+            self.notify("workspace/didChangeWatchedFiles", {"changes": watched_events})
+
     def sync_file(self, path: Path) -> tuple[str, int, int]:
         self.ensure_started()
-        uri = path.resolve().as_uri()
+        resolved = path.resolve()
+        uri = resolved.as_uri()
         key = _uri_key(uri)
-        text = path.read_text(encoding="utf-8", errors="replace")
-        lang_id = "python" if path.suffix.lower() in PY_EXTS else "cpp"
+        self.refresh_opened_files(exclude_key=key)
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+        lang_id = "python" if resolved.suffix.lower() in PY_EXTS else "cpp"
         with self._diag_cond:
             self._sync_seq += 1
             expected_seq = self._sync_seq
             ver = self._opened.get(key, 0) + 1
             self._opened[key] = ver
+            self._opened_files[key] = (resolved, uri, text)
         if ver == 1:
             self.notify("textDocument/didOpen", {
                 "textDocument": {"uri": uri, "languageId": lang_id, "version": 1, "text": text}
@@ -403,7 +441,7 @@ class LspMcpServer:
             if seed is not None:
                 client.sync_file(seed)
         else:
-            client.ensure_started()
+            client.refresh_opened_files()
         res = client.request("workspace/symbol", {"query": raw}) or []
         if not res:
             return f"no workspace symbols matching {raw!r}"

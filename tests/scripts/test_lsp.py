@@ -498,6 +498,30 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
                     [(r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in astral_refs],
                     [(0, 10), (1, 4)],
                 )
+
+                # 4. Unicode identifier navigation (`café = 1` + `print(café)`).
+                unicode_ident = scripts_dir / "unicode_ident.py"
+                unicode_ident.write_text("caf\u00e9 = 1\nprint(caf\u00e9)\n", encoding="utf-8")
+                self.assertEqual(client.diagnostics_for(unicode_ident, wait_seconds=5.0), [])
+                ui_uri = unicode_ident.resolve().as_uri()
+                ui_defs = client.request(
+                    "textDocument/definition",
+                    {"textDocument": {"uri": ui_uri}, "position": {"line": 1, "character": 7}},
+                )
+                self.assertEqual(len(ui_defs), 1, ui_defs)
+                self.assertEqual((ui_defs[0]["range"]["start"]["line"], ui_defs[0]["range"]["start"]["character"]), (0, 0))
+                ui_refs = client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": ui_uri},
+                        "position": {"line": 1, "character": 7},
+                        "context": {"includeDeclaration": True},
+                    },
+                )
+                self.assertEqual(
+                    [(r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in ui_refs],
+                    [(0, 0), (1, 6)],
+                )
             finally:
                 client.stop()
 
@@ -554,6 +578,34 @@ class LspMcpBridge(unittest.TestCase):
             srv.shutdown_all()
             if py_proc is not None:
                 self.assertIsNotNone(py_proc.poll())
+
+    def test_mcp_refreshes_previously_opened_dependencies_after_disk_edits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            pkg = ws / "scripts"
+            pkg.mkdir()
+            dep_a = pkg / "dep_a.py"
+            caller_b = pkg / "caller_b.py"
+            dep_a.write_text("def exported() -> int:\n    return 1\n", encoding="utf-8")
+            caller_b.write_text("from dep_a import exported\nval = exported()\n", encoding="utf-8")
+
+            srv = LSP_MCP.LspMcpServer(ws)
+            srv.clients["python"] = LSP_MCP.LspClient(
+                "python",
+                [sys.executable, "-B", str(SCRIPTS / "python-lsp.py"), "--builtin"],
+                ws,
+            )
+            try:
+                self.assertIn("0 diagnostics", srv.tool_diagnostics({"file": "scripts/dep_a.py"}))
+                first_loc = srv.tool_definition({"file": "scripts/caller_b.py", "line": 2, "character": 8})
+                self.assertEqual(first_loc, "scripts/dep_a.py:1:1")
+
+                # Edit `dep_a.py` on disk so `exported` shifts to line 3 WITHOUT querying `dep_a.py` directly again.
+                dep_a.write_text("# moved line 1\n# moved line 2\ndef exported() -> int:\n    return 2\n", encoding="utf-8")
+                updated_loc = srv.tool_definition({"file": "scripts/caller_b.py", "line": 2, "character": 8})
+                self.assertEqual(updated_loc, "scripts/dep_a.py:3:1")
+            finally:
+                srv.shutdown_all()
 
     def test_mcp_stdio_survives_malformed_json_and_non_dict_requests(self):
         ping_frame_body = b'{"jsonrpc":"2.0","id":9,"method":"ping"}'
