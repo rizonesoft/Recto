@@ -236,6 +236,43 @@ class RunTestsCadence(unittest.TestCase):
                 time.sleep(0.05)
             self.assertFalse(self._pid_alive(grandchild_pid), "running worker child tree leaked after Ctrl+C")
 
+    def test_terminate_and_close_synchronously_releases_descendant_file_locks(self):
+        pg = RUN_TESTS.proc_group
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            count = 6
+            locked_files = [ws / f"locked_{i}.txt" for i in range(count)]
+            ready_files = [ws / f"ready_{i}.txt" for i in range(count)]
+            worker_code = (
+                "import pathlib, sys, time; "
+                "idx = sys.argv[1]; "
+                "ws = pathlib.Path(sys.argv[2]); "
+                "fh = open(ws / f'locked_{idx}.txt', 'w', encoding='utf-8'); "
+                "tmp = ws / f'ready_{idx}.tmp'; "
+                "tmp.write_text('1', encoding='utf-8'); "
+                "tmp.replace(ws / f'ready_{idx}.txt'); "
+                "time.sleep(60)"
+            )
+            parent_code = (
+                "import os, subprocess, sys, time; "
+                "kw = {'creationflags': 0x00000200, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL} "
+                "if os.name == 'nt' else {'start_new_session': True, 'stdout': subprocess.DEVNULL, 'stderr': subprocess.DEVNULL}; "
+                f"procs = [subprocess.Popen([sys.executable, '-c', {worker_code!r}, str(i), {str(ws)!r}], **kw) for i in range({count})]; "
+                "time.sleep(60)"
+            )
+            managed = pg.spawn_managed_process([sys.executable, "-c", parent_code], cwd=ws, capture_output=True)
+            try:
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline and not all(r.is_file() for r in ready_files):
+                    time.sleep(0.02)
+                self.assertTrue(all(r.is_file() for r in ready_files), "grandchildren did not open locked files in time")
+                managed.drain_after_terminate()
+                # Every kernel file handle across all grandchildren must already be closed with zero retry.
+                for lf in locked_files:
+                    lf.unlink()
+            finally:
+                managed.terminate_and_close()
+
 
 if __name__ == "__main__":
     unittest.main()

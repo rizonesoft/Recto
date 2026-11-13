@@ -839,7 +839,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 "time.sleep(30)"
             )
             with self.assertRaises(subprocess.TimeoutExpired):
-                _run_managed([sys.executable, "-c", parent], cwd=base, env=os.environ.copy(), timeout=1.5)
+                _run_managed([sys.executable, "-c", parent], cwd=base, env=os.environ.copy(), timeout=3.0)
             self.assertTrue(ready.is_file())
             locked.unlink()
 

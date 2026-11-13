@@ -30,9 +30,26 @@ import weakref
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_SUSPENDED = 0x00000004
 CREATE_NO_WINDOW = 0x08000000
+JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1
+JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS = 3
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+SYNCHRONIZE = 0x00100000
+ERROR_MORE_DATA = 234
 _GROUP_ENV_KEY = "_RECTO_MANAGED_GROUP"
+
+
+class _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_int64),
+        ("TotalKernelTime", ctypes.c_int64),
+        ("ThisPeriodTotalUserTime", ctypes.c_int64),
+        ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+        ("TotalPageFaultCount", ctypes.c_uint32),
+        ("TotalProcesses", ctypes.c_uint32),
+        ("ActiveProcesses", ctypes.c_uint32),
+        ("TotalTerminatedProcesses", ctypes.c_uint32),
+    ]
 
 
 class _IO_COUNTERS(ctypes.Structure):
@@ -95,8 +112,20 @@ def _win32_apis() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
             kernel32.SetInformationJobObject.restype = ctypes.c_int
             kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
             kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+            kernel32.QueryInformationJobObject.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_uint32),
+            ]
+            kernel32.QueryInformationJobObject.restype = ctypes.c_int
             kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
             kernel32.TerminateJobObject.restype = ctypes.c_int
+            kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+            kernel32.OpenProcess.restype = ctypes.c_void_p
+            kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+            kernel32.WaitForSingleObject.restype = ctypes.c_uint32
             kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
             kernel32.CloseHandle.restype = ctypes.c_int
             ntdll = ctypes.WinDLL("ntdll")
@@ -104,6 +133,76 @@ def _win32_apis() -> tuple[ctypes.WinDLL, ctypes.WinDLL]:
             ntdll.NtResumeProcess.restype = ctypes.c_int32
             _WIN32_APIS = (kernel32, ntdll)
         return _WIN32_APIS
+
+
+def _job_active_processes(kernel32: ctypes.WinDLL, job: int) -> int:
+    info = _JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+    ret_len = ctypes.c_uint32(0)
+    ok = kernel32.QueryInformationJobObject(
+        job,
+        JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+        ctypes.byref(ret_len),
+    )
+    return int(info.ActiveProcesses) if ok else 0
+
+
+def _job_process_ids(kernel32: ctypes.WinDLL, job: int) -> list[int]:
+    cap = 64
+    while cap <= 4096:
+        class _PidList(ctypes.Structure):
+            _fields_ = [
+                ("NumberOfAssignedProcesses", ctypes.c_uint32),
+                ("NumberOfProcessIdsInList", ctypes.c_uint32),
+                ("ProcessIdList", ctypes.c_size_t * cap),
+            ]
+
+        buf = _PidList()
+        ret_len = ctypes.c_uint32(0)
+        ok = kernel32.QueryInformationJobObject(
+            job,
+            JOB_OBJECT_BASIC_PROCESS_ID_LIST_CLASS,
+            ctypes.byref(buf),
+            ctypes.sizeof(buf),
+            ctypes.byref(ret_len),
+        )
+        if ok:
+            count = min(int(buf.NumberOfProcessIdsInList), cap)
+            return [int(buf.ProcessIdList[i]) for i in range(count) if int(buf.ProcessIdList[i]) > 0]
+        if ctypes.get_last_error() != ERROR_MORE_DATA:
+            return []
+        cap *= 2
+    return []
+
+
+def _terminate_and_wait_job(job: int, timeout_s: float = 5.0) -> None:
+    """Terminate `job` and wait for every job process to finish kernel handle rundown before closing `job`."""
+    kernel32, _ = _win32_apis()
+    handles: dict[int, int] = {}
+    try:
+        if _job_active_processes(kernel32, job) == 0:
+            return
+        for pid in _job_process_ids(kernel32, job):
+            h = kernel32.OpenProcess(SYNCHRONIZE, 0, pid)
+            if h:
+                handles[pid] = int(h)
+        kernel32.TerminateJobObject(job, 1)
+        for pid in _job_process_ids(kernel32, job):
+            if pid not in handles:
+                h = kernel32.OpenProcess(SYNCHRONIZE, 0, pid)
+                if h:
+                    handles[pid] = int(h)
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        for h in handles.values():
+            rem_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            kernel32.WaitForSingleObject(h, rem_ms)
+        while _job_active_processes(kernel32, job) > 0 and time.monotonic() < deadline:
+            time.sleep(0.005)
+    finally:
+        for h in handles.values():
+            kernel32.CloseHandle(h)
+        kernel32.CloseHandle(job)
 
 
 def _create_configured_job() -> int:
@@ -388,9 +487,7 @@ class ManagedProcess:
 
         if os.name == "nt":
             if job is not None:
-                kernel32, _ = _win32_apis()
-                kernel32.TerminateJobObject(job, 1)
-                kernel32.CloseHandle(job)
+                _terminate_and_wait_job(job)
         else:
             _kill_posix_tree(self.proc.pid, self._group_token)
             if lifeline_fd is not None:
@@ -533,7 +630,6 @@ def spawn_managed_process(
                 raise OSError(f"NtResumeProcess failed with NTSTATUS 0x{status & 0xFFFFFFFF:08x}")
             return ManagedProcess(proc, job)
         except BaseException:
-            kernel32, _ = _win32_apis()
             if proc is not None:
                 try:
                     proc.kill()
@@ -549,7 +645,7 @@ def spawn_managed_process(
                     proc.wait(timeout=2.0)
                 except subprocess.TimeoutExpired:
                     pass
-            kernel32.CloseHandle(job)
+            _terminate_and_wait_job(job)
             raise
 
     group_token = uuid.uuid4().hex
