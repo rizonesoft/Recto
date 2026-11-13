@@ -958,15 +958,25 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
 def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
     """The command line. Exit 1 means one thing only, a red CI run, so nothing else may leave as 1: a file or folder
     this machine cannot read or write, wherever it happens, is unknown (3), with the error."""
+    raw_argv = sys.argv[1:] if argv is None else list(argv)
+    agy_hook = "--agy-hook" in raw_argv
     try:
         return run(argv, runner, root, git)
     except OSError as exc:
-        print(f"ci-status unknown: {type(exc).__name__}: {exc}; nothing here says CI is red. Free disk space or close "
-              f"the program holding the file, then run the same command again", flush=True)
+        msg = (f"ci-status unknown: {type(exc).__name__}: {exc}; nothing here says CI is red. Free disk space or close "
+               f"the program holding the file, then run the same command again")
+        if agy_hook:
+            print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}), flush=True)
+            return 0
+        print(msg, flush=True)
         return 3
     except Exception as exc:  # exit 1 is a verdict (red CI), so a defect in this script must not produce it
-        print(f"ci-status unknown: this script failed ({type(exc).__name__}: {exc}); nothing here says CI is red. "
-              f"Run `python scripts/ci_status.py` for the plain report, and file the failure", flush=True)
+        msg = (f"ci-status unknown: this script failed ({type(exc).__name__}: {exc}); nothing here says CI is red. "
+               f"Run `python scripts/ci_status.py` for the plain report, and file the failure")
+        if agy_hook:
+            print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}), flush=True)
+            return 0
+        print(msg, flush=True)
         return 3
 
 
@@ -982,9 +992,27 @@ def run(argv, runner, root, git):
     parser.add_argument("--poll", type=int, default=10, help="seconds between --wait's reads (default 10)")
     parser.add_argument("--gate", action="store_true", help="may a new row be claimed: the watch of origin/main's head")
     parser.add_argument("--brief", action="store_true", help="with --gate, one line")
+    parser.add_argument("--agy-hook", action="store_true", help="with --gate, emit Antigravity SessionStart JSON")
     parser.add_argument("--scheduled", action="store_true", help="the recto-ci-watch task: exit 1 once per new red run")
     args = parser.parse_args(argv)
     if args.gate:
+        if args.agy_hook:
+            import io
+            from contextlib import redirect_stdout
+            try:
+                if not sys.stdin.isatty():
+                    sys.stdin.read()
+            except OSError:
+                pass
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                try:
+                    gate(git=git, runner=runner, root=root, brief_line=True)
+                except Unavailable as exc:
+                    print(f"ci gate: unknown: {exc}")
+            line = " ".join(ln.strip() for ln in buf.getvalue().splitlines() if ln.strip())
+            print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": line}}]} if line else {}))
+            return 0
         try:
             code = gate(git=git, runner=runner, root=root, brief_line=args.brief)
         except Unavailable as exc:

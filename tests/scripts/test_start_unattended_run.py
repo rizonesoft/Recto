@@ -1,7 +1,8 @@
 """scripts/start-unattended-run.ps1, driven with a fake `op`, a fake `claude` and a fake `agy` first on PATH: the
 Claude Code session gets the 1Password token in its environment and nowhere else, cannot ask questions, and is told
 the clone it runs in; the Antigravity session runs Gemini 4 Carbon and never gets that token; and both Desktop
-shortcuts are written with their runner's badged icon."""
+shortcuts are written with their runner's badged icon in pure stdlib Python."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,14 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / "scripts" / "start-unattended-run.ps1"
+ICON_SCRIPT = ROOT / "scripts" / "campaign-icon.py"
 POWERSHELL = shutil.which("pwsh")
 TOKEN = "fake-token-0123456789"
+
+_icon_spec = importlib.util.spec_from_file_location("recto_campaign_icon", ICON_SCRIPT)
+assert _icon_spec is not None and _icon_spec.loader is not None
+_icon_mod = importlib.util.module_from_spec(_icon_spec)
+_icon_spec.loader.exec_module(_icon_mod)
 
 FAKE_CLAUDE = """
 $record = @{
@@ -24,6 +31,7 @@ $record = @{
     goal = [string]$args[-1]
     token_matches = ($env:CLAUDE_CODE_OAUTH_TOKEN -ceq $env:RECTO_TEST_EXPECTED_TOKEN)
     token_set = [bool]$env:CLAUDE_CODE_OAUTH_TOKEN
+    unattended_env = [string]$env:CONCLAVE_UNATTENDED_RUN
 }
 $record | ConvertTo-Json | Set-Content -Encoding utf8 $env:RECTO_TEST_RECORD
 exit 0
@@ -38,26 +46,34 @@ def no_window() -> int:
 
 @unittest.skipUnless(POWERSHELL, "needs PowerShell 7")
 class Launcher(unittest.TestCase):
-    def run_launcher(self, *switches: str, op_exit: int = 0, op_hangs: bool = False,
+    def run_launcher(self, *switches: str, op_exit: int = 0, op_hangs: bool = False, with_op: bool = True,
                      before: str = "", after: str = "",
                      inherited_token: str = "") -> tuple[subprocess.CompletedProcess, dict | None]:
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             for runner in ("claude", "agy"):  # both runners take the same fake, which records its own name
                 (tmp / f"{runner}.ps1").write_text(FAKE_CLAUDE, encoding="utf-8")
-            # op is started as a process, so the fake is a batch file; a hanging one stands for an unanswered prompt.
-            wait = "ping -n 60 127.0.0.1 >nul\n" if op_hangs else ""
-            say = f"echo {TOKEN}\n" if op_exit == 0 else ""
-            (tmp / "op.cmd").write_text(f"@echo off\n{wait}{say}exit /b {op_exit}\n", encoding="utf-8", newline="\r\n")
+            if with_op:
+                # op is started as a process, so the fake is a batch file; a hanging one stands for an unanswered prompt.
+                wait = "ping -n 60 127.0.0.1 >nul\n" if op_hangs else ""
+                say = f"echo {TOKEN}\n" if op_exit == 0 else ""
+                (tmp / "op.cmd").write_text(f"@echo off\n{wait}{say}exit /b {op_exit}\n", encoding="utf-8", newline="\r\n")
             record = tmp / "record.json"
-            env = dict(os.environ, PATH=str(tmp) + os.pathsep + os.environ["PATH"], RECTO_TEST_RECORD=str(record),
+            path_entries = [str(tmp)]
+            for entry in os.environ["PATH"].split(os.pathsep):
+                if not with_op and entry and (Path(entry) / "op.exe").exists():
+                    continue
+                path_entries.append(entry)
+            env = dict(os.environ, PATH=os.pathsep.join(path_entries), RECTO_TEST_RECORD=str(record),
                        RECTO_TEST_EXPECTED_TOKEN=TOKEN)
             env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+            env.pop("CONCLAVE_UNATTENDED_RUN", None)
             if inherited_token:
                 env["CLAUDE_CODE_OAUTH_TOKEN"] = inherited_token
             command = f"{before}; & '{LAUNCHER}' {' '.join(switches)}; {after}"
             run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
-                                 capture_output=True, text=True, timeout=180, env=env, creationflags=no_window())
+                                 capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                 timeout=180, env=env, creationflags=no_window())
             seen = json.loads(record.read_text(encoding="utf-8-sig")) if record.exists() else None
             return run, seen
 
@@ -65,9 +81,17 @@ class Launcher(unittest.TestCase):
         run, seen = self.run_launcher()
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertTrue(seen["token_matches"])
+        self.assertEqual(seen["unattended_env"], "1")
         self.assertNotIn(TOKEN, run.stdout + run.stderr)
         self.assertNotIn(TOKEN, json.dumps(seen["args"]) + seen["goal"])
         self.assertIn("Sign-in: the one-year token from 1Password.", run.stdout)
+
+    def test_portable_env_token_works_without_1password_installed(self):
+        run, seen = self.run_launcher(with_op=False, inherited_token=TOKEN)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertTrue(seen["token_matches"])
+        self.assertNotIn(TOKEN, run.stdout + run.stderr)
+        self.assertIn("Sign-in: CLAUDE_CODE_OAUTH_TOKEN from environment.", run.stdout)
 
     def test_the_session_runs_unattended_on_the_newest_opus_and_cannot_ask(self):
         run, seen = self.run_launcher()
@@ -112,6 +136,7 @@ class Launcher(unittest.TestCase):
         self.assertEqual(seen["args"], ["--model", "gemini-4-carbon-medium", "--dangerously-skip-permissions", "-i"])
         self.assertTrue(seen["goal"].startswith("/goal "))
         self.assertFalse(seen["token_set"])
+        self.assertEqual(seen["unattended_env"], "1")
         self.assertNotIn("1Password", run.stdout + run.stderr)
         self.assertIn("own account on this PC", run.stdout)
 
@@ -137,7 +162,6 @@ class Launcher(unittest.TestCase):
         self.assertIsNone(seen)  # installing the shortcuts starts no session
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
         self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
-        plain = str(ROOT / "resources" / "ico" / "recto.ico")
         for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
                                                   ("Google Antigravity on Gemini 4 Carbon", "Claude Code")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
@@ -147,11 +171,7 @@ class Launcher(unittest.TestCase):
             self.assertEqual(shortcut["description"], f"Start the unattended Recto campaign in {where}")
             self.assertEqual(shortcut["style"], 1)
             self.assertTrue(shortcut["icon_exists"], shortcut["icon"])
-            # The badged icon where this machine can render it (Pillow), else Recto's plain one, said in a warning.
-            if "could not be rendered" in run.stdout + run.stderr:
-                self.assertEqual(shortcut["icon"], f"{plain},0")
-            else:
-                self.assertTrue(shortcut["icon"].endswith(f"recto-campaign-{badge}.ico,0"), shortcut["icon"])
+            self.assertTrue(shortcut["icon"].endswith(f"recto-campaign-{badge}.ico,0"), shortcut["icon"])
 
     def test_every_process_this_file_starts_opens_no_window(self):
         self.assertEqual(no_window(), 0x08000000 if os.name == "nt" else 0)
@@ -165,36 +185,32 @@ class Launcher(unittest.TestCase):
             self.assertEqual(call.kwargs.get("creationflags"), no_window(), Path(call.args[0][0]).name)
 
 
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
-
-
-@unittest.skipUnless(Image, "needs Pillow")
 class CampaignIcon(unittest.TestCase):
+    @staticmethod
+    def _pixel(rgba: bytearray, size: int, x: int, y: int) -> tuple[int, int, int, int]:
+        o = (y * size + x) * 4
+        return rgba[o], rgba[o + 1], rgba[o + 2], rgba[o + 3]
+
     def test_the_icon_keeps_every_size_and_carries_the_badge_bottom_right(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "badged.ico"
-            run = subprocess.run([sys.executable, str(ROOT / "scripts" / "campaign-icon.py"), str(target), "#D97757"],
+            run = subprocess.run([sys.executable, str(ICON_SCRIPT), str(target), "#D97757"],
                                  capture_output=True, text=True, timeout=120, creationflags=no_window())
             self.assertEqual(run.returncode, 0, run.stderr)
             self.assertEqual(os.listdir(tmp), ["badged.ico"])  # no partial file is left beside it
-            with Image.open(ROOT / "resources" / "ico" / "recto.ico") as plain, Image.open(target) as badged:
-                self.assertEqual(sorted(badged.ico.sizes()), sorted(plain.ico.sizes()))
-                for size in ((16, 16), (256, 256)):
-                    at = round(size[0] * 0.75)  # the badge's centre
-                    # At 16 pixels the white outline blends a few levels into the centre; the colour is still the fill.
-                    for got, want in zip(badged.ico.getimage(size).convert("RGBA").getpixel((at, at)),
-                                         (217, 119, 87, 255)):
-                        self.assertAlmostEqual(got, want, delta=0 if size[0] == 256 else 6)
-                    self.assertEqual(badged.ico.getimage(size).convert("RGBA").getpixel((1, 1)),
-                                     plain.ico.getimage(size).convert("RGBA").getpixel((1, 1)))
+            plain = _icon_mod.read_ico((ROOT / "resources" / "ico" / "recto.ico").read_bytes())
+            badged = _icon_mod.read_ico(target.read_bytes())
+            self.assertEqual(sorted(badged), sorted(plain))
+            for size in (16, 256):
+                at = round(size * 0.75)  # the badge's centre
+                for got, want in zip(self._pixel(badged[size][2], size, at, at), (217, 119, 87, 255)):
+                    self.assertAlmostEqual(got, want, delta=0 if size == 256 else 6)
+                self.assertEqual(self._pixel(badged[size][2], size, 1, 1),
+                                 self._pixel(plain[size][2], size, 1, 1))
 
     def test_a_bad_colour_is_refused_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            run = subprocess.run([sys.executable, str(ROOT / "scripts" / "campaign-icon.py"),
-                                  str(Path(tmp) / "badged.ico"), "orange"],
+            run = subprocess.run([sys.executable, str(ICON_SCRIPT), str(Path(tmp) / "badged.ico"), "orange"],
                                  capture_output=True, text=True, timeout=120, creationflags=no_window())
             self.assertEqual(run.returncode, 2)
             self.assertEqual(os.listdir(tmp), [])

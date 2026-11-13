@@ -1,28 +1,32 @@
 #!/usr/bin/env python3
-"""The campaign run guard for process-plan: the Claude Code Stop hook and its lifecycle commands.
+"""The campaign run guard for process-plan: the Claude Code and Google Antigravity Stop hook and lifecycle commands.
 
     python scripts/campaign_guard.py stop-hook                      (the Stop hook; reads the payload on stdin)
-    python scripts/campaign_guard.py acquire --session S --phase N --run-file F --cron-id J [--scope plan|phase] [--generation G] [--handover REASON]
+    python scripts/campaign_guard.py acquire --session S --phase N --run-file F --cron-id J [--runner claude|agy] [--scope plan|phase] [--generation G] [--handover REASON]
     python scripts/campaign_guard.py end --session S --reason closeout|park|plan-done|operator-stop|escalation|stall
     python scripts/campaign_guard.py hook-error [--session S] [--ack LINE]
     python scripts/campaign_guard.py mint-generation
     python scripts/campaign_guard.py whoami --session S --generation G
     python scripts/campaign_guard.py reset-state --session S | --expect-no-guard yes
     python scripts/campaign_guard.py pending-cancel | cancel-confirmed --cron-id J
-    python scripts/campaign_guard.py reconcile --session S --jobs J1,J2
+    python scripts/campaign_guard.py reconcile --session S --jobs J1,J2 [--runner claude|agy]
     python scripts/campaign_guard.py health --session S --jobs J1,J2
     python scripts/campaign_guard.py expiry --session S [--now ISO]
+    python scripts/campaign_guard.py heartbeat-still --session S     (a heartbeat resumption: counts a still, trips, ends a stall)
     python scripts/campaign_guard.py reviewing                      (prints the running review, if one is in flight)
+    python scripts/campaign_guard.py --self-test [--hook-file F]     (run each wired hook file's command, or F's alone, against a scratch run)
 
 A campaign run has three parts. The guard file (`build/claude-campaign-guard.json`) names the session that owns the
-run, its phase, run file, heartbeat job and run id; it is written and deleted only through this module, under an
-interprocess lock. The Stop hook (`stop-hook`, wired in `.claude/settings.json`) blocks that session's end of turn
-while the run is open and lets go when the run file carries this run's `## Closeout run=<id>` heading or column-0
-`PARKED <UTC> run=<id>` line, when `build/review-in-flight/` names a live review dispatcher (the wait is the work, and
-never counts toward the breaker), when `query ready` has nothing runnable, or when the stall breaker trips after 3
-blocks with no change to the tree. The heartbeat is a `CronCreate` job inside the session (process-plan holds its prompt)
-that resumes an idle run. There is no keep-alive outside the session: a session that died is resumed by the operator,
-and the new session takes the guard with `acquire --handover`.
+run, its runner (`claude` or `agy`), phase, run file, heartbeat job and run id; it is written and deleted only through
+this module, under an interprocess lock. The Stop hook (`stop-hook`, wired in `.claude/settings.json` and
+`.agents/hooks.json`) blocks that session's end of turn while the run is open and lets go when the run file carries
+this run's `## Closeout run=<id>` heading or column-0 `PARKED <UTC> run=<id>` line, when `build/review-in-flight/`
+names a live review dispatcher (the wait is the work, and never counts toward the breaker), when `query ready` has
+nothing runnable, when Antigravity stops for a non-idle reason (`USER_CANCELED`, `ERROR`, `MAX_FORCED_INVOCATIONS`),
+or when the stall breaker trips after 3 blocks with no change to the tree. The heartbeat is a recurring job inside the
+session (`CronCreate` in Claude Code, `schedule` in Antigravity; `process-plan` holds its prompt) that resumes an idle
+run. There is no keep-alive outside the session: a session that died is resumed by the operator, and the new session
+takes the guard with `acquire --handover`.
 
 The hook fails open on a bad payload, a missing guard or any error, and records the error for the heartbeat to report
 (`hook-error`). Every command takes `--root` to act on a fixture workspace instead of this repository. Ported from
@@ -40,9 +44,12 @@ import json
 import os
 import queue
 import re
+import shutil
+import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -50,8 +57,13 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, ".."))
 END_REASONS = ("closeout", "park", "plan-done", "operator-stop", "escalation", "stall")
+ENDED_FILE = "claude-campaign-ended.json"  # beside the guard: how the last run ended
 LOCK_WAIT = 10.0
 MAX_BLOCKS_WITHOUT_PROGRESS = 3
+# Heartbeat resumptions in a row with no tree change that count one stall trip (`heartbeat-still`): at one heartbeat
+# every 5 minutes, about 30 minutes of resuming with nothing done; the second trip ends the run.
+MAX_HEARTBEAT_STILLS = 6
+RUNNERS = ("claude", "agy")
 SCOPES = ("plan", "phase")
 # Claude Code stops a Stop hook at the timeout .claude/settings.json gives it (60 seconds) and treats that as a
 # non-blocking error, so the hook keeps its own deadline well inside it and still has time to record a failure.
@@ -176,8 +188,15 @@ def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime(UTC_FORMAT)
 
 
+def _job_verbs(runner: str | None) -> tuple[str, str, str]:
+    if runner == "agy":
+        return "schedule", "manage_task kill", "manage_task list"
+    return "CronCreate", "CronDelete", "CronList"
+
+
 def acquire(root: str, session: str, phase: int | None, run_file: str, cron_id: str,
-            handover: str | None = None, generation: str | None = None, scope: str | None = None) -> str:
+            handover: str | None = None, generation: str | None = None, scope: str | None = None,
+            runner: str | None = None) -> str:
     """Write the guard for `session`. Only one session can hold it: every guard change holds the lock, so two sessions
     racing to start a run cannot both win; the owner re-points its own guard; a live guard owned by another session is
     refused unless the operator hands it over, and the handover is recorded in the guard.
@@ -191,12 +210,14 @@ def acquire(root: str, session: str, phase: int | None, run_file: str, cron_id: 
         raise GuardError(f"run file {run_file!r} must be a repo-relative path inside the workspace")
     if scope is not None and scope not in SCOPES:
         raise GuardError(f"scope {scope!r} is not one of {', '.join(SCOPES)}")
+    if runner is not None and runner not in RUNNERS:
+        raise GuardError(f"runner {runner!r} is not one of {', '.join(RUNNERS)}")
     with _Lock(root):
-        return _acquire_locked(root, session, phase, run_file, cron_id, handover, generation, scope)
+        return _acquire_locked(root, session, phase, run_file, cron_id, handover, generation, scope, runner)
 
 
 def _acquire_locked(root: str, session: str, phase: int | None, run_file: str, cron_id: str,
-                    handover: str | None, generation: str | None, scope: str | None) -> str:
+                    handover: str | None, generation: str | None, scope: str | None, runner: str | None) -> str:
     guard, state_path = _paths(root)
     os.makedirs(os.path.dirname(guard), exist_ok=True)
     exists = os.path.exists(guard)
@@ -209,7 +230,9 @@ def _acquire_locked(root: str, session: str, phase: int | None, run_file: str, c
         if not (previous.get("session_id") == session and isinstance(previous.get("phase"), int)):
             raise GuardError("acquire needs --phase for a new guard (a re-point of your own guard keeps its phase)")
         phase = previous["phase"]
-    doc = {"runner": "claude", "workspace": root.replace("\\", "/"), "phase": phase,
+    chosen_runner = (runner or (previous.get("runner") if previous.get("session_id") == session
+                                and previous.get("runner") in RUNNERS else None) or "claude")
+    doc = {"runner": chosen_runner, "workspace": root.replace("\\", "/"), "phase": phase,
            "run_file": run_file, "session_id": session, "cron_id": cron_id,
            "scope": scope or (previous.get("scope") if previous.get("session_id") == session or
                               (handover and previous.get("run_file") == run_file) else None) or "plan",
@@ -223,6 +246,12 @@ def _acquire_locked(root: str, session: str, phase: int | None, run_file: str, c
            # this run however the file is edited.
            "run_id": (previous.get("run_id") if (same_run or (handover and previous.get("run_file") == run_file))
                       and previous.get("run_id") else mint_generation())}
+    # The unattended kit's launcher tags every process of a run (CONCLAVE_UNATTENDED_TAG); the guard keeps the tag of
+    # the run that acquired it, so the launcher can tell its own run's guard for agents whose session id it cannot
+    # choose (Codex, Antigravity).
+    tag = os.environ.get("CONCLAVE_UNATTENDED_TAG")
+    if tag:
+        doc["launch_tag"] = tag
     what = "created"
     if exists:
         owner = str(previous.get("session_id", ""))
@@ -360,6 +389,12 @@ def _end_locked(root: str, session: str, reason: str, ready: int | None, still_o
     # guard (the heartbeat finds none and deletes itself, the Stop hook lets the turn end), never a live guard that a
     # heartbeat would resume beside a recorded cancellation.
     jobs = [j for j in _pending_jobs(root) if j.get("cron_id") != guard.get("cron_id")]
+    # The durable record of how the run ended, for the unattended kit's heartbeat, which polls and so can miss a guard
+    # held and released between two ticks. Written before the guard goes, so an end interrupted here errs toward
+    # "this run is over", which never revives a run its agent ended.
+    _write_json(os.path.join(os.path.dirname(guard_path), ENDED_FILE),
+                {"run_id": guard.get("run_id"), "session_id": guard.get("session_id"),
+                 "launch_tag": guard.get("launch_tag"), "reason": reason, "at": _utc_now()})
     try:
         os.unlink(guard_path)
     except FileNotFoundError:
@@ -370,14 +405,16 @@ def _end_locked(root: str, session: str, reason: str, ready: int | None, still_o
         os.unlink(state_path)
     except FileNotFoundError:
         pass
-    # The job id outlives the guard until CronDelete is confirmed, so a failed delete stays recoverable, and a later
+    # The job id outlives the guard until cancellation is confirmed, so a failed delete stays recoverable, and a later
     # end never overwrites an earlier unconfirmed cancellation.
-    jobs.append({"cron_id": guard.get("cron_id"), "reason": reason, "at": _utc_now()})
+    runner = str(guard.get("runner") or "claude")
+    _, delete_verb, list_verb = _job_verbs(runner)
+    jobs.append({"cron_id": guard.get("cron_id"), "runner": runner, "reason": reason, "at": _utc_now()})
     _write_json(_pending_path(root), jobs)
     if os.path.exists(state_path):
         raise GuardError(f"could not delete {state_path}")
-    return (f"end: {reason}: guard and state deleted; CronDelete {guard.get('cron_id')} now "
-            f"(the heartbeat job), confirm it is gone with CronList, then run "
+    return (f"end: {reason}: guard and state deleted; {delete_verb} {guard.get('cron_id')} now "
+            f"(the heartbeat job), confirm it is gone with {list_verb}, then run "
             f"cancel-confirmed --cron-id {guard.get('cron_id')}")
 
 
@@ -392,8 +429,8 @@ def _pending_jobs(root: str) -> list[dict]:
     except FileNotFoundError:
         return []
     except (OSError, ValueError):
-        raise GuardError("the pending-cancellation record is unreadable: list the jobs with CronList and delete any "
-                         "run-guard heartbeat by hand")
+        raise GuardError("the pending-cancellation record is unreadable: list the jobs with CronList (or manage_task "
+                         "list in Antigravity) and delete any run-guard heartbeat by hand")
     if isinstance(doc, dict):
         doc = [doc]
     return [j for j in doc if isinstance(j, dict)] if isinstance(doc, list) else []
@@ -404,8 +441,9 @@ def pending_cancel(root: str) -> str:
         jobs = _pending_jobs(root)
     except GuardError as exc:
         return f"pending-cancel: {exc}"
-    return "\n".join(f"pending-cancel: CronDelete {j.get('cron_id')} (ended by {j.get('reason')} at {j.get('at')})"
-                     for j in jobs)
+    return "\n".join(
+        f"pending-cancel: {_job_verbs(j.get('runner'))[1]} {j.get('cron_id')} (ended by {j.get('reason')} at {j.get('at')})"
+        for j in jobs)
 
 
 def cancel_confirmed(root: str, cron_id: str) -> str:
@@ -463,30 +501,35 @@ def reset_state(root: str, session: str | None = None, expect_no_guard: bool = F
             return "reset-state: no state"
 
 
-def reconcile(root: str, session: str, jobs: list[str]) -> list[str]:
+def reconcile(root: str, session: str, jobs: list[str], runner: str | None = None) -> list[str]:
     """Startup reconciliation between the guard and the live heartbeat jobs: what to delete or recreate before a run
     starts."""
+    if runner is not None and runner not in RUNNERS:
+        raise GuardError(f"runner {runner!r} is not one of {', '.join(RUNNERS)}")
     with _Lock(root):
         try:
             guard = read_guard(root)
         except GuardError:
             return ["reconcile: the guard is unreadable: report it to the operator and start nothing"]
+    active_runner = runner or (str(guard.get("runner")) if guard and guard.get("runner") in RUNNERS else "claude")
+    create_verb, delete_verb, _ = _job_verbs(active_runner)
     out: list[str] = []
     try:
-        out += [f"reconcile: a pending cancellation is unconfirmed: CronDelete {j.get('cron_id')}, then cancel-confirmed"
+        out += [f"reconcile: a pending cancellation is unconfirmed: {_job_verbs(j.get('runner') or active_runner)[1]} "
+                f"{j.get('cron_id')}, then cancel-confirmed"
                 for j in _pending_jobs(root)]
     except GuardError as exc:
         out.append(f"reconcile: {exc}")
     if guard is None:
-        out += [f"reconcile: orphan job {j} has no guard: CronDelete it" for j in jobs]
+        out += [f"reconcile: orphan job {j} has no guard: {delete_verb} it" for j in jobs]
         return out or ["reconcile: consistent (no guard, no job)"]
     owner, job = str(guard.get("session_id", "")), str(guard.get("cron_id", ""))
     if owner != session:
         return [f"reconcile: the guard belongs to session {owner}: start nothing and report the owner"]
     if job not in jobs:
-        out.append(f"reconcile: the guard names job {job}, which is not live: CronCreate a heartbeat "
+        out.append(f"reconcile: the guard names job {job}, which is not live: {create_verb} a heartbeat "
                    f"and re-point with acquire --cron-id")
-    out += [f"reconcile: stale job {j} is not the guard's: CronDelete it" for j in jobs if j != job]
+    out += [f"reconcile: stale job {j} is not the guard's: {delete_verb} it" for j in jobs if j != job]
     return out or [f"reconcile: consistent (guard and job {job})"]
 
 
@@ -498,9 +541,10 @@ def health(root: str, session: str, jobs: list[str]) -> tuple[int, str]:
             return 1, "health: the guard is unreadable"
     if guard is None or str(guard.get("session_id", "")) != session:
         return 1, "health: this session holds no live guard"
+    create_verb, _, _ = _job_verbs(str(guard.get("runner") or "claude"))
     job = str(guard.get("cron_id", ""))
     if job not in jobs:
-        return 1, f"health: job {job} is missing: CronCreate a heartbeat and re-point with acquire --cron-id"
+        return 1, f"health: job {job} is missing: {create_verb} a heartbeat and re-point with acquire --cron-id"
     return 0, f"health: ok, job {job} is live"
 
 
@@ -514,6 +558,7 @@ def expiry(root: str, session: str, now: str | None = None, days: float = 7.0,
             return 1, "expiry: the guard is unreadable"
     if guard is None or str(guard.get("session_id", "")) != session:
         return 1, "expiry: this session holds no live guard"
+    create_verb, _, _ = _job_verbs(str(guard.get("runner") or "claude"))
     try:
         created = datetime.datetime.strptime(str(guard.get("job_created_at")), UTC_FORMAT)
     except ValueError:
@@ -523,7 +568,7 @@ def expiry(root: str, session: str, now: str | None = None, days: float = 7.0,
     left = datetime.timedelta(days=days) - (current - created)
     if left <= datetime.timedelta(hours=margin_hours):
         return 1, (f"expiry: replace due, job {guard.get('cron_id')} created {guard.get('job_created_at')} "
-                   f"expires in {max(left.total_seconds(), 0) / 3600:.1f}h: CronCreate a replacement and re-point")
+                   f"expires in {max(left.total_seconds(), 0) / 3600:.1f}h: {create_verb} a replacement and re-point")
     return 0, f"expiry: ok, job {guard.get('cron_id')} expires in {left.total_seconds() / 3600:.1f}h"
 
 
@@ -599,7 +644,7 @@ def _remaining(deadline: float) -> float:
 
 
 # The guard's own files: a repository that does not ignore build/ would otherwise see every state write as progress.
-OWN_FILES = re.compile(r"^build/claude-campaign-(guard|state|pending-cancel)\.json(\.[0-9]+\.tmp)?$|"
+OWN_FILES = re.compile(r"^build/claude-campaign-(guard|state|pending-cancel|ended)\.json(\.[0-9]+\.tmp)?$|"
                        r"^build/claude-campaign-guard\.lock$|^build/claude-campaign-hook-errors/")
 
 
@@ -609,14 +654,12 @@ def _open_no_follow(path: str) -> int:
     which opens a link as itself instead of following it (to a stalled network share, say)."""
     if os.name != "nt":
         return os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    import ctypes
-    from ctypes import wintypes
     import msvcrt
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     create = kernel32.CreateFileW
-    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
-                       wintypes.DWORD, wintypes.HANDLE]
-    create.restype = wintypes.HANDLE
+    create.argtypes = [ctypes.wintypes.LPCWSTR, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD, ctypes.wintypes.LPVOID,
+                       ctypes.wintypes.DWORD, ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE]
+    create.restype = ctypes.wintypes.HANDLE
     generic_read, share_all, open_existing, open_reparse_point = 0x80000000, 0x7, 3, 0x00200000
     handle = create(path, generic_read, share_all, None, open_existing, open_reparse_point, None)
     if handle in (None, ctypes.c_void_p(-1).value):
@@ -624,11 +667,12 @@ def _open_no_follow(path: str) -> int:
     try:
         return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
     except OSError:
-        kernel32.CloseHandle(wintypes.HANDLE(handle))
+        kernel32.CloseHandle(ctypes.wintypes.HANDLE(handle))
         raise
 
 
 FILE_SECONDS = 5.0  # the longest the fingerprint waits on one untracked path before counting the rest by name
+STALL_REASON = "the fingerprint could not read every untracked path in time (a path stalled)"
 
 
 def _untracked_line(full: str, path: str, hash_it: bool, stat_it: bool, max_bytes: int) -> bytes:
@@ -706,10 +750,6 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
     digest.update(_git(root, deadline, "diff", "HEAD", "--", ".", f":(exclude){run_path}",
                        ":(exclude)build/claude-campaign-*") + b"\n")
     listed = _git(root, deadline, "ls-files", "-z", "--others", "--exclude-standard").decode("utf-8", "replace")
-    # Every file-system call on an untracked path runs on a daemon worker, waited on for at most FILE_SECONDS: no call
-    # can be interrupted once it blocks (a path whose parent became a link to a stalled share, say), so a stall is
-    # outwaited instead. After one, this and every later path count by name alone, with no further I/O, and the
-    # blocked worker is abandoned (a daemon thread never holds the process open).
     jobs: queue.Queue = queue.Queue()
     results: queue.Queue = queue.Queue()
 
@@ -737,10 +777,7 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
             stalled = True
             digest.update(f"{path} stalled\n".encode("utf-8"))
     if stalled:
-        # An incomplete observation is neither progress nor its absence: it is an error, which the Stop hook handles
-        # the way it handles every error (it fails open and records the error for the heartbeat), so the breaker's
-        # counters are never moved by something nobody could see.
-        raise GuardError("the fingerprint could not read every untracked path in time (a path stalled)")
+        raise GuardError(STALL_REASON)
     jobs.put(None)
     digest.update(re.sub(r"(?m)^- bookkeeping:.*(\r?\n)?", "", run_text).encode("utf-8"))
     return digest.hexdigest()
@@ -839,11 +876,13 @@ def stop_decision(root: str, session: str) -> dict | None:
             return None
         old = _read_state(root)
         state = {"fingerprint": str(old.get("fingerprint", "")), "blocks": int(old.get("blocks", 0) or 0),
-                 "trips": int(old.get("trips", 0) or 0), "stalled": False}
+                 "trips": int(old.get("trips", 0) or 0), "stalled": False,
+                 "hb_still": int(old.get("hb_still", 0) or 0)}  # the heartbeat's count: one progress, two observers
         # An error the heartbeat has not acknowledged yet stays until it is (`hook-error --ack`).
         state.update({k: old[k] for k in ("hook_error", "hook_error_at") if old.get(k)})
         if state["fingerprint"] != print_:
-            state.update(fingerprint=print_, blocks=0, trips=0)  # the tree moved: real progress resets the breaker
+            # The tree moved: real progress resets both observers' counts and the trips they share.
+            state.update(fingerprint=print_, blocks=0, trips=0, hb_still=0)
         if state["blocks"] >= MAX_BLOCKS_WITHOUT_PROGRESS:
             # Repeated pushes with no change to the tree mean the session is stuck, not idle: let it stop.
             state.update(blocks=0, trips=state["trips"] + 1, stalled=True, stalled_at=_utc_now())
@@ -861,12 +900,61 @@ def stop_decision(root: str, session: str) -> dict | None:
               f"red CI (repair it) or a status report is not a stop.")
     if next_row:
         reason += f" Next ready row: {next_row}."
+    _, delete_verb, _ = _job_verbs(str(guard.get("runner") or "claude"))
     reason += (f" Finished means a '## Closeout{tag}' heading or a column-0 'PARKED <UTC>{tag} <reason>' line in the "
                f"run file. Escalating to the operator ends the run first: write a column-0 'PARKED <UTC>{tag} "
                f"escalation: <cause>' line, run 'python scripts/campaign_guard.py end --session {session} --reason "
-               f"escalation', CronDelete the heartbeat it names, then report. The breaker allows the stop after "
+               f"escalation', {delete_verb} the heartbeat it names, then report. The breaker allows the stop after "
                f"{MAX_BLOCKS_WITHOUT_PROGRESS} pushes with no tree change (this is push {state['blocks']}).")
     return {"decision": "block", "reason": reason}
+
+
+def heartbeat_still(root: str, session: str) -> str:
+    """One heartbeat resumption's progress accounting, for a harness whose Stop hook cannot hold the run (or a run
+    the hook has let go): it compares the tree with the same `fingerprint` the Stop hook's breaker keeps, so the two
+    observers share one notion of progress and one `trips` count. A changed tree resets `blocks`, `hb_still` and
+    `trips`; MAX_HEARTBEAT_STILLS resumptions in a row with no change count one trip; the second trip ends the run
+    with reason `stall` through `end`'s own path."""
+    guard = read_guard(root)
+    if guard is None or not session or str(guard.get("session_id", "")) != session:
+        raise GuardError("heartbeat-still needs the --session that owns a live guard")
+    reviewing = review_in_flight(root)
+    if reviewing:
+        return f"heartbeat-still: waiting on review ({reviewing})"
+    run_rel = str(guard.get("run_file", ""))
+    if not run_rel or os.path.isabs(run_rel) or ".." in run_rel.replace("\\", "/").split("/"):
+        raise GuardError(f"run file {run_rel!r} is not a path inside the project")
+    try:
+        with open(os.path.join(root, run_rel), encoding="utf-8", errors="replace") as fh:
+            run_text = fh.read()
+    except FileNotFoundError:
+        raise GuardError(f"the run file {run_rel} is missing") from None
+    deadline = time.monotonic() + _env_int("CAMPAIGN_HEARTBEAT_BUDGET_SECONDS", 120)
+    print_ = fingerprint(root, run_rel, run_text, deadline)
+    _, state_path = _paths(root)
+    with _Lock(root):
+        try:
+            still = read_guard(root)
+        except GuardError:
+            still = None
+        if not _same_run(still, guard):
+            return "heartbeat-still: the guard changed while noting; nothing written"
+        state = dict(_read_state(root))
+        if str(state.get("fingerprint", "")) != print_:
+            state.update(fingerprint=print_, blocks=0, hb_still=0, trips=0, stalled=False)
+            _write_json(state_path, state)
+            return "heartbeat-still: progress (still count and trips reset)"
+        if int(state.get("trips", 0) or 0) >= 2:
+            return "heartbeat-still: second trip (recorded by the Stop hook); " + _end_locked(root, session, "stall", None)
+        state["hb_still"] = int(state.get("hb_still", 0) or 0) + 1
+        if state["hb_still"] < MAX_HEARTBEAT_STILLS:
+            _write_json(state_path, state)
+            return f"heartbeat-still: still {state['hb_still']} of {MAX_HEARTBEAT_STILLS}"
+        state.update(hb_still=0, trips=int(state.get("trips", 0) or 0) + 1, stalled=True, stalled_at=_utc_now())
+        _write_json(state_path, state)
+        if state["trips"] < 2:
+            return f"heartbeat-still: trip {state['trips']} after {MAX_HEARTBEAT_STILLS} resumptions with no tree change"
+        return "heartbeat-still: second trip; " + _end_locked(root, session, "stall", None)
 
 
 def _record_hook_error(root: str, guard: dict | None, reason: str) -> None:
@@ -896,16 +984,35 @@ def _record_hook_error(root: str, guard: dict | None, reason: str) -> None:
 
 def stop_hook(stdin: str, project_dir: str | None) -> tuple[int, str]:
     """Run the hook on one Stop payload; returns (exit, stdout). Always exits 0: a failure allows the stop."""
-    root, guard = None, None
+    root, guard, is_agy = None, None, False
     try:
         if not stdin.strip():
             return 0, ""
+        root = project_dir or None
         event = json.loads(stdin)
-        root = project_dir or str(event.get("cwd") or "")
-        if not root:
+        if not isinstance(event, dict):
             return 0, ""
+        is_agy = "conversationId" in event or event.get("hookEventName") == "Stop"
+        if "workspacePaths" in event:
+            paths = event["workspacePaths"]
+            if not isinstance(paths, list) or not all(isinstance(p, str) and "\0" not in p for p in paths):
+                raise GuardError("the Stop payload's workspacePaths is not a list of paths")
+            ws_root = paths[0] if paths else ""
+        else:
+            ws_root = ""
+        root = project_dir or str((ws_root or event.get("cwd") or "") if is_agy else (event.get("cwd") or ws_root or ""))
+        if not root:
+            return 0, json.dumps({"decision": "allow"}) if is_agy else ""
+        if is_agy:
+            termination = str(event.get("terminationReason") or "")
+            if event.get("fullyIdle") is False or (termination and termination != "NO_TOOL_CALL"):
+                return 0, json.dumps({"decision": "allow"})
         guard = read_guard(root)
-        decision = stop_decision(root, str(event.get("session_id") or ""))
+        session = str(event.get("session_id") or event.get("conversationId") or "")
+        decision = stop_decision(root, session)
+        if is_agy:
+            return 0, json.dumps({"decision": "continue", "reason": decision["reason"]} if decision
+                                 else {"decision": "allow"})
         return 0, json.dumps(decision) if decision else ""
     except Exception as error:  # fail open, but never silently: the heartbeat reports what is recorded here
         reason = f"{type(error).__name__}: {error}"
@@ -913,9 +1020,211 @@ def stop_hook(stdin: str, project_dir: str | None) -> tuple[int, str]:
         if root:
             try:
                 _record_hook_error(root, guard, reason)
-            except OSError:
+            except Exception as unrecorded:
+                print(f"campaign-stop: the error could not be recorded: {unrecorded}", file=sys.stderr)
+        return 0, json.dumps({"decision": "allow"}) if is_agy else ""
+
+
+SELF_TEST_SECONDS = 60
+SELF_TEST_SESSION = "5e1f7e57-0000-4000-8000-000000000001"
+SELF_TEST_RUN_FILE = "docs/phase-runs/2099-01-01-self-test.md"
+# Each agent's hook file, the decision that holds its session, and what marks the campaign command in it.
+HOOK_FILES = (
+    (".claude/settings.json", "block", ("campaign_guard.py", "stop-hook")),
+    (".agents/hooks.json", "continue", ("campaign_guard.py", "stop-hook")),
+    (".codex/hooks.json", "block", ("codex-campaign-hook.py",)),
+)
+
+
+def _campaign_command(path: str, hook_file: str, markers: tuple) -> str:
+    """The enabled campaign Stop command a hook file holds, as its harness would pick it; a GuardError says why
+    there is none (the file does not parse, holds no campaign command, or holds only a disabled one)."""
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError) as error:
+        raise GuardError(f"does not parse as a hook file ({error})") from None
+    key = "commandWindows" if hook_file.startswith(".codex") and os.name == "nt" else "command"
+    enabled, disabled = [], []
+    try:
+        if hook_file.startswith(".agents"):  # Antigravity: named hooks, each with a flat Stop list of handlers
+            for hook in doc.values():
+                if isinstance(hook, dict) and isinstance(hook.get("Stop"), list):
+                    found = [h.get("command") for h in hook["Stop"] if isinstance(h, dict)]
+                    (disabled if hook.get("enabled", True) is False else enabled).extend(found)
+        else:  # Claude Code and Codex: hooks.Stop[].hooks[]
+            for entry in doc.get("hooks", {}).get("Stop", []):
+                enabled.extend(h.get(key) or h.get("command") for h in entry.get("hooks", []))
+    except (AttributeError, TypeError) as error:
+        raise GuardError(f"is not in its agent's hook file shape ({error})") from None
+
+    def campaign(commands):
+        return [c for c in commands if isinstance(c, str) and all(m in c for m in markers)]
+
+    if campaign(enabled):
+        return campaign(enabled)[0]
+    if campaign(disabled):
+        raise GuardError("holds the campaign Stop hook only disabled (\"enabled\": false)")
+    raise GuardError("holds no campaign Stop command")
+
+
+def _run_wired(command: str, hook_file: str, workspace: str, payload: str, limit: float) -> tuple[int | None, str]:
+    """Run one hook command the way its harness does and return (exit, stdout); exit None means it ran past `limit`
+    and its whole process tree was ended. Claude Code: Git Bash on Windows (`sh` elsewhere) with CLAUDE_PROJECT_DIR
+    set. Antigravity: the system shell (`cmd /c` on Windows) from `.agents/`, no CLAUDE_PROJECT_DIR. Codex: the
+    system shell from the project root."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    cwd, args, shell = workspace, command, True
+    if hook_file.startswith(".claude"):
+        env["CLAUDE_PROJECT_DIR"] = workspace
+        args, shell = [git_bash() if os.name == "nt" else "/bin/sh", "-c", command], False
+    elif hook_file.startswith(".agents"):
+        cwd = os.path.join(workspace, ".agents")
+    group: dict = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
+    proc = subprocess.Popen(args, shell=shell, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", **group)
+
+    def end_tree() -> None:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
+        else:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
                 pass
-        return 0, ""
+        proc.communicate()
+
+    try:
+        out, _err = proc.communicate(payload, timeout=limit)
+    except subprocess.TimeoutExpired:
+        end_tree()
+        return None, ""
+    except BaseException:
+        end_tree()
+        raise
+    return proc.returncode, out
+
+
+def git_bash() -> str:
+    """The Git Bash Claude Code runs hooks through on Windows: `CLAUDE_CODE_GIT_BASH_PATH` when set, else the
+    `bin/bash.exe` of the Git on PATH. A GuardError when there is none, never another shell: a hook that works in
+    PowerShell can still fail in the shell the harness uses."""
+    configured = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if configured:
+        if os.path.isfile(configured):
+            return configured
+        raise GuardError(f"CLAUDE_CODE_GIT_BASH_PATH names {configured}, which is not a file")
+    git = shutil.which("git")
+    if git:
+        folder = os.path.dirname(os.path.realpath(git))
+        for _ in range(2):  # git.exe sits in cmd/ or bin/ (or mingw64/bin/) under the Git folder
+            folder = os.path.dirname(folder)
+            candidate = os.path.join(folder, "bin", "bash.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    raise GuardError("no Git Bash found (Claude Code runs its hooks through it on Windows); install Git for Windows "
+                     "or set CLAUDE_CODE_GIT_BASH_PATH")
+
+
+def _self_test(project: str = REPO, limit: float = SELF_TEST_SECONDS,
+               only: str | None = None) -> tuple[int, list[str]]:
+    """Drive each hook file this project has (or only the hook file `only`, which must then exist: the one agent a
+    run uses, so another agent's broken file does not block it) through its own wired command, as its harness would,
+    against a throwaway workspace with a guard held: `(exit, report lines)`."""
+    lines: list[str] = []
+    failed = False
+    with tempfile.TemporaryDirectory(prefix="campaign-self-test-") as tmp:
+        workspace = os.path.join(tmp, "ws")
+        lines.append(f"self-test: workspace {workspace}")
+        for folder in ("scripts", "build", os.path.dirname(SELF_TEST_RUN_FILE)):
+            os.makedirs(os.path.join(workspace, folder))
+        for script in ("campaign_guard.py", "codex-campaign-hook.py"):
+            if os.path.isfile(os.path.join(project, "scripts", script)):
+                shutil.copyfile(os.path.join(project, "scripts", script), os.path.join(workspace, "scripts", script))
+        with open(os.path.join(workspace, "scripts", "todo-graph.py"), "w", encoding="utf-8") as fh:
+            fh.write("import json\nprint(json.dumps([{'ref': 'D00 T01 \\u00a71', 'title': 'Self-test row', 'phase': 0}]))\n")
+        with open(os.path.join(workspace, SELF_TEST_RUN_FILE), "w", encoding="utf-8") as fh:
+            fh.write("# Phase run: self-test\n")
+        with open(os.path.join(workspace, ".gitignore"), "w", encoding="utf-8") as fh:
+            fh.write("build/\n")
+        present = []
+        for hook_file, decision, markers in HOOK_FILES:
+            if only is not None and hook_file != only:
+                continue
+            source = os.path.join(project, hook_file)
+            if not os.path.isfile(source):
+                failed = failed or only is not None
+                lines.append(f"self-test: {'FAIL ' if only else ''}{hook_file}: absent")
+                continue
+            os.makedirs(os.path.dirname(os.path.join(workspace, hook_file)), exist_ok=True)
+            shutil.copyfile(source, os.path.join(workspace, hook_file))
+            present.append((hook_file, decision, markers))
+        for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                     ["config", "commit.gpgsign", "false"], ["add", "-A"], ["commit", "-qm", "self-test"]):
+            subprocess.run(["git", *args], cwd=workspace, capture_output=True, check=True, timeout=60)
+        acquire(workspace, SELF_TEST_SESSION, 0, SELF_TEST_RUN_FILE, "self-test")
+        forward = workspace.replace("\\", "/")
+        for hook_file, decision, markers in present:
+            try:
+                command = _campaign_command(os.path.join(workspace, hook_file), hook_file, markers)
+            except GuardError as error:
+                failed = True
+                lines.append(f"self-test: FAIL {hook_file}: {error}")
+                continue
+            if hook_file.startswith(".agents"):
+                payload = {"conversationId": SELF_TEST_SESSION, "workspacePaths": [forward], "cwd": workspace,
+                           "hookEventName": "Stop", "fullyIdle": True, "terminationReason": "NO_TOOL_CALL"}
+            else:
+                payload = {"session_id": SELF_TEST_SESSION, "cwd": workspace, "hook_event_name": "Stop"}
+            for attempt in (1, 2):
+                _remove_state(workspace)
+                try:
+                    code, out = _run_wired(command, hook_file, workspace, json.dumps(payload), limit)
+                except GuardError as error:
+                    problem, transient = f"cannot run: {error}", False
+                    break
+                try:
+                    answer = json.loads(out) if out.strip() else None
+                except ValueError:
+                    answer = "not JSON"
+                transient = False
+                if code is None:
+                    problem = f"ran past {limit:g} seconds; its process tree was ended"
+                elif code != 0:
+                    problem = f"exited {code}"
+                elif not (isinstance(answer, dict) and answer.get("decision") == decision and answer.get("reason")):
+                    shown = out.strip()[:120] or "nothing"
+                    problem = f"answered {shown} for a guarded session, not a \"{decision}\" decision with a reason"
+                    recorded = _self_test_hook_error(workspace)
+                    if recorded:
+                        problem += f" (it failed open: {recorded})"
+                        transient = STALL_REASON in recorded
+                else:
+                    problem = None
+                if problem is None or not transient or attempt == 2:
+                    break
+            if problem is None:
+                lines.append(f"self-test: {hook_file}: ok ({decision})")
+                continue
+            failed = True
+            lines.append(f"self-test: FAIL {hook_file}: its Stop command {problem}")
+    return (1 if failed else 0), lines
+
+
+def _self_test_hook_error(workspace: str) -> str:
+    """The error a hook recorded in the self-test's workspace when it failed open, or an empty string."""
+    try:
+        line = hook_error(workspace)
+    except GuardError:
+        return ""
+    return line.partition(": ")[2] if line.startswith("campaign-stop hook failed") else line
+
+
+def _remove_state(root: str) -> None:
+    try:
+        os.unlink(_paths(root)[1])
+    except FileNotFoundError:
+        pass
 
 
 def _opts(argv: list[str]) -> dict:
@@ -935,6 +1244,15 @@ def main(argv: list[str]) -> int:
         if out:
             print(out)
         return code
+    if argv[:1] == ["--self-test"]:
+        names = [name for name, _, _ in HOOK_FILES]
+        if argv[1:] and (len(argv) != 3 or argv[1] != "--hook-file" or argv[2] not in names):
+            print(f"campaign-guard: --self-test takes nothing or --hook-file with one of {', '.join(names)}",
+                  file=sys.stderr)
+            return 2
+        code, lines = _self_test(only=argv[2] if argv[1:] else None)
+        print("\n".join(lines))
+        return code
     if not argv:
         print(__doc__.split("\n\n")[1], file=sys.stderr)
         return 2
@@ -946,7 +1264,8 @@ def main(argv: list[str]) -> int:
             if phase is not None and not phase.isdigit():
                 raise GuardError(f"--phase {phase!r} is not a phase number")
             print(acquire(root, opts.get("session", ""), int(phase) if phase is not None else None, opts.get("run_file", ""),
-                          opts.get("cron_id", ""), opts.get("handover"), opts.get("generation"), opts.get("scope")))
+                          opts.get("cron_id", ""), opts.get("handover"), opts.get("generation"), opts.get("scope"),
+                          opts.get("runner")))
             return 0
         if argv[0] == "end":
             print(end(root, opts.get("session", ""), opts.get("reason", "")))
@@ -955,6 +1274,9 @@ def main(argv: list[str]) -> int:
             line = hook_error(root, opts.get("session"), opts.get("ack"))
             if line:
                 print(line)
+            return 0
+        if argv[0] == "heartbeat-still":
+            print(heartbeat_still(root, opts.get("session", "")))
             return 0
         if argv[0] == "mint-generation" and not opts:
             print(mint_generation())
@@ -981,7 +1303,7 @@ def main(argv: list[str]) -> int:
         if argv[0] in ("reconcile", "health"):
             jobs = [j for j in opts.get("jobs", "").split(",") if j]
             if argv[0] == "reconcile":
-                print("\n".join(reconcile(root, opts.get("session", ""), jobs)))
+                print("\n".join(reconcile(root, opts.get("session", ""), jobs, opts.get("runner"))))
                 return 0
             code, line = health(root, opts.get("session", ""), jobs)
             print(line, file=sys.stdout if code == 0 else sys.stderr)

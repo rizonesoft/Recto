@@ -1,0 +1,23 @@
+{
+  "cpp": {
+    "command": "python",
+    "args": ["-B", "scripts/clangd-lsp.py"],
+    "extensionToLanguage": {
+      ".c": "c",
+      ".cpp": "cpp",
+      ".cc": "cpp",
+      ".cxx": "cpp",
+      ".h": "cpp",
+      ".hpp": "cpp",
+      ".inc": "cpp"
+    }
+  },
+  "python": {
+    "command": "python",
+    "args": ["-B", "scripts/python-lsp.py"],
+    "extensionToLanguage": {
+      ".py": "python",
+      ".pyi": "python"
+    }
+  }
+}

@@ -13,13 +13,24 @@ on:
       - 'docs/plans/**'
       - 'docs/scope.md'
       - 'docs/support/**'
+      - 'docs/unattended-prompt.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
       - 'README.md'
       - 'todo/**'
       - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
       - 'src/pdf/error.h'
+      - '.conclave/**'
       - '.claude/skills/**'
+      - '.claude/agents/**'
+      - '.claude/settings.json'
+      - '.agents/**'
+      - '.lsp.json'
+      - '.mcp.json'
+      - 'pyrightconfig.json'
+      - '.clangd'
       - '.gitattributes'
       # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
       - '.github/workflows/**'
@@ -31,13 +42,24 @@ on:
       - 'docs/plans/**'
       - 'docs/scope.md'
       - 'docs/support/**'
+      - 'docs/unattended-prompt.md'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
       - 'README.md'
       - 'todo/**'
       - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
       - 'src/pdf/error.h'
+      - '.conclave/**'
       - '.claude/skills/**'
+      - '.claude/agents/**'
+      - '.claude/settings.json'
+      - '.agents/**'
+      - '.lsp.json'
+      - '.mcp.json'
+      - 'pyrightconfig.json'
+      - '.clangd'
       - '.gitattributes'
       # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
       - '.github/workflows/**'
@@ -55,29 +77,20 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
-      - name: Test the TODO graph tooling
-        run: python -m unittest tests.scripts.test_todo_graph
-      - name: Test the pre-commit hook that keeps the plan current
-        run: python -m unittest tests.scripts.test_pre_commit_hook
-      - name: Validate the TODO tree
-        run: python scripts/todo-graph.py validate
-      - name: Error codes the plan names exist in error.h
-        run: python -m unittest tests.scripts.test_error_code_names
-      - name: Check the generated plan is current
-        run: python scripts/todo-graph.py plan --check
-      - name: Test the demand ledger checker
-        run: python -m unittest tests.scripts.test_user_demand
-      - name: Dependency merge automation tests
-        run: python -m unittest tests.scripts.test_merge_prs
-      - name: CI status watch tests
-        run: python -m unittest tests.scripts.test_ci_status
-      - name: Build driver checks
-        run: python -m unittest tests.scripts.test_build_ps1
-      - name: ETW registration guard
-        run: python -m unittest tests.scripts.test_etw_registration
-      - name: Recovery post-scan guard
-        run: python -m unittest tests.scripts.test_recovery_post_scan
-      - name: Mockup renderer and design checks
-        run: python -m unittest tests.scripts.test_render_mockups tests.scripts.test_engine_dependency_policy
+      - name: Validate the TODO tree and generated plan
+        run: |
+          python scripts/todo-graph.py validate
+          python scripts/todo-graph.py plan --check
+      - name: Check reviewer pin, campaign guard self-test and agent tiers
+        run: |
+          python scripts/review_pin.py --check --all
+          python scripts/campaign_guard.py --self-test
+          node scripts/verify-agent-tiers.mjs
+      - name: Check portable clangd compilation database generator
+        run: |
+          python scripts/gen-compile-commands.py
+          python scripts/gen-compile-commands.py --check
       - name: Check the user demand ledger (D07 T03 §6)
         run: python scripts/check-user-demand.py
+      - name: Run full Recto and Conclave kit Python test suites in parallel
+        run: python scripts/run-tests.py --full

@@ -19,7 +19,7 @@
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
         --plan '<findings file>' \
-        --completion '<findings file>:<complete|completed|filed>' \
+        --completion '<findings file>:<complete|reconciled|filed|completed>' \
         --review '<round>:<report path>:<clean|fixed|stopped-at-33|stopped-low-severity>' --check '<command> -> <result>' \
         [--cap-outcome '<what was done when the review cap was reached>']   # required with a stopped verdict
     python scripts/todo-graph.py unstamp 'D02 T01 §1' --reason '<what regressed, and the repair section>'
@@ -89,7 +89,7 @@ def main():
     s.add_argument("--cap-outcome", help="with a stopped-at verdict: what was done when the review cap was reached")
     s.add_argument("--plan", help="required: <findings file>, the one-pass plan review before the build")
     s.add_argument("--completion", type=completion_review,
-                   help="required: <findings file>:<complete|completed|filed>, the one-pass completion review")
+                   help="required: <findings file>:<verdict> of the completion review. complete: it found no gap. reconciled (three-pass pins): it returned gaps and a later reconciliation ended complete. filed: gaps filed as new sections, each on a '- Filed:' line (under three-pass only when the last pass's worst finding is below the pin's blocking levels). completed (rotation pins only): every gap was fixed in the section")
     u = sub.add_parser("unstamp", help="an audit found a stamped section regressed: reopen it, keeping the receipt")
     u.add_argument("ref")
     u.add_argument("--reason", required=True)

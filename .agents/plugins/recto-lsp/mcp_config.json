@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "recto-lsp": {
+      "command": "python",
+      "args": [
+        "-B",
+        "-c",
+        "import os, pathlib, runpy; p = pathlib.Path(os.environ.get('PLUGIN_ROOT', '.')).resolve(); root = p.parents[2] if p.name == 'recto-lsp' else pathlib.Path.cwd(); runpy.run_path(str(root / 'scripts' / 'lsp_mcp.py'), run_name='__main__')"
+      ]
+    }
+  }
+}

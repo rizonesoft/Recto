@@ -1,0 +1,14 @@
+{
+  "include": [
+    "scripts",
+    "tests/scripts"
+  ],
+  "exclude": [
+    "build",
+    "vcpkg_installed",
+    ".vs",
+    "**/__pycache__"
+  ],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic"
+}

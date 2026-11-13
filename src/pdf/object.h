@@ -244,27 +244,23 @@ public:
 	using iterator = const_iterator;
 	static constexpr size_t kIndexThreshold = 32;
 
-	PdfDict() noexcept = default;
+	PdfDict() noexcept;
 	~PdfDict() noexcept;
 
 	PdfDict(const PdfDict& other);
-	PdfDict(PdfDict&& other) noexcept = default;
+	PdfDict(PdfDict&& other) noexcept;
 	PdfDict& operator=(const PdfDict& other);
-	PdfDict& operator=(PdfDict&& other) noexcept = default;
+	PdfDict& operator=(PdfDict&& other) noexcept;
 
-	[[nodiscard]] size_t size() const noexcept { return entries_.size(); }
-	[[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
+	[[nodiscard]] size_t size() const noexcept;
+	[[nodiscard]] bool empty() const noexcept;
 	void reserve(size_t count);
-	void clear() noexcept
-	{
-		entries_.clear();
-		index_.reset();
-	}
+	void clear() noexcept;
 
-	[[nodiscard]] const_iterator begin() const noexcept { return entries_.cbegin(); }
-	[[nodiscard]] const_iterator end() const noexcept { return entries_.cend(); }
-	[[nodiscard]] const_iterator cbegin() const noexcept { return entries_.cbegin(); }
-	[[nodiscard]] const_iterator cend() const noexcept { return entries_.cend(); }
+	[[nodiscard]] const_iterator begin() const noexcept;
+	[[nodiscard]] const_iterator end() const noexcept;
+	[[nodiscard]] const_iterator cbegin() const noexcept;
+	[[nodiscard]] const_iterator cend() const noexcept;
 
 	[[nodiscard]] const Container& entries() const noexcept { return entries_; }
 
@@ -592,6 +588,23 @@ public:
 private:
 	Storage storage_;
 };
+
+// Defined out of line once PdfValue is complete so std::pair<PdfName, PdfValue> is never instantiated on an
+// incomplete PdfValue under C++23 constexpr std::vector (ISO C++ [pairs.pair]/2, MSVC 14.52 /std:c++23).
+inline PdfDict::PdfDict() noexcept = default;
+inline PdfDict::PdfDict(PdfDict&& other) noexcept = default;
+inline PdfDict& PdfDict::operator=(PdfDict&& other) noexcept = default;
+inline size_t PdfDict::size() const noexcept { return entries_.size(); }
+inline bool PdfDict::empty() const noexcept { return entries_.empty(); }
+inline void PdfDict::clear() noexcept
+{
+	entries_.clear();
+	index_.reset();
+}
+inline PdfDict::const_iterator PdfDict::begin() const noexcept { return entries_.cbegin(); }
+inline PdfDict::const_iterator PdfDict::end() const noexcept { return entries_.cend(); }
+inline PdfDict::const_iterator PdfDict::cbegin() const noexcept { return entries_.cbegin(); }
+inline PdfDict::const_iterator PdfDict::cend() const noexcept { return entries_.cend(); }
 
 // Decodes a PDF text string (ISO 32000-1 section 7.9.2.2 / Table D.2 and
 // ISO 32000-2 section 7.9.2.2) into UTF-8:

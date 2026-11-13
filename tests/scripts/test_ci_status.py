@@ -1004,6 +1004,37 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("ci gate: red at bbbbbbbbbbbb: build.yml red u1 (failed jobs: Build x64, Tests)", lines[0])
 
+    def test_the_antigravity_session_start_hook_emits_inject_steps_json_and_exits_zero(self):
+        red = {"sha": SHA_NEW, "pid": 1, "exit": 1, "workflows": {
+            "build.yml": {"state": "red", "run": {"url": "u1", "databaseId": 7},
+                          "failed_jobs": [{"name": "Build x64", "url": "j"}]}}}
+        (self.root / "build" / "ci-watch" / f"{SHA_NEW}.json").write_text(json.dumps(red), encoding="utf-8")
+        out = io.StringIO()
+        with unittest.mock.patch.object(ci.sys, "stdin", io.StringIO('{"hookEventName":"SessionStart"}')), \
+                redirect_stdout(out):
+            code = ci.main(["--gate", "--brief", "--agy-hook"], runner=GateGh(), root=self.root, git=self.git(SHA_NEW))
+        self.assertEqual(code, 0)
+        payload = json.loads(out.getvalue())
+        msg = payload["injectSteps"][0]["systemMessage"]["systemMessage"]
+        self.assertIn("ci gate: red at bbbbbbbbbbbb: build.yml red u1 (failed jobs: Build x64)", msg)
+        # Unavailable and OSError also emit valid SessionStart JSON and exit 0 so session startup never breaks.
+        for runner, patcher in (
+            (GateGh(fail=True), unittest.mock.MagicMock()),
+        ):
+            out = io.StringIO()
+            with unittest.mock.patch.object(ci.sys, "stdin", io.StringIO("{}")), redirect_stdout(out):
+                code = ci.main(["--gate", "--brief", "--agy-hook"], runner=runner, root=self.root,
+                               git=lambda args: (_ for _ in ()).throw(ci.Unavailable("gh offline")))
+            self.assertEqual(code, 0)
+            self.assertIn("ci gate: unknown: gh offline",
+                          json.loads(out.getvalue())["injectSteps"][0]["systemMessage"]["systemMessage"])
+        out = io.StringIO()
+        with unittest.mock.patch.object(ci, "run", side_effect=OSError(28, "disk full")), redirect_stdout(out):
+            code = ci.main(["--gate", "--brief", "--agy-hook"], runner=GateGh(), root=self.root, git=self.git(SHA_NEW))
+        self.assertEqual(code, 0)
+        self.assertIn("ci-status unknown: OSError",
+                      json.loads(out.getvalue())["injectSteps"][0]["systemMessage"]["systemMessage"])
+
 
 class TimedOut(unittest.TestCase):
     """GitHub reports a job stopped at its timeout-minutes as cancelled: that run is red, never skipped or rerun

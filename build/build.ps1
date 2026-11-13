@@ -1,4 +1,4 @@
-# Recto's one-command build (D00 T01 section 3). From a clean clone:
+﻿# Recto's one-command build (D00 T01 section 3). From a clean clone:
 #
 #     git clone https://github.com/rizonesoft/Recto.git
 #     cd Recto
@@ -9,10 +9,12 @@
 # Release. Exit code 0 only when the build also passed the x64 test
 # binaries.
 #
-# Options: -Platform x64|ARM64 (default both, or x64 under -EnableASAN),
-# -Configuration Debug|Release (default both), -TestFilter <pattern>,
-# -TestOutputDir <folder> (where the gtest XML reports go; default build\),
-# -SkipTests, -EnableASAN.
+# Options: -Quick (x64 Debug + tests for fast local iteration),
+# -Platform x64|ARM64 (default both, or x64 under -Quick / -EnableASAN),
+# -Configuration Debug|Release (default both, or Debug under -Quick),
+# -Project <vcxproj-or-target> (single project/target for fast local iteration),
+# -TestFilter <pattern>, -TestOutputDir <folder> (default build\),
+# -SkipTests, -EnableASAN, -ForceRestore, -MaxCpuCount <N> (0 = RAM-bounded auto).
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
@@ -24,14 +26,21 @@
 param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
+    [string]$Project = '',
     [string]$TestFilter = '',
     [string]$TestOutputDir = '',
+    [switch]$Quick,
     [switch]$SkipTests,
-    [switch]$EnableASAN
+    [switch]$EnableASAN,
+    [switch]$ForceRestore,
+    [ValidateRange(0, 128)][int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
-if ($EnableASAN -and -not $PSBoundParameters.ContainsKey('Platform')) {
+if (($Quick -or $EnableASAN) -and -not $PSBoundParameters.ContainsKey('Platform')) {
     $Platform = @('x64')
+}
+if ($Quick -and -not $PSBoundParameters.ContainsKey('Configuration')) {
+    $Configuration = @('Debug')
 }
 $Platform = @($Platform | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Configuration = @($Configuration | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
@@ -41,11 +50,69 @@ if ($EnableASAN -and ($Platform -contains 'ARM64')) {
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+function Get-RamBoundedJobs([int]$Requested) {
+    if ($Requested -gt 0) { return $Requested }
+    $cores = [Math]::Max(1, [Environment]::ProcessorCount)
+    try {
+        $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+        $freeMb = [double]$osInfo.FreePhysicalMemory / 1024.0
+        # Reserve ~1.5 GB per parallel MSBuild + cl.exe worker so C++23 / WinRT builds never thrash pagefile.
+        $byRam = [Math]::Max(1, [int][Math]::Floor($freeMb / 1536.0))
+        return [Math]::Min($cores, $byRam)
+    } catch {
+        return [Math]::Min($cores, 4)
+    }
+}
+
+function Get-RestoreFingerprint([string]$RepoRoot) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $files = @(
+        (Join-Path $RepoRoot 'Recto.sln'),
+        (Join-Path $RepoRoot 'Directory.Build.props'),
+        (Join-Path $RepoRoot 'Directory.Build.targets'),
+        (Join-Path $RepoRoot 'vcpkg.json'),
+        (Join-Path $RepoRoot 'vcpkg-configuration.json')
+    )
+    $vcxprojs = Get-ChildItem -Path $RepoRoot -Recurse -Filter '*.vcxproj' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(build|vcpkg_installed|\.git)\\' } |
+        Sort-Object FullName
+    $files += $vcxprojs.FullName
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.AppendLine("root:$([System.IO.Path]::GetFullPath($RepoRoot))")
+    $prefixLen = $RepoRoot.TrimEnd('\', '/').Length + 1
+    foreach ($f in $files) {
+        if (Test-Path $f) {
+            $full = [System.IO.Path]::GetFullPath($f)
+            $rel = $full.Substring($prefixLen).Replace('\', '/')
+            $fileHash = [BitConverter]::ToString($sha.ComputeHash([System.IO.File]::ReadAllBytes($full))).Replace('-', '')
+            [void]$builder.AppendLine("${rel}:${fileHash}")
+        }
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+    $digest = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+    $sha.Dispose()
+    return @{ Hash = $digest; Vcxprojs = $vcxprojs }
+}
+
+function Test-RestoreCurrent([string]$RepoRoot, [string]$StampFile, [hashtable]$Meta) {
+    if (-not (Test-Path $StampFile)) { return $false }
+    $recorded = (Get-Content -Path $StampFile -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($recorded -ne $Meta.Hash) { return $false }
+    foreach ($proj in $Meta.Vcxprojs) {
+        $raw = Get-Content -Path $proj.FullName -Raw -ErrorAction SilentlyContinue
+        if ($raw -match '<PackageReference\s') {
+            $assets = Join-Path $proj.DirectoryName 'obj\project.assets.json'
+            if (-not (Test-Path $assets)) { return $false }
+        }
+    }
+    return $true
+}
+
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$required = @(
-    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-    'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
-)
+$required = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64')
+if ($Platform -contains 'ARM64') {
+    $required += 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+}
 $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $required -property installationPath
 if (-not $vs) {
     $missing = @($required | Where-Object { -not (& $vswhere -version '[18.0,19.0)' -latest -requires $_ -property installationPath) })
@@ -86,6 +153,31 @@ if ($EnableASAN) {
 }
 
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
+$jobs = Get-RamBoundedJobs -Requested $MaxCpuCount
+Write-Host "Parallel:   /m:$jobs (/nr:false)"
+
+# MSBuild's LinkEmbedManifest writes *_manifest.rc only when absent, embedding an absolute path; self-heal after a clone move.
+Get-ChildItem -Path (Join-Path $root 'build') -Recurse -Filter '*_manifest.rc' -ErrorAction SilentlyContinue | ForEach-Object {
+    $rcText = Get-Content -Path $_.FullName -Raw -ErrorAction SilentlyContinue
+    if ($rcText -and ($rcText.IndexOf($root, [System.StringComparison]::OrdinalIgnoreCase) -lt 0)) {
+        Remove-Item -LiteralPath $_.FullName -Force
+    }
+}
+
+$restoreStamp = Join-Path $root 'build\restore.stamp'
+$restoreMeta = Get-RestoreFingerprint -RepoRoot $root
+if ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $restoreStamp -Meta $restoreMeta)) {
+    Write-Host '=== Restoring NuGet packages for Recto.sln'
+    & $msbuild 'Recto.sln' '-t:Restore' "/m:$jobs" '/nr:false' '/nologo' '/v:minimal'
+    if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed (exit $LASTEXITCODE)" }
+    Set-Content -Path $restoreStamp -Value $restoreMeta.Hash -Encoding Ascii -NoNewline
+}
+
+$genCompileDb = Join-Path $root 'scripts\gen-compile-commands.py'
+if ((Test-Path $genCompileDb) -and (Get-Command python -ErrorAction SilentlyContinue)) {
+    & python $genCompileDb | Out-Null
+}
+
 $asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
 $binFolder = if ($EnableASAN) { 'bin-asan' } else { 'bin' }
 
@@ -96,23 +188,31 @@ foreach ($plat in $Platform) {
 
         # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
         $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
-        if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
+        if (-not $Project) {
+            if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
+        }
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
+        $buildTarget = if ($Project -and (Test-Path $Project)) { $Project } else { 'Recto.sln' }
         $msbuildArgs = @(
-            'Recto.sln',
-            '-restore',
+            $buildTarget,
             "/p:Configuration=$cfg",
             "/p:Platform=$plat",
             "/p:TreatWarningsAsErrors=true",
             "/p:EnableASAN=$desiredAsanState",
             '/fl',
             "/flp:logfile=$logFile;verbosity=normal",
-            '/m',
+            "/m:$jobs",
+            '/nr:false',
             '/nologo'
         )
         if ($EnableASAN) {
                 $msbuildArgs += "-t:$($asanProjects -join ';')"
             Write-Host "=== Recto $cfg|$plat (ASan)"
+        } elseif ($Project -and ($buildTarget -eq 'Recto.sln')) {
+            $msbuildArgs += "-t:$Project"
+            Write-Host "=== Recto $cfg|$plat ($Project)"
+        } elseif ($Project) {
+            Write-Host "=== Recto $cfg|$plat ($Project)"
         } else {
             Write-Host "=== Recto $cfg|$plat"
         }
@@ -125,8 +225,10 @@ foreach ($plat in $Platform) {
         # reports and the librarian's directives, members and symbols of this configuration's libraries (D10 T01 §1).
         # It reads what this build compiled from the manifests the RectoBoundaryManifest target wrote (emptied below,
         # before the build), never from a re-evaluation of the projects.
-        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
-        if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
+        if (-not $Project) {
+            & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
+            if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
+        }
 
         if ($EnableASAN -and $plat -eq 'x64') {
             # Recto.exe too: recto-tests launches it (Ui.App tests).

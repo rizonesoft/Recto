@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "recto",
+  "agent": "claude",
+  "model": "opus",
+  "effort": "medium",
+  "prompt_file": "docs/unattended-prompt.md",
+  "branch": "main",
+  "skip_permissions": true,
+  "tools": ["git", "gh", "codex"],
+  "min_disk_gb": 10,
+  "min_ram_gb": 3,
+  "tick_seconds": 300,
+  "idle_minutes": 30,
+  "stall_hours": 3,
+  "preflight": [
+    {
+      "name": "todo-graph",
+      "command": ["python3", "scripts/todo-graph.py", "validate"],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "plan-sync",
+      "command": ["python3", "scripts/todo-graph.py", "plan", "--check"],
+      "timeout_seconds": 120
+    },
+    {
+      "name": "review-pin",
+      "command": ["python3", "scripts/review_pin.py", "--check", "--all"],
+      "timeout_seconds": 60
+    }
+  ]
+}

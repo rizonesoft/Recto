@@ -22,6 +22,7 @@ vcpkg_installed/
 
 # Local tooling state.
 .tools/
+.cache/
 
 # Crash dumps hold process memory (document content, credentials): never committable.
 *.dmp

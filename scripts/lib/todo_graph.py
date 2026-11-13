@@ -1,13 +1,13 @@
 """The canonical TODO graph: parse todo/NN-domain/TODO-NN-*.md, validate it, order it, project the plan.
 
-Adapted from swisshotelschool-coza's scripts/lib/todo_graph.py (itself a port of rizonetech-com's
-scripts/lib/workflow.py), extended with the ScratchPad, Resolute, and Recto format rules:
-Adjacency declarations, bidirectional XREFs, index coverage, frozen freeze checks, and durable
-deferrals. Rules: todo/README.md.
+Installed by the todo kit: Adjacency declarations, bidirectional XREFs, index coverage, frozen
+freeze checks, durable deferrals, and stamps that bind a section to its reviewed evidence.
+Stamping loads the reviewer kit's scripts/review-dispatch.py. Rules: todo/README.md.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import copy
 import hashlib
 import json
 import os
@@ -29,8 +29,8 @@ NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice
          "attended", "owner-decision", "third-party", "operator"}
 WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
-# stopped-at-33 is the current review-round cap (owner decision 2026-10-23); stopped-at-22, -13, -8 and -3 stay valid on
-# receipts written under earlier caps.
+# stopped-at-33 is the current review-round cap; stopped-at-22, -13, -8 and -3 stay valid on receipts written under
+# earlier caps.
 # stopped-low-severity: after SEVERITY_CUTOFF_ROUND, a round whose findings are all P3 or advisory ends the loop and
 # its findings are filed as leftovers (review-todo-section). With the cutoff at 0 that is the first such round.
 VERDICTS = {"clean", "fixed", "stopped-at-33", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3",
@@ -38,21 +38,22 @@ VERDICTS = {"clean", "fixed", "stopped-at-33", "stopped-at-22", "stopped-at-13",
 REVIEW_ROUND_CAP = 33
 # Caps a receipt that records round_cap may name: the current one and the earlier ones this repository used.
 EARLIER_CAPS = {8, 13, 22}
-# Receipts older than the rounds_spent field (stamped before 2026-10-21 under the earlier process). Each is frozen by the
+# Receipts older than the rounds_spent field (stamped under the earlier process). Each is frozen by the
 # digest of its content in LEGACY_RECEIPTS, so a new receipt cannot pass by dropping the field. Their round counts vary
 # (up to 16), so unlike their verdicts they are not bounded here; the digest is what binds them.
 LEGACY_RECEIPTS = "docs/reviews/legacy-receipts.json"
 LEGACY_VERDICTS = {"clean", "fixed", "stopped-at-3"}
-# Owner decision 2026-10-24: the first round with no P1 or P2 finding ends the loop, from round 1
-# (.conclave/reviewers.toml severity_stop_after; it was 3 from 2026-10-23, and 8 before). Lowering it only loosens the
-# rule, so older receipts hold.
+# The first round with no P1 or P2 finding ends the loop, from round 1 (.conclave/reviewers.toml severity_stop_after,
+# which must equal this). Lowering it only loosens the rule, so older receipts hold.
 SEVERITY_CUTOFF_ROUND = 0
-# The one-pass completion and excellence review (owner decision 2026-10-23), required for every new stamp: complete (no
+# The one-pass completion and excellence review, required for every new stamp: complete (no
 # gaps), completed (every gap implemented in the section) or filed (some gaps filed as new sections, each listed under
 # the completion review as "- Filed: DNN TNN §N"). A receipt without a completion field predates the requirement.
-COMPLETION_VERDICTS = ("complete", "completed", "filed")
+# Under the three-pass policy a completion review that returned gaps is followed by reconciliation passes: the verdict
+# is `reconciled` when the last one ended RECONCILIATION: complete.
+COMPLETION_VERDICTS = ("complete", "completed", "filed", "reconciled")
 FILED = re.compile(r"^- Filed: (D\d{2} T\d{2} §[1-9]\d*)(?![\w§]|\.\d)")
-# The one-pass plan review before the build and the review schedule (2026-10-24): every new receipt records the plan
+# The one-pass plan review before the build and the review schedule: every new receipt records the plan
 # review (`plan`) and the pin's [schedule] (`schedule`), and stamp replays the schedule over every recorded pass through
 # scripts/review-dispatch.py's own `scheduled`. A receipt without them predates the requirement and is frozen by digest
 # under `before_plan` in LEGACY_RECEIPTS, so dropping the fields from a new receipt does not dodge the checks.
@@ -72,6 +73,8 @@ PLAN_DEFAULTS = {"title": "Implementation plan", "acceptance": None, "phases": {
 MAX_SECTIONS_PER_FILE = 55
 MAX_ITEMS_PER_SECTION = 30
 MAX_DELIVERABLE_LEN = 88
+# The widest generated plan table row, so the plan never wraps in raw Markdown view.
+MAX_TABLE_ROW = 120
 
 
 class Refused(ValueError):
@@ -214,18 +217,106 @@ def receipt_ok(root, receipt, ref, stamp_sha, commits=None, surface=None):
 
 
 _REVIEW_DISPATCH = []
+# The reviewer kit's dispatcher, installed beside this script's folder.
+DISPATCHER = Path(__file__).resolve().parents[1] / "review-dispatch.py"
 
 
 def review_dispatch():
     """scripts/review-dispatch.py as a module (its file name is not importable), loaded once."""
     if not _REVIEW_DISPATCH:
         import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "review_dispatch", Path(__file__).resolve().parents[1] / "review-dispatch.py")
+        if not DISPATCHER.is_file():
+            raise Refused(f"{DISPATCHER} is missing: the todo kit stamps through the reviewer kit's dispatcher, "
+                          "so install the reviewer kit (python forge.py kit <project> reviewer)")
+        spec = importlib.util.spec_from_file_location("review_dispatch", DISPATCHER)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         _REVIEW_DISPATCH.append(module)
     return _REVIEW_DISPATCH[0]
+
+
+_WINDOWLESS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+_PIN_BYTES_CACHE: dict[tuple[str, str], bytes] = {}
+_HIST_PIN_CACHE: dict[bytes, dict] = {}
+
+
+def _git(root, *args):
+    return subprocess.run(["git", "-C", str(root), *args], capture_output=True, timeout=60, creationflags=_WINDOWLESS)
+
+
+def _pin_bytes(root, sha):
+    key = (str(Path(root).resolve()), sha)
+    cached = _PIN_BYTES_CACHE.get(key)
+    if cached is not None:
+        return 0, cached
+    shown = _git(root, "show", f"{sha}:{PIN}")
+    if shown.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", str(sha)):
+        _PIN_BYTES_CACHE[key] = shown.stdout
+    return shown.returncode, shown.stdout
+
+
+def _prefetch_pins(root):
+    """Batch-read `<sha>:.conclave/reviewers.toml` for all receipts in `docs/reviews/` in one `git cat-file --batch`
+    process instead of spawning hundreds of `git show` calls on Windows."""
+    reviews_dir = Path(root) / "docs" / "reviews"
+    if not reviews_dir.is_dir():
+        return
+    root_key = str(Path(root).resolve())
+    shas = []
+    seen = set()
+    for p in sorted(reviews_dir.glob("*.json")):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        plan = doc.get("plan")
+        for cand in (doc.get("implementation_sha"), doc.get("schedule_sha"),
+                     plan.get("candidate") if isinstance(plan, dict) else None):
+            if isinstance(cand, str) and re.fullmatch(r"[0-9a-f]{40}", cand) and cand not in seen:
+                seen.add(cand)
+                if (root_key, cand) not in _PIN_BYTES_CACHE:
+                    shas.append(cand)
+    if not shas:
+        return
+    payload = "".join(f"{sha}:{PIN}\n" for sha in shas).encode("ascii")
+    try:
+        done = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"], input=payload,
+                              capture_output=True, timeout=60, creationflags=_WINDOWLESS)
+    except (OSError, subprocess.SubprocessError):
+        return
+    if done.returncode != 0:
+        return
+    buf = memoryview(done.stdout)
+    pos = 0
+    for sha in shas:
+        nl = done.stdout.find(b"\n", pos)
+        if nl < 0:
+            break
+        header = bytes(buf[pos:nl]).decode("ascii", "replace")
+        pos = nl + 1
+        parts = header.split()
+        if len(parts) >= 3 and parts[1] == "blob" and parts[2].isdigit():
+            size = int(parts[2])
+            if pos + size + 1 <= len(done.stdout):
+                _PIN_BYTES_CACHE[(root_key, sha)] = bytes(buf[pos:pos + size])
+                pos += size + 1
+            else:
+                break
+
+
+def is_ancestor(root, older, newer):
+    """True when commit `older` is `newer` or an ancestor of it."""
+    return _git(root, "merge-base", "--is-ancestor", older, newer).returncode == 0
+
+
+def changed_paths(root, base, candidate, ref):
+    """The files that differ between two commits, repository-relative with forward slashes: what the dispatcher gave
+    a three-pass pass's conditional lenses."""
+    shown = _git(root, "-c", "core.quotepath=false", "diff", "--name-only", "--no-renames", "-z", base, candidate)
+    require(shown.returncode == 0, f"cannot list the files changed between {base} and {candidate}: {ref}")
+    return [name for name in shown.stdout.decode("utf-8", errors="replace").split("\0") if name]
 
 
 def receipt_digest(data):
@@ -296,29 +387,54 @@ def completion_record(root, completion, ref, stamp_sha, commits=None):
     found = dispatch.read_completions(path.read_bytes().decode("utf-8"))
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Completion review; run review-dispatch.py --kind completion: {ref}")
-    returned = [e for e in found if dispatch.returned_pass("completion", e)]
+    returned = [e for e in found if dispatch.returned_one_pass(e, "completion")]
     require(len(returned) == 1, f"{report} must hold exactly one completion review returned by another model family "
                                 f"and ending COMPLETION: complete or COMPLETION: gaps, not {len(returned)}: {ref}")
     (entry,) = returned
-    last = [x.strip() for x in entry["review"].splitlines() if x.strip()][-1]
-    expected = "COMPLETION: complete" if verdict == "complete" else "COMPLETION: gaps"
-    require(last == expected, f"completion verdict {verdict} needs a review ending {expected}, and {report} ends "
-                              f"{last}: {ref}")
-    filed = list(dict.fromkeys(m[1] for m in (FILED.match(line) for line in entry["notes"]) if m))
+
+    def ending(e):
+        return [x.strip() for x in e["review"].splitlines() if x.strip()][-1]
+    last = ending(entry)
+    # The reconciliations the three-pass policy records after a completion with gaps. The last returned pass is the
+    # one the receipt names: its candidate, and the writer's `- Filed:` lines under it.
+    passed = [e for e in dispatch.read_findings(path.read_bytes().decode("utf-8"))["reconciliations"]
+              if dispatch.returned_one_pass(e, "reconciliation")]
+    final = passed[-1] if passed else entry
+    for earlier in passed[:-1]:
+        require(ending(earlier) == "RECONCILIATION: gaps",
+                f"only the last reconciliation in {report} may end RECONCILIATION: complete: {ref}")
+    if verdict == "reconciled":
+        require(bool(passed), f"completion verdict reconciled needs a returned ## Reconciliation review in {report}: {ref}")
+        require(last == "COMPLETION: gaps" and ending(final) == "RECONCILIATION: complete",
+                f"completion verdict reconciled needs a completion ending COMPLETION: gaps and a last reconciliation "
+                f"ending RECONCILIATION: complete, and {report} ends {ending(final)}: {ref}")
+    else:
+        expected = "COMPLETION: complete" if verdict == "complete" else "COMPLETION: gaps"
+        require(last == expected, f"completion verdict {verdict} needs a review ending {expected}, and {report} ends "
+                                  f"{last}: {ref}")
+        require(not passed or ending(final) == "RECONCILIATION: gaps",
+                f"{report} holds a reconciliation ending RECONCILIATION: complete, so the verdict is reconciled, not "
+                f"{verdict}: {ref}")
+    filed = list(dict.fromkeys(m[1] for m in (FILED.match(line) for line in final["notes"]) if m))
     require(bool(filed) == (verdict == "filed"),
-            f"completion verdict filed needs each filed section listed as '- Filed: DNN TNN §N' under the completion "
-            f"review in {report}, and only filed lists any: {ref}")
+            f"completion verdict filed needs each filed section listed as '- Filed: DNN TNN §N' under the last "
+            f"returned completion or reconciliation review in {report}, and only filed lists any: {ref}")
     require(ref not in filed, f"{ref} cannot file a completion gap to itself: {ref}")
-    candidate = entry["candidate"]
+    candidate = final["candidate"]
     if commits is None or candidate not in commits:
         commit_ok(root, candidate)
     if commits is None:  # stamping: the candidate is the stamped commit or one before it
-        ancestor = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", candidate, stamp_sha],
-                                  capture_output=True, timeout=30)
-        require(ancestor.returncode == 0,
+        require(is_ancestor(root, candidate, stamp_sha),
                 f"the completion review's candidate {candidate} is not the stamped commit or an ancestor of it: {ref}")
     return {"report": report, "verdict": verdict, "candidate": candidate, "reviewer": entry["reviewer"],
             "model": entry["model"], "filed": filed}
+
+
+def _other_family(dispatch, entry):
+    """A review returned by a reviewer of another model family than the writer: not an outage, not a self-review."""
+    families = getattr(dispatch.review_pin, "HISTORICAL_WRITER_FAMILY", dispatch.WRITER_FAMILY)
+    return bool(entry["reviewer"]) and entry["writer"] in families \
+        and dispatch.FAMILY.get(entry["cli"]) not in (None, families[entry["writer"]])
 
 
 def section_text(text, number):
@@ -330,9 +446,9 @@ def section_text(text, number):
     return text[head.start():head.end() + end.start() if end else len(text)]
 
 
-def unstamped_notes(body):
-    """How many times `unstamp` reopened the section: its `> **Unstamped:**` notes, which are never removed."""
-    return len(UNSTAMPED.findall(body or ""))
+def unstamped_notes(text):
+    """How many `> **Unstamped:**` lines a section's text carries: zero until an audit has reopened it."""
+    return len(UNSTAMPED.findall(text or ""))
 
 
 def build_start(root, path, body, ref):
@@ -396,7 +512,11 @@ def plan_record(root, report, ref, commits=None, start=None):
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Plan review; run review-dispatch.py --kind plan: {ref}")
 
-    returned = [e for e in found if dispatch.returned_pass("plan", e)]
+    def verdict(entry):
+        lines = [x.strip() for x in entry["review"].splitlines() if x.strip()]
+        return len(lines) >= 2 and lines[-2] in ("PLAN: complete", "PLAN: gaps") \
+            and lines[-1] in ("OVERALL: approve", "OVERALL: needs-attention")
+    returned = [e for e in found if _other_family(dispatch, e) and verdict(e)]
     require(len(returned) == 1, f"{report} must hold exactly one plan review returned by another model family and "
                                 f"ending PLAN: complete or gaps, then OVERALL: approve or needs-attention, not "
                                 f"{len(returned)}: {ref}")
@@ -413,22 +533,37 @@ def plan_record(root, report, ref, commits=None, start=None):
             "effort": entry["effort"], "lenses": entry["lenses"] or []}
 
 
-def pin_at(root, sha, ref):
-    """The reviewer pin committed at `sha`, loaded by the dispatcher's own `load_pin`."""
-    shown = subprocess.run(["git", "-C", str(root), "show", f"{sha}:{PIN}"], capture_output=True, timeout=30)
-    require(shown.returncode == 0, f"no reviewer pin {PIN} at {sha}: {ref}")
+def _load_cached_historical_pin(raw: bytes):
+    cached = _HIST_PIN_CACHE.get(raw)
+    if cached is not None:
+        return copy.deepcopy(cached)
+    pin = review_dispatch().load_historical_pin(PIN, data=raw)
+    _HIST_PIN_CACHE[raw] = copy.deepcopy(pin)
+    return pin
+
+
+def committed_pin(root, sha, ref):
+    """The reviewer pin committed at `sha`, loaded by `load_pin` (or `load_historical_pin` for pre-three-pass commits)."""
+    rc, raw = _pin_bytes(root, sha)
+    require(rc == 0, f"no reviewer pin {PIN} at {sha}: {ref}")
     dispatch = review_dispatch()
     try:
-        return dispatch.load_pin(PIN, data=shown.stdout)
+        pin = _load_cached_historical_pin(raw)
     except dispatch.Refused as exc:
         raise Refused(f"the reviewer pin at {sha} does not load: {exc}: {ref}") from None
-
-
-def pin_schedule(root, sha, ref):
-    """The [schedule] of the reviewer pin committed at `sha`."""
-    pin = pin_at(root, sha, ref)
     require("schedule" in pin, f"the reviewer pin at {sha} has no [schedule] to check the reviews against: {ref}")
-    return pin["schedule"]
+    return pin
+
+
+def pin_at(root, sha, ref):
+    """Alias for committed_pin without requiring [schedule]."""
+    rc, raw = _pin_bytes(root, sha)
+    require(rc == 0, f"no reviewer pin {PIN} at {sha}: {ref}")
+    dispatch = review_dispatch()
+    try:
+        return _load_cached_historical_pin(raw)
+    except dispatch.Refused as exc:
+        raise Refused(f"the reviewer pin at {sha} does not load: {exc}: {ref}") from None
 
 
 def reviewer_of(entry):
@@ -437,16 +572,14 @@ def reviewer_of(entry):
 
 
 def panel_ok(root, data, ref, stamp_sha):
-    """With a panel in the pin at the stamped commit (owner decision 2026-10-28), every member reviewed the section:
-    its own findings file (`panel_record` beside the section's) is a loop the receipt names, records only its rounds,
-    and returned as many rounds as every other member, so no member's loop ended on a candidate the others never
-    reviewed. The route's first member returned the receipt's plan and completion reviews (checked against their files
-    by `plan_record` and `completion_record`); every other member's file holds its own returned plan and completion
-    reviews."""
-    route = pin_at(root, stamp_sha, ref)["routes"].get("claude", [])
+    """With a panel in the pin at the section's pin commit (owner decision 2026-10-28), every member reviewed the section."""
+    dispatch = review_dispatch()
+    plan_entries = dispatch.read_plans((Path(root) / data["plan"]["report"]).read_bytes().decode("utf-8")) or []
+    writer = next((e.get("writer") for e in plan_entries if dispatch.returned_one_pass(e, "plan")), None) or "claude"
+    pin_sha = data.get("schedule_sha", stamp_sha)
+    route = pin_at(root, pin_sha, ref)["routes"].get(writer, [])
     if len(route) < 2:
         return
-    dispatch = review_dispatch()
     reports = {r["report"] for r in data["reviews"]}
     returned = {}
     for name in route:
@@ -459,9 +592,9 @@ def panel_ok(root, data, ref, stamp_sha):
             require(data["plan"]["reviewer"] == name and data["completion"]["reviewer"] == name,
                     f"the receipt's plan and completion reviews are not {name}'s, the panel's first member: {ref}")
         else:
-            require(any(dispatch.returned_pass("plan", e) and e["reviewer"] == name for e in found["plans"]),
+            require(any(dispatch.returned_one_pass(e, "plan") and e["reviewer"] == name for e in found["plans"]),
                     f"{path} holds no plan review returned by {name}: {ref}")
-            require(any(dispatch.returned_pass("completion", e) and e["reviewer"] == name
+            require(any(dispatch.returned_one_pass(e, "completion") and e["reviewer"] == name
                         for e in found["completions"]),
                     f"{path} holds no completion review returned by {name}: {ref}")
         require(all(reviewer_of(e) == name for e in found["rounds"]), f"{path} holds rounds of another reviewer: {ref}")
@@ -470,49 +603,231 @@ def panel_ok(root, data, ref, stamp_sha):
             f"the panel's loops returned {returned} reviews; every member reviews every round: {ref}")
 
 
+def pin_schedule(root, sha, ref):
+    """The [schedule] of the reviewer pin committed at `sha`."""
+    return committed_pin(root, sha, ref)["schedule"]
+
+
+def section_pin_sha(root, plan_candidate, stamp_sha):
+    """The commit whose pin a section's receipt is held to. Under the three-pass policy that is its plan review's
+    candidate, the pin the dispatcher ran every pass under. A section whose plan candidate holds a rotation pin, or
+    none, is held to the stamped commit's pin, as it always was."""
+    dispatch = review_dispatch()
+
+    def policy(sha):
+        """ "three-pass", "other" (a pin that is not three-pass) or None (no pin at that commit)."""
+        rc, raw = _pin_bytes(root, sha)
+        if rc != 0:
+            return None
+        try:
+            pin = _load_cached_historical_pin(raw)
+        except dispatch.Refused:
+            return dispatch.THREE_PASS if dispatch.THREE_PASS.encode() in raw else None
+        return dispatch.THREE_PASS if pin.get("schedule", {}).get("policy") == dispatch.THREE_PASS else "other"
+    began = policy(plan_candidate)
+    if began == dispatch.THREE_PASS:
+        return plan_candidate
+    # A section that began under a rotation pin finishes under it even when the pin has since become three-pass.
+    return plan_candidate if began == "other" and policy(stamp_sha) == dispatch.THREE_PASS else stamp_sha
+
+
 def schedule_ok(root, data, ref, surface):
-    """Every pass the receipt names ran at the effort and lenses the pin's schedule gave it: every attempt at the plan
-    and completion reviews, and each round in each findings file, replayed through the dispatcher's own `scheduled`
-    over the rounds recorded before it (outages, self-reviews and replies without the OVERALL line do not advance the
-    position)."""
+    """Every pass the receipt names ran at the effort and lenses the section's pin gave it: every attempt at the plan,
+    completion and reconciliation reviews, and each round in each findings file, replayed through the reviewer kit's
+    own `scheduled` over the rounds recorded before it (outages, self-reviews and replies without the OVERALL line do
+    not advance the position). Under the three-pass policy a pass's conditional lenses are replayed from the files
+    changed between the plan review's candidate and its own, the returned passes were reviewed by the reviewer the
+    pin routes their writer to, and the chain itself is checked by `three_pass_ok`."""
     require(isinstance(surface, bool), f"the section's Surface is needed to check the review schedule: {ref}")
     dispatch = review_dispatch()
     schedule = data["schedule"]
+    three_pass = schedule.get("policy") == dispatch.THREE_PASS
+    base = data["plan"]["candidate"]
 
-    def check(where, recorded, expected):
-        got = (recorded["effort"], list(recorded["lenses"] or []))
-        want = (expected["effort"], expected["lenses"])
+    def changed(entry):
+        return changed_paths(root, base, entry["candidate"], ref) if three_pass and entry.get("candidate") else []
+
+    def check(where, recorded, expected, optional=()):
+        lenses = list(recorded["lenses"] or [])
+        fixed = expected["lenses"]
+        # A plan review's conditional lenses came from the paths the writer named before the build, so any of the
+        # entries naming plan may follow the plan's own lenses; every other pass's are replayed exactly.
+        same = lenses == fixed or (bool(optional) and lenses[:len(fixed)] == fixed
+                                   and all(name in optional for name in lenses[len(fixed):]))
         position = f" (position {expected['position']}{', escalated' if expected['escalated'] else ''})" \
             if expected["position"] else ""
-        require(got == want, f"{where} ran at {got[0]} with lenses {got[1]}; the schedule expects {want[0]} with "
-                             f"{want[1]}{position}: {ref}")
+        require(recorded["effort"] == expected["effort"] and same,
+                f"{where} ran at {recorded['effort']} with lenses {lenses}; the schedule expects "
+                f"{expected['effort']} with {fixed}{position}: {ref}")
     # Every attempt the one-pass files record, outages and self-reviews included, ran at that pass's scheduled step.
     plan_report = data["plan"]["report"]
+    plan_optional = [name for entry in schedule.get("conditional", []) if "plan" in entry["passes"]
+                     for name in entry["lenses"]] if three_pass else []
     for entry in dispatch.read_plans((Path(root) / plan_report).read_bytes().decode("utf-8")):
+        attempt, optional = schedule, plan_optional
+        if three_pass and entry["candidate"] != base:
+            # An attempt that returned no review, on another candidate than the plan review that did: the dispatcher
+            # ran it under the three-pass pin at its own candidate, so that is the schedule it is held to. One whose
+            # candidate holds no such pin ran under a working tree's, which is not on record.
+            shown = _git(root, "show", f"{entry['candidate']}:{PIN}")
+            try:
+                own = dispatch.load_pin(PIN, data=shown.stdout) if shown.returncode == 0 else None
+            except dispatch.Refused:
+                own = None
+            if own is None or own.get("schedule", {}).get("policy") != dispatch.THREE_PASS:
+                continue
+            attempt = own["schedule"]
+            optional = [name for item in attempt.get("conditional", []) if "plan" in item["passes"]
+                        for name in item["lenses"]]
         check(f"the plan review in {plan_report}", entry,
-              dispatch.scheduled(schedule, "plan", [], surface, reviewer_of(entry)))
+              dispatch.scheduled(attempt, "plan", [], surface, reviewer=reviewer_of(entry)), optional)
     completion = data["completion"]["report"]
-    completions = dispatch.read_completions((Path(root) / completion).read_bytes().decode("utf-8"))
-    require(sum(1 for e in completions if dispatch.returned_pass("completion", e)
-                and e["candidate"] == data["completion"]["candidate"]) == 1,
-            f"{completion} must hold exactly one returned completion review: {ref}")
-    for entry in completions:
+    found = dispatch.read_findings((Path(root) / completion).read_bytes().decode("utf-8"))
+    final_kind = "reconciliation" if any(dispatch.returned_one_pass(e, "reconciliation")
+                                         for e in found["reconciliations"]) else "completion"
+    final = [e for e in found[final_kind + "s"] if dispatch.returned_one_pass(e, final_kind)]
+    require((len(final) == 1 or final_kind == "reconciliation") and bool(final)
+            and final[-1]["candidate"] == data["completion"]["candidate"],
+            f"{completion} must end with one returned {final_kind} review of the receipt's candidate: {ref}")
+    for entry in found["completions"]:
         check(f"the completion review in {completion}", entry,
-              dispatch.scheduled(schedule, "completion", [], surface, reviewer_of(entry)))
-    # Each panel member's file is replayed with that member's efforts: its plan and completion attempts and its rounds.
+              dispatch.scheduled(schedule, "completion", [], surface, changed(entry), reviewer=reviewer_of(entry)))
+    if three_pass:
+        for entry in found["reconciliations"]:
+            check(f"the reconciliation review in {completion}", entry,
+                  dispatch.scheduled(schedule, "reconciliation", [], surface, changed(entry),
+                                     reviewer=reviewer_of(entry)))
+    else:
+        require(not found["reconciliations"],
+                f"{completion} holds a reconciliation review, which only the three-pass policy takes: {ref}")
     for report in dict.fromkeys(r["report"] for r in data["reviews"]):
         text = (Path(root) / report).read_bytes().decode("utf-8")
-        if report not in (plan_report, completion):
+        if not three_pass and report not in (plan_report, completion):
             for entry in dispatch.read_plans(text):
                 check(f"the plan review in {report}", entry,
-                      dispatch.scheduled(schedule, "plan", [], surface, reviewer_of(entry)))
+                      dispatch.scheduled(schedule, "plan", [], surface, reviewer=reviewer_of(entry)))
             for entry in dispatch.read_completions(text):
                 check(f"the completion review in {report}", entry,
-                      dispatch.scheduled(schedule, "completion", [], surface, reviewer_of(entry)))
+                      dispatch.scheduled(schedule, "completion", [], surface, reviewer=reviewer_of(entry)))
         recorded = dispatch.read_rounds(text)
         for i, entry in enumerate(recorded):
             check(f"{report} round {entry['number']}", entry,
-                  dispatch.scheduled(schedule, "round", recorded[:i], surface, reviewer_of(entry)))
+                  dispatch.scheduled(schedule, "round", recorded[:i], surface, changed(entry),
+                                     reviewer=reviewer_of(entry)))
+    if three_pass:
+        three_pass_ok(root, data, ref, found)
+    else:
+        panel_ok(root, data, ref, data["implementation_sha"])
+
+
+def section_contract(root, sha, ref):
+    """The section's text at a commit with its ticks, stamp lines and quoted evidence neutral, so a reconciliation can
+    tell a build that ticked boxes and recorded results from one that changed what the section promised."""
+    m = re.fullmatch(r"D(\d{2}) T(\d{2}) §([1-9]\d*)", ref)
+    require(m is not None, f"not a full section reference: {ref}")
+    paths = sorted((Path(root) / "todo").glob(f"{m[1]}-*/TODO-{m[2]}-*.md"))
+    require(len(paths) == 1, f"no single TODO file for: {ref}")
+    rel = paths[0].relative_to(root).as_posix()
+    shown = _git(root, "show", f"{sha}:{rel}")
+    require(shown.returncode == 0, f"{rel} is not in {sha}: {ref}")
+    body = section_text(shown.stdout.decode("utf-8").replace("\r\n", "\n"), int(m[3]))
+    require(body is not None, f"the section is not in {rel} at {sha}: {ref}")
+    body = re.sub(r"^(\s*- )\[[xX ]\](?= )", r"\1[ ]", body, flags=re.M)
+    body = re.sub(r"^> \*\*(?:Verified|Review|Started|Duration|Deferred|Resolved):\*\*[^\n]*(?:\n|$)", "", body,
+                  flags=re.M)
+    # Dated correction and completion notes record what happened; the promise is the text before them.
+    body = re.sub(r" \*\*Corrected \d{4}-\d{2}-\d{2}[^*]*\*\*.*$", "", body, flags=re.M)
+    body = re.sub(r" Completed \d{4}-\d{2}-\d{2}:.*$", "", body, flags=re.M)
+    return re.sub(r"\n{3,}", "\n\n", body).rstrip()
+
+
+def three_pass_ok(root, data, ref, found):
+    """The three-pass chain: one plan review, exactly one returned round naming its candidate, one completion review,
+    then reconciliations up to the section pin's `pass_cap` returned passes in all, each run after the pass before on
+    a candidate at or after it, the last on the stamped commit. The receipt's completion verdict is `complete`,
+    `reconciled`, or, when the pin sets `blocking` and the last pass ended gaps below those levels, `filed`. The
+    section's promise at the stamped commit is the one the completion review that failed reviewed (a reconciliation
+    between may have changed it and returned gaps for that)."""
+    dispatch = review_dispatch()
+    schedule, sha = data["schedule"], data["implementation_sha"]
+    pin = committed_pin(root, data.get("schedule_sha", sha), ref)
+    returned = [e for e in found["rounds"] if dispatch.returned_review(e)]
+    require(len(returned) == 1, f"the three-pass policy needs exactly one returned round, not {len(returned)}: {ref}")
+    (round_entry,) = returned
+    claimed = data["reviews"]
+    require(len(claimed) == 1 and claimed[0]["round"] == round_entry["number"]
+            and claimed[0]["verdict"] in ("clean", "fixed"),
+            f"the three-pass receipt names its one round, clean or fixed: {ref}")
+    require(round_entry.get("candidate") is not None, f"the three-pass round recorded no --candidate: {ref}")
+    (plan,) = [e for e in found["plans"] if dispatch.returned_one_pass(e, "plan")]
+    (completion,) = [e for e in found["completions"] if dispatch.returned_one_pass(e, "completion")]
+    passed = [e for e in found["reconciliations"] if dispatch.returned_one_pass(e, "reconciliation")]
+    cap = dispatch.review_pin.pass_cap(schedule)
+    require(3 + len(passed) <= cap,
+            f"the section's pin allows {cap} review passes (pass_cap), not {3 + len(passed)}: {ref}")
+    require(data.get("pass_cap") == cap and data.get("passes_spent") == 3 + len(passed),
+            f"receipt passes_spent or pass_cap is not what the findings file and the section's pin hold "
+            f"({3 + len(passed)} of {cap}): {ref}")
+    require(data["completion"]["report"] == data["plan"]["report"]
+            and all(r["report"] == data["plan"]["report"] for r in claimed),
+            f"a three-pass receipt names one findings file, the section's own, for every pass: {ref}")
+    # Each reconciliation was one the dispatcher would have run: after a pass that returned gaps, whose worst finding
+    # blocks when the pin names blocking levels, and before the chain had stalled.
+
+    def ended_gaps(entry):
+        return [x.strip() for x in entry["review"].splitlines() if x.strip()][-1].endswith(": gaps")
+    tail = [completion, *passed]
+    worst = [dispatch.review_pin.declared_highest(e["review"]) for e in tail]
+    stall = dispatch.review_pin.no_progress_cap(schedule)
+    for i in range(len(passed)):
+        require(ended_gaps(tail[i]), f"a reconciliation follows a pass that returned gaps, not one that was complete: {ref}")
+        require("blocking" not in schedule or dispatch.review_pin.blocks(schedule, worst[i]),
+                f"a reconciliation followed a pass whose worst finding ({worst[i]}) is below the pin's blocking "
+                f"levels; its findings are filed, not reviewed again: {ref}")
+        if stall is not None:
+            run = 0
+            for before, after in reversed(list(zip(worst[:i + 1], worst[1:i + 1]))):
+                if dispatch.SEVERITY_RANK[after] < dispatch.SEVERITY_RANK[before]:
+                    break
+                run += 1
+            require(run < stall, f"a reconciliation ran after {run} in a row made no progress, past the pin's "
+                                 f"no_progress_cap of {stall}: {ref}")
+    chain = [("plan review", plan), ("round", round_entry), ("completion review", completion),
+             *[("reconciliation", e) for e in passed]]
+    for name, entry in chain:
+        writer = entry["writer"]
+        routed = dispatch.review_pin.route_for(pin, writer)
+        require(routed is not None, f"the {name} names writer {writer!r}, which the section's pin does not route: {ref}")
+        want = (routed, pin["reviewers"][routed]["cli"], pin["reviewers"][routed]["model"])
+        got = (entry["reviewer"], entry["cli"], entry["model"])
+        require(got == want, f"the {name} was reviewed by {got[0]} ({got[2]} via {got[1]}), not the reviewer "
+                             f"{want[0]} ({want[2]} via {want[1]}) the section's pin routes {writer!r} to: {ref}")
+    verdict = data["completion"]["verdict"]
+    worst = dispatch.review_pin.declared_highest(chain[-1][1]["review"])
+    below = "blocking" in schedule and not dispatch.review_pin.blocks(schedule, worst)
+    require(verdict in ("complete", "reconciled") or (verdict == "filed" and below),
+            f"the three-pass policy takes completion verdict complete or reconciled, or filed when the last pass's "
+            f"worst finding ({worst}) is below the pin's blocking levels, not {verdict}: {ref}")
+    # A last pass that ends complete while declaring a finding that holds the stamp contradicts itself: the severity
+    # it declared decides, so a `complete` footer never overrides a blocking level.
+    # A reply with no HIGHEST line counts as P1 under a pin that names blocking levels (the dispatcher that reads
+    # such a pin records no reply without the line); a pin without the key predates the line and is not held to it.
+    holds = dispatch.review_pin.blocks(schedule, worst) if worst is not None else "blocking" in schedule
+    require(verdict == "filed" or worst == "none" or not holds,
+            f"the last review ({chain[-1][0]}) ends complete but "
+            f"{'declares HIGHEST: ' + worst if worst else 'declares no HIGHEST line, which counts as P1'}, which holds "
+            f"the stamp under the section's pin: {ref}")
+    for (older_name, older), (newer_name, newer) in zip(chain, chain[1:]):
+        require(older["run"] <= newer["run"] and is_ancestor(root, older["candidate"], newer["candidate"]),
+                f"the {newer_name} must run after the {older_name}, on a candidate at or after it: {ref}")
+    require(chain[-1][1]["candidate"] == sha,
+            f"the last review ({chain[-1][0]}) reviewed {chain[-1][1]['candidate']}, not the stamped commit {sha}: {ref}")
+    # The promise the stamp holds is the stamped candidate's: it must be the one the failed completion reviewed. A
+    # reconciliation whose candidate changed it returns gaps for that and a later one may restore it, so the
+    # candidates in between are not held to it (D02 T02 §5, 2026-11-12).
+    promised = section_contract(root, completion["candidate"], ref)
+    require(not passed or section_contract(root, sha, ref) == promised,
+            f"the section's contract changed between the failed completion and its reconciliation: {ref}")
 
 
 def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=None, surface=None):
@@ -531,7 +846,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
     if root is not None:
         for r in rounds:
             report_ok(root, r["report"], ref)
-    # Receipts written since 2026-10-21 record the rounds spent against the cap, and what was done when a review
+    # Newer receipts record the rounds spent against the cap, and what was done when a review
     # stopped at the cap; earlier receipts carry neither field.
     if "rounds_spent" not in data and not building:
         # Dropping the field must not dodge the checks below: an old receipt holds only what the old process wrote,
@@ -576,8 +891,9 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
                 for r in claimed:
                     e = reviewed.get(r["round"])
                     last = ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1] if e else ""
-                    require(e is not None and e["writer"] in dispatch.WRITER_FAMILY
-                            and dispatch.family(e["cli"], e["model"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
+                    families = getattr(dispatch.review_pin, "HISTORICAL_WRITER_FAMILY", dispatch.WRITER_FAMILY)
+                    require(e is not None and e["writer"] in families
+                            and dispatch.FAMILY.get(e["cli"]) not in (None, families[e["writer"]])
                             and last == ("OVERALL: approve" if r["verdict"] == "clean" else "OVERALL: needs-attention"),
                             f"round {r['round']} is not a review returned by another model family with a verdict "
                             f"matching {r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in "
@@ -605,8 +921,11 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
                 require(max(reviewed) == len(recorded),
                         f"the review loop in {report} ends with round {len(recorded)}, which returned no review; "
                         f"run another round before stamping: {ref}")
+                # The three-pass policy's one round may end fixed: the completion review after it checks the fixes.
+                three_pass = (data.get("schedule") or {}).get("policy") == dispatch.THREE_PASS
                 require(claimed[-1]["round"] == max(reviewed)
-                        and (claimed[-1]["verdict"] == "clean" or claimed[-1]["verdict"].startswith("stopped-")),
+                        and (claimed[-1]["verdict"] == "clean" or claimed[-1]["verdict"].startswith("stopped-")
+                             or (three_pass and claimed[-1]["verdict"] == "fixed")),
                         f"the review loop in {report} must end at its last reviewed round ({max(reviewed)}), clean or "
                         f"stopped, and the receipt must name that round: {ref}")
             # The count the receipt reports is the count the findings files hold, so query rounds sums real rounds.
@@ -617,7 +936,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
                 f"receipt needs cap_outcome exactly when a review stopped (at the cap or on severity): {ref}")
-    # Receipts stamped since 2026-10-23 record the completion review; a receipt without the field predates it. The
+    # Newer receipts record the completion review; a receipt without the field predates it. The
     # record must be what the findings file still says, so an edit to either refuses.
     if "completion" in data:
         recorded = data["completion"]
@@ -627,7 +946,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
         if root is not None:
             require(completion_record(root, recorded, ref, stamp_sha, commits if commits is not None else set())
                     == recorded, f"receipt completion does not match its findings file {recorded['report']}: {ref}")
-    # Receipts stamped since 2026-10-24 record the plan review and the pin's schedule, and every pass is replayed
+    # Newer receipts record the plan review and the pin's schedule, and every pass is replayed
     # against that schedule. A receipt without them predates the requirement and must be frozen by digest, so
     # dropping both fields from a new receipt does not dodge the checks.
     require(("plan" in data) == ("schedule" in data), f"receipt records plan and schedule together or neither: {ref}")
@@ -648,10 +967,23 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
                 require(data["completion"]["report"] == own and all(r["report"] == own for r in rounds),
                         f"a reopened section's completion review and rounds must come from its repair's findings "
                         f"file {own}: {ref}")
-            require(pin_schedule(root, stamp_sha, ref) == data["schedule"],
-                    f"receipt schedule is not the [schedule] in {PIN} at the stamped commit: {ref}")
+            # Every receipt is held to the schedule of the commit the section pin rule selects (the stamped commit
+            # for a rotation section, as always). A receipt names that commit as `schedule_sha`; one from before the
+            # field is valid only when that commit is the stamped one, so dropping the field moves nothing.
+            pinned = section_pin_sha(root, recorded["candidate"], stamp_sha)
+            require(data.get("schedule_sha", pinned) == pinned,
+                    f"receipt schedule_sha is not {pinned}, the commit whose pin the section ran under: {ref}")
+            require("schedule_sha" in data or pinned == stamp_sha,
+                    f"receipt names no schedule_sha, and the section ran under the pin at {pinned}, not the stamped "
+                    f"commit's: {ref}")
+            require(pin_schedule(root, pinned, ref) == data["schedule"],
+                    f"receipt schedule is not the [schedule] in {PIN} at "
+                    f"{'the stamped commit' if pinned == stamp_sha else pinned + ', the commit whose pin the section ran under'}"
+                    f": {ref}")
+            three_pass = data["schedule"].get("policy") == review_dispatch().THREE_PASS
+            require(three_pass == ("passes_spent" in data) and three_pass == ("pass_cap" in data),
+                    f"a three-pass receipt records passes_spent and pass_cap, and only a three-pass receipt: {ref}")
             schedule_ok(root, data, ref, surface)
-            panel_ok(root, data, ref, stamp_sha)
     elif not building:
         frozen = root is not None and (legacy_receipts(root).get(ref) == receipt_digest(data)
                                        or receipts_before_plan(root).get(ref) == receipt_digest(data))
@@ -851,6 +1183,7 @@ def graph(root=ROOT):
                 require(m is not None, f"invalid stamp: {ref}")
                 if head_commits is None:
                     head_commits = _head_commits(root)
+                    _prefetch_pins(root)
                 data = receipt_ok(root, receipt, ref, m[1], head_commits, surface=surface == "yes")
                 if "completion" in data:
                     filed_gaps[ref] = data["completion"]["filed"]
@@ -924,7 +1257,7 @@ def graph(root=ROOT):
                 # A stamped section may sit on an open prerequisite only when an audit reopened that prerequisite
                 # (its Unstamped note): the consumer is then suspect until the prerequisite re-stamps, not unstamped.
                 require(not sections[ref].done or sections[dep].done
-                        or unstamped_notes(sections[dep].body) > 0,
+                        or re.search(r"^> \*\*Unstamped:\*\* ", sections[dep].body, re.M) is not None,
                         f"stamped section has open dependency: {ref}")
                 if dep not in visited:
                     visiting.add(dep)
@@ -1137,6 +1470,20 @@ def review_rounds(root=ROOT):
                         "stopped_low_severity": sum("stopped-low-severity" in s["verdicts"] for s in sections)}}
 
 
+def same_request(persisted, data):
+    """What a receipt on disk (its bytes, or None) records differently from the receipt a stamp request builds: the
+    implementation commit, the reviews, the plan review and the completion review. Empty when it is the same request."""
+    try:
+        held = json.loads(persisted.decode("utf-8"))
+    except (AttributeError, ValueError):
+        return ["content (it is not readable)"]
+    held = held if isinstance(held, dict) else {}
+    names = {"implementation_sha": "commit", "reviews": "reviews", "plan": "plan review",
+             "completion": "completion review"}
+    return [label for key, label in names.items()
+            if held.get(key) != json.loads(json.dumps(data.get(key)))]
+
+
 def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=None, completion=None, plan=None):
     """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines. The receipt
     records the plan review (`plan`: its findings file, required), the completion review (`completion`: {"report",
@@ -1146,11 +1493,14 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
     rows = graph(root)
     require(ref in rows, "unresolved section: " + ref)
     row = rows[ref]
-    require(not row.done, f"already verified: {ref}")
-    require(all(settled(d, rows) for d in row.depends),
-            f"open prerequisite, or one resting on a reopened section: {ref}")
-    require(not set(row.needs) & WAITING,
-            f"still waiting on {', '.join(sorted(set(row.needs) & WAITING))}: {ref}")
+    # A stamped section is only ever a retry (a stamp cut short before the plan was written): the request is compared
+    # with its persisted receipt below, before anything is written.
+    stamped = row.done
+    if not stamped:
+        require(all(settled(d, rows) for d in row.depends),
+                f"open prerequisite, or one resting on a reopened section: {ref}")
+        require(not set(row.needs) & WAITING,
+                f"still waiting on {', '.join(sorted(set(row.needs) & WAITING))}: {ref}")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
             "the implementation SHA must be a full 40-character commit")
     commit_ok(root, sha)
@@ -1160,8 +1510,9 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
     slug = re.sub(r"[^a-z0-9]+", "-", ref.lower().replace("§", "s")).strip("-")
     receipt = f"docs/reviews/{slug}.json"
     require(completion is not None,
-            f"--completion '<findings file>:<{'|'.join(COMPLETION_VERDICTS)}>' is required: run the one-pass completion "
-            f"review (scripts/review-dispatch.py --kind completion) before the rounds and name its verdict: {ref}")
+            f"--completion '<findings file>:<{'|'.join(COMPLETION_VERDICTS)}>' is required: run the completion review "
+            f"(scripts/review-dispatch.py --kind completion; under a three-pass pin after the round, under a rotation "
+            f"pin before the rounds) and name its verdict: {ref}")
     require(plan is not None,
             f"--plan '<findings file>' is required: run the one-pass plan review (scripts/review-dispatch.py --kind "
             f"plan) before the build: {ref}")
@@ -1181,10 +1532,34 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
     if stopped:
         data["cap_outcome"] = cap_outcome.strip()
     data["plan"] = plan_record(root, plan, ref, start=build_start(root, row.path, row.body, ref))
-    data["schedule"] = pin_schedule(root, sha, ref)
+    # The section's pin is the one at its plan review's candidate: the dispatcher ran every pass under it.
+    data["schedule_sha"] = section_pin_sha(root, data["plan"]["candidate"], sha)
+    data["schedule"] = pin_schedule(root, data["schedule_sha"], ref)
+    dispatch = review_dispatch()
+    if data["schedule"].get("policy") == dispatch.THREE_PASS:
+        # A three-pass section's cap counts every returned pass: plan, round, completion and each reconciliation.
+        held = dispatch.read_findings((root / data["plan"]["report"]).read_bytes().decode("utf-8"))
+        data["passes_spent"] = 3 + sum(1 for e in held["reconciliations"]
+                                       if dispatch.returned_one_pass(e, "reconciliation"))
+        data["pass_cap"] = dispatch.review_pin.pass_cap(data["schedule"])
     receipt_data_ok(data, ref, sha, root=root, surface=field(row.body, "Surface") == "yes")
     receipt_path = root / receipt
-    require(not receipt_path.exists(), f"receipt already exists: {receipt}")
+    plan_path = root / PLAN
+    # A receipt already on disk is what a stamp killed between its writes leaves. It is replaced (or, once the TODO
+    # file carries the stamp, accepted) only when it records this same request; any other is refused untouched.
+    receipt_before = receipt_path.read_bytes() if receipt_path.is_file() else None
+    if stamped or receipt_before is not None:
+        differs = same_request(receipt_before, data)
+        if stamped:
+            require(receipt_before is not None and not differs, f"already verified: {ref}"
+                    + (f" (receipt {receipt} " + ("is missing)" if receipt_before is None
+                                                  else "records a different " + ", ".join(differs) + ")")))
+            fresh = plan_path.is_file() and read_text(plan_path) == projection(root)
+            if (sync_plan or plan_path.is_file()) and not fresh:
+                projections(root, sync=True)  # the retry of a stamp that was cut short before its plan write
+            return receipt
+        require(not differs, f"receipt already exists: {receipt} (a leftover that records a different "
+                             + ", ".join(differs) + "); nothing was written")
     path = root / row.path
     original_bytes = path.read_bytes()
     original = read_text(path)
@@ -1201,7 +1576,6 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
     if all(r.done for r in siblings):
         text, n = re.subn(r"\A(---\n(?:.*\n)*?)status: [a-z]+\n", r"\1status: done\n", text, count=1)
         require(n == 1, f"frontmatter status not found: {row.path}")
-    plan_path = root / PLAN
     original_plan_bytes = plan_path.read_bytes() if plan_path.is_file() else None
     try:
         atomic(receipt_path, json.dumps(data, indent=2) + "\n")
@@ -1210,7 +1584,10 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
         if sync_plan or original_plan_bytes is not None:
             projections(root, sync=True)
     except BaseException:  # an interrupt between writes must roll back as an error does
-        receipt_path.unlink(missing_ok=True)
+        if receipt_before is None:
+            receipt_path.unlink(missing_ok=True)
+        elif not receipt_path.is_file() or receipt_path.read_bytes() != receipt_before:
+            atomic(receipt_path, receipt_before)  # the leftover this call replaced goes back as it was
         try:
             if not path.is_file() or path.read_bytes() != original_bytes:
                 atomic(path, original_bytes)
@@ -1292,7 +1669,6 @@ def suspects(root, ref):
                 found.append(row.ref)
                 frontier.append(row.ref)
     return [r for r in found if rows[r].done]
-
 
 XREF_MARK = "-> XREF:"
 DEFERRAL_LINE = re.compile(r"> \*\*(?:Deferred|Resolved):\*\*")

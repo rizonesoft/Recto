@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "recto-lsp": {
+      "command": "python",
+      "args": ["-B", "scripts/lsp_mcp.py"]
+    }
+  }
+}

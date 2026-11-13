@@ -1,0 +1,30 @@
+{
+  "recto-campaign": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python ../scripts/ci_status.py --gate --agy-hook",
+        "timeout": 60
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_command|ask_question|write_file|edit_file|swarm|invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python ../scripts/dispatch_hook.py",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "python ../scripts/campaign_guard.py stop-hook",
+        "timeout": 60
+      }
+    ]
+  }
+}

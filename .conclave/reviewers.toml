@@ -1,27 +1,14 @@
-# Independent reviewers for this repository, read by scripts/review-dispatch.py.
+# Independent reviewers for Recto, read by scripts/review_pin.py for
+# scripts/review-dispatch.py and scripts/todo-graph.py stamp.
 #
-# Owner decision 2026-11-10: Fable 5.2 (Claude Code, writer `claude`) is the only
-# writer in this repository (Opus 5.5 was, from 2026-10-23). Owner decision 2026-11-10:
-# the reviewer is GPT-6 Astra always, whichever of Claude Code (`claude`),
-# Antigravity (`agy`) or Muse Code (`muse`) wrote the work, so each of the three
-# routes names it alone. Owner decision 2026-10-28:
-# the Astra and Terra panel was more review than the work needed, so the route
-# is GPT-6 Astra alone through the Codex CLI, each of its passes one effort
-# level higher than before the panel (the panel's record is
-# docs/experiments/2026-10-27-reviewer-ab.md). There is no fallback: a reviewer
-# that is not installed, fails, times out, returns nothing or replies OVERALL:
-# blocked is recorded with its reason, and is no review, never an approval.
-#
-# Loaded strictly: an unknown key, an unknown CLI, a malformed model, a route
-# naming an undefined reviewer or one twice, more than 4 reviewers, or a
-# reviewer of the writer's own model family refuses every dispatch. The
-# schedule is loaded as strictly: an unknown lens, or an effort a reviewer's
-# CLI does not take, refuses too.
+# Owner decisions 2026-10-28, 2026-11-10 and 2026-11-13: GPT-6 Astra through the
+# Codex CLI in its read-only sandbox reviews all work written by Claude Code
+# (`claude`) and Google Antigravity (`agy` / `gemini`), with no fallback.
+# Earlier stamps (panel era 2026-10-28 and rotation era through 2026-11-12)
+# replay against the pin committed at their plan or stamp commit.
 
 schema_version = 1
 
-# GPT-6 Astra through the Codex CLI, read-only sandbox (owner decision 2026-10-23, replacing GPT-6.1 Sol). The
-# effort here is the default for a pass the schedule does not cover; [schedule] sets each pass's own effort.
 [reviewers.astra]
 cli = "codex"
 model = "gpt-6-astra"
@@ -30,32 +17,31 @@ effort = "high"
 [routes]
 claude = ["astra"]
 agy = ["astra"]
-muse = ["astra"]
 
-# The review schedule (owner decision 2026-10-23; simplified with these efforts by the owner on 2026-11-06). The
-# dispatcher picks each pass's effort and lenses, so the loop runs the same way every time: a medium plan review before
-# the build, a low completion review after it, a medium round 1 across its lenses (design on Surface: yes sections
-# only), then low adversarial rounds. The first round with no P1 or P2 finding (its worst P3, or none) ends the loop
-# (owner decision 2026-10-24: was from round 4 on; severity_stop_after = 0 opens the stop from round 1); a low round
-# that finds a P1 is followed by one medium-effort adversarial round. The cap stays 33 rounds.
+# Three-pass review policy (imported from Conclave-SDK kits/reviewer):
+#   1. Plan review (--kind plan) before the build;
+#   2. One round (--kind round --candidate <SHA>) across every defect lens;
+#   3. Completion and excellence review (--kind completion --candidate <SHA>);
+#   4. Reconciliation (--kind reconciliation) only when completion returns
+#      blocking gaps (P1 or P2), up to pass_cap returned passes in all.
 [schedule]
-severity_stop_after = 0
+policy = "three-pass"
+pass_cap = 33
+blocking = ["P1", "P2"]
 
 [schedule.plan]
 effort = "medium"
 lenses = ["plan"]
 
-[schedule.completion]
-effort = "low"
-
+# `design` runs only when `--surface` is passed (Surface: yes sections).
 [[schedule.rounds]]
 effort = "medium"
-lenses = ["adversarial", "integration", "source-defect", "plan-delivery", "design"]
+lenses = ["adversarial", "integration", "source-defect", "consistency", "quality", "optimization", "design"]
 
-[schedule.rotation]
-effort = "low"
-lenses = ["adversarial"]
-
-[schedule.escalation]
+[schedule.completion]
 effort = "medium"
-lenses = ["adversarial"]
+lenses = ["plan-delivery", "record"]
+
+[schedule.reconciliation]
+effort = "medium"
+lenses = ["adversarial", "integration", "plan-delivery", "record"]

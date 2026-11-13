@@ -167,6 +167,16 @@ class BuildScript(unittest.TestCase):
         self.assertIn("$env:VSLANG = '1033'", text)
         self.assertNotIn("asan_dbg_dynamic", text)
 
+    def test_ram_bounded_parallelism_restore_stamp_and_quick_mode(self):
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        self.assertIn("[switch]$Quick", text)
+        self.assertIn("[switch]$ForceRestore", text)
+        self.assertIn("[int]$MaxCpuCount = 0", text)
+        self.assertIn("'/nr:false'", text)
+        self.assertIn('"/m:$jobs"', text)
+        self.assertIn("build\\restore.stamp", text)
+        self.assertIn("Win32_OperatingSystem", text)
+
 
 class AsanCoverage(unittest.TestCase):
     """-EnableASAN instruments into its own folders and stages the runtime for every C++ project in Recto.sln,

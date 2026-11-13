@@ -320,6 +320,58 @@ class StopHook(Workspace):
                 ran += 1
         self.assertGreater(ran, 0, "no shell could run the configured hook")
 
+    def test_antigravity_stop_hook_protocol_and_configured_command(self):
+        self.acquire(runner="agy", cron_id="task-agy-1")
+        # Open run with NO_TOOL_CALL blocks with {"decision": "continue", "reason": ...} and names manage_task kill.
+        code, out = guard.stop_hook(json.dumps({
+            "hookEventName": "Stop",
+            "conversationId": SESSION,
+            "workspacePaths": [self.root],
+            "cwd": os.path.join(self.root, "scripts"),
+            "terminationReason": "NO_TOOL_CALL",
+        }), None)
+        self.assertEqual(code, 0)
+        decision = json.loads(out)
+        self.assertEqual(decision["decision"], "continue")
+        self.assertIn("manage_task kill", decision["reason"])
+        self.assertEqual(self.state()["blocks"], 1)
+        # Non-idle termination reasons allow immediately without advancing the stall breaker.
+        for reason in ("USER_CANCELED", "ERROR", "MAX_FORCED_INVOCATIONS", "MAX_INVOCATIONS"):
+            with self.subTest(reason=reason):
+                code, out = guard.stop_hook(json.dumps({
+                    "hookEventName": "Stop",
+                    "conversationId": SESSION,
+                    "workspacePaths": [self.root],
+                    "terminationReason": reason,
+                }), None)
+                self.assertEqual((code, json.loads(out)), (0, {"decision": "allow"}))
+                self.assertEqual(self.state()["blocks"], 1)
+        # Configured .agents/hooks.json command executes cleanly from a .agents directory via cmd /c or sh -c.
+        hooks_cfg = json.loads((REPO / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+        command = hooks_cfg["recto-campaign"]["Stop"][0]["command"]
+        agents_dir = os.path.join(self.root, ".agents")
+        os.makedirs(agents_dir, exist_ok=True)
+        shell = ["cmd", "/c", command] if os.name == "nt" else ["sh", "-c", command]
+        env = dict(os.environ)
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        proc = subprocess.run(shell, input=json.dumps({
+            "hookEventName": "Stop",
+            "conversationId": SESSION,
+            "workspacePaths": [self.root],
+            "terminationReason": "NO_TOOL_CALL",
+        }), capture_output=True, text=True, encoding="utf-8", env=env, cwd=agents_dir, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["decision"], "continue", proc.stderr)
+        # Closeout allows with {"decision": "allow"}.
+        self.write(RUN_FILE, f"\n## Closeout run={self.run_id()}\n", "a")
+        code, out = guard.stop_hook(json.dumps({
+            "hookEventName": "Stop",
+            "conversationId": SESSION,
+            "workspacePaths": [self.root],
+            "terminationReason": "NO_TOOL_CALL",
+        }), None)
+        self.assertEqual((code, json.loads(out)), (0, {"decision": "allow"}))
+
 
 class Lifecycle(Workspace):
     def test_acquire_is_exclusive_and_a_handover_is_recorded(self):
@@ -595,6 +647,28 @@ class Lifecycle(Workspace):
         code, line = guard.expiry(self.root, SESSION, now=later.strftime(guard.UTC_FORMAT))
         self.assertEqual(code, 1)
         self.assertIn("replace due", line)
+        # Antigravity runner uses schedule / manage_task kill / manage_task list across lifecycle commands.
+        self.write(RUN_FILE, f"\n## Closeout run={self.run_id()}\n", "a")
+        guard.end(self.root, SESSION, "closeout")
+        guard.cancel_confirmed(self.root, "job-1")
+        self.assertEqual(guard.reconcile(self.root, SESSION, ["task-9"], runner="agy"),
+                         ["reconcile: orphan job task-9 has no guard: manage_task kill it"])
+        self.acquire(runner="agy", cron_id="task-1")
+        self.assertEqual(guard.read_guard(self.root)["runner"], "agy")
+        self.acquire(cron_id="task-2")  # re-point preserves runner="agy"
+        self.assertEqual(guard.read_guard(self.root)["runner"], "agy")
+        self.assertIn("schedule a heartbeat", guard.health(self.root, SESSION, [])[1])
+        created_agy = guard.read_guard(self.root)["job_created_at"]
+        later_agy = datetime.datetime.strptime(created_agy, guard.UTC_FORMAT) + datetime.timedelta(days=6, hours=13)
+        self.assertIn("schedule a replacement", guard.expiry(self.root, SESSION, now=later_agy.strftime(guard.UTC_FORMAT))[1])
+        self.write(RUN_FILE, f"\n## Closeout run={self.run_id()}\n", "a")
+        end_line = guard.end(self.root, SESSION, "closeout")
+        self.assertIn("manage_task kill task-2", end_line)
+        self.assertIn("manage_task list", end_line)
+        self.assertIn("manage_task kill task-2", guard.pending_cancel(self.root))
+        guard.cancel_confirmed(self.root, "task-2")
+        with self.assertRaises(guard.GuardError):
+            self.acquire(runner="unknown")
 
     def test_reset_state_rechecks_ownership_under_the_lock(self):
         self.acquire()

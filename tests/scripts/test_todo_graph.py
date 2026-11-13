@@ -426,19 +426,62 @@ class Graph(Tree):
 
 
 class Stamp(Tree):
-    def setUp(self):
-        super().setUp()
-        self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]).replace(
-            "**Test checkpoint:**", STARTED + "**Test checkpoint:**", 1))
-        report_path = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+    _seed_tmp = None
+    _seed_dir = None
+    _seed_sha = None
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        if cls is not Stamp:
+            return
+        cls._seed_tmp = tempfile.TemporaryDirectory()
+        seed = pathlib.Path(cls._seed_tmp.name)
+        (seed / "todo/00-workspace").mkdir(parents=True)
+        todo_text = todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]).replace(
+            "**Test checkpoint:**", STARTED + "**Test checkpoint:**", 1)
+        (seed / "todo/00-workspace/TODO-01-a.md").write_text(todo_text, encoding="utf-8")
+        (seed / "todo/00-workspace/INDEX.md").write_text("# Index\n- TODO-01-a.md\n", encoding="utf-8")
+        (seed / "todo/TODO-00-INDEX.md").write_text("# Index\n- 00-workspace/TODO-01-a.md\n", encoding="utf-8")
+        report_path = seed / "docs/reviews/00-workspace/D00-T01-s1.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text("# Review findings\n\n" + envelope(1), encoding="utf-8")
-        (self.root / ".conclave").mkdir()
-        (self.root / tg.PIN).write_text(UNIFORM_PIN, encoding="utf-8")
+        (seed / ".conclave").mkdir()
+        (seed / tg.PIN).write_text(UNIFORM_PIN, encoding="utf-8")
         for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
-                     ["config", "user.name", "T"], ["add", "-A"], ["commit", "-qm", "x"]):
-            subprocess.run(["git", "-C", str(self.root), *args], check=True)
-        self.sha = self.head()
+                     ["config", "user.name", "T"], ["config", "core.autocrlf", "false"],
+                     ["config", "commit.gpgsign", "false"], ["add", "-A"], ["commit", "-qm", "x"]):
+            subprocess.run(["git", "-C", str(seed), *args], check=True, capture_output=True)
+        cls._seed_sha = subprocess.run(["git", "-C", str(seed), "rev-parse", "HEAD"],
+                                       capture_output=True, text=True, check=True).stdout.strip()
+        cls._seed_dir = seed
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls is Stamp and cls._seed_tmp is not None:
+            cls._seed_tmp.cleanup()
+            cls._seed_tmp = None
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        import shutil
+        if type(self) is Stamp and self._seed_dir is not None:
+            shutil.copytree(self._seed_dir, self.root, dirs_exist_ok=True)
+            self.sha = self._seed_sha
+        else:
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]).replace(
+                "**Test checkpoint:**", STARTED + "**Test checkpoint:**", 1))
+            report_path = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("# Review findings\n\n" + envelope(1), encoding="utf-8")
+            (self.root / ".conclave").mkdir()
+            (self.root / tg.PIN).write_text(UNIFORM_PIN, encoding="utf-8")
+            for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
+                         ["config", "user.name", "T"], ["config", "core.autocrlf", "false"],
+                         ["config", "commit.gpgsign", "false"], ["add", "-A"], ["commit", "-qm", "x"]):
+                subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
+            self.sha = self.head()
         self.start = self.sha  # the commit that records §1's Started line: the build began here
         self.reviews = [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
                          "verdict": "clean"}]
@@ -460,7 +503,7 @@ class Stamp(Tree):
 
     def commit(self, message="more"):
         for args in (["add", "-A"], ["commit", "-q", "--allow-empty", "-m", message]):
-            subprocess.run(["git", "-C", str(self.root), *args], check=True)
+            subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
         return self.head()
 
     def write_plan(self, review="1. Controls: all present.\n\nHIGHEST: none\n\nPLAN: complete\n\nOVERALL: approve",
@@ -524,7 +567,7 @@ class Stamp(Tree):
         before = self.snapshot()
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-23")
-        self.assertIn("--completion '<findings file>:<complete|completed|filed>' is required", str(ctx.exception))
+        self.assertIn("--completion '<findings file>:<complete|completed|filed|reconciled>' is required", str(ctx.exception))
         self.assertEqual(self.snapshot(), before)
 
     def test_an_unknown_completion_verdict_refuses(self):
@@ -1657,6 +1700,32 @@ class Stamp(Tree):
         path.write_bytes(self.only(path.read_bytes().decode("utf-8"), plans=False).encode("utf-8"))
         self.stamp_refuses("holds no plan review returned by terra")
 
+    def test_a_panel_on_the_antigravity_route_requires_every_member(self):
+        agy_panel_pin = PANEL_PIN.replace('claude = ["astra", "terra"]', 'claude = ["astra"]\nagy = ["astra", "terra"]')
+        (self.root / tg.PIN).write_text(agy_panel_pin, encoding="utf-8")
+        self.sha = self.commit("agy panel")
+        dispatch = tg.review_dispatch()
+        schedule = tg.pin_schedule(self.root, self.sha, "test")
+        # Rewrite the section's plan, completion and round 1 under writer="agy" without Terra's file: must refuse.
+        s1 = self.root / self.PLAN
+        s1.unlink(missing_ok=True)
+        dispatch.record_pass("plan", s1, {"writer": "agy", "reviewer": "astra", "model": "m", "cli": "codex",
+                                          "effort": "medium", "lenses": ["plan"], "skipped": [],
+                                          "review": "1. ok.\n\nPLAN: complete\n\nOVERALL: approve"},
+                             "2026-10-23T00:00:00Z", self.start)
+        comp = self.root / self.COMPLETION
+        comp.unlink(missing_ok=True)
+        dispatch.record_completion(comp, {"writer": "agy", "reviewer": "astra", "model": "m", "cli": "codex",
+                                          "effort": "medium", "skipped": [],
+                                          "review": "1. ok: present.\n\nCOMPLETION: complete"},
+                                   "2026-10-23T00:00:00Z", self.sha)
+        plan = dispatch.scheduled(schedule, "round", [], False, "astra")
+        dispatch.record(s1, {"writer": "agy", "reviewer": "astra", "model": "m", "cli": "codex",
+                             "effort": plan["effort"], "lenses": plan["lenses"], "skipped": [],
+                             "review": "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve"}, "2026-10-23T00:00:00Z")
+        self.reviews = [{"round": 1, "report": self.PLAN, "verdict": "clean"}]
+        self.stamp_refuses("the panel's terra has no review loop named in the receipt")
+
     def test_a_loop_that_follows_the_whole_schedule_stamps(self):
         self.live(surface=True)
         self.loop(["P2", "outage", "P2", "self", "P1", "P3", "P2", "P2", "P2", "clean"], surface=True)
@@ -1837,11 +1906,25 @@ class Repository(unittest.TestCase):
 
     def test_the_authoring_template_copy_is_identical(self):
         # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copy as the same file.
-        # .claude is the only agent kit since 2026-10-23 (one writer through Claude Code).
+        # .claude/skills is the single skill tree; .agents/skills.json points Antigravity there with zero duplicated
+        # skill files, and .agents/hooks.json wires Antigravity's hooks to the same scripts/ modules.
         canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
         self.assertEqual((tg.ROOT / ".claude/skills/create-todo/todo-template.md").read_bytes(), canonical)
-        for kit in (".codex", ".agents"):
-            self.assertFalse((tg.ROOT / kit).exists(), f"the removed {kit} writer kit is back")
+        for duplicate in (".codex", ".agents/skills"):
+            self.assertFalse((tg.ROOT / duplicate).exists(), f"the removed {duplicate} writer kit is back")
+        skills_cfg = json.loads((tg.ROOT / ".agents/skills.json").read_text(encoding="utf-8"))
+        self.assertEqual(skills_cfg, {"entries": [{"path": ".claude/skills"}]})
+        hooks_cfg = json.loads((tg.ROOT / ".agents/hooks.json").read_text(encoding="utf-8"))
+        campaign = hooks_cfg["recto-campaign"]
+        self.assertEqual(set(campaign), {"SessionStart", "PreToolUse", "Stop"})
+        commands = [campaign["SessionStart"][0]["command"],
+                    campaign["PreToolUse"][0]["hooks"][0]["command"],
+                    campaign["Stop"][0]["command"]]
+        for command in commands:
+            script_rel = next(tok for tok in command.split() if tok.startswith("../scripts/"))
+            self.assertTrue(((tg.ROOT / ".agents") / script_rel).resolve().is_file(), command)
+        # Antigravity skips workspace rule files larger than 24,000 bytes; keep AGENTS.md under that ceiling.
+        self.assertLessEqual(len((tg.ROOT / "AGENTS.md").read_bytes()), 24_000)
 
     def test_the_stamp_command_reads_completion_as_findings_file_and_verdict(self):
         import importlib.util
