@@ -23,6 +23,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+PYTHON_CMD = r"build\python.cmd" if os.name == "nt" else "./scripts/run-python.sh"
 SLN = ROOT / "Recto.sln"
 PROPS = ROOT / "Directory.Build.props"
 OUT = ROOT / "build" / "compile_commands.json"
@@ -337,7 +338,7 @@ def _normalize_entry(entry: dict) -> tuple[str, str, tuple[str, ...]]:
 
 def _check_against_expected(out_path: Path, expected: list[dict]) -> tuple[bool, str]:
     if not out_path.is_file():
-        return False, f"{out_path} is missing (run: python scripts/gen-compile-commands.py)"
+        return False, f"{out_path} is missing (run: {PYTHON_CMD} scripts/gen-compile-commands.py)"
     try:
         actual = json.loads(out_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -358,13 +359,13 @@ def _check_against_expected(out_path: Path, expected: list[dict]) -> tuple[bool,
             (a[0] for a, b in zip(actual_norm, expected_norm) if a != b),
             actual_files[0] if actual_files else str(out_path),
         )
-        return False, f"{out_path} has stale directory or compiler arguments for {mismatch} (run: python scripts/gen-compile-commands.py)"
+        return False, f"{out_path} has stale directory or compiler arguments for {mismatch} (run: {PYTHON_CMD} scripts/gen-compile-commands.py)"
     return True, f"ok: {len(actual_files)} translation units"
 
 
 def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
     if not out_path.is_file():
-        return False, f"{out_path} is missing (run: python scripts/gen-compile-commands.py)"
+        return False, f"{out_path} is missing (run: {PYTHON_CMD} scripts/gen-compile-commands.py)"
     return _check_against_expected(out_path, build_database(root))
 
 

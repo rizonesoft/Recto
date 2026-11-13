@@ -973,9 +973,10 @@ def stop_decision(root: str, session: str) -> dict | None:
     if next_row:
         reason += f" Next ready row: {next_row}."
     _, delete_verb, _ = _job_verbs(str(guard.get("runner") or "claude"))
+    py_cmd = r"build\python.cmd" if os.name == "nt" else "./scripts/run-python.sh"
     reason += (f" Finished means a '## Closeout{tag}' heading or a column-0 'PARKED <UTC>{tag} <reason>' line in the "
                f"run file. Escalating to the operator ends the run first: write a column-0 'PARKED <UTC>{tag} "
-               f"escalation: <cause>' line, run 'python scripts/campaign_guard.py end --session {session} --reason "
+               f"escalation: <cause>' line, run '{py_cmd} scripts/campaign_guard.py end --session {session} --reason "
                f"escalation', {delete_verb} the heartbeat it names, then report. The breaker allows the stop after "
                f"{MAX_BLOCKS_WITHOUT_PROGRESS} pushes with no tree change (this is push {state['blocks']}).")
     return {"decision": "block", "reason": reason}

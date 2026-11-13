@@ -103,6 +103,8 @@ class Launcher(unittest.TestCase):
         run, seen = self.run_launcher()
         self.assertIn(f"todo/implementation-plan.md in {ROOT})", seen["goal"])
         self.assertNotIn("{ROOT}", seen["goal"])
+        self.assertIn(r"build\python.cmd scripts/todo-graph.py query stats", seen["goal"])
+        self.assertNotIn("`python scripts/", seen["goal"])
         self.assertLessEqual(len(seen["goal"]), 4000)
 
     def test_a_failed_1password_read_is_said_and_the_run_starts_on_the_stored_login(self):

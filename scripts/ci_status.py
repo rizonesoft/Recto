@@ -63,6 +63,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+PYTHON_CMD = r"build\python.cmd" if os.name == "nt" else "./scripts/run-python.sh"
 WORKFLOWS = ("build.yml", "plan.yml")
 FIELDS = "databaseId,headSha,status,conclusion,url,createdAt,event,attempt"
 LIMIT = 10
@@ -640,11 +641,11 @@ def follow(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=
             still = sorted(w for w, entry in states.items() if entry["state"] == "pending")
             if red and still:
                 out(f"red is reported at once; still running on this commit: {', '.join(still)} "
-                    f"(read them with `python scripts/ci_status.py`)")
+                    f"(read them with `{PYTHON_CMD} scripts/ci_status.py`)")
             if unsaved and code != 1:
                 out(f"ci watch: exit {code} for {sha[:12]}. next: the watch's state could not be saved: free disk "
                     f"space or close the program holding {state_path}, then start "
-                    f"`python scripts/ci_status.py --wait {sha}` again")
+                    f"`{PYTHON_CMD} scripts/ci_status.py --wait {sha}` again")
             else:
                 out(f"ci watch: exit {code} for {sha[:12]}. {next_step(record)}")
             return code
@@ -660,7 +661,7 @@ def follow(sha, *, since=None, runner=run_gh, git=run_git, root=ROOT, workflows=
 def next_step(state):
     """The one next action for a watch's recorded end, as `process-phase` step 3 decides it, with its command."""
     sha, code = state.get("sha") or "", state.get("exit")
-    again = f"`python scripts/ci_status.py --wait {sha}`"
+    again = f"`{PYTHON_CMD} scripts/ci_status.py --wait {sha}`"
     workflows = state.get("workflows") or {}
     if code == 0:
         return "next: nothing, CI is green for this push"
@@ -701,9 +702,9 @@ def gate(*, git=run_git, runner=run_gh, root=ROOT, brief_line=False, out=print, 
         raise Unavailable("git ls-remote returned no head for main")
     if remote[0] != head:
         out(f"ci gate: main moved on GitHub to {remote[0][:12]} and this clone still has {head[:12]}, so no watch here "
-            f"judged it. next: `git pull --ff-only`, then `python scripts/ci_status.py --wait {remote[0]} --since {head}`")
+            f"judged it. next: `git pull --ff-only`, then `{PYTHON_CMD} scripts/ci_status.py --wait {remote[0]} --since {head}`")
         return 6
-    again = f"`python scripts/ci_status.py --wait {head}`"
+    again = f"`{PYTHON_CMD} scripts/ci_status.py --wait {head}`"
     state = read_state(watch_file(root, head))
     if not isinstance(state, dict) or state.get("sha") != head:
         out(f"ci gate: no watch for origin/main {head[:12]}. next: start {again}")
@@ -972,7 +973,7 @@ def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
         return 3
     except Exception as exc:  # exit 1 is a verdict (red CI), so a defect in this script must not produce it
         msg = (f"ci-status unknown: this script failed ({type(exc).__name__}: {exc}); nothing here says CI is red. "
-               f"Run `python scripts/ci_status.py` for the plain report, and file the failure")
+               f"Run `{PYTHON_CMD} scripts/ci_status.py` for the plain report, and file the failure")
         if agy_hook:
             print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": msg}}]}), flush=True)
             return 0

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Fill one of the review prompt templates in docs/ and write the prompt to send to the reviewer.
 
-    python scripts/review-prompt.py --kind round --candidate <commit> --ref "D00 T01 §7" \
+    build\\python.cmd scripts/review-prompt.py --kind round --candidate <commit> --ref "D00 T01 §7" \\
         --purpose "what the change is for" --governing docs/plan.md --out <scratch>/round.md
-    python scripts/review-prompt.py --kind reconciliation --candidate <repaired SHA> --failed <completion SHA> \
-        --findings docs/reviews/00-core/D00-T01-s1.md --gates <scratch>/gates.txt --governing docs/plan.md \
+    build\\python.cmd scripts/review-prompt.py --kind reconciliation --candidate <repaired SHA> --failed <completion SHA> \\
+        --findings docs/reviews/00-core/D00-T01-s1.md --gates <scratch>/gates.txt --governing docs/plan.md \\
         --out <scratch>/reconciliation.md
 
 `--kind` picks the template (plan, round, completion or reconciliation) from the docs/ folder beside this script's

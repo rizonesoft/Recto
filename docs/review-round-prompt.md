@@ -1,6 +1,6 @@
 # Review round prompt
 
-Fill this with `python scripts/review-prompt.py --kind round --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] --purpose "<text>" --governing <file> --out <scratch file>` (`--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --prompt` (add `--surface` when the section has `Surface: yes`). The prompt does not pick the lenses or the effort: the pin's `[schedule]` in `.conclave/reviewers.toml` does. The dispatcher counts the rounds already in the `--record` file, sets the reasoning effort and appends a `## Lenses for this pass` block naming this round's lenses, so the same prompt file serves every round. Under a pin with `policy = "three-pass"` a section takes exactly one round, after the build and before the completion review, run with `--kind round --candidate <FULL_SHA>`, and the appended block also asks for one `LENS <name>: clean` or `LENS <name>: findings` line per lens: a reply without them, or without its `HIGHEST:` line, is recorded as incomplete and run again. The lens list below is the fallback for a pin without a schedule.
+Fill this with `build\python.cmd scripts/review-prompt.py --kind round --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] --purpose "<text>" --governing <file> --out <scratch file>` (`./scripts/run-python.sh` on Linux and WSL; `--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --prompt` (add `--surface` when the section has `Surface: yes`). The prompt does not pick the lenses or the effort: the pin's `[schedule]` in `.conclave/reviewers.toml` does. The dispatcher counts the rounds already in the `--record` file, sets the reasoning effort and appends a `## Lenses for this pass` block naming this round's lenses, so the same prompt file serves every round. Under a pin with `policy = "three-pass"` a section takes exactly one round, after the build and before the completion review, run with `--kind round --candidate <FULL_SHA>`, and the appended block also asks for one `LENS <name>: clean` or `LENS <name>: findings` line per lens: a reply without them, or without its `HIGHEST:` line, is recorded as incomplete and run again. The lens list below is the fallback for a pin without a schedule.
 
 ---
 
@@ -10,7 +10,7 @@ You are an independent, adversarial code reviewer. Do not modify any file. Revie
 
 - Commit or range: `<FULL_SHA>` or `<BASE_SHA>..<TIP_SHA>` (inspect it with `git show` or `git diff`).
 - What it is meant to do: `<one or two sentences>`.
-- TODO section, when there is one: `<DNN TNN §N>` (its contract: `python scripts/todo-graph.py resolve "<DNN TNN §N>" --context`).
+- TODO section, when there is one: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`, or `./scripts/run-python.sh` on Linux and WSL).
 - Governing documents: `AGENTS.md` and `<the spec, plan or design file that applies>`.
 
 ## Lenses

@@ -1,6 +1,6 @@
 # Plan review prompt
 
-Fill this with `python scripts/review-prompt.py --kind plan --candidate <FULL_SHA> --ref "<DNN TNN §N>" --governing <file> --out <scratch file>` (`--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind plan --candidate <FULL_SHA of the commit that holds the section as it will be built> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section, after the section is validated and before any code is written, and is not counted as a round. The pin's `[schedule] plan` step sets its effort and appends the `plan` lens. Under a pin with `policy = "three-pass"` the section then keeps the pin committed at this candidate, so commit the pin first; the appended block asks for one `LENS <name>:` line per lens; and when the pin has `[[schedule.conditional]]` entries that name plan, add `--paths <file> ...` with the files the section will change.
+Fill this with `build\python.cmd scripts/review-prompt.py --kind plan --candidate <FULL_SHA> --ref "<DNN TNN §N>" --governing <file> --out <scratch file>` (`./scripts/run-python.sh` on Linux and WSL; `--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind plan --candidate <FULL_SHA of the commit that holds the section as it will be built> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section, after the section is validated and before any code is written, and is not counted as a round. The pin's `[schedule] plan` step sets its effort and appends the `plan` lens. Under a pin with `policy = "three-pass"` the section then keeps the pin committed at this candidate, so commit the pin first; the appended block asks for one `LENS <name>:` line per lens; and when the pin has `[[schedule.conditional]]` entries that name plan, add `--paths <file> ...` with the files the section will change.
 
 ---
 
@@ -9,7 +9,7 @@ You are an independent plan reviewer. Do not modify any file. The candidate belo
 ## Candidate
 
 - Commit: `<FULL_SHA>` (read the section at that commit).
-- TODO section: `<DNN TNN §N>` (its contract: `python scripts/todo-graph.py resolve "<DNN TNN §N>" --context`).
+- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`, or `./scripts/run-python.sh` on Linux and WSL).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 - Governing documents: `AGENTS.md` and `<the spec or plan that applies>`.

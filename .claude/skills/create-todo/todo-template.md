@@ -51,7 +51,7 @@ CHANGEME: one paragraph of context: why this section exists, the single coherent
 - [ ] CHANGEME micro-step 3 in `tests/backtick/path` (falsifiable test covering happy + refusal path). Done when: CHANGEME test command passes and fails if production logic is reverted.
 - [ ] Commit: `scope: concrete outcome`
 
-**Test checkpoint:** `python scripts/todo-graph.py validate` exits 0; replace with the feature's own falsifiable check before making this file active.
+**Test checkpoint:** `build\python.cmd scripts/todo-graph.py validate` exits 0; replace with the feature's own falsifiable check before making this file active.
 
 ## 2. CHANGEME Second Single-Responsibility Section Title
 
@@ -75,4 +75,4 @@ CHANGEME: one paragraph of context. Surface sections set `**Surface:** yes` and 
 ## Verification
 
 - CHANGEME: the connected outcome, end to end, with its evidence.
-- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.
+- `build\python.cmd scripts/todo-graph.py validate` and `build\python.cmd scripts/todo-graph.py plan --check` pass.

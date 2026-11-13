@@ -116,7 +116,7 @@ class FillEachKind(Filler):
         text = self.ok("completion", "--ref", REF, "--todo", TODO, "--fidelity", "design/main-window.png")
         self.assertEqual(self.out.read_text(encoding="utf-8"), text)
         self.assertIn(f"- Commit or range: `{CAND}` (inspect", text)
-        self.assertIn(f"- TODO section: `{REF}` (its contract: `python scripts/todo-graph.py resolve \"{REF}\" --context`)", text)
+        self.assertIn(f"- TODO section: `{REF}` (its contract: `build\\python.cmd scripts/todo-graph.py resolve \"{REF}\" --context`, or `./scripts/run-python.sh` on Linux and WSL)", text)
         self.assertIn(f"`{TODO}`", text)
         self.assertIn("- Fidelity: `design/main-window.png`.", text)
         self.assertNotIn("none (Surface: no)", text)

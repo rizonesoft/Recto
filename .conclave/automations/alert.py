@@ -60,9 +60,9 @@ def rerun(name: str, folder: str, windows: bool) -> list[str]:
     """How to start the task again, on the scheduler this machine uses."""
     if windows:
         return [f"Run again: Start-ScheduledTask -TaskPath '{folder}' -TaskName {name}",
-                f"Or directly: python .conclave/automations/run.py {name}"]
+                f"Or directly: build\\python.cmd .conclave/automations/run.py {name}"]
     return [f"Run again: systemctl --user start {name}.service",
-            f"Or directly: python3 .conclave/automations/run.py {name}"]
+            f"Or directly: ./scripts/run-python.sh .conclave/automations/run.py {name}"]
 
 
 def message(name: str, task: dict, outcome: dict, tail: str, host: str, folder: str,

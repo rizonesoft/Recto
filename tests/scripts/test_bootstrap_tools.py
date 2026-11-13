@@ -721,30 +721,94 @@ class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
 
 
 class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
-    """Repository user/contributor docs use build\\python.cmd rather than bare system python."""
+    """Repository user, contributor and operational instructions use build\\python.cmd rather than bare python."""
+
+    EXCLUDED_PREFIXES = (
+        ".git/",
+        ".tools/",
+        "build/",
+        "docs/reviews/",
+        "docs/phase-runs/",
+        "docs/plans/",
+        "docs/experiments/",
+    )
+    ALLOWED_TODO_MDS = frozenset({
+        "todo/README.md",
+        "todo/implementation-plan.md",
+        "todo/templates/TODO-template.md",
+    })
+    BARE_PY_RE = re.compile(
+        r"(?<![\\/\w.-])(?:python3?|py)\s+(?:-[A-Za-z]+\s+)*(?:\./|\.\\)?(?:scripts[\\/]|tests[\\/]|\.conclave[\\/]|todo[\\/]|-m\s+unittest\b)"
+    )
+
+    def _operational_markdown_files(self, root: Path = ROOT) -> list[str]:
+        found: list[str] = []
+        for md in sorted(root.rglob("*.md")):
+            rel = md.relative_to(root).as_posix()
+            if rel.startswith(self.EXCLUDED_PREFIXES):
+                continue
+            if rel.startswith("todo/") and rel not in self.ALLOWED_TODO_MDS:
+                continue
+            found.append(rel)
+        return found
 
     def test_documented_windows_commands_use_pinned_python_launcher(self):
-        bare_cmd = re.compile(r"(?<![\\/\w.-])python3?\s+(?:scripts/|\.conclave/|-m\b)")
-        checked_docs = (
+        md_files = self._operational_markdown_files()
+        for required in (
             "README.md",
             "CONTRIBUTING.md",
-            ".conclave/automations/README.md",
-            "docs/todo-workflow.md",
-            "todo/README.md",
-            "tests/corpus/README.md",
-            "docs/support/user-bugs.md",
-            "docs/support/triage.md",
-            "docs/user-demand.md",
             "AGENTS.md",
-        )
+            ".conclave/automations/README.md",
+            ".agents/agents/README.md",
+            "docs/todo-workflow.md",
+            "docs/plan-review-prompt.md",
+            "docs/review-round-prompt.md",
+            "docs/completion-review-prompt.md",
+            "docs/reconciliation-review-prompt.md",
+            "docs/unattended-prompt.md",
+            ".claude/skills/process-plan/SKILL.md",
+            ".claude/skills/process-phase/SKILL.md",
+            ".claude/skills/process-todo-section/SKILL.md",
+            ".claude/skills/review-todo-section/SKILL.md",
+            "todo/README.md",
+            "todo/implementation-plan.md",
+            "todo/templates/TODO-template.md",
+        ):
+            self.assertIn(required, md_files)
+            self.assertIn(r"build\python.cmd", (ROOT / required).read_text(encoding="utf-8"), required)
+
         offenders: list[str] = []
-        for rel in checked_docs:
+        for rel in md_files:
             text = (ROOT / rel).read_text(encoding="utf-8")
-            self.assertIn(r"build\python.cmd", text, f"{rel} should document build\\python.cmd")
             for lineno, line in enumerate(text.splitlines(), 1):
-                if bare_cmd.search(line):
+                if self.BARE_PY_RE.search(line):
                     offenders.append(f"{rel}:{lineno}: {line.strip()}")
-        self.assertEqual(offenders, [], "Found bare python commands in repository docs:\n" + "\n".join(offenders))
+        for rel in ("scripts/start-unattended-run.ps1",):
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if self.BARE_PY_RE.search(line):
+                    offenders.append(f"{rel}:{lineno}: {line.strip()}")
+        self.assertEqual(
+            offenders,
+            [],
+            "Found bare python/python3 commands in repository docs or operational prompts:\n" + "\n".join(offenders),
+        )
+
+    def test_scanner_catches_bare_python_and_python3_in_prompt_and_skill_docs(self):
+        for bad in (
+            "Fill this with `python scripts/review-prompt.py --kind plan`",
+            "its contract: `python scripts/todo-graph.py resolve \"D00 T04 §6\" --context`",
+            "The run ends when `python3 scripts/todo-graph.py query stats` shows verified.",
+            "Run `python -m unittest tests.scripts.test_todo_graph`.",
+            "Reproduce with `python .conclave/automations/run.py recto-ci-watch`.",
+        ):
+            self.assertIsNotNone(self.BARE_PY_RE.search(bad), bad)
+        for good in (
+            r"Fill this with `build\python.cmd scripts/review-prompt.py --kind plan`",
+            "Run `./scripts/run-python.sh scripts/todo-graph.py query stats` on Linux/WSL.",
+            'Add `"command": ["python", "scripts/check.py"]` to tasks.json.',
+        ):
+            self.assertIsNone(self.BARE_PY_RE.search(good), good)
 
 
 if __name__ == "__main__":

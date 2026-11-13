@@ -35,9 +35,9 @@ Size sections as small, single-responsibility deliverables: never bundle multipl
 - Regenerate the plan and prove the tree holds:
 
 ```powershell
-python scripts/todo-graph.py validate
-python scripts/todo-graph.py plan --sync
-python scripts/todo-graph.py plan --check
+build\python.cmd scripts/todo-graph.py validate
+build\python.cmd scripts/todo-graph.py plan --sync
+build\python.cmd scripts/todo-graph.py plan --check
 ```
 
 ### 4. Commit and report

@@ -5,7 +5,7 @@ description: Quality-gate a just-implemented TODO section with self-review, inde
 
 # Review TODO Section
 
-The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `python scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
+The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `build\python.cmd scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
 
 Review is mandatory and independent: the implementing session self-reviews, and every external pass comes from the reviewer pinned in `.conclave/reviewers.toml`: GPT-6 Astra through the Codex CLI, of a different model family from the writer, run through `scripts/review-dispatch.py` (Claude Code `claude` and Google Antigravity `agy` are the writers, owner directions 2026-11-10, 2026-11-12 and 2026-11-13; one reviewer, owner decision 2026-10-28, after the Astra and Terra panel, and the same one for the writers `claude`, `agy` and `muse`, owner decision 2026-11-10). The pin's `[schedule]` owns each pass's reasoning effort and lenses, so the writer never picks them. Sections stamped while the panel ran keep their `<file>.terra.md` records, which their receipts name. Record the writer's decisions as settled items in the findings files (`- Filed: DNN TNN §N (...)` and `- Not taken: <item> (<reason>)` under the review or a `## Writer note: settled` heading): the dispatcher gives them to every reviewer, so a repeated one never keeps a loop running. Every `scripts/review-dispatch.py` invocation MUST run in tracked background (`run_in_background` in Claude Code; `run_command` with `WaitMsBeforeAsync: 500` and `IsDaemon: false` in Antigravity). A verdict with no record is an opinion.
 
@@ -17,11 +17,11 @@ Review is mandatory and independent: the implementing session self-reviews, and 
 
 ## Step 0: resolve the argument
 
-Same front door as `process-todo-section`, run once: `python scripts/todo-graph.py resolve "$ARGUMENTS" --context`. Exit 3 means the row is already `[x]`: that is the signal for audit stance, not an error. The one call gives the canonical reference (its first line, `# resolve --context DNN TNN §N`), the section's contract and everything it needs from its file (the file's Goal, Outcome and Verification block, each prerequisite's effective state and receipt, the cross-references and deferrals that name it): read that output in place of the TODO file.
+Same front door as `process-todo-section`, run once: `build\python.cmd scripts/todo-graph.py resolve "$ARGUMENTS" --context`. Exit 3 means the row is already `[x]`: that is the signal for audit stance, not an error. The one call gives the canonical reference (its first line, `# resolve --context DNN TNN §N`), the section's contract and everything it needs from its file (the file's Goal, Outcome and Verification block, each prerequisite's effective state and receipt, the cross-references and deferrals that name it): read that output in place of the TODO file.
 
 ## Which review schedule applies
 
-Check the pin before the first pass (`python scripts/review_pin.py --check`, `python scripts/review_pin.py --lenses <kind>`, `python scripts/review_pin.py --caps`).
+Check the pin before the first pass (`build\python.cmd scripts/review_pin.py --check`, `build\python.cmd scripts/review_pin.py --lenses <kind>`, `build\python.cmd scripts/review_pin.py --caps`).
 
 - **Three-pass** (`policy = "three-pass"`, Recto's active schedule in `.conclave/reviewers.toml`): a plan review before the build (`process-todo-section` step 3a), one round after it, one completion review of the final candidate, and reconciliations only after blocking gaps. Step 3 and the three-pass stamp in step 7.
 - **Rotation** (no `policy` key, kept on historical pre-three-pass sections whose plan review began under rotation): a plan review, a completion review before the rounds, then rounds until one has no `P1` or `P2` finding. Step 4 and the rotation stamp in step 7.
@@ -56,30 +56,30 @@ Work the three questions across the diff and its blast radius. Fix what you find
 
 ### 3. Review passes under the three-pass pin
 
-The passes run in this order for `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. Each pass is on a commit descending from the one before, the dispatcher refuses a pass out of order before a reviewer runs, and it refuses a second pass while one is running. Push the candidate to `main` and watch GitHub Actions (`python scripts/ci_status.py --wait <sha> --since <before>` in tracked background) so heavy full-matrix builds and suites run on GitHub in parallel with Astra's review.
+The passes run in this order for `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. Each pass is on a commit descending from the one before, the dispatcher refuses a pass out of order before a reviewer runs, and it refuses a second pass while one is running. Push the candidate to `main` and watch GitHub Actions (`build\python.cmd scripts/ci_status.py --wait <sha> --since <before>` in tracked background) so heavy full-matrix builds and suites run on GitHub in parallel with Astra's review.
 
 1. **Plan review**, before the build (`process-todo-section` step 3a): `--kind plan --candidate <commit holding the section>`.
 2. **The round**, after the build, its local gates and its commit. Fill the prompt into a scratch file from `docs/review-round-prompt.md` with `scripts/review-prompt.py`, then run `scripts/review-dispatch.py` in tracked background with `--surface` on a `Surface: yes` section (and `--paths <changed files>` when `[[schedule.conditional]]` applies):
 
 ```powershell
-python scripts/review-prompt.py --kind round --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-round-prompt.md>
-python scripts/review-dispatch.py --kind round --candidate <full tip SHA> --writer <claude|agy> [--surface] --prompt <scratch-round-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
+build\python.cmd scripts/review-prompt.py --kind round --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-round-prompt.md>
+build\python.cmd scripts/review-dispatch.py --kind round --candidate <full tip SHA> --writer <claude|agy> [--surface] --prompt <scratch-round-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
    The dispatcher appends a `## Round 1` section and the pin's lenses. Verify every finding against the code, fix what is real in new commits appended to the candidate, record why anything else is not real under a `## Writer note:` heading, and re-run the touched gates (step 5). There is no second round: the dispatcher refuses one.
 3. **The completion and excellence review** of the final candidate: fill the prompt from `docs/completion-review-prompt.md` with `scripts/review-prompt.py` (passing `--fidelity` on `Surface: yes` sections) and run in tracked background:
 
 ```powershell
-python scripts/review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" [--fidelity <design source>] --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-completion-prompt.md>
-python scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writer <claude|agy> --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
+build\python.cmd scripts/review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" [--fidelity <design source>] --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-completion-prompt.md>
+build\python.cmd scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writer <claude|agy> --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
    Part 1 lists every control, menu item, toolbar entry, `Ctrl+K` command, dialog, state, setting consumer, error and refusal path, undo or reverse path and persistence read-back the feature needs (`present`, `missing-in-scope` or `missing-out-of-scope`). Part 2 names how the strongest competitor (Acrobat Pro first, then Foxit, PDFelement, UPDF) does the job and lists where Recto's feature falls short of beating it (`in-scope` or `out-of-scope`). It ends `COMPLETION: complete` or `COMPLETION: gaps`.
 4. **Reconciliation after blocking gaps.** On `COMPLETION: gaps` whose `HIGHEST:` is in `blocking` (`P1` or `P2`), implement every in-scope gap in new commits without changing the section's checklist text, add `- Implemented: <gap> in <commit>` lines under the review, re-run the touched gates, then fill from `docs/reconciliation-review-prompt.md` and run `--kind reconciliation` in tracked background:
 
 ```powershell
-python scripts/review-prompt.py --kind reconciliation --candidate <full new tip SHA> --ref "D<NN> T<NN> §<N>" --failed <the failed completion's SHA> --findings docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md --gates <scratch-gates.txt> --governing <the spec or plan> --out <scratch-reconciliation-prompt.md>
-python scripts/review-dispatch.py --kind reconciliation --candidate <full new tip SHA> --writer <claude|agy> --prompt <scratch-reconciliation-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
+build\python.cmd scripts/review-prompt.py --kind reconciliation --candidate <full new tip SHA> --ref "D<NN> T<NN> §<N>" --failed <the failed completion's SHA> --findings docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md --gates <scratch-gates.txt> --governing <the spec or plan> --out <scratch-reconciliation-prompt.md>
+build\python.cmd scripts/review-dispatch.py --kind reconciliation --candidate <full new tip SHA> --writer <claude|agy> --prompt <scratch-reconciliation-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
    File each out-of-scope or non-blocking (`P3`) gap through `add-todo` as a new section (surface changes go through a `design/SPEC.md` subsection and board first, the `D06 T04` way) and add `- Filed: DNN TNN §N (<gap>)` under the review that raised it (and `> **Deferred:** <what> -> XREF: DNN TNN §N` in the section when its surface shows it). Under a last pass that ended complete write no `- Filed:` line: `stamp` takes `- Filed:` lines under the last returned pass only with `:filed`.
@@ -114,7 +114,7 @@ Architecture check: on sections touching an architectural boundary the foundatio
 
 ### 5. Re-run the gates and check CI
 
-After each fix, run the iteration gate while preserving the section's actual Test checkpoint commands: for C++ work, run `.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'` (with optional `-Project <vcxproj>` when narrowing compilation to a touched project, plus `-EnableASAN` for the section's ASan checkpoint when it names one); for Python-only work, run the section's Python `unittest` suites / `python scripts/run-tests.py --filter <pat>` and `python scripts/run-tests.py --quick` (never represent Python-only work as a GoogleTest `-TestFilter` or verify it solely with unrelated C++ tests); for mixed C++ and Python work, run both the filtered `.\build.cmd` iteration command and the section's Python suites, plus `python scripts/todo-graph.py validate` and the Freeze check in frozen files. Push the final candidate tip and verify `python scripts/ci_status.py --gate` exits 0 so GitHub Actions confirms the full matrix. Quote the checkpoint output in the findings file. A red local gate or red CI reopens the candidate: fix at the owning layer, re-run to green, and re-run the affected review pass.
+After each fix, run the iteration gate while preserving the section's actual Test checkpoint commands: for C++ work, run `.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'` (with optional `-Project <vcxproj>` when narrowing compilation to a touched project, plus `-EnableASAN` for the section's ASan checkpoint when it names one); for Python-only work, run the section's Python `unittest` suites / `build\python.cmd scripts/run-tests.py --filter <pat>` and `build\python.cmd scripts/run-tests.py --quick` (never represent Python-only work as a GoogleTest `-TestFilter` or verify it solely with unrelated C++ tests); for mixed C++ and Python work, run both the filtered `.\build.cmd` iteration command and the section's Python suites, plus `build\python.cmd scripts/todo-graph.py validate` and the Freeze check in frozen files. Push the final candidate tip and verify `build\python.cmd scripts/ci_status.py --gate` exits 0 so GitHub Actions confirms the full matrix. Quote the checkpoint output in the findings file. A red local gate or red CI reopens the candidate: fix at the owning layer, re-run to green, and re-run the affected review pass.
 
 ### 6. Surface, feature, and frozen checks
 
@@ -125,14 +125,14 @@ Surface and feature completeness: 100% of every control, menu item, dialog and s
 Before stamping, run the stamp gate once on the candidate tip that stamps: `.\build.cmd` (x64 Debug and Release, every test) alongside the section's own Test checkpoint commands (including its Python `unittest` suites on Python-only or mixed sections and its ASan checkpoint when named), and quote both the section's Test checkpoint and the full-suite `.\build.cmd` result in `--check` arguments to `stamp`. Tick nothing by hand. Confirm every checklist item except `Commit:` is `[x]`, then under the `three-pass` pin (with the last returned pass having reviewed the stamped commit):
 
 ```powershell
-python scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full tip SHA> --plan 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md' --completion 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<complete|reconciled|filed>' --review '<N>:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<clean|fixed>' --check '<checkpoint command> -> <quoted result>' --check '.\build.cmd -> <quoted x64 Debug and Release full-suite result>'
+build\python.cmd scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full tip SHA> --plan 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md' --completion 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<complete|reconciled|filed>' --review '<N>:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<clean|fixed>' --check '<checkpoint command> -> <quoted result>' --check '.\build.cmd -> <quoted x64 Debug and Release full-suite result>'
 ```
 
 Under `three-pass`, `--completion` is `complete`, `reconciled` or `filed` (`completed`, `--cap-outcome` and `stopped-` verdicts are rotation-only), and `--review` names the one returned round (`1` unless an earlier attempt was an outage or incomplete reply) with `clean` or `fixed`. Under a historical rotation pin, `--completion` takes `complete`, `completed` or `filed`, `--review` lists every round, and stopped verdicts carry `--cap-outcome`. `stamp` writes `docs/reviews/<ref>.json`, ticks the `Commit:` item and Implementation Order row, appends `Verified:` and `Review:`, marks the file `done` when its last section stamps, and syncs the plan. Commit the stamp, receipt, findings file and regenerated plan together as `todo: stamp <ref>`. Add any `Deferred:` lines (each with `-> XREF:`) and `Started:` to `Duration:` notes before stamping.
 
 ### 8. Audit stance
 
-On an already-`[x]` section: run steps 1, 2, 5, 6 and standalone `--kind round` passes recorded in `docs/reviews/<NN-domain>/audit-d<NN>-t<NN>-s<N>.md` (never in the section's stamped findings file), changing nothing in the section itself until `unstamp` has reopened it. Stop when a round's summary shows `"blocking": false`. If a regression is confirmed, file the repair with `add-todo` first, then run `python scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`. Once `unstamp` is committed, a reopened section's own findings file is `D<NN>-T<NN>-s<N>-cycle<n+1>.md` (`n` being its `Unstamped:` notes), and downstream stamped sections are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
+On an already-`[x]` section: run steps 1, 2, 5, 6 and standalone `--kind round` passes recorded in `docs/reviews/<NN-domain>/audit-d<NN>-t<NN>-s<N>.md` (never in the section's stamped findings file), changing nothing in the section itself until `unstamp` has reopened it. Stop when a round's summary shows `"blocking": false`. If a regression is confirmed, file the repair with `add-todo` first, then run `build\python.cmd scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`. Once `unstamp` is committed, a reopened section's own findings file is `D<NN>-T<NN>-s<N>-cycle<n+1>.md` (`n` being its `Unstamped:` notes), and downstream stamped sections are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
 
 ## Guardrails
 

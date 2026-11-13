@@ -15,7 +15,7 @@ Search the tree for a home the work already has:
 
 ```powershell
 Select-String -Path todo\*\TODO-*.md -Pattern "<keywords>" | Select-Object -First 30
-python scripts/todo-graph.py query deferred
+build\python.cmd scripts/todo-graph.py query deferred
 ```
 
 Read the candidates. A home exists when a section's scope already covers the work, even if its checklist does not name it yet. Check `todo/findings.md` too: a finding with `file:line` that matches is scheduled by writing a section and striking the finding with its new `DNN TNN §N`.
@@ -47,9 +47,9 @@ Give it a dependency edge, not a wish. If it must wait on another section, say s
 - Then prove the tree still holds:
 
 ```powershell
-python scripts/todo-graph.py validate
-python scripts/todo-graph.py plan --sync
-python scripts/todo-graph.py plan --check
+build\python.cmd scripts/todo-graph.py validate
+build\python.cmd scripts/todo-graph.py plan --sync
+build\python.cmd scripts/todo-graph.py plan --check
 ```
 
 ### 5. Commit and report

@@ -1,6 +1,6 @@
 # Completion and excellence review prompt
 
-Fill this with `python scripts/review-prompt.py --kind completion --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] [--fidelity <source>] --purpose "<text>" --governing <file> --out <scratch file>` (`--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind completion --candidate <FULL_SHA> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section and is not counted as a round. Under a pin with `policy = "three-pass"` it is the last of the three passes: it reviews the final candidate, after the one round's findings are fixed and the gates rerun, and when it ends `COMPLETION: gaps` the gaps are repaired and checked by a reconciliation review (`docs/reconciliation-review-prompt.md`). Under a rotation pin it runs after the section is built and before the regular review rounds (`docs/review-round-prompt.md`).
+Fill this with `build\python.cmd scripts/review-prompt.py --kind completion --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] [--fidelity <source>] --purpose "<text>" --governing <file> --out <scratch file>` (`./scripts/run-python.sh` on Linux and WSL; `--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind completion --candidate <FULL_SHA> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section and is not counted as a round. Under a pin with `policy = "three-pass"` it is the last of the three passes: it reviews the final candidate, after the one round's findings are fixed and the gates rerun, and when it ends `COMPLETION: gaps` the gaps are repaired and checked by a reconciliation review (`docs/reconciliation-review-prompt.md`). Under a rotation pin it runs after the section is built and before the regular review rounds (`docs/review-round-prompt.md`).
 
 ---
 
@@ -9,7 +9,7 @@ You are an independent product reviewer. Do not modify any file. The candidate b
 ## Candidate
 
 - Commit or range: `<FULL_SHA>` or `<BASE_SHA>..<TIP_SHA>` (inspect it with `git show` or `git diff`).
-- TODO section: `<DNN TNN §N>` (its contract: `python scripts/todo-graph.py resolve "<DNN TNN §N>" --context`).
+- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`, or `./scripts/run-python.sh` on Linux and WSL).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 - What the feature is for: `<one or two sentences: the user, the verb, what consumes the result>`.

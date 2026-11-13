@@ -19,7 +19,7 @@ For every dependency edge (section `Depends On` and file `depends_on`), confirm 
 - Never renumber a section or reuse a number: addresses are permanent.
 - Record each fix with `**Corrected YYYY-MM-DD:**` or `**Groomed YYYY-MM-DD:**`, saying what it said before.
 
-Run `python scripts/todo-graph.py validate` after every structural edit.
+Run `build\python.cmd scripts/todo-graph.py validate` after every structural edit.
 
 ### 2. Drift sweep and brownfield reconciliation
 
@@ -29,7 +29,7 @@ Walk every open section's concrete claims against today's repository and governi
 - Micro-steps already 100% implemented in the codebase: verify their `Done when:` and `Cheaper substitute:` against `file:line` and tests, then append `Already shipped: <commit SHA or file:line>` to the item, leaving it `[ ]`; `process-todo-section` re-verifies and ticks it when it runs the section.
 - Half-implemented items in the codebase (for example, UI exists with hardcoded hex colors, or write path exists without atomic replace or refusal tests): keep `[ ]` and rewrite the micro-steps to target the exact remaining gaps rather than re-planning what already works.
 - Counts and versions quoted confidently (these age fastest).
-- Deferrals whose descriptions drifted while their owners stayed open (`python scripts/todo-graph.py query deferred`).
+- Deferrals whose descriptions drifted while their owners stayed open (`build\python.cmd scripts/todo-graph.py query deferred`).
 - XREFs whose targets shipped or moved.
 - Current state blocks older than the last shipped section in their domain.
 
@@ -37,7 +37,7 @@ Walk every open section's concrete claims against today's repository and governi
 
 Read the plan as the user will use the finished product, domain by domain, against `design/SPEC.md` (every screen, dialog and state) and the foundation plan's milestone "Done when" column. Running `process-plan` to completion must produce a 100% complete, shippable product with zero unowned surfaces, controls, settings, refusal/error paths, undo/reverse paths, or persistence read-backs. Compare the union of (`existing working codebase` + `open TODO sections`) against the spec: anything already 100% working in baseline code belongs in `Current state:`, and every remaining gap gets filed via `add-todo` (evidence, owner, dependency) and synced into the plan. Never cap operator-requested planning and never silently drop scope.
 
-Check the Adjacency declarations while here (`python scripts/todo-graph.py query adjacency`): an `applicable` with no owning section, or a `not-applicable` whose reason no longer holds, becomes work or a corrected declaration.
+Check the Adjacency declarations while here (`build\python.cmd scripts/todo-graph.py query adjacency`): an `applicable` with no owning section, or a `not-applicable` whose reason no longer holds, becomes work or a corrected declaration.
 
 ### 4. Complete-feature and micro-step granularity pass
 

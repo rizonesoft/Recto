@@ -13,13 +13,13 @@ Every scheduled job lives in `.conclave/automations/tasks.json`. The installers 
 2. Write the check as a script in this repository that exits 0 when all is well and non-zero, with one line saying why, when it is not. Give it tests. A check that cannot reach its source exits 2 (unverified), never 0.
 3. Add the entry: `name`, a one-line `description`, `command` (`["python", "scripts/<check>.py", ...]`), `trigger` (`{"weekly": "Monday", "at": "07:00"}` or `{"at_logon_delay_minutes": 3, "every_minutes": 60}`) and `timeout_minutes`.
 4. Add its row to the README's "What runs" table: task, when, what it runs, and when it fails.
-5. Run `python scripts/tests/test_automations.py`, run the task once with `python .conclave/automations/run.py <name>`, then re-run the installer: `pwsh .conclave/automations/install.ps1` on Windows, `bash .conclave/automations/install.sh` on Linux and WSL.
+5. Run `build\python.cmd scripts/tests/test_automations.py` (`./scripts/run-python.sh` on Linux and WSL), run the task once with `build\python.cmd .conclave/automations/run.py <name>`, then re-run the installer: `pwsh .conclave/automations/install.ps1` on Windows, `bash .conclave/automations/install.sh` on Linux and WSL.
 
 To remove a task, delete its entry and its README row, then re-run the installer: it unregisters what the file no longer lists.
 
 ## When a failure email arrives
 
-1. Read the run's log under `build/automations/<name>/` (`last.json` names it) and reproduce with `python .conclave/automations/run.py <name>`.
+1. Read the run's log under `build/automations/<name>/` (`last.json` names it) and reproduce with `build\python.cmd .conclave/automations/run.py <name>` (`./scripts/run-python.sh` on Linux and WSL).
 2. Fix the cause where it is owned: the code, setting or pin the check reports on. Never loosen the check or its timeout to make the email stop.
 3. Exit 3 means the task failed and the alert could not be sent; the reason is at the end of the log.
 

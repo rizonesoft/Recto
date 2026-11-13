@@ -1946,7 +1946,7 @@ class Repository(unittest.TestCase):
                 raise AssertionError(f"{rel} invokes build.ps1 directly instead of .\\build.cmd wrapper")
         for rel in skills:
             body = texts[rel]
-            for token in ("C++", "Python-only", "mixed", "unittest", "python scripts/run-tests.py"):
+            for token in ("C++", "Python-only", "mixed", "unittest", r"build\python.cmd scripts/run-tests.py"):
                 if token not in body:
                     raise AssertionError(f"{rel} is missing section-type handling token {token!r}")
             low = body.lower()

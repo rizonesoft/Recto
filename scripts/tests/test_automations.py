@@ -338,10 +338,12 @@ class Alert(unittest.TestCase):
                                       windows=True)
         self.assertEqual(subject, "Automation failed: demo-packages on PC")
         for text in ("exit 1", "Check the packages", "pkg 1.0 High",
-                     "Start-ScheduledTask -TaskPath '\\Demo\\' -TaskName demo-packages"):
+                     "Start-ScheduledTask -TaskPath '\\Demo\\' -TaskName demo-packages",
+                     r"Or directly: build\python.cmd .conclave/automations/run.py demo-packages"):
             self.assertIn(text, body)
         _, linux = alert.message("demo-packages", self.TASK, self.OUTCOME, "", "PC", "\\Demo\\", windows=False)
         self.assertIn("systemctl --user start demo-packages.service", linux)
+        self.assertIn("Or directly: ./scripts/run-python.sh .conclave/automations/run.py demo-packages", linux)
         _, timed = alert.message("x", self.TASK, {**self.OUTCOME, "timed_out": True}, "", "PC", "\\Demo\\")
         self.assertIn("timed out", timed)
 

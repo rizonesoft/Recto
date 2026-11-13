@@ -863,7 +863,7 @@ class Gate(unittest.TestCase):
         # The fix is pushed: no watch of the new head yet holds the gate shut.
         code, out = self.gate(SHA_NEW, red)
         self.assertEqual(code, 6, out)
-        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
+        self.assertIn(f"next: start `{ci.PYTHON_CMD} scripts/ci_status.py --wait {SHA_NEW}`", out)
         code, out = self.gate(SHA_NEW, self.GREEN)
         self.assertEqual(code, 0, out)
 
@@ -874,7 +874,7 @@ class Gate(unittest.TestCase):
         code, out = self.gate(SHA_NEW, dead)
         self.assertEqual(code, 6, out)
         self.assertIn("gone before it ended", out)
-        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
+        self.assertIn(f"next: start `{ci.PYTHON_CMD} scripts/ci_status.py --wait {SHA_NEW}`", out)
         code, out = self.gate(SHA_NEW, dead, alive=lambda pid: True)
         self.assertEqual(code, 6, out)
         self.assertIn("still running (process 9999999). next: wait for its notification", out)
@@ -884,13 +884,13 @@ class Gate(unittest.TestCase):
         code, out = self.gate(SHA_NEW, reused, alive=lambda pid: True, born=lambda pid: 999)
         self.assertEqual(code, 6, out)
         self.assertIn("gone before it ended", out)
-        self.assertIn(f"next: start `python scripts/ci_status.py --wait {SHA_NEW}`", out)
+        self.assertIn(f"next: start `{ci.PYTHON_CMD} scripts/ci_status.py --wait {SHA_NEW}`", out)
 
     def test_a_head_this_clone_has_not_fetched_is_not_judged_by_an_old_green(self):
         code, out = self.gate(SHA_NEW, self.GREEN, remote="c" * 40)
         self.assertEqual(code, 6, out)
         self.assertIn("main moved on GitHub to cccccccccccc", out)
-        self.assertIn(f"`git pull --ff-only`, then `python scripts/ci_status.py --wait {'c' * 40} --since {SHA_NEW}`", out)
+        self.assertIn(f"`git pull --ff-only`, then `{ci.PYTHON_CMD} scripts/ci_status.py --wait {'c' * 40} --since {SHA_NEW}`", out)
 
     def test_a_recorded_green_is_refused_once_the_commit_runs_again(self):
         rerun = GateGh({"build.yml": [wrun(2, "build", status="in_progress")]})
@@ -976,7 +976,7 @@ class Gate(unittest.TestCase):
         def ended(code, state, watches=1, run_id=7):
             return {"sha": SHA_NEW, "pid": 1, "exit": code, "watches": watches, "workflows": {
                 "build.yml": {"state": state, "run": {"url": "u", "databaseId": run_id}, "failed_jobs": []}}}
-        again = f"`python scripts/ci_status.py --wait {SHA_NEW}`"
+        again = f"`{ci.PYTHON_CMD} scripts/ci_status.py --wait {SHA_NEW}`"
         cases = [(ended(5, "cancelled"), f"ci gate: cancelled at bbbbbbbbbbbb: build.yml cancelled u. next: a cancelled "
                                          f"run is not green: `gh run rerun 7`, then {again}"),
                  (ended(3, "unknown"), f"next: unknown is not green: start a second watch, {again}"),
