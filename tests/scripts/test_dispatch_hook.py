@@ -10,9 +10,12 @@ HOOK = Path(__file__).resolve().parents[2] / "scripts" / "dispatch_hook.py"
 REVIEW = "python scripts/review-dispatch.py --writer claude --prompt R:/scratch/p.md --record docs/reviews/01-engine/D01-T02-s1.md"
 
 
-def run(payload) -> subprocess.CompletedProcess:
+def run(payload, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     data = payload if isinstance(payload, str) else json.dumps(payload)
-    return subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True, text=True, timeout=30)
+    env = {k: v for k, v in os.environ.items() if k not in ("CONCLAVE_UNATTENDED_RUN", "CLAUDE_PROJECT_DIR")}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run([sys.executable, str(HOOK)], input=data, capture_output=True, text=True, env=env, timeout=30)
 
 
 def call(tool: str, command: str, background=None) -> dict:
@@ -153,14 +156,22 @@ class DispatchHook(unittest.TestCase):
 
     def test_antigravity_ask_question_is_denied_only_for_the_session_owning_a_live_campaign_guard(self):
         import tempfile
+        from unittest import mock
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             subdir = root / "src"
             subdir.mkdir()
-            # No guard file: attended Antigravity session may ask questions when genuinely needed.
-            res = run(agy_call("ask_question", {"questions": []}, conversation_id="conv-camp",
-                               workspace=str(root), cwd=str(subdir)))
+            # No guard file: attended Antigravity session may ask questions even if the test runner itself was
+            # invoked inside an unattended campaign process carrying CONCLAVE_UNATTENDED_RUN=1.
+            with mock.patch.dict(os.environ, {"CONCLAVE_UNATTENDED_RUN": "1", "CLAUDE_PROJECT_DIR": str(HOOK.parents[1])}):
+                res = run(agy_call("ask_question", {"questions": []}, conversation_id="conv-camp",
+                                   workspace=str(root), cwd=str(subdir)))
             self.assertEqual(json.loads(res.stdout), {"decision": "allow"})
+            # Explicit CONCLAVE_UNATTENDED_RUN=1 in the hook's own environment denies ask_question even before acquire.
+            forced = run(agy_call("ask_question", {"questions": []}, conversation_id="conv-camp",
+                                  workspace=str(root), cwd=str(subdir)),
+                         extra_env={"CONCLAVE_UNATTENDED_RUN": "1"})
+            self.assertEqual(json.loads(forced.stdout)["decision"], "deny")
             (root / "build").mkdir()
             (root / "build" / "claude-campaign-guard.json").write_text(
                 json.dumps({"runner": "agy", "session_id": "conv-camp"}), encoding="utf-8")

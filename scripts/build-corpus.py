@@ -1964,6 +1964,23 @@ def _gf_mul(a: int, b: int) -> int:
     return res
 
 
+_AES_TE0: tuple[int, ...] = tuple(
+    ((AES_XTIME[s] << 24) | (s << 16) | (s << 8) | (s ^ AES_XTIME[s])) & 0xFFFFFFFF
+    for s in AES_SBOX
+)
+_AES_TE1: tuple[int, ...] = tuple(((t >> 8) | ((t & 0xFF) << 24)) for t in _AES_TE0)
+_AES_TE2: tuple[int, ...] = tuple(((t >> 16) | ((t & 0xFFFF) << 16)) for t in _AES_TE0)
+_AES_TE3: tuple[int, ...] = tuple(((t >> 24) | ((t & 0xFFFFFF) << 8)) for t in _AES_TE0)
+
+_AES_IMC0: tuple[int, ...] = tuple(
+    (_gf_mul(x, 0x0E) << 24) | (_gf_mul(x, 0x09) << 16) | (_gf_mul(x, 0x0D) << 8) | _gf_mul(x, 0x0B)
+    for x in range(256)
+)
+_AES_IMC1: tuple[int, ...] = tuple(((t >> 8) | ((t & 0xFF) << 24)) for t in _AES_IMC0)
+_AES_IMC2: tuple[int, ...] = tuple(((t >> 16) | ((t & 0xFFFF) << 16)) for t in _AES_IMC0)
+_AES_IMC3: tuple[int, ...] = tuple(((t >> 24) | ((t & 0xFFFFFF) << 8)) for t in _AES_IMC0)
+
+
 def aes_expand_key(key: bytes) -> list[list[int]]:
     nk = len(key) // 4
     nr = nk + 6
@@ -1983,91 +2000,135 @@ def aes_expand_key(key: bytes) -> list[list[int]]:
     return [[w[4 * r + c][row] for c in range(4) for row in range(4)] for r in range(nr + 1)]
 
 
+@functools.lru_cache(maxsize=256)
+def _aes_expand_key_words(key: bytes) -> tuple[int, ...]:
+    rks = aes_expand_key(key)
+    words: list[int] = []
+    for rk in rks:
+        for c in range(0, 16, 4):
+            words.append((rk[c] << 24) | (rk[c + 1] << 16) | (rk[c + 2] << 8) | rk[c + 3])
+    return tuple(words)
+
+
+def _round_keys_to_words(round_keys: list[list[int]]) -> tuple[int, ...]:
+    words: list[int] = []
+    for rk in round_keys:
+        for c in range(0, 16, 4):
+            words.append((rk[c] << 24) | (rk[c + 1] << 16) | (rk[c + 2] << 8) | rk[c + 3])
+    return tuple(words)
+
+
+def _aes_encrypt_words(b0: int, b1: int, b2: int, b3: int, rkw: tuple[int, ...]) -> tuple[int, int, int, int]:
+    te0, te1, te2, te3, sbox = _AES_TE0, _AES_TE1, _AES_TE2, _AES_TE3, AES_SBOX
+    s0 = b0 ^ rkw[0]
+    s1 = b1 ^ rkw[1]
+    s2 = b2 ^ rkw[2]
+    s3 = b3 ^ rkw[3]
+    last = len(rkw) - 4
+    for r in range(4, last, 4):
+        t0 = te0[s0 >> 24] ^ te1[(s1 >> 16) & 0xFF] ^ te2[(s2 >> 8) & 0xFF] ^ te3[s3 & 0xFF] ^ rkw[r]
+        t1 = te0[s1 >> 24] ^ te1[(s2 >> 16) & 0xFF] ^ te2[(s3 >> 8) & 0xFF] ^ te3[s0 & 0xFF] ^ rkw[r + 1]
+        t2 = te0[s2 >> 24] ^ te1[(s3 >> 16) & 0xFF] ^ te2[(s0 >> 8) & 0xFF] ^ te3[s1 & 0xFF] ^ rkw[r + 2]
+        t3 = te0[s3 >> 24] ^ te1[(s0 >> 16) & 0xFF] ^ te2[(s1 >> 8) & 0xFF] ^ te3[s2 & 0xFF] ^ rkw[r + 3]
+        s0, s1, s2, s3 = t0, t1, t2, t3
+    return (
+        ((sbox[s0 >> 24] << 24) | (sbox[(s1 >> 16) & 0xFF] << 16) | (sbox[(s2 >> 8) & 0xFF] << 8) | sbox[s3 & 0xFF]) ^ rkw[last],
+        ((sbox[s1 >> 24] << 24) | (sbox[(s2 >> 16) & 0xFF] << 16) | (sbox[(s3 >> 8) & 0xFF] << 8) | sbox[s0 & 0xFF]) ^ rkw[last + 1],
+        ((sbox[s2 >> 24] << 24) | (sbox[(s3 >> 16) & 0xFF] << 16) | (sbox[(s0 >> 8) & 0xFF] << 8) | sbox[s1 & 0xFF]) ^ rkw[last + 2],
+        ((sbox[s3 >> 24] << 24) | (sbox[(s0 >> 16) & 0xFF] << 16) | (sbox[(s1 >> 8) & 0xFF] << 8) | sbox[s2 & 0xFF]) ^ rkw[last + 3],
+    )
+
+
+def _aes_decrypt_words(b0: int, b1: int, b2: int, b3: int, rkw: tuple[int, ...]) -> tuple[int, int, int, int]:
+    imc0, imc1, imc2, imc3, isbox = _AES_IMC0, _AES_IMC1, _AES_IMC2, _AES_IMC3, AES_INV_SBOX
+    last = len(rkw) - 4
+    s0 = b0 ^ rkw[last]
+    s1 = b1 ^ rkw[last + 1]
+    s2 = b2 ^ rkw[last + 2]
+    s3 = b3 ^ rkw[last + 3]
+    for r in range(last - 4, 0, -4):
+        d0 = ((isbox[s0 >> 24] << 24) | (isbox[(s3 >> 16) & 0xFF] << 16) | (isbox[(s2 >> 8) & 0xFF] << 8) | isbox[s1 & 0xFF]) ^ rkw[r]
+        d1 = ((isbox[s1 >> 24] << 24) | (isbox[(s0 >> 16) & 0xFF] << 16) | (isbox[(s3 >> 8) & 0xFF] << 8) | isbox[s2 & 0xFF]) ^ rkw[r + 1]
+        d2 = ((isbox[s2 >> 24] << 24) | (isbox[(s1 >> 16) & 0xFF] << 16) | (isbox[(s0 >> 8) & 0xFF] << 8) | isbox[s3 & 0xFF]) ^ rkw[r + 2]
+        d3 = ((isbox[s3 >> 24] << 24) | (isbox[(s2 >> 16) & 0xFF] << 16) | (isbox[(s1 >> 8) & 0xFF] << 8) | isbox[s0 & 0xFF]) ^ rkw[r + 3]
+        s0 = imc0[d0 >> 24] ^ imc1[(d0 >> 16) & 0xFF] ^ imc2[(d0 >> 8) & 0xFF] ^ imc3[d0 & 0xFF]
+        s1 = imc0[d1 >> 24] ^ imc1[(d1 >> 16) & 0xFF] ^ imc2[(d1 >> 8) & 0xFF] ^ imc3[d1 & 0xFF]
+        s2 = imc0[d2 >> 24] ^ imc1[(d2 >> 16) & 0xFF] ^ imc2[(d2 >> 8) & 0xFF] ^ imc3[d2 & 0xFF]
+        s3 = imc0[d3 >> 24] ^ imc1[(d3 >> 16) & 0xFF] ^ imc2[(d3 >> 8) & 0xFF] ^ imc3[d3 & 0xFF]
+    return (
+        ((isbox[s0 >> 24] << 24) | (isbox[(s3 >> 16) & 0xFF] << 16) | (isbox[(s2 >> 8) & 0xFF] << 8) | isbox[s1 & 0xFF]) ^ rkw[0],
+        ((isbox[s1 >> 24] << 24) | (isbox[(s0 >> 16) & 0xFF] << 16) | (isbox[(s3 >> 8) & 0xFF] << 8) | isbox[s2 & 0xFF]) ^ rkw[1],
+        ((isbox[s2 >> 24] << 24) | (isbox[(s1 >> 16) & 0xFF] << 16) | (isbox[(s0 >> 8) & 0xFF] << 8) | isbox[s3 & 0xFF]) ^ rkw[2],
+        ((isbox[s3 >> 24] << 24) | (isbox[(s2 >> 16) & 0xFF] << 16) | (isbox[(s1 >> 8) & 0xFF] << 8) | isbox[s0 & 0xFF]) ^ rkw[3],
+    )
+
+
 def aes_encrypt_block(block: bytes, round_keys: list[list[int]]) -> bytes:
-    s = [block[i] ^ round_keys[0][i] for i in range(16)]
-    nr = len(round_keys) - 1
-    for r in range(1, nr):
-        u = [
-            AES_SBOX[s[0]],  AES_SBOX[s[5]],  AES_SBOX[s[10]], AES_SBOX[s[15]],
-            AES_SBOX[s[4]],  AES_SBOX[s[9]],  AES_SBOX[s[14]], AES_SBOX[s[3]],
-            AES_SBOX[s[8]],  AES_SBOX[s[13]], AES_SBOX[s[2]],  AES_SBOX[s[7]],
-            AES_SBOX[s[12]], AES_SBOX[s[1]],  AES_SBOX[s[6]],  AES_SBOX[s[11]],
-        ]
-        rk = round_keys[r]
-        for c in range(4):
-            i = 4 * c
-            a0, a1, a2, a3 = u[i], u[i + 1], u[i + 2], u[i + 3]
-            tm = a0 ^ a1 ^ a2 ^ a3
-            s[i] = a0 ^ tm ^ AES_XTIME[a0 ^ a1] ^ rk[i]
-            s[i + 1] = a1 ^ tm ^ AES_XTIME[a1 ^ a2] ^ rk[i + 1]
-            s[i + 2] = a2 ^ tm ^ AES_XTIME[a2 ^ a3] ^ rk[i + 2]
-            s[i + 3] = a3 ^ tm ^ AES_XTIME[a3 ^ a0] ^ rk[i + 3]
-    rk = round_keys[nr]
-    return bytes((
-        AES_SBOX[s[0]] ^ rk[0],   AES_SBOX[s[5]] ^ rk[1],   AES_SBOX[s[10]] ^ rk[2],  AES_SBOX[s[15]] ^ rk[3],
-        AES_SBOX[s[4]] ^ rk[4],   AES_SBOX[s[9]] ^ rk[5],   AES_SBOX[s[14]] ^ rk[6],  AES_SBOX[s[3]] ^ rk[7],
-        AES_SBOX[s[8]] ^ rk[8],   AES_SBOX[s[13]] ^ rk[9],  AES_SBOX[s[2]] ^ rk[10],  AES_SBOX[s[7]] ^ rk[11],
-        AES_SBOX[s[12]] ^ rk[12], AES_SBOX[s[1]] ^ rk[13],  AES_SBOX[s[6]] ^ rk[14],  AES_SBOX[s[11]] ^ rk[15],
-    ))
+    b0, b1, b2, b3 = struct.unpack(">4I", block)
+    e0, e1, e2, e3 = _aes_encrypt_words(b0, b1, b2, b3, _round_keys_to_words(round_keys))
+    return struct.pack(">4I", e0, e1, e2, e3)
 
 
 def aes_decrypt_block(block: bytes, round_keys: list[list[int]]) -> bytes:
-    nr = len(round_keys) - 1
-    s = [block[i] ^ round_keys[nr][i] for i in range(16)]
-    for r in range(nr - 1, 0, -1):
-        u = [
-            AES_INV_SBOX[s[0]],  AES_INV_SBOX[s[13]], AES_INV_SBOX[s[10]], AES_INV_SBOX[s[7]],
-            AES_INV_SBOX[s[4]],  AES_INV_SBOX[s[1]],  AES_INV_SBOX[s[14]], AES_INV_SBOX[s[11]],
-            AES_INV_SBOX[s[8]],  AES_INV_SBOX[s[5]],  AES_INV_SBOX[s[2]],  AES_INV_SBOX[s[15]],
-            AES_INV_SBOX[s[12]], AES_INV_SBOX[s[9]],  AES_INV_SBOX[s[6]],  AES_INV_SBOX[s[3]],
-        ]
-        rk = round_keys[r]
-        for c in range(4):
-            i = 4 * c
-            a0 = u[i] ^ rk[i]
-            a1 = u[i + 1] ^ rk[i + 1]
-            a2 = u[i + 2] ^ rk[i + 2]
-            a3 = u[i + 3] ^ rk[i + 3]
-            s[i] = _gf_mul(a0, 0x0E) ^ _gf_mul(a1, 0x0B) ^ _gf_mul(a2, 0x0D) ^ _gf_mul(a3, 0x09)
-            s[i + 1] = _gf_mul(a0, 0x09) ^ _gf_mul(a1, 0x0E) ^ _gf_mul(a2, 0x0B) ^ _gf_mul(a3, 0x0D)
-            s[i + 2] = _gf_mul(a0, 0x0D) ^ _gf_mul(a1, 0x09) ^ _gf_mul(a2, 0x0E) ^ _gf_mul(a3, 0x0B)
-            s[i + 3] = _gf_mul(a0, 0x0B) ^ _gf_mul(a1, 0x0D) ^ _gf_mul(a2, 0x09) ^ _gf_mul(a3, 0x0E)
-    rk = round_keys[0]
-    return bytes((
-        AES_INV_SBOX[s[0]] ^ rk[0],   AES_INV_SBOX[s[13]] ^ rk[1],  AES_INV_SBOX[s[10]] ^ rk[2],  AES_INV_SBOX[s[7]] ^ rk[3],
-        AES_INV_SBOX[s[4]] ^ rk[4],   AES_INV_SBOX[s[1]] ^ rk[5],   AES_INV_SBOX[s[14]] ^ rk[6],  AES_INV_SBOX[s[11]] ^ rk[7],
-        AES_INV_SBOX[s[8]] ^ rk[8],   AES_INV_SBOX[s[5]] ^ rk[9],   AES_INV_SBOX[s[2]] ^ rk[10],  AES_INV_SBOX[s[15]] ^ rk[11],
-        AES_INV_SBOX[s[12]] ^ rk[12], AES_INV_SBOX[s[9]] ^ rk[13],  AES_INV_SBOX[s[6]] ^ rk[14],  AES_INV_SBOX[s[3]] ^ rk[15],
-    ))
+    b0, b1, b2, b3 = struct.unpack(">4I", block)
+    d0, d1, d2, d3 = _aes_decrypt_words(b0, b1, b2, b3, _round_keys_to_words(round_keys))
+    return struct.pack(">4I", d0, d1, d2, d3)
 
 
 def aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes, pad: bool = True) -> bytes:
     if pad:
         pad_len = 16 - (len(data) % 16)
         data = data + bytes([pad_len] * pad_len)
-    rks = aes_expand_key(key)
-    prev = iv
-    out = bytearray()
-    for off in range(0, len(data), 16):
-        blk = bytes(data[off + i] ^ prev[i] for i in range(16))
-        enc = aes_encrypt_block(blk, rks)
-        out.extend(enc)
-        prev = enc
-    return bytes(out)
+    if not data:
+        return b""
+    rkw = _aes_expand_key_words(key)
+    p0, p1, p2, p3 = struct.unpack(">4I", iv)
+    n_words = len(data) // 4
+    in_words = struct.unpack(f">{n_words}I", data)
+    out_words: list[int] = [0] * n_words
+    te0, te1, te2, te3, sbox = _AES_TE0, _AES_TE1, _AES_TE2, _AES_TE3, AES_SBOX
+    last = len(rkw) - 4
+    rk0, rk1, rk2, rk3 = rkw[0], rkw[1], rkw[2], rkw[3]
+    rkl0, rkl1, rkl2, rkl3 = rkw[last], rkw[last + 1], rkw[last + 2], rkw[last + 3]
+    for off in range(0, n_words, 4):
+        s0 = in_words[off] ^ p0 ^ rk0
+        s1 = in_words[off + 1] ^ p1 ^ rk1
+        s2 = in_words[off + 2] ^ p2 ^ rk2
+        s3 = in_words[off + 3] ^ p3 ^ rk3
+        for r in range(4, last, 4):
+            t0 = te0[s0 >> 24] ^ te1[(s1 >> 16) & 0xFF] ^ te2[(s2 >> 8) & 0xFF] ^ te3[s3 & 0xFF] ^ rkw[r]
+            t1 = te0[s1 >> 24] ^ te1[(s2 >> 16) & 0xFF] ^ te2[(s3 >> 8) & 0xFF] ^ te3[s0 & 0xFF] ^ rkw[r + 1]
+            t2 = te0[s2 >> 24] ^ te1[(s3 >> 16) & 0xFF] ^ te2[(s0 >> 8) & 0xFF] ^ te3[s1 & 0xFF] ^ rkw[r + 2]
+            t3 = te0[s3 >> 24] ^ te1[(s0 >> 16) & 0xFF] ^ te2[(s1 >> 8) & 0xFF] ^ te3[s2 & 0xFF] ^ rkw[r + 3]
+            s0, s1, s2, s3 = t0, t1, t2, t3
+        p0 = ((sbox[s0 >> 24] << 24) | (sbox[(s1 >> 16) & 0xFF] << 16) | (sbox[(s2 >> 8) & 0xFF] << 8) | sbox[s3 & 0xFF]) ^ rkl0
+        p1 = ((sbox[s1 >> 24] << 24) | (sbox[(s2 >> 16) & 0xFF] << 16) | (sbox[(s3 >> 8) & 0xFF] << 8) | sbox[s0 & 0xFF]) ^ rkl1
+        p2 = ((sbox[s2 >> 24] << 24) | (sbox[(s3 >> 16) & 0xFF] << 16) | (sbox[(s0 >> 8) & 0xFF] << 8) | sbox[s1 & 0xFF]) ^ rkl2
+        p3 = ((sbox[s3 >> 24] << 24) | (sbox[(s0 >> 16) & 0xFF] << 16) | (sbox[(s1 >> 8) & 0xFF] << 8) | sbox[s2 & 0xFF]) ^ rkl3
+        out_words[off] = p0
+        out_words[off + 1] = p1
+        out_words[off + 2] = p2
+        out_words[off + 3] = p3
+    return struct.pack(f">{n_words}I", *out_words)
 
 
 def aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes, unpad: bool = True) -> bytes:
     if len(ciphertext) == 0 or len(ciphertext) % 16 != 0:
         raise ValueError(f"invalid AES-CBC ciphertext length {len(ciphertext)}")
-    rks = aes_expand_key(key)
-    prev = iv
-    out = bytearray()
-    for off in range(0, len(ciphertext), 16):
-        cblk = ciphertext[off : off + 16]
-        dblk = aes_decrypt_block(cblk, rks)
-        out.extend(dblk[i] ^ prev[i] for i in range(16))
-        prev = cblk
-    raw = bytes(out)
+    rkw = _aes_expand_key_words(key)
+    p0, p1, p2, p3 = struct.unpack(">4I", iv)
+    n_words = len(ciphertext) // 4
+    in_words = struct.unpack(f">{n_words}I", ciphertext)
+    out_words: list[int] = [0] * n_words
+    for off in range(0, n_words, 4):
+        c0, c1, c2, c3 = in_words[off], in_words[off + 1], in_words[off + 2], in_words[off + 3]
+        d0, d1, d2, d3 = _aes_decrypt_words(c0, c1, c2, c3, rkw)
+        out_words[off] = d0 ^ p0
+        out_words[off + 1] = d1 ^ p1
+        out_words[off + 2] = d2 ^ p2
+        out_words[off + 3] = d3 ^ p3
+        p0, p1, p2, p3 = c0, c1, c2, c3
+    raw = struct.pack(f">{n_words}I", *out_words)
     if unpad:
         pad_len = raw[-1]
         if not (1 <= pad_len <= 16) or raw[-pad_len:] != bytes([pad_len] * pad_len):
@@ -2150,6 +2211,7 @@ def pdf_r34_object_key(file_key: bytes, obj_num: int, gen_num: int, is_aes: bool
     return hashlib.md5(file_key + ext).digest()[:16]
 
 
+@functools.lru_cache(maxsize=256)
 def pdf_r6_hash_2b(pw: bytes, salt: bytes, user_key: bytes = b"") -> bytes:
     """ISO 32000-2 section 7.6.4.3.4 Algorithm 2.B (64+ round iterative hash)."""
     pw = pw[:127]
@@ -2500,16 +2562,8 @@ def build_broken_deep_nested_array_70() -> bytes:
     return pdf.build(root_obj=1)
 
 
-def build_broken_deflate_bomb_10kb() -> bytes:
-    """Build a ~10 KB PDF whose stream expands to 272 MB (> 256 MB cap) of zeros.
-
-    RFC 1951 caps a single-pass deflate back-reference at 258 bytes per 2 bits
-    (1032:1 maximum ratio, so 256 MB requires >= 254 KB in one pass). Using a
-    standard PDF 2-stage [/FlateDecode /FlateDecode] stream compresses 272 MB
-    into a ~9.6 KB stream (total file size ~10.2 KB), where pass 1 yields the
-    277 KB single-pass deflate stream and pass 2 expands to 272 MB inside FlateDecode.
-    """
-    rel = "broken/deflate-bomb-10kb.pdf"
+@functools.lru_cache(maxsize=1)
+def _deflate_bomb_outer_payload() -> bytes:
     c1 = zlib.compressobj(level=9, method=zlib.DEFLATED, wbits=15)
     chunk_16mb = b"\x00" * (16 * 1024 * 1024)
     inner_parts = [c1.compress(chunk_16mb) for _ in range(17)]  # 17 * 16 MB = 272 MB
@@ -2523,7 +2577,20 @@ def build_broken_deflate_bomb_10kb() -> bytes:
         for i in range(0, len(inner_deflate), step)
     ]
     outer_parts.append(c2.flush())
-    outer_deflate = b"".join(outer_parts)
+    return b"".join(outer_parts)
+
+
+def build_broken_deflate_bomb_10kb() -> bytes:
+    """Build a ~10 KB PDF whose stream expands to 272 MB (> 256 MB cap) of zeros.
+
+    RFC 1951 caps a single-pass deflate back-reference at 258 bytes per 2 bits
+    (1032:1 maximum ratio, so 256 MB requires >= 254 KB in one pass). Using a
+    standard PDF 2-stage [/FlateDecode /FlateDecode] stream compresses 272 MB
+    into a ~9.6 KB stream (total file size ~10.2 KB), where pass 1 yields the
+    277 KB single-pass deflate stream and pass 2 expands to 272 MB inside FlateDecode.
+    """
+    rel = "broken/deflate-bomb-10kb.pdf"
+    outer_deflate = _deflate_bomb_outer_payload()
 
     pdf = ClassicPdfBuilder(rel, "1.7")
     pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
@@ -5418,8 +5485,15 @@ def build_flate_image_rows() -> bytes:
 def build_flate_collisions() -> bytes:
     """256 KiB over a three-symbol alphabet: all 27 three-byte strings recur everywhere, so every hash chain is long
     and most matches are short, the compressor's worst case for search work."""
-    rng = Xorshift32(0xC0111)
-    return bytes(b"01 "[rng.below(3)] for _ in range(FLATE_COLLISION_BYTES))
+    x = 0xC0111
+    alphabet = b"01 "
+    out = bytearray(FLATE_COLLISION_BYTES)
+    for i in range(FLATE_COLLISION_BYTES):
+        x ^= (x << 13) & 0xFFFFFFFF
+        x ^= x >> 17
+        x ^= (x << 5) & 0xFFFFFFFF
+        out[i] = alphabet[x % 3]
+    return bytes(out)
 
 
 def build_flate_reference_sizes(files: dict[str, bytes]) -> bytes:
@@ -5869,9 +5943,8 @@ def build_provenance_markdown(files: dict[str, bytes] | None = None,
 
 def generate_corpus(corpus_root: Path = CORPUS_ROOT) -> dict[str, str]:
     """Generate all corpus files and PROVENANCE.md atomically and return {rel_path: sha256_hex}."""
-    files = expected_corpus_files()
-    # The user-report rows are carried forward, and only for files that are present and unchanged: regenerating never
-    # drops a recorded reproduction, and never records one that is missing or altered.
+    # Validate user-report rows and their on-disk digests before building the generated fixtures, so malformed
+    # PROVENANCE.md rows or altered user-report files fail immediately without spending seconds building fixtures.
     user_rows = user_report_rows(corpus_root)
     for rel_path, (digest, _, _) in user_rows.items():
         try:
@@ -5880,6 +5953,7 @@ def generate_corpus(corpus_root: Path = CORPUS_ROOT) -> dict[str, str]:
             raise ValueError(f"user-report file listed in PROVENANCE.md cannot be read: {rel_path}: {exc}") from exc
         if actual != digest:
             raise ValueError(f"user-report file {rel_path} does not match its PROVENANCE.md SHA-256")
+    files = expected_corpus_files()
     hashes: dict[str, str] = {}
     for rel_path, data in sorted(files.items()):
         dest = corpus_root / rel_path

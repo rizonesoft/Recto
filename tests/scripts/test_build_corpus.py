@@ -25,6 +25,7 @@ class BuildCorpusTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.mod = load_build_corpus()
+        cls.files = cls.mod.expected_corpus_files()
 
     def test_deterministic_double_generation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
@@ -132,7 +133,7 @@ class BuildCorpusTests(unittest.TestCase):
                 "test.pdf", b"BT 72 730 Td (A) Tj 180 680 Td (OffPage) Tj ET"
             )
 
-        files = self.mod.expected_corpus_files()
+        files = self.files
         self.assertIn(b"/DR << /Font << /F1 5 0 R /ZaDb 10 0 R >> >>", files["convert/tables-and-forms.pdf"])
         self.assertIn(b"/AP << /N << /Yes 12 0 R /Off 13 0 R >> >>", files["convert/tables-and-forms.pdf"])
         self.assertIn(b"/W [1 2 2]", files["render/compressed-xref-2p.pdf"])
@@ -432,7 +433,7 @@ class BuildCorpusTests(unittest.TestCase):
         self.assertEqual(calls, [False])  # one earlier revision, validated once, without recursing again
 
     def test_encryption_is_read_from_what_the_trailer_names(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         aes = files["render/encrypted-aes-128.pdf"]
         self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes)
         for old, new in ((b"/Encrypt 7 0 R", b"/Encrypt 6 0 R"), (b"/CFM /AESV2", b"/CFM /V2   "),
@@ -443,7 +444,7 @@ class BuildCorpusTests(unittest.TestCase):
                 self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes.replace(old, new, 1))
 
     def test_rc4_and_aes_256_declare_the_key_they_derive(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         rc4, aes256 = files["render/encrypted-rc4-128.pdf"], files["render/encrypted-aes-256.pdf"]
         for name, data, old, new, says in (
                 ("render/encrypted-rc4-128.pdf", rc4, b"/Length 128", b"/Length 040", "/Length 040"),
@@ -456,7 +457,7 @@ class BuildCorpusTests(unittest.TestCase):
 
     def test_the_objects_around_the_encryption_have_one_form(self) -> None:
         name = "render/encrypted-rc4-128.pdf"
-        data = self.mod.expected_corpus_files()[name]
+        data = self.files[name]
         for old, new, says in ((b"/FlateDecode", b"/DCTDecode  ", "/Filter /FlateDecode"),
                                (b"/Type /Catalog", b"/Type /INVALID", "object 1"),
                                (b"/BaseFont /Helvetica", b"/BaseFont /Courier  ", "object 5")):
@@ -465,7 +466,7 @@ class BuildCorpusTests(unittest.TestCase):
                 self.mod.validate_encrypted_pdf_structure(name, data.replace(old, new, 1))
 
     def test_encrypted_strings_and_the_promised_revision_are_proved(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         aes256 = files["render/encrypted-aes-256.pdf"]
         start = aes256.index(b"/Title <") + 8
         end = aes256.index(b">", start)
@@ -478,7 +479,7 @@ class BuildCorpusTests(unittest.TestCase):
 
     def test_the_recoverable_fixture_is_the_one_page_document_exactly(self) -> None:
         name = "broken/corrupt-xref-recoverable.pdf"
-        data = self.mod.expected_corpus_files()[name]
+        data = self.files[name]
         self.mod.validate_broken_pdf_structure(name, data)
         for old, new, says in ((b"<< /Type /Catalog /Pages 2 0 R >>", b"null", "object 1"),
                                (b"/Info 6 0 R", b"/Info 5 0 R", "the tail")):
@@ -488,7 +489,7 @@ class BuildCorpusTests(unittest.TestCase):
 
     def test_encrypted_fixtures_get_the_full_cross_reference_checks(self) -> None:
         name = "render/encrypted-rc4-128.pdf"
-        data = self.mod.expected_corpus_files()[name]
+        data = self.files[name]
         xref = data.rindex(b"xref\n0 8\n") + len(b"xref\n0 8\n")
         entry_1 = xref + 20  # the second 20-byte entry: object 1, the catalog
         freed = data[:entry_1] + b"0000000000 65535 f \n" + data[entry_1 + 20 :]
@@ -515,7 +516,7 @@ class BuildCorpusTests(unittest.TestCase):
 
     def test_the_recoverable_fixture_starts_with_its_exact_header(self) -> None:
         name = "broken/corrupt-xref-recoverable.pdf"
-        data = self.mod.expected_corpus_files()[name]
+        data = self.files[name]
         for old, new, says in ((b"%PDF-1.7", b"NOTAPDF!", "exact %PDF-1.7 header"),
                                (b"endobj\n2 0 obj", b"endobj\n\n2 0 obj", "")):
             self.assertIn(old, data)
@@ -544,13 +545,13 @@ class BuildCorpusTests(unittest.TestCase):
         for name, build, num, old, new in cases:
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"object {num}"):
                 self.mod.validate_broken_pdf_structure(name, regenerate(build, num, old, new))
-        truncated = self.mod.expected_corpus_files()["broken/truncated-stream.pdf"]
+        truncated = self.files["broken/truncated-stream.pdf"]
         with self.assertRaisesRegex(ValueError, "truncated-stream"):
             self.mod.validate_broken_pdf_structure("broken/truncated-stream.pdf",
                                                    truncated.replace(b"/Length 512", b"/Length 999", 1))
 
     def test_each_seed_proves_its_own_construct(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         seeds = sorted(k for k in files if k.startswith("seeds/") and k.endswith(".pdf"))
         self.assertEqual(len(seeds), 6)
         for name in seeds:
@@ -665,7 +666,7 @@ class BuildCorpusTests(unittest.TestCase):
                 self.mod.validate_encrypted_pdf_structure(name, data)
 
     def test_each_encrypted_fixture_declares_the_version_its_revision_needs(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         for name, old, new in (("render/encrypted-aes-256.pdf", b"%PDF-2.0", b"%PDF-1.7"),
                                ("render/encrypted-rc4-128.pdf", b"%PDF-1.7", b"%PDF-2.0")):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "header"):
@@ -1005,7 +1006,7 @@ class BuildCorpusTests(unittest.TestCase):
     def test_fixture_descriptions_claim_only_what_the_fixtures_hold(self) -> None:
         import io
         import zipfile
-        files = self.mod.expected_corpus_files()
+        files = self.files
         purposes = {k: v.lower() for k, v in self.mod.CORPUS_PURPOSES.items()}
         rotated = files["render/rotated-pages.pdf"]
         for box in ("bleed", "trim", "art"):
@@ -1022,7 +1023,7 @@ class BuildCorpusTests(unittest.TestCase):
             self.assertNotIn("formula", purposes["convert/sample.xlsx"])
 
     def test_encrypted_broken_seeds_and_readme(self) -> None:
-        files = self.mod.expected_corpus_files()
+        files = self.files
         for enc_name in (
             "render/encrypted-rc4-128.pdf",
             "render/encrypted-aes-128.pdf",
@@ -1077,6 +1078,30 @@ class BuildCorpusTests(unittest.TestCase):
         for rel_path in files:
             self.assertIn(f"| {rel_path} | ", provenance)
             self.assertIn(" | CC0-1.0 | scripts/build-corpus.py | ", provenance)
+
+    def test_aes_fips_vectors_and_r6_budget(self) -> None:
+        import time
+        # FIPS-197 Appendix B & C.1 / C.3 test vectors for AES-128 and AES-256 block encrypt/decrypt.
+        pt = bytes.fromhex("00112233445566778899aabbccddeeff")
+        for key_hex, ct_hex in (
+            ("000102030405060708090a0b0c0d0e0f", "69c4e0d86a7b0430d8cdb78070b4c55a"),
+            ("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+             "8ea2b7ca516745bfeafc49904b496089"),
+        ):
+            key = bytes.fromhex(key_hex)
+            expected_ct = bytes.fromhex(ct_hex)
+            rks = self.mod.aes_expand_key(key)
+            self.assertEqual(self.mod.aes_encrypt_block(pt, rks), expected_ct)
+            self.assertEqual(self.mod.aes_decrypt_block(expected_ct, rks), pt)
+            iv = bytes(range(16))
+            for n in (0, 1, 15, 16, 17, 64):
+                msg = bytes((i * 13 + 5) & 0xFF for i in range(n))
+                enc = self.mod.aes_cbc_encrypt(key, iv, msg, pad=True)
+                self.assertEqual(self.mod.aes_cbc_decrypt(key, iv, enc, unpad=True), msg)
+        t0 = time.perf_counter()
+        aes256 = self.mod.build_encrypted_aes_256()
+        self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-256.pdf", aes256)
+        self.assertLess(time.perf_counter() - t0, 5.0)
 
 
 if __name__ == "__main__":
