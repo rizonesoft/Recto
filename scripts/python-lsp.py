@@ -778,6 +778,8 @@ class StdlibPythonLsp:
         cls_path: Path,
         cls_node: ast.ClassDef,
         visited: set[tuple[Path, int, int, str]] | None = None,
+        memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] | None = None,
+        cycle_box: list[bool] | None = None,
     ) -> list[tuple[Path, ast.ClassDef]]:
         cls_path = cls_path.resolve()
         tree = self._parse_file(cls_path)
@@ -785,6 +787,7 @@ class StdlibPythonLsp:
             return []
         path_consts, str_consts = self._collect_module_consts(tree, cls_path)
         out: list[tuple[Path, ast.ClassDef]] = []
+        out_keys: set[tuple[Path, int, int, str]] = set()
         for base_expr in cls_node.bases:
             dotted = self._expr_to_dotted_name(base_expr)
             if not dotted:
@@ -801,59 +804,106 @@ class StdlibPythonLsp:
                 str_consts,
                 cursor_pos=(b_line1, b_col),
                 visited=visited,
+                memo=memo,
+                cycle_box=cycle_box,
             )
-            if resolved is not None and all(
-                self._cls_key(p, n) != self._cls_key(resolved[0], resolved[1]) for p, n in out
-            ):
-                out.append((resolved[0].resolve(), resolved[1]))
+            if resolved is not None:
+                res_pair = (resolved[0].resolve(), resolved[1])
+                res_key = self._cls_key(res_pair[0], res_pair[1])
+                if res_key not in out_keys:
+                    out_keys.add(res_key)
+                    out.append(res_pair)
         return out
+
+    def _class_mro_inner(
+        self,
+        cls_path: Path,
+        cls_node: ast.ClassDef,
+        active: set[tuple[Path, int, int, str]],
+        memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]],
+    ) -> tuple[list[tuple[Path, ast.ClassDef]], bool]:
+        resolved_path = cls_path.resolve()
+        key = self._cls_key(resolved_path, cls_node)
+        if key in active:
+            return [], True
+        cached = memo.get(key)
+        if cached is not None:
+            return list(cached), False
+
+        next_active = {*active, key}
+        cycle_box = [False]
+        raw_bases = self._resolve_class_bases(
+            resolved_path,
+            cls_node,
+            visited=next_active,
+            memo=memo,
+            cycle_box=cycle_box,
+        )
+        hit_cycle = cycle_box[0]
+        bases: list[tuple[Path, ast.ClassDef]] = []
+        for bp, bn in raw_bases:
+            if self._cls_key(bp, bn) in next_active:
+                hit_cycle = True
+            else:
+                bases.append((bp, bn))
+
+        if not bases:
+            single = [(resolved_path, cls_node)]
+            if not hit_cycle:
+                memo[key] = single
+            return list(single), hit_cycle
+
+        keyed_seqs: list[list[tuple[tuple[Path, ast.ClassDef], tuple[Path, int, int, str]]]] = []
+        for bp, bn in bases:
+            sub_mro, sub_cycle = self._class_mro_inner(bp, bn, next_active, memo)
+            hit_cycle = hit_cycle or sub_cycle
+            if sub_mro:
+                keyed_seqs.append([(item, self._cls_key(item[0], item[1])) for item in sub_mro])
+        base_seq = [((bp.resolve(), bn), self._cls_key(bp, bn)) for bp, bn in bases]
+        if base_seq:
+            keyed_seqs.append(base_seq)
+
+        mro: list[tuple[Path, ast.ClassDef]] = [(resolved_path, cls_node)]
+        seen_mro: set[tuple[Path, int, int, str]] = {key}
+        while keyed_seqs:
+            tail_keys = {k for seq in keyed_seqs for _, k in seq[1:]}
+            chosen_pair: tuple[tuple[Path, ast.ClassDef], tuple[Path, int, int, str]] | None = None
+            for seq in keyed_seqs:
+                cand, cand_k = seq[0]
+                if cand_k not in tail_keys:
+                    chosen_pair = (cand, cand_k)
+                    break
+            if chosen_pair is None:
+                chosen_pair = keyed_seqs[0][0]
+            chosen, chosen_k = chosen_pair
+            if chosen_k not in seen_mro:
+                seen_mro.add(chosen_k)
+                mro.append(chosen)
+            next_seqs: list[list[tuple[tuple[Path, ast.ClassDef], tuple[Path, int, int, str]]]] = []
+            for seq in keyed_seqs:
+                filtered = [pair for pair in seq if pair[1] != chosen_k]
+                if filtered:
+                    next_seqs.append(filtered)
+            keyed_seqs = next_seqs
+
+        if not hit_cycle:
+            memo[key] = mro
+        return list(mro), hit_cycle
 
     def _class_mro(
         self,
         cls_path: Path,
         cls_node: ast.ClassDef,
         active: set[tuple[Path, int, int, str]] | None = None,
+        memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] | None = None,
     ) -> list[tuple[Path, ast.ClassDef]]:
-        """Compute cycle-safe Python C3 MRO for `(cls_path, cls_node)` across same-file and imported bases."""
-        active_set = set() if active is None else set(active)
-        key = self._cls_key(cls_path, cls_node)
-        if key in active_set:
-            return []
-        active_set.add(key)
-        bases = [
-            b
-            for b in self._resolve_class_bases(cls_path, cls_node, visited=active_set)
-            if self._cls_key(b[0], b[1]) not in active_set
-        ]
-        if not bases:
-            return [(cls_path.resolve(), cls_node)]
-
-        seqs: list[list[tuple[Path, ast.ClassDef]]] = [
-            self._class_mro(bp, bn, active_set) for bp, bn in bases
-        ]
-        seqs.append([(bp.resolve(), bn) for bp, bn in bases])
-        seqs = [s for s in seqs if s]
-
-        mro: list[tuple[Path, ast.ClassDef]] = [(cls_path.resolve(), cls_node)]
-        while seqs:
-            chosen: tuple[Path, ast.ClassDef] | None = None
-            for seq in seqs:
-                cand = seq[0]
-                cand_k = self._cls_key(cand[0], cand[1])
-                if all(all(self._cls_key(t[0], t[1]) != cand_k for t in other[1:]) for other in seqs):
-                    chosen = cand
-                    break
-            if chosen is None:
-                chosen = seqs[0][0]
-            chosen_k = self._cls_key(chosen[0], chosen[1])
-            if all(self._cls_key(x[0], x[1]) != chosen_k for x in mro):
-                mro.append(chosen)
-            next_seqs: list[list[tuple[Path, ast.ClassDef]]] = []
-            for seq in seqs:
-                filtered = [item for item in seq if self._cls_key(item[0], item[1]) != chosen_k]
-                if filtered:
-                    next_seqs.append(filtered)
-            seqs = next_seqs
+        """Compute cycle-safe, memoized Python C3 MRO for `(cls_path, cls_node)` across same-file and imported bases."""
+        mro, _ = self._class_mro_inner(
+            cls_path,
+            cls_node,
+            set() if active is None else set(active),
+            {} if memo is None else memo,
+        )
         return mro
 
     def _class_member_defs(
@@ -862,11 +912,19 @@ class StdlibPythonLsp:
         cls_node: ast.ClassDef,
         attr: str,
         visited: set[tuple[Path, int, int, str]] | None = None,
+        memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] | None = None,
+        cycle_box: list[bool] | None = None,
     ) -> list[tuple[Path, ast.AST]]:
         seen = set() if visited is None else set(visited)
         if self._cls_key(cls_path, cls_node) in seen:
+            if cycle_box is not None:
+                cycle_box[0] = True
             return []
-        for m_path, m_cls in self._class_mro(cls_path, cls_node, active=seen):
+        shared_memo = {} if memo is None else memo
+        mro, hit_cycle = self._class_mro_inner(cls_path, cls_node, seen, shared_memo)
+        if hit_cycle and cycle_box is not None:
+            cycle_box[0] = True
+        for m_path, m_cls in mro:
             matches = self._direct_class_member_defs(m_path, m_cls, attr)
             if matches:
                 return matches
@@ -1220,6 +1278,8 @@ class StdlibPythonLsp:
         *,
         cursor_pos: tuple[int, int] | None = None,
         visited: set[tuple[Path, int, int, str]] | None = None,
+        memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] | None = None,
+        cycle_box: list[bool] | None = None,
     ) -> tuple[Path, ast.ClassDef] | None:
         parts = cls_expr.split(".")
         if len(parts) == 1:
@@ -1241,7 +1301,9 @@ class StdlibPythonLsp:
             cur_cls: tuple[Path, ast.ClassDef] | None = None
             for seg in parts[1:]:
                 if cur_cls is not None:
-                    sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, visited)
+                    sub_defs = self._class_member_defs(
+                        cur_cls[0], cur_cls[1], seg, visited, memo=memo, cycle_box=cycle_box
+                    )
                     cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
                     if cls_match is None:
                         return None
@@ -1262,7 +1324,9 @@ class StdlibPythonLsp:
         if cls_head is not None:
             cur_cls = cls_head
             for seg in parts[1:]:
-                sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, visited)
+                sub_defs = self._class_member_defs(
+                    cur_cls[0], cur_cls[1], seg, visited, memo=memo, cycle_box=cycle_box
+                )
                 nxt_cls = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
                 if nxt_cls is None:
                     return None
@@ -1270,7 +1334,14 @@ class StdlibPythonLsp:
             return cur_cls
         return None
 
-    def _resolve_defs_at(self, path: Path, line: int, character: int) -> tuple[str, list[tuple[Path, ast.AST]]]:
+    def _resolve_defs_at(
+        self,
+        path: Path,
+        line: int,
+        character: int,
+        *,
+        mro_memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] | None = None,
+    ) -> tuple[str, list[tuple[Path, ast.AST]]]:
         text = self._text(path)
         receiver, ident, is_attr, utf8_col = self._cursor_symbol(text, line, character)
         if not ident:
@@ -1282,6 +1353,7 @@ class StdlibPythonLsp:
         path = path.resolve()
         path_consts, str_consts = self._collect_module_consts(tree, path)
         scopes = self._enclosing_scopes(tree, line + 1, utf8_col)
+        memo = {} if mro_memo is None else mro_memo
 
         if is_attr:
             if receiver is None:
@@ -1289,7 +1361,7 @@ class StdlibPythonLsp:
             if receiver == "super()":
                 for sc in reversed(scopes):
                     if isinstance(sc, ast.ClassDef):
-                        for m_path, m_cls in self._class_mro(path, sc)[1:]:
+                        for m_path, m_cls in self._class_mro(path, sc, memo=memo)[1:]:
                             m_defs = self._direct_class_member_defs(m_path, m_cls, ident)
                             if m_defs:
                                 return ident, m_defs
@@ -1298,7 +1370,7 @@ class StdlibPythonLsp:
             if receiver in ("self", "cls"):
                 for sc in reversed(scopes):
                     if isinstance(sc, ast.ClassDef):
-                        return ident, self._class_member_defs(path, sc, ident, set())
+                        return ident, self._class_member_defs(path, sc, ident, set(), memo=memo)
                 return ident, []
 
             recv_parts = receiver.split(".")
@@ -1315,7 +1387,7 @@ class StdlibPythonLsp:
                 cur_cls: tuple[Path, ast.ClassDef] | None = None
                 for seg in recv_parts[1:]:
                     if cur_cls is not None:
-                        sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, set())
+                        sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, set(), memo=memo)
                         cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
                         if cls_match is None:
                             return ident, []
@@ -1332,17 +1404,19 @@ class StdlibPythonLsp:
                             continue
                         return ident, []
                 if cur_cls is not None:
-                    return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set())
+                    return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set(), memo=memo)
                 return ident, self._top_level_defs_in_module(cur_mod, ident, set())
 
             cls_direct = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
             if cls_direct is not None and len(recv_parts) == 1:
-                return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set())
+                return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set(), memo=memo)
 
             if cls_expr and len(recv_parts) == 1:
-                resolved_cls = self._resolve_class_expr(cls_expr, scopes, path, tree, path_consts, str_consts)
+                resolved_cls = self._resolve_class_expr(
+                    cls_expr, scopes, path, tree, path_consts, str_consts, memo=memo
+                )
                 if resolved_cls is not None:
-                    return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set())
+                    return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set(), memo=memo)
             return ident, []
 
         # Declaration header of a function, method, or class (`def method(self):` inside `class Foo:`).
@@ -1569,7 +1643,8 @@ class StdlibPythonLsp:
     ) -> list[dict]:
         path = path.resolve()
         text = self._text(path)
-        ident, target_defs = self._resolve_defs_at(path, line, character)
+        mro_memo: dict[tuple[Path, int, int, str], list[tuple[Path, ast.ClassDef]]] = {}
+        ident, target_defs = self._resolve_defs_at(path, line, character, mro_memo=mro_memo)
         if not ident:
             return []
         if not target_defs:
@@ -1617,7 +1692,7 @@ class StdlibPythonLsp:
                 row = src_lines[ln0] if ln0 < len(src_lines) else ""
                 u16_start = self._codepoint_col_to_utf16(row, cp_start)
                 u16_end = self._codepoint_col_to_utf16(row, cp_end)
-                _, cand_defs = self._resolve_defs_at(cand_file, ln0, u16_start)
+                _, cand_defs = self._resolve_defs_at(cand_file, ln0, u16_start, mro_memo=mro_memo)
                 cand_keys = {self._def_key(dp, dn) for dp, dn in cand_defs}
                 if not (cand_keys & target_keys):
                     continue

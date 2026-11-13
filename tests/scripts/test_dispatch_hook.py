@@ -1,5 +1,6 @@
 """scripts/dispatch_hook.py: a review runs only through the shell tool's background option (ported from Is It Legit)."""
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -355,6 +356,124 @@ class DispatchHook(unittest.TestCase):
             st = subprocess.run(["git", "-C", str(staged), "status", "--porcelain"],
                                 capture_output=True, text=True, check=True)
             self.assertEqual(st.stdout, "")
+
+            # Allowed GTest binaries (`recto-tests.exe`) are staged into the isolated temp repo so executable-relative
+            # `repo_root()` (`GetModuleFileNameW`) cannot touch live `tests/goldens`, and mutation env vars are stripped.
+            (repo / ".gitignore").write_text("/build/\n", encoding="utf-8")
+            (repo / "Recto.sln").write_text("Microsoft Visual Studio Solution File\n", encoding="utf-8")
+            (repo / "tests" / "recto-tests").mkdir(parents=True, exist_ok=True)
+            (repo / "tests" / "recto-tests" / "stub.txt").write_text("stub\n", encoding="utf-8")
+            golden_ref = repo / "tests" / "goldens" / "rasterizer" / "ref.png"
+            golden_ref.parent.mkdir(parents=True, exist_ok=True)
+            golden_ref.write_text("canonical-golden\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", "add-sln-and-goldens"],
+                           check=True, capture_output=True)
+
+            bin_dir = repo / "build" / "bin" / "x64" / "Debug" / "recto-tests"
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            (bin_dir / "gtest.dll").write_bytes(b"companion-dll")
+            (bin_dir / "recto-tests.pdb").write_bytes(b"debug-symbols")
+            fake_exe = bin_dir / "recto-tests.exe"
+            if os.name == "nt":
+                csc_candidates = [
+                    Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                    / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+                    Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                    / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+                ]
+                csc = next((p for p in csc_candidates if p.is_file()), None)
+                self.assertIsNotNone(csc, "Expected built-in .NET Framework csc.exe on Windows")
+                cs_src = Path(tmp) / "probe_gtest.cs"
+                cs_src.write_text(
+                    "using System;\n"
+                    "using System.IO;\n"
+                    "using System.Reflection;\n"
+                    "class Program {\n"
+                    "    static int Main(string[] args) {\n"
+                    "        string[] banned = {\n"
+                    "            \"RECTO_UPDATE_GOLDENS\", \"RECTO_CORPUS_DIR\", \"GTEST_OUTPUT\",\n"
+                    "            \"XML_OUTPUT_FILE\", \"PYTHONSTARTUP\", \"GIT_DIR\", \"GIT_WORK_TREE\"\n"
+                    "        };\n"
+                    "        foreach (string k in banned) {\n"
+                    "            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(k))) return 11;\n"
+                    "        }\n"
+                    "        string exePath = Assembly.GetExecutingAssembly().Location;\n"
+                    "        string binDir = Path.GetDirectoryName(exePath);\n"
+                    "        if (!File.Exists(Path.Combine(binDir, \"gtest.dll\"))) return 12;\n"
+                    "        if (File.Exists(Path.Combine(binDir, \"recto-tests.pdb\"))) return 13;\n"
+                    "        DirectoryInfo cur = new DirectoryInfo(binDir);\n"
+                    "        while (cur != null) {\n"
+                    "            if (File.Exists(Path.Combine(cur.FullName, \"Recto.sln\")) &&\n"
+                    "                Directory.Exists(Path.Combine(cur.FullName, \"tests\", \"recto-tests\"))) {\n"
+                    "                File.WriteAllText(Path.Combine(cur.FullName, \"AGENTS.md\"), \"clobbered\");\n"
+                    "                File.WriteAllText(\n"
+                    "                    Path.Combine(cur.FullName, \"tests\", \"goldens\", \"rasterizer\", \"ref.png\"),\n"
+                    "                    \"clobbered-golden\"\n"
+                    "                );\n"
+                    "                return 0;\n"
+                    "            }\n"
+                    "            cur = cur.Parent;\n"
+                    "        }\n"
+                    "        return 14;\n"
+                    "    }\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                subprocess.run(
+                    [str(csc), "/nologo", "/target:exe", f"/out:{fake_exe}", str(cs_src)],
+                    check=True, capture_output=True, text=True, timeout=30,
+                )
+            else:
+                fake_exe.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import os, pathlib, sys\n"
+                    "for k in ('RECTO_UPDATE_GOLDENS', 'RECTO_CORPUS_DIR', 'GTEST_OUTPUT',\n"
+                    "          'XML_OUTPUT_FILE', 'PYTHONSTARTUP', 'GIT_DIR', 'GIT_WORK_TREE'):\n"
+                    "    if os.environ.get(k):\n"
+                    "        sys.exit(11)\n"
+                    "exe_dir = pathlib.Path(__file__).resolve().parent\n"
+                    "if not (exe_dir / 'gtest.dll').is_file():\n"
+                    "    sys.exit(12)\n"
+                    "if (exe_dir / 'recto-tests.pdb').exists():\n"
+                    "    sys.exit(13)\n"
+                    "for parent in [exe_dir, *exe_dir.parents]:\n"
+                    "    if (parent / 'Recto.sln').is_file() and (parent / 'tests' / 'recto-tests').is_dir():\n"
+                    "        (parent / 'AGENTS.md').write_text('clobbered', encoding='utf-8')\n"
+                    "        (parent / 'tests' / 'goldens' / 'rasterizer' / 'ref.png').write_text(\n"
+                    "            'clobbered-golden', encoding='utf-8'\n"
+                    "        )\n"
+                    "        sys.exit(0)\n"
+                    "sys.exit(14)\n",
+                    encoding="utf-8",
+                )
+                fake_exe.chmod(0o755)
+
+            injected_env = {
+                "RECTO_UPDATE_GOLDENS": "1",
+                "RECTO_CORPUS_DIR": str(repo / "tests" / "corpus"),
+                "GTEST_OUTPUT": f"xml:{repo / 'AGENTS.md'}",
+                "XML_OUTPUT_FILE": str(repo / "AGENTS.md"),
+                "PYTHONSTARTUP": str(repo / "evil_startup.py"),
+                "GIT_DIR": str(repo / ".git"),
+                "GIT_WORK_TREE": str(repo),
+            }
+            saved_env = {k: os.environ.get(k) for k in injected_env}
+            try:
+                os.environ.update(injected_env)
+                gtest_rc = hexec.execute_hydrogen_argv(
+                    ["build/bin/x64/Debug/recto-tests/recto-tests.exe", "--gtest_filter=Probe.*"],
+                    root=repo,
+                )
+            finally:
+                for k, old_v in saved_env.items():
+                    if old_v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = old_v
+            self.assertEqual(gtest_rc, 0)
+            self.assertEqual((repo / "AGENTS.md").read_text(encoding="utf-8"), "canonical-agents-rules\n")
+            self.assertEqual(golden_ref.read_text(encoding="utf-8"), "canonical-golden\n")
 
         # Live repo checks: `gen-compile-commands.py --check` sees gitignored `build/compile_commands.json`, and
         # `run-tests.py --quick --list` through `hydrogen_exec.py` matches direct quick selection instead of 38/38.

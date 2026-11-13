@@ -18,6 +18,7 @@ At execution time this module:
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -580,11 +581,76 @@ def build_overwrite_command(tokens: list[str], script_path: Path | None = None) 
     return f"& python '{target}' --payload {payload_hex}"
 
 
+_FORBIDDEN_ENV_KEYS = frozenset({
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_WORK_TREE",
+    "LLVM_PROFILE_FILE",
+    "NODE_OPTIONS",
+    "PYTHONHOME",
+    "PYTHONINSPECT",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "RECTO_CORPUS_DIR",
+    "RECTO_UPDATE_GOLDENS",
+    "TEST_OUTPUT_FILE",
+    "XML_OUTPUT_FILE",
+})
+_FORBIDDEN_ENV_PREFIXES = (
+    "GIT_CONFIG_KEY_",
+    "GIT_CONFIG_VALUE_",
+    "GTEST_",
+    "RECTO_UPDATE_",
+)
+_SKIPPED_GTEST_DEBUG_EXTS = frozenset({
+    ".exp", ".ilk", ".iobj", ".ipdb", ".lastbuildstate", ".lib", ".obj", ".pdb", ".tlog",
+})
+
+
+def _sanitized_hydrogen_env(base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return an environment stripped of mutation, output-redirection, and repo-relocation variables."""
+    src = os.environ if base_env is None else base_env
+    clean: dict[str, str] = {}
+    for key, val in src.items():
+        upper = key.upper()
+        if upper in _FORBIDDEN_ENV_KEYS or upper.startswith(_FORBIDDEN_ENV_PREFIXES):
+            continue
+        clean[key] = val
+    clean["PYTHONDONTWRITEBYTECODE"] = "1"
+    clean["GIT_OPTIONAL_LOCKS"] = "0"
+    return clean
+
+
+def _stage_gtest_binary_dir(exe: Path, staged_exe: Path) -> None:
+    """Copy `exe` and companion runtime files (skipping large debug/import artifacts) into `staged_exe.parent`."""
+    def copy_dir(src_dir: Path, dst_dir: Path) -> None:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for item in src_dir.iterdir():
+            if item.is_symlink():
+                continue
+            if item.is_dir():
+                copy_dir(item, dst_dir / item.name)
+            elif item.is_file() and item.suffix.lower() not in _SKIPPED_GTEST_DEBUG_EXTS:
+                shutil.copy2(item, dst_dir / item.name)
+
+    copy_dir(exe.parent, staged_exe.parent)
+    if not staged_exe.is_file():
+        staged_exe.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(exe, staged_exe)
+
+
 def stage_isolated_repo(root: Path, dest: Path) -> None:
     """Populate `dest` with `root`'s tracked/untracked files and read-only git object alternates."""
+    env = _sanitized_hydrogen_env()
     listed = subprocess.run(
         ["git", "--no-optional-locks", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-        capture_output=True, timeout=60, creationflags=windowless(),
+        capture_output=True, timeout=60, env=env, creationflags=windowless(),
     )
     if listed.returncode != 0:
         raise RuntimeError(f"git ls-files failed: {listed.stderr.decode('utf-8', 'replace').strip()}")
@@ -601,11 +667,11 @@ def stage_isolated_repo(root: Path, dest: Path) -> None:
 
     git_dir_proc = subprocess.run(
         ["git", "--no-optional-locks", "-C", str(root), "rev-parse", "--git-dir"],
-        capture_output=True, text=True, timeout=15, creationflags=windowless(),
+        capture_output=True, text=True, timeout=15, env=env, creationflags=windowless(),
     )
     common = subprocess.run(
         ["git", "--no-optional-locks", "-C", str(root), "rev-parse", "--git-common-dir"],
-        capture_output=True, text=True, timeout=15, creationflags=windowless(),
+        capture_output=True, text=True, timeout=15, env=env, creationflags=windowless(),
     )
     if common.returncode == 0 and common.stdout.strip():
         git_common = (root / common.stdout.strip()).resolve()
@@ -614,7 +680,10 @@ def stage_isolated_repo(root: Path, dest: Path) -> None:
             if git_dir_proc.returncode == 0 and git_dir_proc.stdout.strip()
             else git_common
         )
-        subprocess.run(["git", "-C", str(dest), "init", "-q"], check=True, capture_output=True, creationflags=windowless())
+        subprocess.run(
+            ["git", "-C", str(dest), "init", "-q"],
+            check=True, capture_output=True, env=env, creationflags=windowless(),
+        )
         alt = dest / ".git" / "objects" / "info" / "alternates"
         alt.parent.mkdir(parents=True, exist_ok=True)
         alt.write_text((git_common / "objects").as_posix() + "\n", encoding="utf-8", newline="\n")
@@ -635,7 +704,7 @@ def stage_isolated_repo(root: Path, dest: Path) -> None:
         # Refresh stat cache in `dest/.git/index` so clean copied files are not misreported as modified/deleted.
         subprocess.run(
             ["git", "-c", "core.fsmonitor=false", "-C", str(dest), "update-index", "--refresh", "-q"],
-            capture_output=True, timeout=30, creationflags=windowless(),
+            capture_output=True, timeout=30, env=env, creationflags=windowless(),
         )
 
 
@@ -647,9 +716,7 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
         return 2
 
     root = root.resolve()
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["GIT_OPTIONAL_LOCKS"] = "0"
+    env = _sanitized_hydrogen_env()
 
     prog_norm = tokens[0].replace("\\", "/")
     base = os.path.basename(prog_norm).lower()
@@ -681,8 +748,16 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
             print(f"hydrogen-readonly: missing test executable {rel_bin}", file=sys.stderr)
             return 2
         with tempfile.TemporaryDirectory(prefix="recto-hydrogen-gtest-") as tmp:
+            tmp_path = Path(tmp)
+            stage_isolated_repo(root, tmp_path)
+            staged_exe = tmp_path / rel_bin
+            _stage_gtest_binary_dir(exe, staged_exe)
             return subprocess.run(
-                [str(exe), *tokens[1:]], cwd=tmp, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()
+                [str(staged_exe), *tokens[1:]],
+                cwd=tmp_path,
+                stdin=subprocess.DEVNULL,
+                env=env,
+                creationflags=windowless(),
             ).returncode
 
     # Read-only `--check` gates inspect gitignored `build/compile_commands.json` whose paths match `root`.

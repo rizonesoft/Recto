@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import unittest.mock
 
@@ -547,6 +548,23 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
             ref_uris_lines = {(r["uri"], r["range"]["start"]["line"]) for r in base_refs}
             self.assertIn((base_mod.resolve().as_uri(), 3), ref_uris_lines)
             self.assertIn((inherit_file.resolve().as_uri(), 6), ref_uris_lines)
+
+            # Deep shared-ancestor DAG (`C0..C24` Fibonacci bases) resolves in linear memoized time (< 0.5s).
+            dag_lines = ["class C0:\n    value = 1\n", "class C1(C0):\n    pass\n"]
+            for idx in range(2, 25):
+                dag_lines.append(f"class C{idx}(C{idx - 1}, C{idx - 2}):\n    pass\n")
+            dag_lines.append("_ = C24.value\n")
+            dag_file = pkg / "dag_mro.py"
+            dag_file.write_text("".join(dag_lines), encoding="utf-8")
+            dag_text_lines = dag_file.read_text(encoding="utf-8").splitlines()
+            dag_use_ln = len(dag_text_lines) - 1
+            dag_use_col = dag_text_lines[dag_use_ln].index("value")
+            t0 = time.perf_counter()
+            dag_defs = scoped._definitions(dag_file, dag_use_ln, dag_use_col)
+            dag_elapsed = time.perf_counter() - t0
+            self.assertEqual(len(dag_defs), 1, dag_defs)
+            self.assertEqual(dag_defs[0]["range"]["start"]["line"], 1)
+            self.assertLess(dag_elapsed, 0.5, f"Memoized C3 MRO took {dag_elapsed:.3f}s on 25-deep DAG")
 
             # Also verify live `Dispatch(Harness)` inherited resolution in `scripts/tests/test_review_dispatch.py`.
             live_rd = ROOT / "scripts" / "tests" / "test_review_dispatch.py"
