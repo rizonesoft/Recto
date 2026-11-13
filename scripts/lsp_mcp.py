@@ -514,10 +514,30 @@ class LspMcpServer:
         },
     ]
 
-    def handle_rpc(self, req: dict) -> dict | None:
+    def handle_rpc(self, req: object) -> dict | None:
+        if not isinstance(req, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": {"code": -32600, "message": "invalid request: expected JSON object"},
+            }
+        raw_id = req.get("id")
+        req_id = raw_id if (raw_id is None or (isinstance(raw_id, (str, int, float)) and not isinstance(raw_id, bool))) else None
         method = req.get("method")
-        req_id = req.get("id")
-        params = req.get("params") or {}
+        if not isinstance(method, str) or not method:
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32600, "message": "invalid request: method must be a non-empty string"},
+            }
+        raw_params = req.get("params")
+        if raw_params is not None and not isinstance(raw_params, dict):
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32602, "message": "invalid params: expected JSON object"},
+            }
+        params = raw_params or {}
         if method == "initialize":
             return {
                 "jsonrpc": "2.0",
@@ -558,6 +578,15 @@ class LspMcpServer:
             return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"unknown method: {method}"}}
         return None
 
+    @staticmethod
+    def _write_stdio_reply(reply: dict, *, framed: bool) -> None:
+        encoded = json.dumps(reply).encode("utf-8")
+        if framed:
+            sys.stdout.buffer.write(f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii") + encoded)
+        else:
+            sys.stdout.buffer.write(encoded + b"\n")
+        sys.stdout.buffer.flush()
+
     def serve_stdio(self) -> int:
         """Support both newline-delimited JSON-RPC (MCP 2024-11-05 / 2025-03-26 stdio) and Content-Length framing."""
         try:
@@ -569,28 +598,38 @@ class LspMcpServer:
                 if not stripped:
                     continue
                 if stripped.lower().startswith(b"content-length:"):
-                    length = int(stripped.split(b":", 1)[1].strip())
+                    try:
+                        length = int(stripped.split(b":", 1)[1].strip())
+                    except ValueError:
+                        length = -1
                     while True:
                         hdr = sys.stdin.buffer.readline()
                         if not hdr or hdr in (b"\r\n", b"\n"):
                             break
+                    if length <= 0:
+                        self._write_stdio_reply(
+                            {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "invalid Content-Length"}},
+                            framed=True,
+                        )
+                        continue
                     raw = sys.stdin.buffer.read(length)
+                    if not raw:
+                        break
                     framed = True
                 else:
                     raw = stripped
                     framed = False
                 try:
                     req = json.loads(raw.decode("utf-8"))
-                except ValueError:
+                except (UnicodeDecodeError, ValueError):
+                    self._write_stdio_reply(
+                        {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}},
+                        framed=framed,
+                    )
                     continue
                 reply = self.handle_rpc(req)
                 if reply is not None:
-                    encoded = json.dumps(reply).encode("utf-8")
-                    if framed:
-                        sys.stdout.buffer.write(f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii") + encoded)
-                    else:
-                        sys.stdout.buffer.write(encoded + b"\n")
-                    sys.stdout.buffer.flush()
+                    self._write_stdio_reply(reply, framed=framed)
         finally:
             self.shutdown_all()
         return 0

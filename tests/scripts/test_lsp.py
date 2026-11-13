@@ -178,6 +178,60 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
                 if proc is not None:
                     self.assertIsNotNone(proc.poll())
 
+    def test_builtin_lsp_resolves_receivers_imports_and_lexical_scopes(self):
+        lsp = PYTHON_LSP.StdlibPythonLsp(ROOT)
+        unattended_run = ROOT / "scripts" / "unattended-run.py"
+        unattended_lib = (ROOT / "scripts" / "lib" / "unattended.py").resolve()
+        # `creationflags=lib.windowless()` at 1-based line 114, col 49 (0-based 113, 48).
+        defs = lsp._definitions(unattended_run, 113, 48)
+        self.assertEqual(len(defs), 1, defs)
+        self.assertEqual(defs[0]["uri"], unattended_lib.as_uri())
+        hover = lsp._hover(unattended_run, 113, 48)
+        self.assertIsNotNone(hover)
+        assert hover is not None
+        self.assertIn("def windowless()", hover["contents"]["value"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            pkg = ws / "scripts"
+            pkg.mkdir()
+            (pkg / "noise.py").write_text(
+                'def shared_name() -> str:\n    """Wrong unrelated module."""\n    return "wrong"\n'
+                'def loads(s: str) -> str:\n    return s\n',
+                encoding="utf-8",
+            )
+            mod_a = pkg / "helper_mod.py"
+            mod_a.write_text(
+                'def shared_name() -> int:\n    """Imported target."""\n    return 7\n',
+                encoding="utf-8",
+            )
+            caller = pkg / "caller.py"
+            caller.write_text(
+                "import json\n"
+                "from helper_mod import shared_name\n\n"
+                "def outer() -> int:\n"
+                "    def shared_name() -> int:\n"
+                '        """Inner lexical shadow."""\n'
+                "        return 99\n"
+                "    _ = json.loads('{}')\n"
+                "    return shared_name()\n\n"
+                "TOP = shared_name()\n",
+                encoding="utf-8",
+            )
+            scoped = PYTHON_LSP.StdlibPythonLsp(ws)
+            # Stdlib `json.loads` on 0-based line 7 col 14 must NOT match `noise.py`'s `def loads`.
+            self.assertEqual(scoped._definitions(caller, 7, 14), [])
+            # Inside `outer()`, `shared_name()` on 0-based line 8 col 13 resolves to inner lexical `def shared_name` (line 4).
+            inner_defs = scoped._definitions(caller, 8, 13)
+            self.assertEqual(len(inner_defs), 1)
+            self.assertEqual(inner_defs[0]["uri"], caller.resolve().as_uri())
+            self.assertEqual(inner_defs[0]["range"]["start"]["line"], 4)
+            # At module top-level, `shared_name()` on 0-based line 10 col 8 resolves to `helper_mod.py`, never `noise.py`.
+            top_defs = scoped._definitions(caller, 10, 8)
+            self.assertEqual(len(top_defs), 1)
+            self.assertEqual(top_defs[0]["uri"], mod_a.resolve().as_uri())
+            self.assertEqual(top_defs[0]["range"]["start"]["line"], 0)
+
 
 class LspMcpBridge(unittest.TestCase):
     """scripts/lsp_mcp.py serves MCP JSON-RPC tools over Python and C++23 language servers and cleans up children."""
@@ -231,6 +285,38 @@ class LspMcpBridge(unittest.TestCase):
             srv.shutdown_all()
             if py_proc is not None:
                 self.assertIsNotNone(py_proc.poll())
+
+    def test_mcp_stdio_survives_malformed_json_and_non_dict_requests(self):
+        stdin_payload = (
+            "[]\n"
+            "not-json\n"
+            '{"jsonrpc":"2.0","id":7,"method":"initialize","params":[]}\n'
+            '{"jsonrpc":"2.0","id":8,"method":"ping"}\n'
+        )
+        proc = subprocess.run(
+            [sys.executable, "-B", str(SCRIPTS / "lsp_mcp.py")],
+            input=stdin_payload,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+        self.assertEqual(len(replies), 4, replies)
+        self.assertEqual(replies[0]["error"]["code"], -32600)
+        self.assertEqual(replies[1]["error"]["code"], -32700)
+        self.assertEqual(replies[2]["id"], 7)
+        self.assertEqual(replies[2]["error"]["code"], -32602)
+        self.assertEqual(replies[3], {"jsonrpc": "2.0", "id": 8, "result": {}})
+
+    def test_clangd_lsp_check_is_read_only_when_database_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_root = Path(tmp)
+            (fake_root / "Recto.sln").write_text("", encoding="utf-8")
+            with unittest.mock.patch.object(CLANGD_LSP, "ROOT", fake_root):
+                rc = CLANGD_LSP.main(["--check"])
+            self.assertEqual(rc, 1)
+            self.assertFalse((fake_root / "build" / "compile_commands.json").exists())
 
     def test_diagnostics_for_fails_closed_on_timeout_stale_version_or_server_exit(self):
         fake_server_code = (

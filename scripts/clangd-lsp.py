@@ -134,11 +134,15 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     clangd = find_clangd()
     if args == ["--check"]:
-        db = ensure_compile_commands(ROOT)
+        db = ROOT / "build" / "compile_commands.json"
+        ok_db, db_msg = load_gen().check_database(db, ROOT)
+        if not ok_db:
+            print(f"clangd-lsp: {db_msg}", file=sys.stderr)
+            return 1
         if not clangd:
             print("clangd-lsp: clangd not found on PATH or Visual Studio LLVM", file=sys.stderr)
             return 1
-        print(f"clangd: {clangd}\ncompile_commands: {db}")
+        print(f"clangd: {clangd}\ncompile_commands: {db} ({db_msg})")
         return 0
     if not clangd:
         print("clangd-lsp: clangd not found; install Visual Studio C++ Clang tools or LLVM", file=sys.stderr)

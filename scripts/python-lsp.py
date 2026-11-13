@@ -83,13 +83,22 @@ class StdlibPythonLsp:
             if ":" in decoded:
                 k, v = decoded.split(":", 1)
                 headers[k.strip().lower()] = v.strip()
-        length = int(headers.get("content-length", "0"))
+        try:
+            length = int(headers.get("content-length", "0"))
+        except ValueError:
+            return {"_malformed": "invalid Content-Length"}
         if length <= 0:
-            return None
+            return {"_malformed": "missing Content-Length"}
         body = sys.stdin.buffer.read(length)
         if not body:
             return None
-        return json.loads(body.decode("utf-8"))
+        try:
+            parsed = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return {"_malformed": "parse error"}
+        if not isinstance(parsed, dict):
+            return {"_malformed": "invalid request"}
+        return parsed
 
     def _send(self, payload: dict) -> None:
         raw = json.dumps(payload).encode("utf-8")
@@ -189,29 +198,524 @@ class StdlibPythonLsp:
                 return m.group(0)
         return ""
 
-    def _find_defs(self, ident: str, preferred: Path) -> list[tuple[Path, ast.AST]]:
-        if not ident:
-            return []
-        ordered = [preferred, *(p for p in self._workspace_py_files() if p != preferred)]
-        matches: list[tuple[Path, ast.AST]] = []
-        for p in ordered:
-            try:
-                tree = ast.parse(self._text(p))
-            except SyntaxError:
+    @staticmethod
+    def _cursor_symbol(text: str, line: int, character: int) -> tuple[str | None, str, bool]:
+        """Return `(receiver_chain, ident, is_attribute_access)` at 0-based `(line, character)`."""
+        lines = text.splitlines()
+        if line < 0 or line >= len(lines):
+            return None, "", False
+        row = lines[line]
+        for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", row):
+            if m.start() <= character <= m.end():
+                prefix = row[:m.start()]
+                is_attr = prefix.rstrip().endswith(".")
+                recv_match = re.search(
+                    r"([A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\.\s*$",
+                    prefix,
+                )
+                if recv_match:
+                    return re.sub(r"\s+", "", recv_match.group(1)), m.group(0), True
+                return None, m.group(0), is_attr
+        return None, "", False
+
+    def _parse_file(self, path: Path) -> ast.Module | None:
+        try:
+            return ast.parse(self._text(path), filename=str(path))
+        except SyntaxError:
+            return None
+
+    @staticmethod
+    def _iter_scope_stmts(stmts: list[ast.stmt]) -> list[ast.stmt]:
+        """Flatten control-flow blocks inside a single scope without descending into nested functions or classes."""
+        flat: list[ast.stmt] = []
+        for stmt in stmts:
+            flat.append(stmt)
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == ident:
-                    matches.append((p, node))
-                elif isinstance(node, ast.Assign):
-                    for t in node.targets:
-                        if isinstance(t, ast.Name) and t.id == ident and getattr(t, "col_offset", 1) == 0:
-                            matches.append((p, t))
+            for attr in ("body", "orelse", "finalbody"):
+                sub = getattr(stmt, attr, None)
+                if isinstance(sub, list) and sub and isinstance(sub[0], ast.stmt):
+                    flat.extend(StdlibPythonLsp._iter_scope_stmts(sub))
+            handlers = getattr(stmt, "handlers", None)
+            if isinstance(handlers, list):
+                for h in handlers:
+                    h_body = getattr(h, "body", None)
+                    if isinstance(h_body, list):
+                        flat.extend(StdlibPythonLsp._iter_scope_stmts(h_body))
+            cases = getattr(stmt, "cases", None)
+            if isinstance(cases, list):
+                for c in cases:
+                    c_body = getattr(c, "body", None)
+                    if isinstance(c_body, list):
+                        flat.extend(StdlibPythonLsp._iter_scope_stmts(c_body))
+        return flat
+
+    @staticmethod
+    def _eval_path_expr(
+        expr: ast.AST,
+        current_file: Path,
+        path_consts: dict[str, Path],
+        str_consts: dict[str, str],
+    ) -> tuple[Path | None, bool]:
+        """Evaluate static `Path` expressions (`HERE / 'lib' / 'unattended.py'`, `Path(__file__).parents[2]`, etc.)."""
+        if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+            return Path(expr.value), False
+        if isinstance(expr, ast.Name):
+            if expr.id == "__file__":
+                return current_file.resolve(), True
+            if expr.id in path_consts:
+                return path_consts[expr.id], True
+            if expr.id in str_consts:
+                return Path(str_consts[expr.id]), False
+            return None, False
+        if isinstance(expr, ast.Call):
+            if (
+                (isinstance(expr.func, ast.Name) and expr.func.id == "Path")
+                or (
+                    isinstance(expr.func, ast.Attribute)
+                    and isinstance(expr.func.value, ast.Name)
+                    and expr.func.value.id == "pathlib"
+                    and expr.func.attr == "Path"
+                )
+            ):
+                if expr.args:
+                    sub, _ = StdlibPythonLsp._eval_path_expr(expr.args[0], current_file, path_consts, str_consts)
+                    if sub is not None:
+                        return sub, True
+                return None, False
+            if isinstance(expr.func, ast.Attribute):
+                base, is_p = StdlibPythonLsp._eval_path_expr(expr.func.value, current_file, path_consts, str_consts)
+                if base is not None and is_p:
+                    if expr.func.attr in ("resolve", "absolute", "expanduser"):
+                        return base.resolve(), True
+                    if expr.func.attr == "with_name" and len(expr.args) == 1:
+                        arg_p, _ = StdlibPythonLsp._eval_path_expr(expr.args[0], current_file, path_consts, str_consts)
+                        if arg_p is not None:
+                            return base.with_name(str(arg_p)), True
+                    if expr.func.attr == "with_suffix" and len(expr.args) == 1:
+                        arg_p, _ = StdlibPythonLsp._eval_path_expr(expr.args[0], current_file, path_consts, str_consts)
+                        if arg_p is not None:
+                            return base.with_suffix(str(arg_p)), True
+                    if expr.func.attr == "joinpath":
+                        cur = base
+                        for a in expr.args:
+                            part, _ = StdlibPythonLsp._eval_path_expr(a, current_file, path_consts, str_consts)
+                            if part is None:
+                                return None, False
+                            cur = cur / part
+                        return cur, True
+        if isinstance(expr, ast.Attribute) and expr.attr == "parent":
+            base, is_p = StdlibPythonLsp._eval_path_expr(expr.value, current_file, path_consts, str_consts)
+            if base is not None and is_p:
+                return base.parent, True
+        if (
+            isinstance(expr, ast.Subscript)
+            and isinstance(expr.value, ast.Attribute)
+            and expr.value.attr == "parents"
+            and isinstance(expr.slice, ast.Constant)
+            and isinstance(expr.slice.value, int)
+        ):
+            base, is_p = StdlibPythonLsp._eval_path_expr(expr.value.value, current_file, path_consts, str_consts)
+            idx = expr.slice.value
+            if base is not None and is_p and 0 <= idx < len(base.parents):
+                return base.parents[idx], True
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div):
+            left, lp = StdlibPythonLsp._eval_path_expr(expr.left, current_file, path_consts, str_consts)
+            right, rp = StdlibPythonLsp._eval_path_expr(expr.right, current_file, path_consts, str_consts)
+            if left is not None and right is not None and (lp or rp):
+                return left / right, True
+        return None, False
+
+    @classmethod
+    def _collect_module_consts(cls, tree: ast.Module, current_file: Path) -> tuple[dict[str, Path], dict[str, str]]:
+        path_consts: dict[str, Path] = {}
+        str_consts: dict[str, str] = {}
+        for stmt in cls._iter_scope_stmts(tree.body):
+            target_name: str | None = None
+            val: ast.AST | None = None
+            if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                target_name = stmt.targets[0].id
+                val = stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.value is not None:
+                target_name = stmt.target.id
+                val = stmt.value
+            if target_name and val is not None:
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    str_consts[target_name] = val.value
+                else:
+                    p, is_path = cls._eval_path_expr(val, current_file, path_consts, str_consts)
+                    if p is not None and is_path:
+                        path_consts[target_name] = p
+        return path_consts, str_consts
+
+    def _resolve_module_file(self, mod_name: str, level: int, current_file: Path) -> Path | None:
+        cur_resolved = current_file.resolve()
+        bases: list[Path] = []
+        if level > 0:
+            ancestors = cur_resolved.parents
+            if level - 1 < len(ancestors):
+                bases.append(ancestors[level - 1])
+        else:
+            bases.extend([
+                cur_resolved.parent,
+                self.root.resolve(),
+                (self.root / "scripts").resolve(),
+                (self.root / "scripts" / "lib").resolve(),
+            ])
+        parts = [p for p in mod_name.split(".") if p] if mod_name else []
+        for base in bases:
+            target_base = base.joinpath(*parts) if parts else base
+            py_cand = target_base.with_suffix(".py") if parts else (target_base / "__init__.py")
+            if py_cand.is_file():
+                return py_cand.resolve()
+            pkg_init = target_base / "__init__.py"
+            if pkg_init.is_file():
+                return pkg_init.resolve()
+        return None
+
+    def _resolve_dynamic_module_call(
+        self,
+        call: ast.Call,
+        tree: ast.Module,
+        current_file: Path,
+        path_consts: dict[str, Path],
+        str_consts: dict[str, str],
+    ) -> Path | None:
+        all_args = [*call.args, *(kw.value for kw in call.keywords)]
+        search_bases = [*path_consts.values(), current_file.resolve().parent, self.root.resolve()]
+        for arg in all_args:
+            cand, is_p = self._eval_path_expr(arg, current_file, path_consts, str_consts)
+            if cand is None:
+                continue
+            if cand.is_absolute() and cand.suffix == ".py" and cand.is_file():
+                return cand.resolve()
+            if not cand.is_absolute() and (is_p or cand.suffix == ".py" or "/" in str(cand) or "\\" in str(cand)):
+                for base in search_bases:
+                    joined = (base / cand).resolve()
+                    if joined.suffix == ".py" and joined.is_file():
+                        return joined
+        if isinstance(call.func, ast.Name) and not all_args:
+            for stmt in tree.body:
+                if isinstance(stmt, ast.FunctionDef) and stmt.name == call.func.id:
+                    for sub in ast.walk(stmt):
+                        if isinstance(sub, ast.Call) and sub is not call:
+                            found = self._resolve_dynamic_module_call(sub, tree, current_file, path_consts, str_consts)
+                            if found is not None:
+                                return found
+        return None
+
+    @staticmethod
+    def _enclosing_scopes(tree: ast.Module, line1: int, col: int) -> list[ast.AST]:
+        scopes: list[ast.AST] = [tree]
+
+        def walk_body(stmts: list[ast.stmt]) -> None:
+            for stmt in stmts:
+                if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    s_ln = getattr(stmt, "lineno", 1)
+                    s_col = getattr(stmt, "col_offset", 0)
+                    e_ln = getattr(stmt, "end_lineno", s_ln)
+                    e_col = getattr(stmt, "end_col_offset", s_col)
+                    if (s_ln, s_col) <= (line1, col) <= (e_ln, e_col):
+                        scopes.append(stmt)
+                        walk_body(stmt.body)
+                        return
+                else:
+                    for attr in ("body", "orelse", "finalbody"):
+                        sub = getattr(stmt, attr, None)
+                        if isinstance(sub, list) and sub and isinstance(sub[0], ast.stmt):
+                            walk_body(sub)
+                    handlers = getattr(stmt, "handlers", None)
+                    if isinstance(handlers, list):
+                        for h in handlers:
+                            h_body = getattr(h, "body", None)
+                            if isinstance(h_body, list):
+                                walk_body(h_body)
+
+        walk_body(tree.body)
+        return scopes
+
+    def _top_level_defs_in_module(
+        self, mod_path: Path, name: str, visited: set[Path]
+    ) -> list[tuple[Path, ast.AST]]:
+        mod_path = mod_path.resolve()
+        if mod_path in visited:
+            return []
+        visited = {*visited, mod_path}
+        tree = self._parse_file(mod_path)
+        if tree is None:
+            return []
+        matches: list[tuple[Path, ast.AST]] = []
+        for stmt in self._iter_scope_stmts(tree.body):
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == name:
+                matches.append((mod_path, stmt))
+            elif isinstance(stmt, ast.Assign):
+                for t in stmt.targets:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        matches.append((mod_path, t))
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == name:
+                matches.append((mod_path, stmt.target))
+            elif isinstance(stmt, ast.ImportFrom):
+                for alias in stmt.names:
+                    bound = alias.asname or alias.name
+                    if bound == name and alias.name != "*":
+                        sub = self._resolve_module_file(stmt.module or "", stmt.level or 0, mod_path)
+                        if sub is not None:
+                            matches.extend(self._top_level_defs_in_module(sub, alias.name, visited))
         return matches
 
-    def _hover(self, path: Path, line: int, character: int) -> dict | None:
+    def _class_member_defs(
+        self, cls_path: Path, cls_node: ast.ClassDef, attr: str, visited: set[tuple[Path, str]]
+    ) -> list[tuple[Path, ast.AST]]:
+        key = (cls_path.resolve(), cls_node.name)
+        if key in visited:
+            return []
+        visited = {*visited, key}
+        matches: list[tuple[Path, ast.AST]] = []
+        for stmt in self._iter_scope_stmts(cls_node.body):
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == attr:
+                matches.append((cls_path, stmt))
+            elif isinstance(stmt, ast.Assign):
+                for t in stmt.targets:
+                    if isinstance(t, ast.Name) and t.id == attr:
+                        matches.append((cls_path, t))
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == attr:
+                matches.append((cls_path, stmt.target))
+        if matches:
+            return matches
+        # Check `self.<attr> = ...` assignments inside `__init__`.
+        for stmt in cls_node.body:
+            if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__":
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, ast.Assign):
+                        for t in sub.targets:
+                            if (
+                                isinstance(t, ast.Attribute)
+                                and isinstance(t.value, ast.Name)
+                                and t.value.id == "self"
+                                and t.attr == attr
+                            ):
+                                matches.append((cls_path, t))
+        return matches
+
+    def _lookup_in_scope(
+        self,
+        scope: ast.AST,
+        ident: str,
+        path: Path,
+        tree: ast.Module,
+        path_consts: dict[str, Path],
+        str_consts: dict[str, str],
+    ) -> tuple[list[tuple[Path, ast.AST]], Path | None, bool, str | None]:
+        """Return `(definitions, module_path, is_external_import, constructed_class_expr)` for `ident` in `scope`."""
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            all_args = [
+                *scope.args.posonlyargs,
+                *scope.args.args,
+                *scope.args.kwonlyargs,
+                *([scope.args.vararg] if scope.args.vararg else []),
+                *([scope.args.kwarg] if scope.args.kwarg else []),
+            ]
+            for a in all_args:
+                if a.arg == ident:
+                    ann_cls = ast.unparse(a.annotation) if isinstance(a.annotation, (ast.Name, ast.Attribute)) else None
+                    return [(path, a)], None, False, ann_cls
+
+        body = getattr(scope, "body", None)
+        if not isinstance(body, list):
+            return [], None, False, None
+
+        defs: list[tuple[Path, ast.AST]] = []
+        mod_target: Path | None = None
+        is_ext = False
+        cls_expr: str | None = None
+
+        for stmt in self._iter_scope_stmts(body):
+            if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == ident:
+                defs.append((path, stmt))
+            elif isinstance(stmt, ast.Import):
+                for alias in stmt.names:
+                    bound = alias.asname or alias.name.split(".")[0]
+                    if bound == ident:
+                        mod_qname = alias.name if alias.asname else alias.name.split(".")[0]
+                        mod_file = self._resolve_module_file(mod_qname, 0, path)
+                        if mod_file is not None:
+                            mod_tree = self._parse_file(mod_file)
+                            defs.append((mod_file, mod_tree or stmt))
+                            mod_target = mod_file
+                        else:
+                            defs.append((path, stmt))
+                            is_ext = True
+            elif isinstance(stmt, ast.ImportFrom):
+                for alias in stmt.names:
+                    if alias.name == "*":
+                        star_file = self._resolve_module_file(stmt.module or "", stmt.level or 0, path)
+                        if star_file is not None:
+                            defs.extend(self._top_level_defs_in_module(star_file, ident, set()))
+                        continue
+                    bound = alias.asname or alias.name
+                    if bound == ident:
+                        base_mod = stmt.module or ""
+                        lvl = stmt.level or 0
+                        sub_qname = f"{base_mod}.{alias.name}".lstrip(".") if base_mod else alias.name
+                        sub_file = self._resolve_module_file(sub_qname, lvl, path)
+                        mod_file = self._resolve_module_file(base_mod, lvl, path) if (base_mod or lvl) else None
+                        if mod_file is not None:
+                            sym_defs = self._top_level_defs_in_module(mod_file, alias.name, set())
+                            if sym_defs:
+                                defs.extend(sym_defs)
+                                if sub_file is not None:
+                                    mod_target = sub_file
+                                continue
+                        if sub_file is not None:
+                            sub_tree = self._parse_file(sub_file)
+                            defs.append((sub_file, sub_tree or stmt))
+                            mod_target = sub_file
+                        else:
+                            defs.append((path, stmt))
+                            is_ext = True
+            elif isinstance(stmt, ast.Assign):
+                for t in stmt.targets:
+                    if isinstance(t, ast.Name) and t.id == ident:
+                        defs.append((path, t))
+                        if isinstance(stmt.value, ast.Call):
+                            dyn = self._resolve_dynamic_module_call(stmt.value, tree, path, path_consts, str_consts)
+                            if dyn is not None:
+                                mod_target = dyn
+                            elif isinstance(stmt.value.func, (ast.Name, ast.Attribute)):
+                                cls_expr = ast.unparse(stmt.value.func)
+            elif isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name) and stmt.target.id == ident:
+                defs.append((path, stmt.target))
+                if isinstance(stmt.annotation, (ast.Name, ast.Attribute)):
+                    cls_expr = ast.unparse(stmt.annotation)
+                if isinstance(stmt.value, ast.Call):
+                    dyn = self._resolve_dynamic_module_call(stmt.value, tree, path, path_consts, str_consts)
+                    if dyn is not None:
+                        mod_target = dyn
+
+        return defs, mod_target, is_ext, cls_expr
+
+    def _lexical_scopes_for_lookup(self, scopes: list[ast.AST]) -> list[ast.AST]:
+        """Python LEGB: a `ClassDef` body is only searched for unqualified names when the cursor is directly inside it."""
+        ordered: list[ast.AST] = []
+        for idx in range(len(scopes) - 1, -1, -1):
+            sc = scopes[idx]
+            if isinstance(sc, ast.ClassDef) and idx != len(scopes) - 1:
+                continue
+            ordered.append(sc)
+        return ordered
+
+    def _resolve_class_expr(
+        self,
+        cls_expr: str,
+        scopes: list[ast.AST],
+        path: Path,
+        tree: ast.Module,
+        path_consts: dict[str, Path],
+        str_consts: dict[str, str],
+    ) -> tuple[Path, ast.ClassDef] | None:
+        parts = cls_expr.split(".")
+        if len(parts) == 1:
+            for sc in self._lexical_scopes_for_lookup(scopes):
+                defs, _, _, _ = self._lookup_in_scope(sc, parts[0], path, tree, path_consts, str_consts)
+                for def_path, node in defs:
+                    if isinstance(node, ast.ClassDef):
+                        return def_path, node
+            return None
+        # Dotted class expression such as `LSP_MCP.LspMcpServer`.
+        for sc in self._lexical_scopes_for_lookup(scopes):
+            defs, mod_target, is_ext, _ = self._lookup_in_scope(sc, parts[0], path, tree, path_consts, str_consts)
+            if is_ext:
+                return None
+            if mod_target is not None:
+                cur_mod = mod_target
+                for seg in parts[1:-1]:
+                    nxt = self._resolve_module_file(seg, 0, cur_mod)
+                    if nxt is None:
+                        return None
+                    cur_mod = nxt
+                for def_path, node in self._top_level_defs_in_module(cur_mod, parts[-1], set()):
+                    if isinstance(node, ast.ClassDef):
+                        return def_path, node
+            if defs:
+                break
+        return None
+
+    def _resolve_defs_at(self, path: Path, line: int, character: int) -> tuple[str, list[tuple[Path, ast.AST]]]:
         text = self._text(path)
-        ident = self._word_at(text, line, character)
-        defs = self._find_defs(ident, path)
+        receiver, ident, is_attr = self._cursor_symbol(text, line, character)
+        if not ident:
+            return "", []
+        tree = self._parse_file(path)
+        if tree is None:
+            return ident, []
+
+        path_consts, str_consts = self._collect_module_consts(tree, path)
+        scopes = self._enclosing_scopes(tree, line + 1, character)
+
+        if is_attr:
+            if receiver is None:
+                return ident, []
+            if receiver in ("self", "cls"):
+                for sc in reversed(scopes):
+                    if isinstance(sc, ast.ClassDef):
+                        return ident, self._class_member_defs(path, sc, ident, set())
+                return ident, []
+
+            recv_parts = receiver.split(".")
+            head = recv_parts[0]
+            for sc in self._lexical_scopes_for_lookup(scopes):
+                defs, mod_target, is_ext, cls_expr = self._lookup_in_scope(
+                    sc, head, path, tree, path_consts, str_consts
+                )
+                if not defs and mod_target is None and not is_ext and cls_expr is None:
+                    continue
+                if is_ext:
+                    return ident, []
+                if mod_target is not None:
+                    cur_mod = mod_target
+                    cur_cls: tuple[Path, ast.ClassDef] | None = None
+                    for seg in recv_parts[1:]:
+                        if cur_cls is not None:
+                            sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, set())
+                            cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
+                            if cls_match is None:
+                                return ident, []
+                            cur_cls = cls_match
+                        else:
+                            sym_defs = self._top_level_defs_in_module(cur_mod, seg, set())
+                            cls_match = next(((p, n) for p, n in sym_defs if isinstance(n, ast.ClassDef)), None)
+                            if cls_match is not None:
+                                cur_cls = cls_match
+                                continue
+                            sub_mod = self._resolve_module_file(seg, 0, cur_mod)
+                            if sub_mod is not None:
+                                cur_mod = sub_mod
+                                continue
+                            return ident, []
+                    if cur_cls is not None:
+                        return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set())
+                    return ident, self._top_level_defs_in_module(cur_mod, ident, set())
+
+                # `head` might itself be a local/imported ClassDef (e.g. `StdlibPythonLsp._word_at`).
+                cls_direct = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
+                if cls_direct is not None and len(recv_parts) == 1:
+                    return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set())
+
+                if cls_expr and len(recv_parts) == 1:
+                    resolved_cls = self._resolve_class_expr(cls_expr, scopes, path, tree, path_consts, str_consts)
+                    if resolved_cls is not None:
+                        return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set())
+                return ident, []
+            return ident, []
+
+        for sc in self._lexical_scopes_for_lookup(scopes):
+            defs, _, _, _ = self._lookup_in_scope(sc, ident, path, tree, path_consts, str_consts)
+            if defs:
+                return ident, defs
+        return ident, []
+
+    def _hover(self, path: Path, line: int, character: int) -> dict | None:
+        ident, defs = self._resolve_defs_at(path, line, character)
         if not defs:
             return None
         def_path, node = defs[0]
@@ -224,20 +728,29 @@ class StdlibPythonLsp:
         elif isinstance(node, ast.ClassDef):
             doc = ast.get_docstring(node) or ""
             md = f"```python\nclass {node.name}\n```" + (f"\n\n{doc}" if doc else "")
+        elif isinstance(node, ast.Module):
+            doc = ast.get_docstring(node) or ""
+            md = f"```python\nmodule {def_path.name}\n```" + (f"\n\n{doc}" if doc else "")
         else:
             md = f"```python\n{ident}  # {def_path.name}:{getattr(node, 'lineno', 1)}\n```"
         return {"contents": {"kind": "markdown", "value": md}}
 
     def _definitions(self, path: Path, line: int, character: int) -> list[dict]:
-        ident = self._word_at(self._text(path), line, character)
+        ident, defs = self._resolve_defs_at(path, line, character)
         locs = []
-        for def_path, node in self._find_defs(ident, path):
+        seen: set[tuple[str, int, int]] = set()
+        for def_path, node in defs:
             ln = max(0, getattr(node, "lineno", 1) - 1)
             col = max(0, getattr(node, "col_offset", 0))
+            uri = path_to_uri(def_path)
+            key = (uri, ln, col)
+            if key in seen:
+                continue
+            seen.add(key)
             locs.append({
-                "uri": path_to_uri(def_path),
+                "uri": uri,
                 "range": {"start": {"line": ln, "character": col},
-                          "end": {"line": ln, "character": col + len(ident)}},
+                          "end": {"line": ln, "character": col + max(1, len(ident))}},
             })
         return locs
 
@@ -270,9 +783,17 @@ class StdlibPythonLsp:
             msg = self._read_msg()
             if msg is None:
                 break
+            if "_malformed" in msg:
+                self._send({
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": str(msg["_malformed"])},
+                })
+                continue
             method = msg.get("method")
             msg_id = msg.get("id")
-            params = msg.get("params") or {}
+            raw_params = msg.get("params")
+            params = raw_params if isinstance(raw_params, dict) else {}
             if method == "initialize":
                 root_uri = params.get("rootUri")
                 if root_uri:

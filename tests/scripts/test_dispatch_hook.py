@@ -341,6 +341,41 @@ class DispatchHook(unittest.TestCase):
             self.assertEqual((repo / "AGENTS.md").read_text(encoding="utf-8"), "canonical-agents-rules\n")
             self.assertFalse((repo / "NEW_FILE.txt").exists())
 
+            # Staged isolated repos preserve the clean Git index so `git status --porcelain` is empty on a clean repo.
+            staged = Path(tmp) / "staged-clean"
+            staged.mkdir()
+            hexec.stage_isolated_repo(repo, staged)
+            st = subprocess.run(["git", "-C", str(staged), "status", "--porcelain"],
+                                capture_output=True, text=True, check=True)
+            self.assertEqual(st.stdout, "")
+
+        # Live repo checks: `gen-compile-commands.py --check` sees gitignored `build/compile_commands.json`, and
+        # `run-tests.py --quick --list` through `hydrogen_exec.py` matches direct quick selection instead of 38/38.
+        live_repo = HOOK.parents[1]
+        subprocess.run([sys.executable, str(live_repo / "scripts" / "gen-compile-commands.py")],
+                       check=True, capture_output=True, timeout=30)
+        self.assertEqual(
+            hexec.execute_hydrogen_argv(["python", "scripts/gen-compile-commands.py", "--check"], root=live_repo),
+            0,
+        )
+        direct_quick = subprocess.run(
+            [sys.executable, str(live_repo / "scripts" / "run-tests.py"), "--quick", "--list"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.splitlines()
+        direct_full = subprocess.run(
+            [sys.executable, str(live_repo / "scripts" / "run-tests.py"), "--full", "--list"],
+            capture_output=True, text=True, check=True, timeout=30,
+        ).stdout.splitlines()
+        payload_hex = json.dumps(["python", "scripts/run-tests.py", "--quick", "--list"]).encode("utf-8").hex()
+        via_hydrogen = subprocess.run(
+            [sys.executable, str(HOOK.parent / "hydrogen_exec.py"), "--payload", payload_hex, "--root", str(live_repo)],
+            capture_output=True, text=True, check=True, timeout=60,
+        ).stdout.splitlines()
+        self.assertEqual(via_hydrogen, direct_quick)
+        if not subprocess.run(["git", "-C", str(live_repo), "status", "--porcelain"],
+                              capture_output=True, text=True, check=True).stdout.strip():
+            self.assertLess(len(via_hydrogen), len(direct_full))
+
     def test_mutate_check_runs_in_temp_copy_without_touching_live_tree(self):
         import tempfile
         mutate_script = HOOK.parent / "mutate-check.py"

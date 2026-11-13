@@ -396,23 +396,44 @@ def stage_isolated_repo(root: Path, dest: Path) -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, out)
 
+    git_dir_proc = subprocess.run(
+        ["git", "--no-optional-locks", "-C", str(root), "rev-parse", "--git-dir"],
+        capture_output=True, text=True, timeout=15, creationflags=windowless(),
+    )
     common = subprocess.run(
         ["git", "--no-optional-locks", "-C", str(root), "rev-parse", "--git-common-dir"],
         capture_output=True, text=True, timeout=15, creationflags=windowless(),
     )
     if common.returncode == 0 and common.stdout.strip():
         git_common = (root / common.stdout.strip()).resolve()
+        git_dir = (
+            (root / git_dir_proc.stdout.strip()).resolve()
+            if git_dir_proc.returncode == 0 and git_dir_proc.stdout.strip()
+            else git_common
+        )
         subprocess.run(["git", "-C", str(dest), "init", "-q"], check=True, capture_output=True, creationflags=windowless())
         alt = dest / ".git" / "objects" / "info" / "alternates"
         alt.parent.mkdir(parents=True, exist_ok=True)
-        alt.write_text(str(git_common / "objects") + "\n", encoding="utf-8")
-        for item in ("packed-refs", "HEAD", "config"):
+        alt.write_text((git_common / "objects").as_posix() + "\n", encoding="utf-8", newline="\n")
+        for item in ("packed-refs", "config"):
             src_meta = git_common / item
             if src_meta.is_file():
                 shutil.copy2(src_meta, dest / ".git" / item)
+        for item in ("HEAD", "index"):
+            src_local = git_dir / item
+            if src_local.is_file():
+                shutil.copy2(src_local, dest / ".git" / item)
+        for shared_idx in git_dir.glob("sharedindex.*"):
+            if shared_idx.is_file():
+                shutil.copy2(shared_idx, dest / ".git" / shared_idx.name)
         src_refs = git_common / "refs"
         if src_refs.is_dir():
             shutil.copytree(src_refs, dest / ".git" / "refs", dirs_exist_ok=True)
+        # Refresh stat cache in `dest/.git/index` so clean copied files are not misreported as modified/deleted.
+        subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", str(dest), "update-index", "--refresh", "-q"],
+            capture_output=True, timeout=30, creationflags=windowless(),
+        )
 
 
 def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
@@ -456,7 +477,7 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
                 [str(exe), *tokens[1:]], cwd=tmp, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()
             ).returncode
 
-    # Every Python command executes inside an isolated staged copy outside `root`.
+    # Read-only `--check` gates inspect gitignored `build/compile_commands.json` whose paths match `root`.
     i = 1
     while i < len(tokens) and (tokens[i] in PYTHON_SAFE_FLAGS or re.match(r"^-3(?:\.\d+)?$", tokens[i])):
         i += 1
@@ -464,6 +485,15 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
     target = tokens[i].replace("\\", "/").lstrip("./")
     rest = tokens[i + 1:]
 
+    if tokens[i] != "-m" and target in DASH_CHECK_SCRIPTS and rest == ["--check"]:
+        script_file = (root / target).resolve()
+        if not script_file.is_relative_to(root) or not script_file.is_file():
+            print(f"hydrogen-readonly: missing script {target}", file=sys.stderr)
+            return 2
+        cmd = [sys.executable, "-B", *py_flags, str(script_file), "--check"]
+        return subprocess.run(cmd, cwd=root, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()).returncode
+
+    # Every other Python command executes inside an isolated staged copy outside `root`.
     with tempfile.TemporaryDirectory(prefix="recto-hydrogen-py-") as tmp:
         tmp_path = Path(tmp)
         stage_isolated_repo(root, tmp_path)
