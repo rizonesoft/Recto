@@ -1143,12 +1143,15 @@ def _campaign_command(path: str, hook_file: str, markers: tuple) -> str:
     raise GuardError("holds no campaign Stop command")
 
 
-def _run_wired(command: str, hook_file: str, workspace: str, payload: str, limit: float) -> tuple[int | None, str]:
+def _run_wired(command: str, hook_file: str, workspace: str, payload: str, limit: float,
+               extra_env: dict[str, str] | None = None) -> tuple[int | None, str]:
     """Run one hook command the way its harness does and return (exit, stdout); exit None means it ran past `limit`
     and its whole process tree was ended. Claude Code: Git Bash on Windows (`sh` elsewhere) with CLAUDE_PROJECT_DIR
     set. Antigravity: the system shell (`cmd /c` on Windows) from `.agents/`, no CLAUDE_PROJECT_DIR. Codex: the
     system shell from the project root."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    if extra_env:
+        env.update(extra_env)
     cwd, args, shell = workspace, command, True
     if hook_file.startswith(".claude"):
         env["CLAUDE_PROJECT_DIR"] = workspace
@@ -1213,9 +1216,16 @@ def _self_test(project: str = REPO, limit: float = SELF_TEST_SECONDS,
         lines.append(f"self-test: workspace {workspace}")
         for folder in ("scripts", "build", os.path.dirname(SELF_TEST_RUN_FILE)):
             os.makedirs(os.path.join(workspace, folder))
-        for script in ("campaign_guard.py", "codex-campaign-hook.py"):
+        for script in ("campaign_guard.py", "codex-campaign-hook.py", "run-python.sh"):
             if os.path.isfile(os.path.join(project, "scripts", script)):
                 shutil.copyfile(os.path.join(project, "scripts", script), os.path.join(workspace, "scripts", script))
+        for build_file in ("tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+            if os.path.isfile(os.path.join(project, "build", build_file)):
+                shutil.copyfile(os.path.join(project, "build", build_file), os.path.join(workspace, "build", build_file))
+        self_test_env: dict[str, str] = {}
+        project_tools = os.environ.get("RECTO_TOOLS_DIR") or os.path.join(project, ".tools")
+        if os.path.isdir(project_tools):
+            self_test_env["RECTO_TOOLS_DIR"] = os.path.abspath(project_tools)
         with open(os.path.join(workspace, "scripts", "todo-graph.py"), "w", encoding="utf-8") as fh:
             fh.write("import json\nprint(json.dumps([{'ref': 'D00 T01 \\u00a71', 'title': 'Self-test row', 'phase': 0}]))\n")
         with open(os.path.join(workspace, SELF_TEST_RUN_FILE), "w", encoding="utf-8") as fh:
@@ -1234,8 +1244,12 @@ def _self_test(project: str = REPO, limit: float = SELF_TEST_SECONDS,
             os.makedirs(os.path.dirname(os.path.join(workspace, hook_file)), exist_ok=True)
             shutil.copyfile(source, os.path.join(workspace, hook_file))
             present.append((hook_file, decision, markers))
-        for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
-                     ["config", "commit.gpgsign", "false"], ["add", "-A"], ["commit", "-qm", "self-test"]):
+        git_steps: list[list[str]] = [["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
+                                      ["config", "commit.gpgsign", "false"], ["add", "-A"]]
+        if os.path.isfile(os.path.join(workspace, "scripts", "run-python.sh")):
+            git_steps.append(["update-index", "--chmod=+x", "scripts/run-python.sh"])
+        git_steps.append(["commit", "-qm", "self-test"])
+        for args in git_steps:
             subprocess.run(["git", *args], cwd=workspace, capture_output=True, check=True, timeout=60)
         acquire(workspace, SELF_TEST_SESSION, 0, SELF_TEST_RUN_FILE, "self-test")
         forward = workspace.replace("\\", "/")
@@ -1254,7 +1268,8 @@ def _self_test(project: str = REPO, limit: float = SELF_TEST_SECONDS,
             for attempt in (1, 2):
                 _remove_state(workspace)
                 try:
-                    code, out = _run_wired(command, hook_file, workspace, json.dumps(payload), limit)
+                    code, out = _run_wired(command, hook_file, workspace, json.dumps(payload), limit,
+                                           extra_env=self_test_env)
                 except GuardError as error:
                     problem, transient = f"cannot run: {error}", False
                     break

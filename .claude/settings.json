@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os, runpy, sys; sys.argv = ['campaign_guard.py', 'stop-hook']; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd(), 'scripts', 'campaign_guard.py'), run_name='__main__')\"",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; if [ -f \"$d/scripts/run-python.sh\" ]; then sh \"$d/scripts/run-python.sh\" \"$d/scripts/campaign_guard.py\" stop-hook; elif command -v python3 >/dev/null 2>&1 && python3 -c \"\" >/dev/null 2>&1; then python3 \"$d/scripts/campaign_guard.py\" stop-hook; else python \"$d/scripts/campaign_guard.py\" stop-hook; fi",
             "timeout": 60
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os, runpy, sys; sys.argv = ['dispatch_hook.py']; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd(), 'scripts', 'dispatch_hook.py'), run_name='__main__')\"",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; if [ -f \"$d/scripts/run-python.sh\" ]; then sh \"$d/scripts/run-python.sh\" \"$d/scripts/dispatch_hook.py\"; elif command -v python3 >/dev/null 2>&1 && python3 -c \"\" >/dev/null 2>&1; then python3 \"$d/scripts/dispatch_hook.py\"; else python \"$d/scripts/dispatch_hook.py\"; fi",
             "timeout": 30
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os, runpy, sys; sys.argv = ['ci_status.py', '--gate', '--brief']; runpy.run_path(os.path.join(os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd(), 'scripts', 'ci_status.py'), run_name='__main__')\"",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; if [ -f \"$d/scripts/run-python.sh\" ]; then sh \"$d/scripts/run-python.sh\" \"$d/scripts/ci_status.py\" --gate --brief; elif command -v python3 >/dev/null 2>&1 && python3 -c \"\" >/dev/null 2>&1; then python3 \"$d/scripts/ci_status.py\" --gate --brief; else python \"$d/scripts/ci_status.py\" --gate --brief; fi",
             "timeout": 60
           }
         ]

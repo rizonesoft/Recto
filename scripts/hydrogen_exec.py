@@ -186,6 +186,7 @@ CHECK_ONLY_SCRIPTS = {
     "scripts/check-actions-pins.py",
     "scripts/check-vcpkg-baseline.py",
     "scripts/check-python-pin.py",
+    "scripts/check-tool-pins.py",
     "scripts/check-visual-studio.py",
 }
 DASH_CHECK_SCRIPTS = {
@@ -554,6 +555,8 @@ def validate_hydrogen_argv(tokens: list[str]) -> str | None:
         return _validate_git_argv(tokens)
     if prog_norm.lower() == base and base in ("python", "python3", "python.exe", "python3.exe", "py", "py.exe"):
         return _validate_python_argv(tokens)
+    if prog_norm.lstrip("./").lower() == "build/python.cmd":
+        return _validate_python_argv(tokens)
     if prog_norm.lower() == base and base in ("node", "node.exe"):
         if len(tokens) == 2 and tokens[1].replace("\\", "/").lstrip("./") == "scripts/verify-agent-tiers.mjs":
             return None
@@ -581,8 +584,13 @@ def parse_hydrogen_command(command: str) -> tuple[list[str] | None, str | None]:
 
 
 def build_overwrite_command(tokens: list[str], script_path: Path | None = None) -> str:
-    target = (script_path or Path(__file__)).resolve().as_posix().replace("'", "''")
+    resolved_script = (script_path or Path(__file__)).resolve()
+    target = resolved_script.as_posix().replace("'", "''")
     payload_hex = json.dumps(tokens, separators=(",", ":")).encode("utf-8").hex()
+    py_cmd = resolved_script.parents[1] / "build" / "python.cmd"
+    if os.name == "nt" and py_cmd.is_file():
+        launcher = py_cmd.as_posix().replace("'", "''")
+        return f"& '{launcher}' '{target}' --payload {payload_hex}"
     return f"& python '{target}' --payload {payload_hex}"
 
 

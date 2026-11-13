@@ -72,19 +72,29 @@ jobs:
           if ($sha -ne $env:REQUESTED_SHA) { throw "checked out $sha, expected $env:REQUESTED_SHA" }
           "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Cache repo-scoped tools (.tools)
+        uses: actions/cache@v6
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('build/tools.lock.json', 'build/bootstrap-tools.ps1') }}
+
+      - name: Bootstrap repo-scoped tools (.tools)
+        shell: pwsh
+        run: pwsh -NoProfile -File build/bootstrap-tools.ps1
+
       - name: Check the PDF engine dependency policy (D00 T01 §2)
         shell: pwsh
-        run: python -m unittest tests.scripts.test_engine_dependency_policy
+        run: .\build\python.cmd -m unittest tests.scripts.test_engine_dependency_policy
 
       - name: Check the engine and recto-ui project boundary before building (D10 T01 §1)
         shell: pwsh
-        run: python -m unittest tests.scripts.test_ui_module_boundary
+        run: .\build\python.cmd -m unittest tests.scripts.test_ui_module_boundary
 
       # build/build.ps1 proves the boundary after each configuration from the compiler's /sourceDependencies reports and
       # the libraries' directives and members (scripts/check-ui-boundary.py); this proves that check catches crossings.
       - name: Check that the compiler-reported boundary check catches crossings (D10 T01 §1)
         shell: pwsh
-        run: python -m unittest tests.scripts.test_check_ui_boundary
+        run: .\build\python.cmd -m unittest tests.scripts.test_check_ui_boundary
 
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
@@ -230,6 +240,16 @@ jobs:
         with:
           ref: ${{ inputs.sha || github.sha }}
           persist-credentials: false
+
+      - name: Cache repo-scoped tools (.tools)
+        uses: actions/cache@v6
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('build/tools.lock.json', 'build/bootstrap-tools.ps1') }}
+
+      - name: Bootstrap repo-scoped tools (.tools)
+        shell: pwsh
+        run: pwsh -NoProfile -File build/bootstrap-tools.ps1
 
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh

@@ -1,11 +1,13 @@
 {
   "mcpServers": {
     "recto-lsp": {
-      "command": "python",
+      "command": "git",
       "args": [
-        "-B",
         "-c",
-        "import os, pathlib, runpy; p = pathlib.Path(os.environ.get('PLUGIN_ROOT', '.')).resolve(); root = p.parents[2] if p.name == 'recto-lsp' else pathlib.Path.cwd(); runpy.run_path(str(root / 'scripts' / 'lsp_mcp.py'), run_name='__main__')"
+        "alias.py=!f() { if [ -f scripts/run-python.sh ]; then exec sh scripts/run-python.sh \"$@\"; elif [ -n \"${PLUGIN_ROOT:-}\" ] && [ -f \"$PLUGIN_ROOT/../../scripts/run-python.sh\" ]; then exec sh \"$PLUGIN_ROOT/../../scripts/run-python.sh\" \"$@\"; fi; exit 127; }; f",
+        "py",
+        "-B",
+        "scripts/lsp_mcp.py"
       ]
     }
   }

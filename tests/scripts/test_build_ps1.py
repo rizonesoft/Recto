@@ -578,7 +578,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             for name in ("Recto.sln", "Directory.Build.props", "Directory.Build.targets",
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
-            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1"):
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
+                         "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
 
@@ -619,6 +620,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     stamp.unlink()
                 env = os.environ.copy()
                 env["ProgramFiles(x86)"] = str(pf86)
+                env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 if jobs_env is None:
                     env.pop("RECTO_BUILD_JOBS", None)
                 else:
@@ -715,9 +717,19 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             for name in ("Recto.sln", "Directory.Build.props", "Directory.Build.targets",
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
-            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1"):
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
+                         "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
-            (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+            gen_marker = base / "gen_compile_ran.txt"
+            boundary_marker = base / "boundary_ran.txt"
+            (ws / "scripts" / "gen-compile-commands.py").write_text(
+                f"import pathlib, sys\npathlib.Path(r'{gen_marker}').write_text(sys.executable, encoding='utf-8')\nsys.exit(0)\n",
+                encoding="utf-8",
+            )
+            (ws / "scripts" / "check-ui-boundary.py").write_text(
+                f"import pathlib, sys\npathlib.Path(r'{boundary_marker}').write_text(sys.executable, encoding='utf-8')\nsys.exit(0)\n",
+                encoding="utf-8",
+            )
 
             pf86 = base / "pf86"
             vs_installer = pf86 / "Microsoft Visual Studio" / "Installer"
@@ -795,18 +807,28 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             env = os.environ.copy()
             env["ProgramFiles(x86)"] = str(pf86)
             env["RECTO_BUILD_JOBS"] = "1"
+            env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
+            # Strip all system Python directories from PATH to prove build.cmd uses build\python.cmd.
+            py_names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe")
+            env["PATH"] = os.pathsep.join(
+                entry for entry in env.get("PATH", "").split(os.pathsep)
+                if entry and not any((Path(entry) / n).exists() for n in py_names)
+            )
 
             for shell_kind, cmd in (
                 ("cmd", ["cmd.exe", "/d", "/c", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
                 ("pwsh", [POWERSHELL, "-NoProfile", "-Command", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
             ):
                 with self.subTest(shell=shell_kind):
-                    if msbuild_calls.exists():
-                        msbuild_calls.unlink()
-                    if gtest_calls.exists():
-                        gtest_calls.unlink()
-                    run = _run_managed(cmd, cwd=ws, env=env, timeout=60)
+                    for marker in (msbuild_calls, gtest_calls, gen_marker, boundary_marker):
+                        if marker.exists():
+                            marker.unlink()
+                    run = _run_managed(cmd, cwd=ws, env=env, timeout=90)
                     self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    self.assertTrue(gen_marker.is_file(), "gen-compile-commands.py did not run via build\\python.cmd")
+                    self.assertTrue(boundary_marker.is_file(), "check-ui-boundary.py did not run via build\\python.cmd")
+                    self.assertIn(".tools", gen_marker.read_text(encoding="utf-8").lower())
+                    self.assertIn(".tools", boundary_marker.read_text(encoding="utf-8").lower())
                     m_lines = msbuild_calls.read_text(encoding="utf-8").splitlines()
                     # Restore runs on first invocation; only Debug|x64 builds (never Release|x64).
                     self.assertTrue(any("/p:Configuration=Debug" in ln and "/p:Platform=x64" in ln for ln in m_lines), m_lines)

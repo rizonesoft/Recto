@@ -184,6 +184,28 @@ class Launcher(unittest.TestCase):
         for call in run.call_args_list + popen.call_args_list:
             self.assertEqual(call.kwargs.get("creationflags"), no_window(), Path(call.args[0][0]).name)
 
+    @unittest.skipUnless(os.name == "nt", "Windows .tools/ CPython launcher path")
+    def test_print_only_and_install_shortcut_succeed_without_system_python_on_path(self):
+        py_names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe")
+        stripped_path = os.pathsep.join(
+            entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and not any((Path(entry) / n).exists() for n in py_names)
+        )
+        with mock.patch.dict(os.environ, {"PATH": stripped_path}):
+            run_print, seen_print = self.run_launcher("-PrintOnly")
+            self.assertEqual(run_print.returncode, 0, run_print.stdout + run_print.stderr)
+            self.assertIsNone(seen_print)
+            self.assertNotIn("self-test failed", (run_print.stdout + run_print.stderr).lower())
+
+            folder = "(Split-Path $env:RECTO_TEST_RECORD)"
+            before = f"$desk = Join-Path {folder} 'desk2'; $icons = Join-Path {folder} 'icons2'; New-Item -ItemType Directory $desk | Out-Null"
+            after = "'SHORTCUT_COUNT=' + @(Get-ChildItem $desk -Filter '*.lnk').Count"
+            run_sc, seen_sc = self.run_launcher("-InstallShortcut", "-ShortcutFolder", "$desk", "-IconFolder", "$icons",
+                                                before=before, after=after)
+            self.assertEqual(run_sc.returncode, 0, run_sc.stdout + run_sc.stderr)
+            self.assertIsNone(seen_sc)
+            self.assertIn("SHORTCUT_COUNT=2", run_sc.stdout)
+
 
 class CampaignIcon(unittest.TestCase):
     @staticmethod

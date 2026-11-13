@@ -57,6 +57,11 @@ if ($EnableASAN -and ($Platform -contains 'ARM64')) {
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+$global:LASTEXITCODE = 0
+& (Join-Path $PSScriptRoot 'bootstrap-tools.ps1')
+if ($LASTEXITCODE -ne 0) { throw "bootstrap-tools.ps1 failed (exit $LASTEXITCODE)" }
+$pinnedPython = Join-Path $PSScriptRoot 'python.cmd'
+
 . (Join-Path $PSScriptRoot 'parallelism.ps1')
 $parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
 $jobs = $parallelism.Projects
@@ -250,8 +255,9 @@ if ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $rest
 }
 
 $genCompileDb = Join-Path $root 'scripts\gen-compile-commands.py'
-if ((Test-Path $genCompileDb) -and (Get-Command python -ErrorAction SilentlyContinue)) {
-    & python $genCompileDb | Out-Null
+if (Test-Path $genCompileDb) {
+    & $pinnedPython $genCompileDb | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "gen-compile-commands.py failed (exit $LASTEXITCODE)" }
 }
 
 $asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
@@ -309,7 +315,7 @@ foreach ($plat in $Platform) {
         # It reads what this build compiled from the manifests the RectoBoundaryManifest target wrote (emptied below,
         # before the build), never from a re-evaluation of the projects.
         if (-not $Project) {
-            & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
+            & $pinnedPython (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
             if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
         }
 

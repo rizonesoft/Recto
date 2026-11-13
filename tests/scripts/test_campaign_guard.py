@@ -60,12 +60,16 @@ class Workspace(unittest.TestCase):
         for folder in ("scripts", "build", "docs/phase-runs"):
             os.makedirs(os.path.join(self.root, folder))
         shutil.copy(GUARD_PY, os.path.join(self.root, "scripts", "campaign_guard.py"))
+        run_py_sh = REPO / "scripts" / "run-python.sh"
+        if run_py_sh.is_file():
+            shutil.copy(run_py_sh, os.path.join(self.root, "scripts", "run-python.sh"))
         self.write("scripts/todo-graph.py", FAKE_GRAPH)
         self.write(".gitignore", "build/\nscripts/ready.txt\nscripts/open.txt\n")
         self.ready(3)
         self.write(RUN_FILE, "# Phase run: Phase 0\n\n## Critical events\n")
         for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"],
-                     ["config", "commit.gpgsign", "false"], ["add", "-A"], ["commit", "-qm", "seed"]):
+                     ["config", "commit.gpgsign", "false"], ["add", "-A"],
+                     ["update-index", "--chmod=+x", "scripts/run-python.sh"], ["commit", "-qm", "seed"]):
             subprocess.run(["git", *args], cwd=self.root, capture_output=True, check=True)
 
     def tearDown(self):
@@ -338,29 +342,37 @@ class StopHook(Workspace):
         self.assertLess(elapsed, 12, "the hook waited on the graph past its budget")
         self.assertEqual(decision["decision"], "block", "an unreadable graph still blocks an open run")
 
+    def _stage_tools_lock(self):
+        for bname in ("tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+            src_b = REPO / "build" / bname
+            if src_b.is_file():
+                shutil.copy(src_b, os.path.join(self.root, "build", bname))
+
     def test_the_configured_command_runs_the_hook_from_any_shell(self):
+        self._stage_tools_lock()
         settings = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
         command = settings["hooks"]["Stop"][0]["hooks"][0]["command"]
         self.acquire()
-        # Claude Code runs hooks through Git Bash on Windows; `bash` on PATH there is often WSL's, which would not
-        # carry CLAUDE_PROJECT_DIR into Linux.
-        bash = "bash"
+        # Claude Code runs hooks through Git Bash on Windows (/bin/sh on POSIX); test both normal PATH and PATH with
+        # system Python removed so .tools/ CPython handles Windows hook execution on its own.
+        bash = "sh"
         if os.name == "nt" and shutil.which("git"):
             bash = str(Path(shutil.which("git")).resolve().parents[1] / "bin" / "bash.exe")
-        shells = [[bash, "-c"]] + ([["powershell.exe", "-NoProfile", "-Command"]] if os.name == "nt" else [])
-        ran = 0
-        for shell in shells:
-            if not shutil.which(shell[0]):
-                continue
-            with self.subTest(shell=shell[0]):
-                env = dict(os.environ, CLAUDE_PROJECT_DIR=self.root)
+        self.assertTrue(os.path.isfile(bash) or shutil.which(bash), f"hook shell missing: {bash}")
+        py_names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe")
+        stripped_path = os.pathsep.join(
+            entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and not any((Path(entry) / n).exists() for n in py_names)
+        )
+        for label, path_val in (("default_path", os.environ.get("PATH", "")), ("no_system_python", stripped_path)):
+            with self.subTest(case=label):
+                env = dict(os.environ, CLAUDE_PROJECT_DIR=self.root, PATH=path_val,
+                           RECTO_TOOLS_DIR=str(REPO / ".tools"))
                 payload = json.dumps({"session_id": SESSION, "cwd": self.root, "hook_event_name": "Stop"})
-                proc = subprocess.run([*shell, command], input=payload, capture_output=True, text=True,
+                proc = subprocess.run([bash, "-c", command], input=payload, capture_output=True, text=True,
                                       encoding="utf-8", env=env, cwd=self._tmp.name, timeout=120)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(json.loads(proc.stdout)["decision"], "block", proc.stderr)
-                ran += 1
-        self.assertGreater(ran, 0, "no shell could run the configured hook")
 
     def test_antigravity_stop_hook_protocol_and_configured_command(self):
         self.acquire(runner="agy", cron_id="task-agy-1")
@@ -388,22 +400,32 @@ class StopHook(Workspace):
                 }), None)
                 self.assertEqual((code, json.loads(out)), (0, {"decision": "allow"}))
                 self.assertEqual(self.state()["blocks"], 1)
-        # Configured .agents/hooks.json command executes cleanly from a .agents directory via cmd /c or sh -c.
+        # Configured .agents/hooks.json command executes cleanly from a .agents directory via cmd /c or sh -c,
+        # including when system Python is absent from PATH.
+        self._stage_tools_lock()
         hooks_cfg = json.loads((REPO / ".agents" / "hooks.json").read_text(encoding="utf-8"))
         command = hooks_cfg["recto-campaign"]["Stop"][0]["command"]
         agents_dir = os.path.join(self.root, ".agents")
         os.makedirs(agents_dir, exist_ok=True)
         shell = ["cmd", "/c", command] if os.name == "nt" else ["sh", "-c", command]
-        env = dict(os.environ)
-        env.pop("CLAUDE_PROJECT_DIR", None)
-        proc = subprocess.run(shell, input=json.dumps({
-            "hookEventName": "Stop",
-            "conversationId": SESSION,
-            "workspacePaths": [self.root],
-            "terminationReason": "NO_TOOL_CALL",
-        }), capture_output=True, text=True, encoding="utf-8", env=env, cwd=agents_dir, timeout=120)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["decision"], "continue", proc.stderr)
+        py_names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe")
+        stripped_path = os.pathsep.join(
+            entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and not any((Path(entry) / n).exists() for n in py_names)
+        )
+        for label, path_val in (("default_path", os.environ.get("PATH", "")), ("no_system_python", stripped_path)):
+            with self.subTest(agy_case=label):
+                self.write("build/claude-campaign-state.json", "{}")
+                env = dict(os.environ, PATH=path_val, RECTO_TOOLS_DIR=str(REPO / ".tools"))
+                env.pop("CLAUDE_PROJECT_DIR", None)
+                proc = subprocess.run(shell, input=json.dumps({
+                    "hookEventName": "Stop",
+                    "conversationId": SESSION,
+                    "workspacePaths": [self.root],
+                    "terminationReason": "NO_TOOL_CALL",
+                }), capture_output=True, text=True, encoding="utf-8", env=env, cwd=agents_dir, timeout=120)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)["decision"], "continue", proc.stderr)
         # Closeout allows with {"decision": "allow"}.
         self.write(RUN_FILE, f"\n## Closeout run={self.run_id()}\n", "a")
         code, out = guard.stop_hook(json.dumps({

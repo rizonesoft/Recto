@@ -4,7 +4,7 @@
   "tasks": [
     {
       "name": "recto-python-pin",
-      "description": "Email once when this machine's Python is behind the newest stable CPython",
+      "description": "Email once when build/tools.lock.json's CPython is behind the newest stable CPython",
       "command": [
         "python",
         "scripts/check-python-pin.py",
@@ -29,6 +29,20 @@
       "trigger": {
         "weekly": "Monday",
         "at": "07:05"
+      },
+      "timeout_minutes": 5
+    },
+    {
+      "name": "recto-tool-pins",
+      "description": "Email once when Ninja, CMake, sccache or CPython in build/tools.lock.json is behind its latest stable release",
+      "command": [
+        "python",
+        "scripts/check-tool-pins.py",
+        "notify"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:10"
       },
       "timeout_minutes": 5
     },

@@ -41,6 +41,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+$pinnedPython = Join-Path $root 'build\python.cmd'
 
 $model = 'opus'
 $carbon = 'gemini-4-carbon-medium'
@@ -63,7 +64,7 @@ if ($InstallShortcut) {
     )
     foreach ($s in $shortcuts) {
         $icon = Join-Path $IconFolder $s.Icon
-        python (Join-Path $PSScriptRoot 'campaign-icon.py') badge $plain $s.Runner $icon
+        & $pinnedPython (Join-Path $PSScriptRoot 'campaign-icon.py') badge $plain $s.Runner $icon
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "The badged icon for '$($s.Name)' could not be rendered; the shortcut carries Recto's plain icon."
             $icon = $plain
@@ -125,7 +126,7 @@ if (Test-Path (Join-Path $root 'build\claude-campaign-guard.json')) {
     Write-Warning 'build\claude-campaign-guard.json exists: an earlier run did not end, or another session is running. The run reconciles it.'
 }
 $hookFile = @{ claude = '.claude/settings.json'; agy = '.agents/hooks.json' }[$Runner]
-$guardOut = python (Join-Path $PSScriptRoot 'campaign_guard.py') --self-test --hook-file $hookFile 2>&1
+$guardOut = & $pinnedPython (Join-Path $PSScriptRoot 'campaign_guard.py') --self-test --hook-file $hookFile 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Stop hook self-test failed ($hookFile): $guardOut"
 }

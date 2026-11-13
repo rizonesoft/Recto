@@ -33,10 +33,10 @@ if str(HERE) not in sys.path:
 
 import hydrogen_exec  # noqa: E402
 
-# The dispatcher run as a command: after `python`, `python3`, `python.exe` or the `py` launcher, quoted or not, and any
+# The dispatcher run as a command: after `python`, `python3`, `python.exe`, `build\python.cmd` or the `py` launcher, quoted or not, and any
 # interpreter options (`-u`, `-X dev`, `-3.14`), its path quoted or not, or in command position (the start, after `;`, `&`, `|`, `(`, a
 # newline, `nohup`, `setsid` or `exec`), unquoted. Text that only mentions it (a heredoc, a commit message) is not a run.
-REVIEW = re.compile(r"(?:\bpy(?:thon)?(?:3(?:\.\d+)?)?(?:\.exe)?['\"]?(?:\s+(?:-[XW]\s*\S+|-[\w.]+))*\s+['\"]?"
+REVIEW = re.compile(r"(?:\bpy(?:thon)?(?:3(?:\.\d+)?)?(?:\.(?:exe|cmd))?['\"]?(?:\s+(?:-[XW]\s*\S+|-[\w.]+))*\s+['\"]?"
                     r"|(?:^|[\n;&|(]|\bnohup\b|\bsetsid\b|\bexec\b)\s*)"
                     r"(?:[\w.~/\\:-]*[/\\])?review-dispatch\.py\b")
 # Bash: a single `&` that backgrounds a command, not `&&`, `&>`, `>&` or `2>&1`.

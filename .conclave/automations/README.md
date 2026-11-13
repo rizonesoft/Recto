@@ -8,8 +8,9 @@ Repository pins are not kept here. The daily GitHub workflow `.github/workflows/
 
 | Task | When (local time) | Runs | Emails you when | Fails when |
 | --- | --- | --- | --- | --- |
-| `recto-python-pin` | Monday 07:00 | `scripts/check-python-pin.py notify --scope local` | this machine's Python is behind the newest stable CPython (once per finding) | python.org cannot be read |
+| `recto-python-pin` | Monday 07:00 | `scripts/check-python-pin.py notify --scope local` | `build/tools.lock.json`'s CPython is behind the newest stable CPython (once per finding) | python.org or `build/tools.lock.json` cannot be read |
 | `recto-visual-studio` | Monday 07:05 | `scripts/check-visual-studio.py notify` | this machine's Visual Studio is behind its latest servicing release (once per release) | the toolset's Visual Studio is not installed, or vswhere or the release channel cannot be read |
+| `recto-tool-pins` | Monday 07:10 | `scripts/check-tool-pins.py notify` | Ninja, CMake, sccache or CPython in `build/tools.lock.json` is behind its latest stable release (once per release set) | a release API or `build/tools.lock.json` cannot be read, or a lock entry is unstable |
 | `recto-pr-merge` | 15 minutes after logon, then every 6 hours | `scripts/merge_prs.py --scheduled` | never (each merge is a GitHub notification) | a merge fails (the pull request stays open), or the `git pull --ff-only` or `todo-graph.py validate` after a merge fails (that pull request is merged; the rest wait) |
 | `recto-ci-watch` | 5 minutes after logon, then every 15 minutes | `scripts/ci_status.py --scheduled` | `main`'s `build.yml` or `plan.yml` has a red run not yet reported (every red run in the last 10 of each, raised again every 15 minutes until the runner records its email as sent in `last.json`, then never again), or `gh` has been unreachable for an hour | the check cannot run |
 
@@ -20,6 +21,7 @@ A weekly task starts when available: a run missed while this PC was off fires at
 | Check | Daily at 05:23 UTC | Becomes |
 | --- | --- | --- |
 | C++/WinRT and Windows SDK build tools | `scripts/check-sdk-pins.py pr` | one pull request on `pins/toolchain-...` for the newer releases |
+| `.tools/` Ninja, CMake, sccache and CPython | `scripts/check-tool-pins.py pr` | one pull request on `pins/tools-...` updating version, URL and SHA-256 |
 | vcpkg baseline (test-only) | `scripts/check-vcpkg-baseline.py pr` | a pull request on `pins/vcpkg-<tag>` for each new vcpkg release |
 | Windows SDK line | `scripts/check-windows-sdk-line.py issue` | one issue per newer line (moving the target platform is your decision); closed automatically when Recto targets the newest line |
 | CI Python | `scripts/check-python-pin.py issue --scope ci` | one issue when `python-version` in a workflow is behind; closed when fixed |

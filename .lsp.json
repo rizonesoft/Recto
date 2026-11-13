@@ -1,7 +1,13 @@
 {
   "cpp": {
-    "command": "python",
-    "args": ["-B", "scripts/clangd-lsp.py"],
+    "command": "git",
+    "args": [
+      "-c",
+      "alias.py=!f() { if [ -f scripts/run-python.sh ]; then exec sh scripts/run-python.sh \"$@\"; elif [ -n \"${PLUGIN_ROOT:-}\" ] && [ -f \"$PLUGIN_ROOT/../../scripts/run-python.sh\" ]; then exec sh \"$PLUGIN_ROOT/../../scripts/run-python.sh\" \"$@\"; fi; exit 127; }; f",
+      "py",
+      "-B",
+      "scripts/clangd-lsp.py"
+    ],
     "extensionToLanguage": {
       ".c": "c",
       ".cpp": "cpp",
@@ -13,8 +19,14 @@
     }
   },
   "python": {
-    "command": "python",
-    "args": ["-B", "scripts/python-lsp.py"],
+    "command": "git",
+    "args": [
+      "-c",
+      "alias.py=!f() { if [ -f scripts/run-python.sh ]; then exec sh scripts/run-python.sh \"$@\"; elif [ -n \"${PLUGIN_ROOT:-}\" ] && [ -f \"$PLUGIN_ROOT/../../scripts/run-python.sh\" ]; then exec sh \"$PLUGIN_ROOT/../../scripts/run-python.sh\" \"$@\"; fi; exit 127; }; f",
+      "py",
+      "-B",
+      "scripts/python-lsp.py"
+    ],
     "extensionToLanguage": {
       ".py": "python",
       ".pyi": "python"

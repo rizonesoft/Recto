@@ -22,8 +22,22 @@ $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
 $repo = (Resolve-Path (Join-Path $here '..\..')).Path
-$pythonw = (Get-Command pythonw.exe -ErrorAction Ignore).Source  # absent is the throw below
-if (-not $pythonw) { throw 'pythonw.exe is not on PATH; install Python 3 for Windows first' }
+$bootstrap = Join-Path $repo 'build\bootstrap-tools.ps1'
+$pythonw = $null
+if (Test-Path -LiteralPath $bootstrap) {
+  & $bootstrap
+  if ($LASTEXITCODE -ne 0) { throw "bootstrap-tools.ps1 failed (exit $LASTEXITCODE)" }
+  $ptr = Join-Path $repo '.tools\cpython-exe.txt'
+  if (Test-Path -LiteralPath $ptr) {
+    $pinnedExe = ([System.IO.File]::ReadAllText($ptr)).Trim()
+    $candidateW = Join-Path (Split-Path -Parent $pinnedExe) 'pythonw.exe'
+    if (Test-Path -LiteralPath $candidateW) { $pythonw = $candidateW }
+  }
+}
+if (-not $pythonw) {
+  $pythonw = (Get-Command pythonw.exe -ErrorAction Ignore).Source  # absent is the throw below
+}
+if (-not $pythonw) { throw 'pythonw.exe is not available in .tools or on PATH; run build/bootstrap-tools.ps1 or install Python 3 for Windows first' }
 $runner = Join-Path $here 'run.py'
 
 # run.py's own loader checks tasks.json, so nothing is registered that the runner would refuse.

@@ -16,7 +16,7 @@ Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document c
 | `tests/scripts/` | Tooling tests; app suites land under `tests/` and kit tests under `scripts/tests/`. |
 | `.claude/`, `.agents/`, `.lsp.json`, `.mcp.json` | Agent kits and portable C++23/Python LSP servers (`.agents/plugins/recto-lsp/`). |
 | `.conclave/` | Reviewer pin (`reviewers.toml`), `unattended.json`, and scheduled `automations/`. |
-| `build/` | Ignored derived output (plus `build/build.ps1` and generated `compile_commands.json`). |
+| `build/` | Ignored output (plus `build.ps1`, `python.cmd`, `tools.lock.json`, generated `compile_commands.json`). |
 
 The repository layout is fixed by foundation plan section 3.2 (`src/pdf`, `src/core`, `src/services`, `src/app`, `src/cli`, `libs/vellum`, `tests/recto-tests`, `tests/corpus`, `fuzz`; `src/ui` until `D10 T04 §1` moves it to `libs/vellum`). Do not invent a different one.
 
@@ -107,22 +107,23 @@ Answer from source first: the foundation plan, the SPEC, the ISO 32000-1 / 32000
 ## Validation
 
 ```powershell
-python scripts/todo-graph.py validate        # graph integrity; any fault exits 2 with the reason
-python scripts/todo-graph.py plan --check    # generated plan is current (CI runs this)
-python scripts/todo-graph.py query ready     # dependency-safe work right now
-python scripts/todo-graph.py query blocked   # sections waiting, and on what
-python scripts/todo-graph.py query stats     # tree health
-python scripts/todo-graph.py query deferred  # open and resolved deferrals
-python -m unittest tests.scripts.test_todo_graph   # tooling tests, including the live tree
-python scripts/check-sdk-pins.py             # C++/WinRT and build tools pins are the latest stable (D4)
-python scripts/check-windows-sdk-line.py check   # Recto targets the newest Windows SDK line (D4)
-python scripts/check-actions-pins.py check     # GitHub Actions are on their latest stable majors (D4)
-python scripts/check-vcpkg-baseline.py check   # the vcpkg baseline is the latest vcpkg release (D4)
-python scripts/check-python-pin.py check       # CI and local Python are the newest stable CPython (D4)
-python scripts/check-visual-studio.py check    # this machine's Visual Studio is at its latest servicing release
-python scripts/ci_status.py                   # main's latest build.yml and plan.yml runs: 0 not red, 1 red, 3 unknown
-python scripts/gen-compile-commands.py --check    # portable C++23 clangd database matches Recto.sln
-python scripts/run-tests.py --quick          # fast RAM-bounded local Python cadence (+ --full in CI)
+build\python.cmd scripts/todo-graph.py validate      # graph integrity; any fault exits 2 with reason
+build\python.cmd scripts/todo-graph.py plan --check  # generated plan is current (CI runs this)
+build\python.cmd scripts/todo-graph.py query ready   # dependency-safe work right now
+build\python.cmd scripts/todo-graph.py query blocked # sections waiting, and on what
+build\python.cmd scripts/todo-graph.py query stats   # tree health
+build\python.cmd scripts/todo-graph.py query deferred # open and resolved deferrals
+build\python.cmd -m unittest tests.scripts.test_todo_graph # tooling tests, including live tree
+build\python.cmd scripts/check-sdk-pins.py           # C++/WinRT and build tools pins are latest stable (D4)
+build\python.cmd scripts/check-tool-pins.py check    # .tools/ Ninja, CMake, sccache and CPython pins (D4)
+build\python.cmd scripts/check-windows-sdk-line.py check # Recto targets newest Windows SDK line (D4)
+build\python.cmd scripts/check-actions-pins.py check # GitHub Actions are on latest stable majors (D4)
+build\python.cmd scripts/check-vcpkg-baseline.py check # vcpkg baseline is latest vcpkg release (D4)
+build\python.cmd scripts/check-python-pin.py check   # CI and .tools/ Python are newest stable CPython (D4)
+build\python.cmd scripts/check-visual-studio.py check # Visual Studio is at latest servicing release
+build\python.cmd scripts/ci_status.py                # main's latest build.yml and plan.yml runs
+build\python.cmd scripts/gen-compile-commands.py --check # C++23 clangd database matches Recto.sln
+build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Python cadence (+ --full in CI)
 .\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'  # iteration gate while building and after each review fix (+ -EnableASAN when named; Python-only via unittest/run-tests.py; both for mixed)
 .\build.cmd                                  # stamp gate: x64 Debug and Release, every test, once on the candidate tip that stamps, quoted in stamp --check (-Platform x64,ARM64 adds ARM64)
 ```

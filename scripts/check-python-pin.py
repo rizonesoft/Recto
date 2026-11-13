@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Alert when the Python that CI or the local scripts use falls behind the latest stable release (foundation plan D4).
+"""Alert when the Python that CI or build/tools.lock.json pins falls behind the latest stable release (D4).
 
-    python scripts/check-python-pin.py check     # exit 0 current, 1 behind, 2 cannot check
-    python scripts/check-python-pin.py notify    # as check, but being behind is emailed once per finding, exit 0
-    python scripts/check-python-pin.py issue --scope ci   # (GitHub pins workflow) one issue per CI finding
+    build\\python.cmd scripts/check-python-pin.py check     # exit 0 current, 1 behind, 2 cannot check
+    build\\python.cmd scripts/check-python-pin.py notify    # as check, but being behind is emailed once per finding, exit 0
+    python scripts/check-python-pin.py issue --scope ci    # (GitHub pins workflow) one issue per CI finding
 
-`--scope ci` checks only the workflow pins (what GitHub can see), `--scope local` only this machine's interpreter (the
-recto-python-pin task), and the default `all` both.
+`--scope ci` checks only the workflow pins (what GitHub Actions `setup-python` uses), `--scope local` only the
+repo-scoped CPython version in `build/tools.lock.json` (D00 T04 section 6), and the default `all` both.
 
 Two pins are compared with the newest stable CPython on python.org (published, not a pre-release):
 - every `python-version:` in `.github/workflows/*.yml` must name the newest stable minor (for example `3.15`);
-- the interpreter running this script (the one the automations and `scripts/` use on this machine) must be the newest
-  stable minor, at its newest patch.
-Tooling is stdlib-only, so a bump is a one-line workflow edit or a Python install; the tests in `tests/scripts` and
-`scripts/tests` prove it. `notify` (the recto-python-pin task) sends one "Python update available" email for each new
-set of findings through `scripts/lib/pin_proposal.py`.
+- the `cpython.version` entry in `build/tools.lock.json` must be the newest stable minor, at its newest patch.
 """
 import argparse
 import hashlib
+import json
 from pathlib import Path
 import re
 import sys
@@ -30,6 +27,7 @@ from pin_sources import Unreadable, fetch_json, version_key  # noqa: E402
 RELEASES = "https://www.python.org/api/v2/downloads/release/?is_published=true&pre_release=false"
 NAME = re.compile(r"^Python (\d+\.\d+\.\d+)$")
 CI_PIN = re.compile(r"""python-version:\s*["']?(\d+\.\d+(?:\.\d+)?)["']?""")
+LOCK_REL = "build/tools.lock.json"
 
 
 def latest_releases(releases):
@@ -54,6 +52,21 @@ def ci_pins(root=ROOT):
     return found
 
 
+def lock_pin(root=ROOT):
+    """Read the pinned CPython version tuple from build/tools.lock.json."""
+    lock_path = Path(root) / LOCK_REL
+    try:
+        doc = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise Unreadable(f"{LOCK_REL}: {exc}") from None
+    cpython = doc.get("cpython") if isinstance(doc, dict) else None
+    raw = cpython.get("version") if isinstance(cpython, dict) else None
+    parsed = version_key(str(raw)) if isinstance(raw, str) else None
+    if parsed is None or len(parsed) != 3:
+        raise Unreadable(f"{LOCK_REL}: cpython.version is missing or not X.Y.Z")
+    return parsed
+
+
 def text(key):
     return ".".join(map(str, key))
 
@@ -66,31 +79,33 @@ def findings(newest, by_minor, pins, local):
     if local is None:
         return out
     if local[:2] < newest[:2]:
-        out.append(f"this machine's Python {text(local)} is behind the newest stable minor {text(newest[:2])} "
+        out.append(f"{LOCK_REL} cpython {text(local)} is behind the newest stable minor {text(newest[:2])} "
                    f"(latest {text(newest)})")
     elif local < by_minor.get(local[:2], local):
-        out.append(f"this machine's Python {text(local)} is behind its latest patch {text(by_minor[local[:2]])}")
+        out.append(f"{LOCK_REL} cpython {text(local)} is behind its latest patch {text(by_minor[local[:2]])}")
     return out
 
 
-def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3]), mail=pin_proposal.notify,
+def main(argv=None, fetch=fetch_json, root=ROOT, local=None, mail=pin_proposal.notify,
          run_gh=pin_proposal.gh):
-    parser = argparse.ArgumentParser(description="Alert when CI or local Python falls behind the latest stable.")
+    parser = argparse.ArgumentParser(description="Alert when CI or build/tools.lock.json Python falls behind the latest stable.")
     parser.add_argument("mode", choices=("check", "notify", "issue"))
     parser.add_argument("--scope", choices=("all", "ci", "local"), default="all")
     args = parser.parse_args(argv)
     try:
         releases = fetch(RELEASES)
         newest, by_minor = latest_releases(releases if isinstance(releases, list) else [])
-        pins = ci_pins(root)
+        pins = ci_pins(root) if args.scope != "local" else []
+        resolved_local = None
+        if args.scope != "ci":
+            resolved_local = tuple(local) if local is not None else lock_pin(root)
     except Unreadable as exc:
         print(f"check-python-pin: could not read {exc}", file=sys.stderr)
         return 2
     if not pins and args.scope != "local":
         print("check-python-pin: no python-version pin found in .github/workflows", file=sys.stderr)
         return 2
-    found = findings(newest, by_minor, pins if args.scope != "local" else [],
-                     tuple(local) if args.scope != "ci" else None)
+    found = findings(newest, by_minor, pins, resolved_local)
     if not found:
         print(f"the checked Python pins ({args.scope}) are the newest stable Python ({text(newest)})")
         if args.mode == "issue":
@@ -107,10 +122,10 @@ def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3
                                        run_gh=run_gh)
     key = "python-" + hashlib.sha256("\n".join(found).encode()).hexdigest()[:12]
     return pin_proposal.notice(root=root, key=key, subject="Recto: a newer Python is available",
-                               body="\n".join(found + ["", "Install the newer Python on this machine, then run the tooling tests."
+                               body="\n".join(found + ["", "Update cpython in build/tools.lock.json, then run the tooling tests."
                                                        if args.scope == "local" else
-                                                       "Update the workflow python-version, or install the newer "
-                                                       "Python on this machine, then run the tooling tests."]),
+                                                       "Update the workflow python-version or build/tools.lock.json, "
+                                                       "then run the tooling tests."]),
                                mail=mail)
 
 

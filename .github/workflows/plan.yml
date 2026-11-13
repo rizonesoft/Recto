@@ -21,6 +21,9 @@ on:
       - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
+      - 'build/tools.lock.json'
+      - 'build/bootstrap-tools.ps1'
+      - 'build/python.cmd'
       - 'src/pdf/error.h'
       - '.conclave/**'
       - '.claude/skills/**'
@@ -50,6 +53,9 @@ on:
       - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
+      - 'build/tools.lock.json'
+      - 'build/bootstrap-tools.ps1'
+      - 'build/python.cmd'
       - 'src/pdf/error.h'
       - '.conclave/**'
       - '.claude/skills/**'
@@ -74,33 +80,38 @@ jobs:
         with:
           # Stamp ancestry checks need real history, not a shallow checkout.
           fetch-depth: 0
-      - uses: actions/setup-python@v7
+      - name: Cache repo-scoped tools (.tools)
+        uses: actions/cache@v6
         with:
-          python-version: '3.15'
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('build/tools.lock.json', 'build/bootstrap-tools.ps1') }}
+      - name: Bootstrap repo-scoped tools (.tools)
+        shell: pwsh
+        run: pwsh -NoProfile -File build/bootstrap-tools.ps1
       - name: Validate the TODO tree
         shell: pwsh
-        run: python scripts/todo-graph.py validate
+        run: .\build\python.cmd scripts/todo-graph.py validate
       - name: Check generated implementation plan is current
         shell: pwsh
-        run: python scripts/todo-graph.py plan --check
+        run: .\build\python.cmd scripts/todo-graph.py plan --check
       - name: Check reviewer pin and historical receipts
         shell: pwsh
-        run: python scripts/review_pin.py --check --all
+        run: .\build\python.cmd scripts/review_pin.py --check --all
       - name: Run campaign guard self-test
         shell: pwsh
-        run: python scripts/campaign_guard.py --self-test
+        run: .\build\python.cmd scripts/campaign_guard.py --self-test
       - name: Verify Claude agent model tiers
         shell: pwsh
         run: node scripts/verify-agent-tiers.mjs
       - name: Generate portable clangd compilation database
         shell: pwsh
-        run: python scripts/gen-compile-commands.py
+        run: .\build\python.cmd scripts/gen-compile-commands.py
       - name: Verify portable clangd compilation database round-trips
         shell: pwsh
-        run: python scripts/gen-compile-commands.py --check
+        run: .\build\python.cmd scripts/gen-compile-commands.py --check
       - name: Check the user demand ledger (D07 T03 §6)
         shell: pwsh
-        run: python scripts/check-user-demand.py
+        run: .\build\python.cmd scripts/check-user-demand.py
       - name: Run full Recto and Conclave kit Python test suites in parallel
         shell: pwsh
-        run: python scripts/run-tests.py --full
+        run: .\build\python.cmd scripts/run-tests.py --full

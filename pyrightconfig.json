@@ -4,11 +4,17 @@
     "tests/scripts"
   ],
   "exclude": [
+    ".tools",
     "build",
     "vcpkg_installed",
     ".vs",
     "**/__pycache__"
   ],
-  "pythonVersion": "3.14",
+  "extraPaths": [
+    ".",
+    "scripts",
+    "scripts/lib"
+  ],
+  "pythonVersion": "3.15",
   "typeCheckingMode": "basic"
 }

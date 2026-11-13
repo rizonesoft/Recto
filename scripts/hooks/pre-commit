@@ -18,24 +18,27 @@ for dir in todo/ docs/reviews/ src/pdf/error.h; do
 done
 
 root=$(git rev-parse --show-toplevel) || exit 1
-# The first interpreter that actually runs: on Windows `python3` can be the Microsoft Store stub.
-python=
-for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "" >/dev/null 2>&1; then
-        python=$candidate
-        break
+# Prefer the repository's pinned CPython launcher (D00 T04 §6), falling back to python3/python in minimal temp repos.
+run_py() {
+    if [ -f "$root/scripts/run-python.sh" ]; then
+        sh "$root/scripts/run-python.sh" "$@"
+        return $?
     fi
-done
-if [ -z "$python" ]; then
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "" >/dev/null 2>&1; then
+            "$candidate" "$@"
+            return $?
+        fi
+    done
     echo "pre-commit: Python is needed to check the TODO graph" >&2
-    exit 1
-fi
-if ! "$python" "$root/scripts/todo-graph.py" validate >/dev/null || ! "$python" "$root/scripts/todo-graph.py" plan --check; then
-    echo "pre-commit: run 'python scripts/todo-graph.py plan --sync', stage todo/implementation-plan.md, and commit again" >&2
+    return 1
+}
+if ! run_py "$root/scripts/todo-graph.py" validate >/dev/null || ! run_py "$root/scripts/todo-graph.py" plan --check; then
+    echo "pre-commit: run 'build\\python.cmd scripts/todo-graph.py plan --sync' (or 'python scripts/todo-graph.py plan --sync'), stage todo/implementation-plan.md, and commit again" >&2
     exit 1
 fi
 # Every error code a TODO contract names must be one src/pdf/error.h has (D01 T02 §22).
-if ! "$python" "$root/scripts/check-error-code-names.py" --root "$root" >&2; then
+if ! run_py "$root/scripts/check-error-code-names.py" --root "$root" >&2; then
     echo "pre-commit: a TODO names an error code src/pdf/error.h does not have (listed above)" >&2
     exit 1
 fi

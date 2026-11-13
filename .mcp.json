@@ -1,8 +1,14 @@
 {
   "mcpServers": {
     "recto-lsp": {
-      "command": "python",
-      "args": ["-B", "scripts/lsp_mcp.py"]
+      "command": "git",
+      "args": [
+        "-c",
+        "alias.py=!f() { if [ -f scripts/run-python.sh ]; then exec sh scripts/run-python.sh \"$@\"; elif [ -n \"${PLUGIN_ROOT:-}\" ] && [ -f \"$PLUGIN_ROOT/../../scripts/run-python.sh\" ]; then exec sh \"$PLUGIN_ROOT/../../scripts/run-python.sh\" \"$@\"; fi; exit 127; }; f",
+        "py",
+        "-B",
+        "scripts/lsp_mcp.py"
+      ]
     }
   }
 }

@@ -8,6 +8,9 @@ build/*
 !build/msbuild-log.ps1
 !build/parallelism.ps1
 !build/build-evidence.ps1
+!build/tools.lock.json
+!build/bootstrap-tools.ps1
+!build/python.cmd
 __pycache__/
 *.pyc
 
