@@ -49,7 +49,7 @@ track: M0
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | ASan and plain builds in separate output folders | -- | [x] |
 | 2 | §2 | ARM64 off the local build, built in CI, deferred to after Recto v1 | -- | [x] |
-| 3 | §3 | MSBuild and compiler parallelism set by free memory | §1 | [ ] |
+| 3 | §3 | MSBuild and compiler parallelism set by free memory | §1 | [x] |
 | 4 | §4 | Precompiled headers for every project | §3 | [ ] |
 | 5 | §5 | Tiered gates: touched tests while building, the full suite at stamp | §2 | [ ] |
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [ ] |
@@ -146,9 +146,12 @@ MSBuild `/m` starts one project build per core and `MultiProcessorCompilation` o
 - [x] Add `build/parallelism.ps1` (`Read-AvailableMemoryMb` and `Resolve-BuildParallelism`) and wire `build/build.ps1` to read `\Memory\Available MBytes` (falling back to `Win32_OperatingSystem.FreePhysicalMemory / 1024.0` when the counter fails, and refusing before MSBuild starts if both probes fail or return `<= 0` / non-finite data), refuse automatic mode below `3,584 MB` free (`floor((free_mb - 2048) / 1536) < 1`) with an actionable recovery message, and set `total = min(cores, floor((free_mb - 2048) / 1536))` split into `/m:<projects>` (`1` when `< 4`, `2` when `4..5`, `3` when `>= 6`, so `projects * CL_MPCount <= total`) and `/p:CL_MPCount=<compilers per project>` across solution, `-Project`, `-EnableASAN`, and `-t:Restore` (`/m:<projects>`) invocations. Done when: the header line prints `free <N> MB, <C> cores: /m:<M>, CL_MPCount=<K>`, the MSBuild log shows `/MP<K>` on every project's compile line, and `tests/scripts/test_build_ps1.py` verifies `3,583 MB` refusal, `3,584 MB` acceptance, counter success, CIM fallback, and dual-probe failure. Cheaper substitute: clamping `max(1, ...)` below `3,584 MB` or silently defaulting to 4 jobs when memory probes fail, violating the `2,048 MB` floor.
 - [x] Let `RECTO_BUILD_JOBS` override automatic sizing and `-MaxCpuCount` for a run, keep `-MaxCpuCount 0` as automatic mode and `-MaxCpuCount <1..cores>` as the CLI override when `RECTO_BUILD_JOBS` is unset, refuse any `RECTO_BUILD_JOBS` (`< 1`, `> cores`, or non-integer) or `-MaxCpuCount` (`< 0` or `> cores`) with a clear message before `vswhere` or MSBuild starts, update the help comments in `build/build.ps1` and `build.cmd`, and add behavioral MSBuild argument-capture tests in `tests/scripts/test_build_ps1.py`. Done when: `tests/scripts/test_build_ps1.py` drives `build/build.ps1` against a fake `vswhere`/MSBuild shim and proves the captured `/m:<M>` and `/p:CL_MPCount=<K>` arguments across default solution, `-Project`, `-EnableASAN`, and `-t:Restore` paths, `RECTO_BUILD_JOBS` over `-MaxCpuCount` precedence, `-MaxCpuCount 0` auto mode, and pre-MSBuild refusals for `RECTO_BUILD_JOBS=0`, `-1`, `abc`, `<cores+1>`, and `-MaxCpuCount <cores+1>`. Cheaper substitute: source-string regex checks that never execute `build/build.ps1` or inspect the arguments MSBuild actually receives.
 - [x] Measure the memory floor. Done when: a clean x64 Debug build on this host (~4 GB free at start, `4,089 MB`, and ~5.3 GB at `5,457 MB`) samples `\Memory\Available MBytes` every second and never reads under `2,048`, the same clean x64 Debug build with the `/m:<projects>` and `CL_MPCount` limits removed (`MSBuild.exe Recto.sln /t:Build /p:Configuration=Debug /p:Platform=x64 /m /nr:false`) drops below `2,048`, and the wall times and minimum `Available MBytes` readings are recorded in `docs/reviews/00-workspace/D00-T04-s3.md`.
-- [ ] Commit: `build: choose MSBuild and compiler parallelism from free memory`
+- [x] Commit: `build: choose MSBuild and compiler parallelism from free memory`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_build_ps1` passes (including behavioral MSBuild argument capture across solution, `-Project`, `-EnableASAN`, and `-t:Restore`, `< 3,584 MB` and failed-probe refusals, and `RECTO_BUILD_JOBS` / `-MaxCpuCount` precedence), a clean `build.ps1 -Platform x64 -Configuration Debug -SkipTests` shows `/MP` for all eight projects with 0 warnings and keeps 1-second sampled `Available MBytes` at or above `2,048` throughout, and the same clean x64 Debug build with `/m:<projects>` and `CL_MPCount` limits removed (`/m` + `/MP`) falls below `2,048`.
+
+> **Verified:** 2026-11-13 | §3 | 505149d3ddc13550498b2e5661f64c38d31d603c
+> **Review:** `docs/reviews/d00-t04-s3.json`
 
 ## 4. Precompiled headers for every project
 
