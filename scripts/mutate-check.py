@@ -15,12 +15,14 @@ import argparse
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+import lib.proc_group as proc_group  # noqa: E402
 
 
 def windowless() -> int:
@@ -44,24 +46,6 @@ def stage_tree(root: Path, dest: Path) -> None:
         out = dest / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, out)
-
-
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True,
-            creationflags=windowless(),
-        )
-    else:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    try:
-        proc.kill()
-    except OSError:
-        pass
 
 
 NATIVE_BUILD_EXTS = {
@@ -91,34 +75,20 @@ def _resolve_cwd_command(cmd: list[str], cwd: Path) -> list[str]:
 
 def run_cmd(cmd: list[str], cwd: Path, timeout_s: float) -> tuple[int | None, str]:
     resolved_cmd = _resolve_cwd_command(cmd, cwd)
-    spawn_kwargs: dict = (
-        {"creationflags": windowless() | subprocess.CREATE_NEW_PROCESS_GROUP}
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
-    proc = subprocess.Popen(
-        resolved_cmd,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        **spawn_kwargs,
-    )
+    managed = proc_group.spawn_managed_process(resolved_cmd, cwd=cwd)
+    proc = managed.proc
     try:
         out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
-        out, err = proc.communicate()
+        out, err = managed.drain_after_terminate()
         combined = ((out or "") + "\n" + (err or "")).strip()
         tail = "\n".join(combined.splitlines()[-20:])
         return None, (f"timed out after {timeout_s:g}s\n{tail}".strip())
     except BaseException:
-        _kill_process_tree(proc)
-        proc.communicate()
+        managed.drain_after_terminate()
         raise
+    finally:
+        managed.terminate_and_close()
     combined = ((out or "") + "\n" + (err or "")).strip()
     tail = "\n".join(combined.splitlines()[-20:])
     return proc.returncode, tail

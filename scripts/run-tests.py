@@ -16,13 +16,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import ctypes
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+import lib.proc_group as proc_group  # noqa: E402
 
 # Heavy fixture/process-spawning suites deferred to CI (`--full`) during routine `--quick` iteration unless files they
 # cover are dirty in the working tree. Even when `test_todo_graph` is deferred, `--quick` still runs the 2-second live
@@ -143,24 +145,6 @@ def select_modules(
     return sorted(selected, key=lambda m: (0 if m in HEAVY_MODULES else 1, m))
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
-    if os.name == "nt":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-            capture_output=True,
-            creationflags=windowless(),
-        )
-    else:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
-    try:
-        proc.kill()
-    except OSError:
-        pass
-
-
 def _run_bounded_process(
     cmd: list[str],
     cwd: Path,
@@ -168,52 +152,35 @@ def _run_bounded_process(
     env: dict[str, str] | None = None,
     timeout_s: float = 300.0,
     cancel_event: threading.Event | None = None,
-    active_procs: set[subprocess.Popen] | None = None,
+    active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
 ) -> tuple[int, float, str]:
     t0 = time.perf_counter()
     if cancel_event is not None and cancel_event.is_set():
         return 130, 0.0, "cancelled"
 
-    spawn_kwargs: dict = (
-        {"creationflags": windowless() | subprocess.CREATE_NEW_PROCESS_GROUP}
-        if os.name == "nt"
-        else {"start_new_session": True}
-    )
-    proc = subprocess.Popen(
-        cmd,
-        cwd=cwd,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        **spawn_kwargs,
-    )
+    managed = proc_group.spawn_managed_process(cmd, cwd=cwd, env=env)
+    proc = managed.proc
     if active_procs is not None and procs_lock is not None:
         with procs_lock:
             if cancel_event is not None and cancel_event.is_set():
-                _kill_process_tree(proc)
-                proc.communicate()
+                managed.drain_after_terminate()
                 return 130, time.perf_counter() - t0, "cancelled"
-            active_procs.add(proc)
+            active_procs.add(managed)
     try:
         out, err = proc.communicate(timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        _kill_process_tree(proc)
-        out, err = proc.communicate()
+        out, err = managed.drain_after_terminate()
         combined = ((out or "") + "\n" + (err or "")).strip()
         return 124, time.perf_counter() - t0, f"timed out after {timeout_s:g}s\n{combined}".strip()
     except BaseException:
-        _kill_process_tree(proc)
-        proc.communicate()
+        managed.drain_after_terminate()
         raise
     finally:
         if active_procs is not None and procs_lock is not None:
             with procs_lock:
-                active_procs.discard(proc)
+                active_procs.discard(managed)
+        managed.terminate_and_close()
 
     if cancel_event is not None and cancel_event.is_set():
         return 130, time.perf_counter() - t0, "cancelled"
@@ -227,7 +194,7 @@ def run_one(
     *,
     timeout_s: float = 300.0,
     cancel_event: threading.Event | None = None,
-    active_procs: set[subprocess.Popen] | None = None,
+    active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
 ) -> tuple[str, int, float, str]:
     env = os.environ.copy()
@@ -249,7 +216,7 @@ def run_quick_graph_gates(
     *,
     timeout_s: float = 300.0,
     cancel_event: threading.Event | None = None,
-    active_procs: set[subprocess.Popen] | None = None,
+    active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
 ) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
@@ -303,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     failures: list[tuple[str, str]] = []
     cancel_event = threading.Event()
-    active_procs: set[subprocess.Popen] = set()
+    active_procs: set[proc_group.ManagedProcess] = set()
     procs_lock = threading.Lock()
     pool = ThreadPoolExecutor(max_workers=workers)
     completed_cleanly = False
@@ -352,8 +319,8 @@ def main(argv: list[str] | None = None) -> int:
             cancel_event.set()
             with procs_lock:
                 running = list(active_procs)
-            for proc in running:
-                _kill_process_tree(proc)
+            for managed_proc in running:
+                managed_proc.terminate_and_close()
             pool.shutdown(wait=True, cancel_futures=True)
 
     total = time.perf_counter() - started

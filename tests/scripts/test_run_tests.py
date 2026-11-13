@@ -18,6 +18,11 @@ assert SPEC is not None and SPEC.loader is not None
 RUN_TESTS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUN_TESTS)
 
+MUTATE_SPEC = importlib.util.spec_from_file_location("mutate_check", ROOT / "scripts" / "mutate-check.py")
+assert MUTATE_SPEC is not None and MUTATE_SPEC.loader is not None
+MUTATE_CHECK = importlib.util.module_from_spec(MUTATE_SPEC)
+MUTATE_SPEC.loader.exec_module(MUTATE_CHECK)
+
 
 class RunTestsCadence(unittest.TestCase):
     def test_discovers_both_recto_and_agent_kit_suites(self):
@@ -103,6 +108,36 @@ class RunTestsCadence(unittest.TestCase):
             while time.monotonic() < deadline and self._pid_alive(grandchild_pid):
                 time.sleep(0.05)
             self.assertFalse(self._pid_alive(grandchild_pid), f"grandchild PID {grandchild_pid} leaked after timeout")
+
+    def test_timeout_kills_orphan_grandchild_holding_pipes_after_parent_exits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            for label, runner in (("run_tests", "bounded"), ("mutate_check", "mutate")):
+                with self.subTest(runner=label):
+                    pid_file = ws / f"{label}_orphan.pid"
+                    launcher = (
+                        "import os, pathlib, subprocess, sys; "
+                        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+                        f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid), encoding='utf-8'); "
+                        "os._exit(0)"
+                    )
+                    cmd = [sys.executable, "-c", launcher]
+                    t0 = time.perf_counter()
+                    if runner == "bounded":
+                        code, elapsed, out = RUN_TESTS._run_bounded_process(cmd, ws, timeout_s=0.25)
+                        self.assertEqual(code, 124)
+                    else:
+                        rc, out = MUTATE_CHECK.run_cmd(cmd, ws, timeout_s=0.25)
+                        elapsed = time.perf_counter() - t0
+                        self.assertIsNone(rc)
+                    self.assertIn("timed out", out)
+                    self.assertLess(elapsed, 2.5, f"{label} waited on inherited grandchild pipes instead of killing job")
+                    self.assertTrue(pid_file.is_file())
+                    orphan_pid = int(pid_file.read_text(encoding="utf-8").strip())
+                    deadline = time.monotonic() + 2.0
+                    while time.monotonic() < deadline and self._pid_alive(orphan_pid):
+                        time.sleep(0.05)
+                    self.assertFalse(self._pid_alive(orphan_pid), f"{label} leaked orphan PID {orphan_pid}")
 
     def test_keyboard_interrupt_cancels_queued_suites_and_terminates_running_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
