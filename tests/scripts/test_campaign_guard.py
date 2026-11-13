@@ -154,6 +154,48 @@ class StopHook(Workspace):
         self.in_flight(os.getpid(), time.time() + 600)
         self.assertIn("astra", reviewing().stdout)
 
+    def test_a_live_ci_watch_lets_the_turn_end_without_tripping_the_breaker(self):
+        self.acquire()
+        sha = "fa38b630e6ad16026736e522f478fb54347eb533"
+        watch_dir = os.path.join(self.root, "build", "ci-watch")
+        os.makedirs(watch_dir, exist_ok=True)
+        lock_path = os.path.join(watch_dir, f"{sha}.lock")
+        json_path = os.path.join(watch_dir, f"{sha}.json")
+        # Unlocked lock file (a dead watcher): does not hold the run.
+        self.write(f"build/ci-watch/{sha}.lock", json.dumps({"pid": 4242, "born": 1}))
+        self.write(f"build/ci-watch/{sha}.json", json.dumps({"sha": sha, "pid": 4242, "exit": None}))
+        self.assertIsNone(guard.ci_watch_in_flight(self.root))
+        self.assertEqual(self.hook()["decision"], "block")
+        self.assertEqual(self.state()["blocks"], 1)
+        # Hold the OS byte-range lock as scripts/ci_status.py does while --wait is running.
+        handle = open(lock_path, "a+b")
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(guard.CI_WATCH_LOCK_BYTE)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"pid": os.getpid(), "born": 1}).encode("utf-8"))
+            handle.flush()
+            self.assertIn("fa38b630e6ad", guard.ci_watch_in_flight(self.root))
+            self.assertIsNone(self.hook(), "waiting on a live CI watch must not block or trip the breaker")
+            self.assertEqual(self.state()["blocks"], 1)
+            self.assertIn("waiting on CI watch", guard.heartbeat_still(self.root, SESSION))
+            # Once exit is recorded (or past CI_WATCH_MAX_SECONDS), the watch no longer holds the run.
+            self.write(f"build/ci-watch/{sha}.json", json.dumps({"sha": sha, "pid": os.getpid(), "exit": 0}))
+            self.assertIsNone(guard.ci_watch_in_flight(self.root))
+            self.write(f"build/ci-watch/{sha}.json", json.dumps({"sha": sha, "pid": os.getpid(), "exit": None}))
+            old_t = time.time() - guard.CI_WATCH_MAX_SECONDS - 60
+            os.utime(lock_path, (old_t, old_t))
+            os.utime(json_path, (old_t, old_t))
+            self.assertIsNone(guard.ci_watch_in_flight(self.root))
+        finally:
+            handle.close()
+
     def test_a_text_summary_graph_is_read_too(self):
         self.acquire()
         self.ready(2, "text")

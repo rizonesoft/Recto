@@ -814,6 +814,72 @@ def _alive(pid: int) -> bool:
     return True
 
 
+CI_WATCH_LOCK_BYTE = 1 << 30
+CI_WATCH_MAX_SECONDS = 3900.0  # ci_status.py --wait's 60-minute default timeout plus 5 minutes grace
+
+
+def _ci_lock_held(lock_path: str) -> bool:
+    """True when another open handle holds scripts/ci_status.py's OS byte-range lock on `lock_path`."""
+    try:
+        handle = open(lock_path, "a+b")
+    except OSError:
+        return False
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(CI_WATCH_LOCK_BYTE)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            handle.seek(CI_WATCH_LOCK_BYTE)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        handle.close()
+
+
+def ci_watch_in_flight(root: str) -> str | None:
+    """A live `scripts/ci_status.py --wait` process holding `build/ci-watch/<sha>.lock`, or None."""
+    folder = os.path.join(root, "build", "ci-watch")
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return None
+    cutoff = time.time() - CI_WATCH_MAX_SECONDS
+    for name in names:
+        if not name.endswith(".lock"):
+            continue
+        lock_path = os.path.join(folder, name)
+        sha = name[:-5]
+        json_path = os.path.join(folder, f"{sha}.json")
+        try:
+            mtime = os.path.getmtime(lock_path)
+            if os.path.isfile(json_path):
+                mtime = max(mtime, os.path.getmtime(json_path))
+                with open(json_path, encoding="utf-8", errors="replace") as jfh:
+                    state_doc = json.load(jfh)
+                if isinstance(state_doc, dict) and state_doc.get("exit") is not None:
+                    continue
+        except (OSError, ValueError):
+            continue
+        if mtime < cutoff or not _ci_lock_held(lock_path):
+            continue
+        pid_label = "unknown"
+        try:
+            with open(lock_path, encoding="utf-8", errors="replace") as fh:
+                holder = json.load(fh)
+            if isinstance(holder, dict) and holder.get("pid"):
+                pid_label = str(holder["pid"])
+        except (OSError, ValueError):
+            pass
+        return f"ci-watch {sha[:12]}, watcher pid {pid_label}"
+    return None
+
+
 def review_in_flight(root: str) -> str | None:
     """A reviewer scripts/review-dispatch.py is running now, from the marks under build/review-in-flight/, or None: a
     mark must name a live process and a deadline not yet passed (a crashed dispatcher's leftover never holds a run)."""
@@ -856,6 +922,12 @@ def stop_decision(root: str, session: str) -> dict | None:
         # Waiting for a review is the work: the tree must not change under the reviewer, so the turn may end and the
         # review's notification (or the heartbeat) resumes the row. Not a block, so it never counts toward the breaker.
         print(f"campaign-stop: a review is running ({reviewing}); waiting for it, not stalled", file=sys.stderr)
+        return None
+    watching_ci = ci_watch_in_flight(root)
+    if watching_ci:
+        # Waiting on a live `ci_status.py --wait` (for `ci_status.py --gate` before claiming or stamping) is active
+        # background work; let the turn end for reactive wakeup without advancing the stall breaker.
+        print(f"campaign-stop: a CI watch is running ({watching_ci}); waiting for it, not stalled", file=sys.stderr)
         return None
     deadline = time.monotonic() + _env_int("CAMPAIGN_HOOK_BUDGET_SECONDS", int(HOOK_BUDGET_SECONDS))
     phase_only = guard.get("scope") == "phase"
@@ -921,6 +993,9 @@ def heartbeat_still(root: str, session: str) -> str:
     reviewing = review_in_flight(root)
     if reviewing:
         return f"heartbeat-still: waiting on review ({reviewing})"
+    watching_ci = ci_watch_in_flight(root)
+    if watching_ci:
+        return f"heartbeat-still: waiting on CI watch ({watching_ci})"
     run_rel = str(guard.get("run_file", ""))
     if not run_rel or os.path.isabs(run_rel) or ".." in run_rel.replace("\\", "/").split("/"):
         raise GuardError(f"run file {run_rel!r} is not a path inside the project")
