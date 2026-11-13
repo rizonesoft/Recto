@@ -530,7 +530,7 @@ class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
         assert pwsh is not None
         stripped = self._stripped_env()
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            base = Path(tmp).resolve()
             repo = base / "repo"
             (repo / ".conclave" / "automations").mkdir(parents=True)
             (repo / "build").mkdir(parents=True)
