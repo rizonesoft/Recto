@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="$(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto'">
     <ClCompile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
       <ConformanceMode>true</ConformanceMode>

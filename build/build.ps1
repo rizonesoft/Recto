@@ -15,7 +15,9 @@
 # -Configuration Debug|Release (default both, or Debug under -Quick),
 # -Project <vcxproj-or-target> (single project/target for fast local iteration),
 # -TestFilter <pattern>, -TestOutputDir <folder> (default build\),
-# -SkipTests, -EnableASAN, -ForceRestore, -MaxCpuCount <N> (0 = RAM-bounded auto).
+# -SkipTests, -EnableASAN, -ForceRestore, -MaxCpuCount <N> (0 = auto memory-bounded
+# sizing with 2,048 MB reserve, refusing below 3,584 MB free; RECTO_BUILD_JOBS=<1..cores>
+# overrides both automatic sizing and -MaxCpuCount).
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
@@ -35,7 +37,7 @@ param(
     [switch]$SkipTests,
     [switch]$EnableASAN,
     [switch]$ForceRestore,
-    [ValidateRange(0, 128)][int]$MaxCpuCount = 0
+    [int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
 if (($Quick -or $EnableASAN) -and -not $PSBoundParameters.ContainsKey('Platform')) {
@@ -52,19 +54,11 @@ if ($EnableASAN -and ($Platform -contains 'ARM64')) {
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-function Get-RamBoundedJobs([int]$Requested) {
-    if ($Requested -gt 0) { return $Requested }
-    $cores = [Math]::Max(1, [Environment]::ProcessorCount)
-    try {
-        $osInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-        $freeMb = [double]$osInfo.FreePhysicalMemory / 1024.0
-        # Reserve ~1.5 GB per parallel MSBuild + cl.exe worker so C++23 / WinRT builds never thrash pagefile.
-        $byRam = [Math]::Max(1, [int][Math]::Floor($freeMb / 1536.0))
-        return [Math]::Min($cores, $byRam)
-    } catch {
-        return [Math]::Min($cores, 4)
-    }
-}
+. (Join-Path $PSScriptRoot 'parallelism.ps1')
+$parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
+$jobs = $parallelism.Projects
+$clMpCount = $parallelism.ClMpCount
+Write-Host $parallelism.Header
 
 function Get-RestoreFingerprint([string]$RepoRoot) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -75,10 +69,10 @@ function Get-RestoreFingerprint([string]$RepoRoot) {
         (Join-Path $RepoRoot 'vcpkg.json'),
         (Join-Path $RepoRoot 'vcpkg-configuration.json')
     )
-    $vcxprojs = Get-ChildItem -Path $RepoRoot -Recurse -Filter '*.vcxproj' -ErrorAction SilentlyContinue |
+    $vcxprojs = @(Get-ChildItem -Path $RepoRoot -Recurse -Filter '*.vcxproj' -ErrorAction SilentlyContinue |
         Where-Object { $_.FullName -notmatch '\\(build|vcpkg_installed|\.git)\\' } |
-        Sort-Object FullName
-    $files += $vcxprojs.FullName
+        Sort-Object FullName)
+    $files += @($vcxprojs | ForEach-Object { $_.FullName })
     $builder = New-Object System.Text.StringBuilder
     [void]$builder.AppendLine("root:$([System.IO.Path]::GetFullPath($RepoRoot))")
     [void]$builder.AppendLine("nuget:$($env:NUGET_PACKAGES)")
@@ -234,8 +228,6 @@ if ($EnableASAN) {
 }
 
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
-$jobs = Get-RamBoundedJobs -Requested $MaxCpuCount
-Write-Host "Parallel:   /m:$jobs (/nr:false)"
 
 # MSBuild's LinkEmbedManifest writes *_manifest.rc only when absent, embedding an absolute path; self-heal after a clone move.
 Get-ChildItem -Path (Join-Path $root 'build') -Recurse -Filter '*_manifest.rc' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -283,6 +275,7 @@ foreach ($plat in $Platform) {
             "/p:Platform=$plat",
             "/p:TreatWarningsAsErrors=true",
             "/p:EnableASAN=$desiredAsanState",
+            "/p:CL_MPCount=$clMpCount",
             '/fl',
             "/flp:logfile=$logFile;verbosity=normal",
             "/m:$jobs",

@@ -12,6 +12,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD_PS1 = ROOT / "build" / "build.ps1"
+PARALLELISM_PS1 = ROOT / "build" / "parallelism.ps1"
 ASAN_RUNTIME_PS1 = ROOT / "build" / "asan-runtime.ps1"
 MSBUILD_LOG_PS1 = ROOT / "build" / "msbuild-log.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
@@ -150,7 +151,7 @@ class LibraryPathDefaults(unittest.TestCase):
 class BuildScript(unittest.TestCase):
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_the_scripts_parse(self):
-        for script in (BUILD_PS1, ASAN_RUNTIME_PS1, MSBUILD_LOG_PS1):
+        for script in (BUILD_PS1, PARALLELISM_PS1, ASAN_RUNTIME_PS1, MSBUILD_LOG_PS1):
             check = (f"$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('{script}', "
                      f"[ref]$null, [ref]$errors); $errors | ForEach-Object {{ $_.Message }}; exit $errors.Count")
             run = subprocess.run([POWERSHELL, "-NoProfile", "-Command", check], capture_output=True, text=True,
@@ -172,10 +173,12 @@ class BuildScript(unittest.TestCase):
         self.assertIn("[switch]$Quick", text)
         self.assertIn("[switch]$ForceRestore", text)
         self.assertIn("[int]$MaxCpuCount = 0", text)
+        self.assertIn(". (Join-Path $PSScriptRoot 'parallelism.ps1')", text)
+        self.assertIn("Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount", text)
         self.assertIn("'/nr:false'", text)
         self.assertIn('"/m:$jobs"', text)
+        self.assertIn('"/p:CL_MPCount=$clMpCount"', text)
         self.assertIn("build\\restore.stamp", text)
-        self.assertIn("Win32_OperatingSystem", text)
 
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_default_platform_is_x64_and_arm64_overrides_stay_supported(self):
@@ -415,6 +418,269 @@ class BuildEvidence(unittest.TestCase):
             self.assertIn("holds no object files", out)
             code, out = self.run_script("-Record", str(root / "x.json"), "-Root", str(root), "-Configuration", "Debgu")
             self.assertNotEqual(code, 0, out)
+
+
+class BuildParallelism(unittest.TestCase):
+    """Memory-bounded MSBuild (/m) and compiler (/MP + CL_MPCount) parallelism in Directory.Build.targets,
+    build/parallelism.ps1, and build/build.ps1 (D00 T04 §3)."""
+
+    @staticmethod
+    def _has_shared_mp(targets_xml: str) -> bool:
+        import xml.etree.ElementTree as ET
+        ns = {"ms": "http://schemas.microsoft.com/developer/msbuild/2003"}
+        root = ET.fromstring(targets_xml)
+        for group in root.findall("ItemDefinitionGroup") + root.findall("ms:ItemDefinitionGroup", ns):
+            cond = group.attrib.get("Condition", "")
+            if "MSBuildProjectName.StartsWith('recto-')" in cond and "EnableASAN" not in cond:
+                for cl in list(group):
+                    if cl.tag.endswith("ClCompile"):
+                        for child in list(cl):
+                            if child.tag.endswith("MultiProcessorCompilation") and (child.text or "").strip() == "true":
+                                return True
+        return False
+
+    def test_directory_build_targets_enables_multiprocessor_compilation(self):
+        targets_text = (ROOT / "Directory.Build.targets").read_text(encoding="utf-8")
+        self.assertTrue(self._has_shared_mp(targets_text))
+        stripped = targets_text.replace("<MultiProcessorCompilation>true</MultiProcessorCompilation>", "")
+        self.assertFalse(self._has_shared_mp(stripped))
+        if MSBUILD:
+            with tempfile.TemporaryDirectory() as tmp:
+                proj = Path(tmp) / "recto-probe.vcxproj"
+                proj.write_text(f"""<Project>
+  <PropertyGroup>
+    <Configuration>Debug</Configuration>
+    <Platform>x64</Platform>
+  </PropertyGroup>
+  <ItemGroup><ClCompile Include="sample.cpp" /></ItemGroup>
+  <Import Project="{ROOT / 'Directory.Build.targets'}" />
+  <Target Name="ProbeMp">
+    <Message Importance="High" Text="MP=%(ClCompile.MultiProcessorCompilation)" />
+  </Target>
+</Project>
+""", encoding="utf-8")
+                for asan in ("false", "true"):
+                    run = subprocess.run(
+                        [MSBUILD, str(proj), "-nologo", "-t:ProbeMp", f"/p:EnableASAN={asan}"],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    self.assertIn("MP=true", run.stdout)
+
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_formula_split_and_minimum_memory_floor(self):
+        probe = f"""
+. '{PARALLELISM_PS1}'
+$cases = @(
+    @(3584, 12),
+    @(5119, 12),
+    @(5120, 12),
+    @(6656, 12),
+    @(9500, 12),
+    @(11264, 12),
+    @(25000, 12),
+    @(9500, 1)
+)
+$out = @()
+foreach ($c in $cases) {{
+    $r = Resolve-BuildParallelism -Cores $c[1] -JobsEnv '' -MaxCpuCount 0 -AvailableMb $c[0]
+    $out += [ordered]@{{
+        free = $c[0]; cores = $c[1]; total = $r.TotalCompilers;
+        m = $r.Projects; cl = $r.ClMpCount; header = $r.Header
+    }}
+}}
+$out | ConvertTo-Json -Compress
+"""
+        run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", probe],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        rows = {(r["free"], r["cores"]): r for r in json.loads(run.stdout.strip())}
+        self.assertEqual((rows[(3584, 12)]["total"], rows[(3584, 12)]["m"], rows[(3584, 12)]["cl"]), (1, 1, 1))
+        self.assertEqual(rows[(3584, 12)]["header"], "free 3,584 MB, 12 cores: /m:1, CL_MPCount=1")
+        self.assertEqual((rows[(5119, 12)]["total"], rows[(5119, 12)]["m"], rows[(5119, 12)]["cl"]), (1, 1, 1))
+        self.assertEqual((rows[(5120, 12)]["total"], rows[(5120, 12)]["m"], rows[(5120, 12)]["cl"]), (2, 1, 2))
+        self.assertEqual((rows[(6656, 12)]["total"], rows[(6656, 12)]["m"], rows[(6656, 12)]["cl"]), (3, 1, 3))
+        self.assertEqual((rows[(9500, 12)]["total"], rows[(9500, 12)]["m"], rows[(9500, 12)]["cl"]), (4, 2, 2))
+        self.assertEqual(rows[(9500, 12)]["header"], "free 9,500 MB, 12 cores: /m:2, CL_MPCount=2")
+        self.assertEqual((rows[(11264, 12)]["total"], rows[(11264, 12)]["m"], rows[(11264, 12)]["cl"]), (6, 3, 2))
+        self.assertEqual((rows[(25000, 12)]["total"], rows[(25000, 12)]["m"], rows[(25000, 12)]["cl"]), (12, 3, 4))
+        self.assertEqual((rows[(9500, 1)]["total"], rows[(9500, 1)]["m"], rows[(9500, 1)]["cl"]), (1, 1, 1))
+        for r in rows.values():
+            self.assertLessEqual(r["m"] * r["cl"], r["total"])
+            if r["total"] < 6:
+                self.assertLessEqual(r["m"], 2)
+
+        low = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+             f". '{PARALLELISM_PS1}'; Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -AvailableMb 3583"],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertNotEqual(low.returncode, 0)
+        msg = low.stdout + low.stderr
+        self.assertIn("3,583 MB", msg)
+        self.assertIn("3,584 MB", msg)
+        self.assertIn("RECTO_BUILD_JOBS=1", msg)
+
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_memory_probe_counter_fallback_and_dual_failure(self):
+        ok_script = f"""
+. '{PARALLELISM_PS1}'
+$fromCounter = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -CounterProbe {{ 6000.9 }} -CimProbe {{ throw 'cim broken' }}
+$fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -CounterProbe {{ throw 'counter broken' }} -CimProbe {{ 9500.0 }}
+@($fromCounter, $fromCim) | ConvertTo-Json -Compress
+"""
+        ok = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ok_script],
+                            capture_output=True, text=True, timeout=60)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        c_row, w_row = json.loads(ok.stdout.strip())
+        self.assertEqual((c_row["FreeMb"], c_row["Projects"], c_row["ClMpCount"]), (6000, 1, 2))
+        self.assertEqual((w_row["FreeMb"], w_row["Projects"], w_row["ClMpCount"]), (9500, 2, 2))
+
+        for bad_expr in (
+            "-CounterProbe { throw 'no counter' } -CimProbe { throw 'no cim' }",
+            "-CounterProbe { 0 } -CimProbe { [double]::NaN }",
+        ):
+            bad = subprocess.run(
+                [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                 f". '{PARALLELISM_PS1}'; Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 {bad_expr}"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertNotEqual(bad.returncode, 0)
+            err = bad.stdout + bad.stderr
+            self.assertIn("Available MBytes", err)
+            self.assertIn("Win32_OperatingSystem.FreePhysicalMemory", err)
+            self.assertIn("RECTO_BUILD_JOBS", err)
+
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_build_ps1_behavioral_msbuild_arguments_precedence_and_refusals(self):
+        host_cores = max(1, os.cpu_count() or 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ws = base / "repo"
+            (ws / "build").mkdir(parents=True)
+            (ws / "scripts").mkdir(parents=True)
+            for name in ("Recto.sln", "Directory.Build.props", "Directory.Build.targets",
+                         "vcpkg.json", "vcpkg-configuration.json"):
+                shutil.copy2(ROOT / name, ws / name)
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1"):
+                shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+
+            pf86 = base / "pf86"
+            vs_installer = pf86 / "Microsoft Visual Studio" / "Installer"
+            vs_installer.mkdir(parents=True)
+            vs_root = base / "vs2026"
+            msbuild_dir = vs_root / "MSBuild" / "Current" / "Bin"
+            msbuild_dir.mkdir(parents=True)
+            asan_dir = vs_root / "VC" / "Tools" / "MSVC" / "14.51" / "bin" / "Hostx64" / "x64"
+            asan_dir.mkdir(parents=True)
+            (asan_dir / "clang_rt.asan_dynamic-x86_64.dll").write_bytes(b"MZ")
+            vswhere_ps1 = vs_installer / "vswhere.ps1"
+            vswhere_ps1.write_text(f"Write-Output '{vs_root}'\n$global:LASTEXITCODE = 0\n", encoding="utf-8")
+
+            calls_file = base / "msbuild_calls.jsonl"
+            msbuild_ps1 = msbuild_dir / "MSBuild.ps1"
+            msbuild_ps1.write_text(
+                f"$line = (@($args) | ConvertTo-Json -Compress)\n"
+                f"if ($args.Count -eq 1) {{ $line = '[' + $line + ']' }}\n"
+                f"Add-Content -LiteralPath '{calls_file}' -Value $line -Encoding UTF8\n"
+                "foreach ($a in $args) {\n"
+                "    if ($a -like '/flp:logfile=*') {\n"
+                "        $logPath = ($a -split '=', 2)[1].Split(';')[0]\n"
+                "        Set-Content -LiteralPath $logPath -Value \"Build succeeded.`n    0 Warning(s)`n    0 Error(s)`n\" -Encoding UTF8\n"
+                "    }\n"
+                "}\n"
+                "$global:LASTEXITCODE = 0\n",
+                encoding="utf-8",
+            )
+
+            def invoke_build(extra_ps_args: str, counter_body: str = "9500", cim_kb: str = "9728000",
+                             jobs_env: str | None = None) -> tuple[int, str, list[list[str]]]:
+                if calls_file.exists():
+                    calls_file.unlink()
+                stamp = ws / "build" / "restore.stamp"
+                if stamp.exists():
+                    stamp.unlink()
+                env = os.environ.copy()
+                env["ProgramFiles(x86)"] = str(pf86)
+                if jobs_env is None:
+                    env.pop("RECTO_BUILD_JOBS", None)
+                else:
+                    env["RECTO_BUILD_JOBS"] = jobs_env
+                cmd = (
+                    f"Set-Alias -Name '{vs_installer / 'vswhere.exe'}' -Value '{vswhere_ps1}' -Scope Global\n"
+                    f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
+                    f"function global:Get-Counter {{ [pscustomobject]@{{ CounterSamples = @([pscustomobject]@{{ CookedValue = ({counter_body}) }}) }} }}\n"
+                    f"function global:Get-CimInstance {{ [pscustomobject]@{{ FreePhysicalMemory = ({cim_kb}) }} }}\n"
+                    f"& '{ws / 'build' / 'build.ps1'}' {extra_ps_args}\n"
+                )
+                res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                                     capture_output=True, text=True, env=env, timeout=120)
+                recorded = [json.loads(line) for line in calls_file.read_text(encoding="utf-8").splitlines() if line.strip()] \
+                    if calls_file.exists() else []
+                return res.returncode, res.stdout + res.stderr, recorded
+
+            # 1. Default solution build + NuGet restore at 9,500 MB free.
+            exp_total = min(host_cores, (9500 - 2048) // 1536)
+            exp_proj = min(host_cores, 1 if exp_total < 4 else (2 if exp_total < 6 else 3))
+            exp_cl = max(1, exp_total // exp_proj)
+            rc, out, calls = invoke_build("-SkipTests")
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"free 9,500 MB, {host_cores} cores: /m:{exp_proj}, CL_MPCount={exp_cl}", out)
+            self.assertEqual(len(calls), 3)  # Restore, Debug|x64, Release|x64
+            self.assertIn("-t:Restore", calls[0])
+            self.assertIn(f"/m:{exp_proj}", calls[0])
+            self.assertIn("/nr:false", calls[0])
+            for build_call in calls[1:]:
+                self.assertIn(f"/m:{exp_proj}", build_call)
+                self.assertIn(f"/p:CL_MPCount={exp_cl}", build_call)
+                self.assertIn("/nr:false", build_call)
+
+            # 2. -Project and -EnableASAN paths, plus -MaxCpuCount 0 automatic convention.
+            target_jobs = min(host_cores, 2)
+            rc, out, calls = invoke_build("-Project recto-pdf -Configuration Debug -SkipTests -MaxCpuCount 0",
+                                          counter_body="5500")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("-t:recto-pdf", calls[-1])
+            self.assertIn("/m:1", calls[-1])
+            self.assertIn(f"/p:CL_MPCount={target_jobs}", calls[-1])
+
+            rc, out, calls = invoke_build("-EnableASAN -Configuration Debug -SkipTests", counter_body="5500")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("/p:EnableASAN=true", calls[-1])
+            self.assertIn("/m:1", calls[-1])
+            self.assertIn(f"/p:CL_MPCount={target_jobs}", calls[-1])
+
+            # 3. Precedence: RECTO_BUILD_JOBS overrides -MaxCpuCount; -MaxCpuCount > 0 overrides low auto memory.
+            rc, out, calls = invoke_build(f"-Configuration Debug -SkipTests -MaxCpuCount {target_jobs}",
+                                          counter_body="2000", cim_kb="2048000")
+            self.assertEqual(rc, 0, out)
+            self.assertIn(f"(-MaxCpuCount {target_jobs})", out)
+            self.assertIn(f"/p:CL_MPCount={target_jobs}", calls[-1])
+
+            rc, out, calls = invoke_build(f"-Configuration Debug -SkipTests -MaxCpuCount {host_cores}",
+                                          counter_body="2000", jobs_env="1")
+            self.assertEqual(rc, 0, out)
+            self.assertIn("(RECTO_BUILD_JOBS=1)", out)
+            self.assertIn("/m:1", calls[-1])
+            self.assertIn("/p:CL_MPCount=1", calls[-1])
+
+            # 4. Pre-MSBuild refusals: MSBuild must never be invoked.
+            for label, extra, counter_expr, cim_expr, env_val in (
+                ("env=0", "-SkipTests", "9500", "9728000", "0"),
+                ("env=-1", "-SkipTests", "9500", "9728000", "-1"),
+                ("env=abc", "-SkipTests", "9500", "9728000", "abc"),
+                ("env>cores", "-SkipTests", "9500", "9728000", str(host_cores + 1)),
+                ("cli=-1", "-SkipTests -MaxCpuCount -1", "9500", "9728000", None),
+                ("cli>cores", f"-SkipTests -MaxCpuCount {host_cores + 1}", "9500", "9728000", None),
+                ("low_mem", "-SkipTests", "3583", "3668992", None),
+                ("probe_fail", "-SkipTests", "throw 'no counter'", "throw 'no cim'", None),
+            ):
+                with self.subTest(case=label):
+                    rc, out, calls = invoke_build(extra, counter_body=counter_expr, cim_kb=cim_expr, jobs_env=env_val)
+                    self.assertNotEqual(rc, 0, out)
+                    self.assertEqual(calls, [], f"MSBuild should not start on {label}: {out}")
+
 
 if __name__ == "__main__":
     unittest.main()
