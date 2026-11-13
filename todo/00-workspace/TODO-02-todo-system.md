@@ -21,6 +21,7 @@ track: M0
 - ScratchPad `todo/README.md`, `.claude/skills/` (the eight skills), `AGENTS.md` and `.github/workflows/plan.yml` (format rules, skill contracts and the CI gate shape).
 - `docs/plans/2026-10-13-recto-foundation.md` (milestones M0 to M6, decisions D1 to D17: the seed graph's domains, phases and section content) and `design/SPEC.md` (the Fidelity source for every surface section).
 - -> XREF: D00 T01 §1 -- the first commit this file's stamps cite; its §4 wires the product CI beside the plan gate built here.
+- -> XREF: D00 T05 §1 -- imports Conclave-SDK `kits/todo` and `kits/reviewer` (`three-pass` schedule and `git cat-file --batch` pin prefetch) over this graph while preserving all 105 historical receipts.
 
 ## Outcome
 

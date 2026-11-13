@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 55 | Checklist items: 333
+Sections: 60 | Checklist items: 354
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -41,6 +41,11 @@ Sections: 55 | Checklist items: 333
 | [ ]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
 | [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
 | [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 7     |
+| [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
+| [ ]    | D00 T05 §2  | Portable C++23 and Python LSP servers and MCP bridge across runners                      | windows-host | 4     |
+| [ ]    | D00 T05 §3  | Read-only medium-effort Gemini 4 Hydrogen helpers and execution sandbox                  | none         | 4     |
+| [ ]    | D00 T05 §4  | RAM-bounded build/test runner cadence and local-vs-CI gate split                         | windows-host | 4     |
+| [ ]    | D00 T05 §5  | Dual-runner unattended campaign launcher, sleep guard and clone-move recovery            | windows-host | 4     |
 | [ ]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |
 | [ ]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
 | [ ]    | D06 T02 §12 | clang-tidy bug, CERT and concurrency checks over the compile database                    | windows-host | 8     |
@@ -946,6 +951,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 105/877 verified sections, 57 ready to run now.
+Progress: 105/882 verified sections, 58 ready to run now.
 
-Checklist: 709/6497 items completed (includes Commit items).
+Checklist: 709/6518 items completed (includes Commit items).

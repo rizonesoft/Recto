@@ -34,6 +34,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | ------- | -------- |
 | M0 repo, GPL-3.0 repo-face files, native scaffold, both-architecture CI | D00 T01 §1-§5 |
 | This TODO system itself | D00 T02 §1-§3 |
+| Conclave kits, portable LSP/MCP, Hydrogen helpers, test cadence & campaign runtime | D00 T05 §1-§5 |
 | Test backbone, corpus provenance, ASan | D00 T03 §1-§6 |
 | `recto-pdf` lexer, XRef parser, stream filters, CNG crypto & document model (4.1-4.4) | D01 T01 §1-§10 |
 | Content interpreter, DirectWrite fonts, incremental save, `DisplayList` & `RenderPool` | D01 T02 §1-§10 |
@@ -73,6 +74,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 ## Active TODOs
 
 - [00 Workspace] [TODO-04 Build Performance, Repo-Scoped Tools and the Ninja Build](./00-workspace/TODO-04-build-performance.md): separate ASan outputs, x64 local and ARM64 in CI, memory-aware parallelism, precompiled headers, tiered gates, pinned tools in `.tools/`, sccache, CMake and Ninja.
+- [00 Workspace] [TODO-05 Conclave Kits, Portable LSP, Hydrogen Helpers and Campaign Cadence](./00-workspace/TODO-05-agent-kits-and-campaign-runtime.md): Conclave-SDK reviewer/todo/unattended import, C++23 and Python LSP/MCP servers, medium-effort read-only Gemini 4 Hydrogen helpers, RAM-bounded local-vs-CI test cadence, and dual-runner unattended campaigns.
 - [01 Engine] [TODO-02 Content Interpreter, Display Lists, Document Actor and Render Pool](./01-engine/TODO-02-actor-and-render.md): content-stream interpreter, DirectWrite font loader, incremental save, immutable `DisplayList`s, actor threads, tile rendering, scheduler with cancellation, ordered shutdown. Frozen.
 - [01 Engine] [TODO-03 recto-cli, Fuzz Targets and the Thread-Safety Battery](./01-engine/TODO-03-cli-and-fuzz.md): CLI verbs, libFuzzer targets, the 4.9 suite as M1's evidence. Frozen.
 - [02 Viewer] [TODO-01 App Shell, Tabs, Menus, File Open/Save and Shell Dialogs](./02-viewer/TODO-01-app-shell.md): self-contained unpackaged and MSIX-ready app, tokens, custom title bar, tabs, named slots, Classic menu bar, four open paths, Save/Save As/Unsaved changes, Password and Could-not-open dialogs.

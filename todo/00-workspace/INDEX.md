@@ -9,6 +9,7 @@ The git repository, the GPL-3.0 repo-face files, the native C++23 `recto-pdf` an
 | TODO | Title | Status |
 | ---- | ----- | :----: |
 | [TODO-04](./TODO-04-build-performance.md) | Build Performance, Repo-Scoped Tools and the Ninja Build | active |
+| [TODO-05](./TODO-05-agent-kits-and-campaign-runtime.md) | Conclave Kits, Portable LSP, Hydrogen Helpers and Campaign Cadence | active |
 
 ## Completed
 

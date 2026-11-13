@@ -19,6 +19,9 @@ track: M0
 - `build/build.ps1`, `build.cmd`, `Directory.Build.props`, `Directory.Build.targets` (the D13 boundary checks read MSBuild items), `.github/workflows/build.yml`, `scripts/check-*.py` (the pin checks).
 - -> XREF: D00 T01 §3 -- the solution scaffold this file speeds up; its x64 and ARM64 one-command build is kept, with ARM64 moved to CI by `§2`
 - -> XREF: D00 T01 §4 -- the CI build `§2` keeps building ARM64 and `§8` moves to Ninja
+- -> XREF: D00 T05 §2 -- ships portable C++23 and Python LSP/MCP servers (`scripts/clangd-lsp.py`, `scripts/python-lsp.py`, `scripts/lsp_mcp.py`, `.clangd`, `scripts/gen-compile-commands.py`) ahead of `§12`'s MSBuild item-evaluated compile database
+- -> XREF: D00 T05 §4 -- ships `build.cmd -Quick`, free-RAM MSBuild `/m:<N>` + `/nr:false`, `build/restore.stamp` and `scripts/run-tests.py --quick` / `--full` ahead of `§3` and `§5`
+- -> XREF: D00 T05 §5 -- hardens dual-runner unattended campaigns, sleep guard and moved-clone Desktop shortcuts beside `§9` and `§14`
 - -> XREF: D06 T02 §12 -- clang-tidy runs over the compile database `§12` here writes, with the clang-tidy beside the clangd that `build/clangd.cmd` finds
 
 ## Outcome
@@ -116,6 +119,8 @@ The owner decided on 2026-11-09 that the local build is x64 only until Recto v1 
 MSBuild `/m` starts one project build per core and `MultiProcessorCompilation` one compiler per core inside each, so on 12 cores a build can run many 1 to 2 GB compilers at once whatever is free; on 2026-11-09 free memory fell to 88 MB during builds. This section has `build/build.ps1` choose both limits from the free memory and cores when it starts, so a build takes what it can without starving the machine.
 
 **Corrected 2026-11-10:** a check of the tree. No project, props or targets file sets `MultiProcessorCompilation` (a search for it, `CL_MPCount` and `UseMultiToolTask` in every `.vcxproj`, `Directory.Build.props`, `Directory.Build.targets` and `build/build.ps1` finds nothing), so the paragraph above is wrong about today's build: each project compiles its sources one at a time (24 in `recto-pdf`, 28 in `recto-tests`), and only MSBuild's `/m` runs projects side by side. This section therefore also turns `MultiProcessorCompilation` on for every project, in `Directory.Build.targets` (the layer that owns the shared `ClCompile` settings), so the limit computed here bounds compilers that really run in parallel, and it measures the clean build before and after.
+
+**Corrected 2026-11-13:** `D00 T05 §4` added free-memory `/m:<N>` project-parallelism capping, `/nr:false` node-reuse disabling, `-Quick` / `-Project`, and `build/restore.stamp` to `build/build.ps1`; this section still owns turning `MultiProcessorCompilation` (`/MP` + `CL_MPCount`) on in `Directory.Build.targets`, `RECTO_BUILD_JOBS`, and the four clean-build wall-time and memory-floor measurements.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -364,6 +369,8 @@ The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Re
 A session that needs a symbol's definition, its callers or its type today searches the sources and reads pieces of them, and the sources are large: `src/pdf/filters.cpp` is 436 KB, `tests/recto-tests/pdf_filters_tests.cpp` 383 KB, `pdf_interpreter_tests.cpp` 320 KB and `src/pdf/document.cpp` 156 KB (measured 2026-11-10). A language server answers those questions in a few lines and reports a compile error without a build. Nothing is set up: the repository has no `compile_commands.json`, no `.clangd` and no language server configuration under `.claude/`, and MSBuild writes no compile database. `clangd.exe` is already on this host inside Visual Studio 2026 (`VC\Tools\Llvm\x64\bin\clangd.exe`, the C++ Clang tools component), so no new tool is fetched. This section writes the compile database from the build that ran, points clangd at it, proves clangd reads every source as MSVC compiles it (`/std:c++23preview`, the Windows SDK, the vcpkg and NuGet include folders), connects it to Claude Code, and bounds its memory, because this host runs short of memory. `§8` later writes the same database from CMake.
 
 Two defaults, each with its cost of changing: clangd comes from Visual Studio and is not pinned in `.tools/` (moving it into `§6`'s lock costs one lock entry and one line in `build/clangd.cmd`), and the database is x64 Debug only (another configuration costs one argument to the generator).
+
+**Corrected 2026-11-13:** `D00 T05 §2` already shipped `.clangd`, portable `.vcxproj`-parsed `scripts/gen-compile-commands.py` (`build/compile_commands.json` with 0 errors across all 68 units), `scripts/clangd-lsp.py`, `scripts/python-lsp.py` and `scripts/lsp_mcp.py` wired into `.lsp.json`, `.mcp.json` and `.agents/plugins/recto-lsp/`; this section therefore builds on those servers to add the MSBuild item-evaluated `RectoCompileCommands` target (`Directory.Build.targets`) and the indexing working-set benchmark before `§8` switches the database to CMake.
 
 **Phase:** 0
 **Needs:** windows-host
