@@ -96,6 +96,8 @@ track: M0
 
 ## 2. ARM64 off the local build, built in CI, deferred to after Recto v1
 
+> **Started:** 2026-11-13T08:35Z
+
 The owner decided on 2026-11-09 that the local build is x64 only until Recto v1 ships, to halve every gate on the shared development host, while ARM64 stays a ship target. This section changes the local default, keeps ARM64 built in CI so a break is still caught on every push, and records the decision in the foundation plan so later sections that need an ARM64 host (`arm64-host` Needs) are not mistaken for done.
 
 **Corrected 2026-11-13:** validated against the repository before build. Target architectures in `docs/plans/2026-10-13-recto-foundation.md` live in D15 (`Target OS and architectures`), the section 1 owner-decisions list, section 2's `Architectures` row, and section 7 Milestone M0's `Done when` cell rather than D4 (`UI framework`), so the dated `2026-11-09` owner decision is recorded in D15 and the section 1 owner-decisions list with section 2 and M0 aligned to match (`-Platform x64,ARM64` builds both in one command, while plain `.\build.cmd` defaults to `x64` locally until Recto v1). `build.cmd`, `README.md`, `CONTRIBUTING.md`, `AGENTS.md` Validation, and `build/build.ps1`'s `vswhere` missing-toolset error message also still state that plain `.\build.cmd` builds `ARM64` locally and requires the ARM64 compiler; all five are updated together, and `tests/scripts/test_build_ps1.py` locks the `@('x64')` parameter default, `-Platform ARM64` / `-Platform x64,ARM64` parsing, and `ARM64`-conditional `vswhere` component check.
