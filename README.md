@@ -25,7 +25,7 @@ Recto will be an open-source PDF viewer, OCR tool and document converter for Win
 
 ## Building and verifying
 
-The one-command native build (`.\build.cmd`) compiles `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release and runs the x64 test suite (see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for prerequisites). Validate the execution plan and its tooling with Python 3.11 or newer:
+The one-command native build (`.\build.cmd`) compiles `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 in Debug and Release and runs the x64 test suite (`.\build.cmd -Platform x64,ARM64` also builds ARM64 locally, as CI does on every code push; see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for prerequisites). Validate the execution plan and its tooling with Python 3.11 or newer:
 
 ```powershell
 python scripts/todo-graph.py validate

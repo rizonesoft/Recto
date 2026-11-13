@@ -5,12 +5,13 @@
 #     .\build.cmd
 #
 # That restores NuGet packages, installs the vcpkg manifest (GoogleTest,
-# test-only), and builds Recto.sln for x64 and ARM64 in Debug and
-# Release. Exit code 0 only when the build also passed the x64 test
-# binaries.
+# test-only), and builds Recto.sln for x64 in Debug and Release (ARM64 is
+# built in CI on every code push until Recto v1, D00 T04 section 2; pass
+# -Platform x64,ARM64 or -Platform ARM64 to build ARM64 locally). Exit code 0
+# only when the build also passed the x64 test binaries.
 #
 # Options: -Quick (x64 Debug + tests for fast local iteration),
-# -Platform x64|ARM64 (default both, or x64 under -Quick / -EnableASAN),
+# -Platform x64|ARM64 (default x64; pass x64,ARM64 or ARM64 to include ARM64),
 # -Configuration Debug|Release (default both, or Debug under -Quick),
 # -Project <vcxproj-or-target> (single project/target for fast local iteration),
 # -TestFilter <pattern>, -TestOutputDir <folder> (default build\),
@@ -19,12 +20,13 @@
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
 # VS 2022 cannot substitute: the projects use the v145 toolset, which
-# only VS 2026 ships. The installation must have the C++ x64 and ARM64
-# tools; vswhere picks the newest one that does. The Windows SDK comes
+# only VS 2026 ships. The installation must have the C++ x64 tools (and
+# ARM64 tools when -Platform includes ARM64); vswhere picks the newest one
+# that does. The Windows SDK comes
 # from its own install and C++/WinRT and the SDK build tools from NuGet,
 # so neither is asked of Visual Studio (MSBuild names a missing SDK itself).
 param(
-    [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
+    [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
     [string]$Project = '',
     [string]$TestFilter = '',
@@ -195,7 +197,7 @@ if ($Platform -contains 'ARM64') {
 $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $required -property installationPath
 if (-not $vs) {
     $missing = @($required | Where-Object { -not (& $vswhere -version '[18.0,19.0)' -latest -requires $_ -property installationPath) })
-    throw "No Visual Studio 2026 with the C++ x64 and ARM64 tools (the v145 toolset is VS 2026 only); the newest one lacks: $($missing -join ', ')"
+    throw "No Visual Studio 2026 with the required C++ tools (the v145 toolset is VS 2026 only); the newest one lacks: $($missing -join ', ')"
 }
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) {

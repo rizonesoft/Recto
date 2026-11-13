@@ -123,7 +123,7 @@ python scripts/check-visual-studio.py check    # this machine's Visual Studio is
 python scripts/ci_status.py                   # main's latest build.yml and plan.yml runs: 0 not red, 1 red, 3 unknown
 python scripts/gen-compile-commands.py --check    # portable C++23 clangd database matches Recto.sln
 python scripts/run-tests.py --quick          # fast RAM-bounded local Python cadence (+ --full in CI)
-.\build.cmd -Quick                           # fast RAM-bounded x64 Debug build + tests (.\build.cmd for full x64+ARM64)
+.\build.cmd -Quick                           # fast RAM-bounded x64 Debug build + tests (.\build.cmd for x64 Debug+Release; -Platform x64,ARM64 adds ARM64)
 ```
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.

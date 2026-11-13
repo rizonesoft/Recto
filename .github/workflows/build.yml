@@ -1,8 +1,10 @@
 name: build
 
-# Product build and test gate (D00 T01 §4): builds all seven C++23 modules
+# Product build and test gate (D00 T01 §4, D00 T04 §2): builds all C++23 modules
 # across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64 with
 # /W4 /WX (/p:TreatWarningsAsErrors=true) and runs recto-tests on x64.
+# ARM64 is built in CI only by default until Recto v1 ships (local .\build.cmd
+# defaults to x64; this workflow passes -Platform x64,ARM64 explicitly).
 
 # A push or pull request that changes only the plan, review records or other Markdown builds nothing new: GitHub
 # skips the run only when every changed file matches, so any change to code, tests, build files or workflows still

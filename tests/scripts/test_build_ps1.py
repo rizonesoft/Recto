@@ -178,6 +178,33 @@ class BuildScript(unittest.TestCase):
         self.assertIn("Win32_OperatingSystem", text)
 
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_default_platform_is_x64_and_arm64_overrides_stay_supported(self):
+        probe = (
+            f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{BUILD_PS1}', [ref]$null, [ref]$null)\n"
+            "$p = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'Platform' }\n"
+            "$vs = $p.Attributes | Where-Object { $_ -is [System.Management.Automation.Language.AttributeAst] -and $_.TypeName.Name -eq 'ValidateSet' }\n"
+            "Write-Output ('DEFAULT=' + $p.DefaultValue.Extent.Text)\n"
+            "Write-Output ('VALID=' + (($vs.PositionalArguments | ForEach-Object { $_.Value }) -join '|'))\n"
+        )
+        run = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", probe],
+                             capture_output=True, text=True, timeout=60)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        lines = dict(line.split("=", 1) for line in run.stdout.strip().splitlines() if "=" in line)
+        self.assertEqual(lines.get("DEFAULT"), "@('x64')")
+        self.assertEqual(set(lines.get("VALID", "").split("|")), {"x64", "ARM64", "x64,ARM64", "ARM64,x64"})
+
+        ps1_text = BUILD_PS1.read_text(encoding="utf-8")
+        self.assertIn("if ($Platform -contains 'ARM64')", ps1_text)
+        self.assertNotIn("with the C++ x64 and ARM64 tools", ps1_text)
+
+        cmd_text = (ROOT / "build.cmd").read_text(encoding="utf-8")
+        self.assertIn("for x64 in Debug and Release", cmd_text)
+        self.assertIn("-Platform x64,ARM64", cmd_text)
+
+        ci_text = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        self.assertEqual(len(re.findall(r"build/build\.ps1\s+-Configuration\s+(?:Debug|Release)\s+-Platform\s+x64,ARM64", ci_text)), 2)
+
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_project_mode_resolves_solution_targets_and_relinks_recto_tests(self):
         text = BUILD_PS1.read_text(encoding="utf-8")
         fn_match = re.search(r"(function Resolve-SolutionTarget\b.*?^})", text, re.M | re.S)

@@ -32,15 +32,15 @@ git config core.hooksPath scripts/hooks
 
 ## Building the solution
 
-From a clean clone, one command restores NuGet packages, installs the vcpkg manifest (`gtest`, test-only), builds every project in `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release, and runs the x64 test binaries:
+From a clean clone, one command restores NuGet packages, installs the vcpkg manifest (`gtest`, test-only), builds every project in `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 in Debug and Release, and runs the x64 test binaries (CI also builds ARM64 on every code push):
 
 ```powershell
 .\build.cmd
 ```
 
-Pass `-Platform x64` or `-Configuration Release` (or `-SkipTests`) through `build.cmd` to narrow a local run; see `build/build.ps1` for the full option list.
+Pass `-Platform x64,ARM64` or `-Platform ARM64` (or `-Configuration Release` / `-SkipTests`) through `build.cmd` when building ARM64 locally or narrowing a run; see `build/build.ps1` for the full option list.
 
-**Prerequisites:** Windows 11, Visual Studio 2026 with the Desktop development with C++ workload (v145 toolset, MSVC x64 and ARM64 compilers, Windows 11 SDK 10.0.26100, and the bundled `VC\vcpkg`), `git`, and network access on the first restore. Visual Studio 2022 cannot substitute: the projects use the v145 toolset, which only Visual Studio 2026 ships. `build.cmd` picks the newest Visual Studio 2026 that has the C++ x64 and ARM64 tools; the Windows 11 SDK 10.0.26100 is a separate install, and NuGet supplies C++/WinRT and the Windows SDK build tools.
+**Prerequisites:** Windows 11, Visual Studio 2026 with the Desktop development with C++ workload (v145 toolset, MSVC x64 compiler, plus the MSVC ARM64 compiler when passing `-Platform ARM64`, Windows 11 SDK 10.0.26100, and the bundled `VC\vcpkg`), `git`, and network access on the first restore. Visual Studio 2022 cannot substitute: the projects use the v145 toolset, which only Visual Studio 2026 ships. `build.cmd` picks the newest Visual Studio 2026 that has the C++ x64 tools (and ARM64 tools when `-Platform` includes `ARM64`); the Windows 11 SDK 10.0.26100 is a separate install, and NuGet supplies C++/WinRT and the Windows SDK build tools.
 
 ## Pull requests and commits
 
