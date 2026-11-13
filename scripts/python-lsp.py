@@ -69,6 +69,7 @@ class StdlibPythonLsp:
     def __init__(self, root: Path = ROOT):
         self.root = root
         self.docs: dict[Path, str] = {}
+        self._ast_cache: dict[Path, tuple[int, str, ast.Module | None]] = {}
         self.running = True
 
     def _read_msg(self) -> dict | None:
@@ -124,6 +125,37 @@ class StdlibPythonLsp:
                 files.append(extra)
         return files
 
+    @staticmethod
+    def _utf16_len(text: str) -> int:
+        return len(text.encode("utf-16-le")) // 2
+
+    @staticmethod
+    def _utf8_col_to_utf16(line_text: str, utf8_col: int) -> int:
+        if utf8_col <= 0 or not line_text:
+            return 0
+        prefix = line_text.encode("utf-8")[:utf8_col].decode("utf-8", errors="ignore")
+        return len(prefix.encode("utf-16-le")) // 2
+
+    @staticmethod
+    def _codepoint_col_to_utf16(line_text: str, cp_col: int) -> int:
+        if cp_col <= 0 or not line_text:
+            return 0
+        return len(line_text[:cp_col].encode("utf-16-le")) // 2
+
+    @staticmethod
+    def _utf16_to_codepoint_and_utf8(line_text: str, utf16_col: int) -> tuple[int, int]:
+        if utf16_col <= 0 or not line_text:
+            return 0, 0
+        units = 0
+        for idx, ch in enumerate(line_text):
+            units += 2 if ord(ch) > 0xFFFF else 1
+            if units > utf16_col:
+                return idx, len(line_text[:idx].encode("utf-8"))
+            if units == utf16_col:
+                cp = idx + 1
+                return cp, len(line_text[:cp].encode("utf-8"))
+        return len(line_text), len(line_text.encode("utf-8"))
+
     def _diagnostics(self, path: Path, text: str) -> list[dict]:
         diags: list[dict] = []
         try:
@@ -132,26 +164,42 @@ class StdlibPythonLsp:
                 tree = ast.parse(text, filename=str(path))
                 compile(tree, str(path), "exec")
         except SyntaxError as exc:
+            lines = text.splitlines()
             ln = max(0, (exc.lineno or 1) - 1)
-            col = max(0, (exc.offset or 1) - 1)
+            cp_col = max(0, (exc.offset or 1) - 1)
             end_ln = max(ln, (getattr(exc, "end_lineno", None) or (ln + 1)) - 1)
-            end_col = max(col + 1, (getattr(exc, "end_offset", None) or (col + 2)) - 1)
+            raw_end_offset = getattr(exc, "end_offset", None)
+            cp_end = max(cp_col + 1 if end_ln == ln else 0, (raw_end_offset - 1) if raw_end_offset else (cp_col + 1))
+            start_row = lines[ln] if ln < len(lines) else ""
+            end_row = lines[end_ln] if end_ln < len(lines) else ""
+            u16_start = self._codepoint_col_to_utf16(start_row, cp_col)
+            u16_end = max(
+                u16_start + 1 if end_ln == ln else 0,
+                self._codepoint_col_to_utf16(end_row, cp_end),
+            )
             diags.append({
-                "range": {"start": {"line": ln, "character": col}, "end": {"line": end_ln, "character": end_col}},
+                "range": {
+                    "start": {"line": ln, "character": u16_start},
+                    "end": {"line": end_ln, "character": u16_end},
+                },
                 "severity": 1,
                 "source": "recto-python-lsp",
                 "message": exc.msg or str(exc),
             })
         return diags
 
-    @staticmethod
-    def _doc_symbols(text: str) -> list[dict]:
+    @classmethod
+    def _doc_symbols(cls, text: str) -> list[dict]:
         try:
-            tree = ast.parse(text)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(text)
         except SyntaxError:
             return []
+        lines = text.splitlines()
 
         def node_sym(node: ast.AST) -> dict | None:
+            sel_node: ast.AST = node
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 kind = 12
                 name = node.name
@@ -161,21 +209,40 @@ class StdlibPythonLsp:
             elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 kind = 13
                 name = node.targets[0].id
+                sel_node = node.targets[0]
             else:
                 return None
             start_ln = max(0, getattr(node, "lineno", 1) - 1)
-            start_col = max(0, getattr(node, "col_offset", 0))
+            start_utf8 = max(0, getattr(node, "col_offset", 0))
             end_ln = max(start_ln, getattr(node, "end_lineno", start_ln + 1) - 1)
-            end_col = max(start_col + 1, getattr(node, "end_col_offset", start_col + len(name)))
+            end_utf8 = max(start_utf8 + 1, getattr(node, "end_col_offset", start_utf8 + len(name.encode("utf-8"))))
+            start_row = lines[start_ln] if start_ln < len(lines) else ""
+            end_row = lines[end_ln] if end_ln < len(lines) else ""
+            start_col = cls._utf8_col_to_utf16(start_row, start_utf8)
+            end_col = max(start_col + 1 if end_ln == start_ln else 0, cls._utf8_col_to_utf16(end_row, end_utf8))
             rng = {"start": {"line": start_ln, "character": start_col},
                    "end": {"line": end_ln, "character": end_col}}
+
+            sel_ln = max(0, getattr(sel_node, "lineno", start_ln + 1) - 1)
+            sel_row = lines[sel_ln] if sel_ln < len(lines) else ""
+            sel_utf8 = max(0, getattr(sel_node, "col_offset", start_utf8))
+            sel_start = cls._utf8_col_to_utf16(sel_row, sel_utf8)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                cp_start, _ = cls._utf16_to_codepoint_and_utf8(sel_row, sel_start)
+                hdr_match = re.match(r"(?:async\s+def|def|class)\s+", sel_row[cp_start:])
+                if hdr_match:
+                    sel_start = cls._codepoint_col_to_utf16(sel_row, cp_start + hdr_match.end())
+            sel_rng = {
+                "start": {"line": sel_ln, "character": sel_start},
+                "end": {"line": sel_ln, "character": sel_start + max(1, cls._utf16_len(name))},
+            }
             children = []
             if isinstance(node, ast.ClassDef):
                 for child in node.body:
                     cs = node_sym(child)
                     if cs is not None:
                         children.append(cs)
-            out = {"name": name, "kind": kind, "range": rng, "selectionRange": rng}
+            out = {"name": name, "kind": kind, "range": rng, "selectionRange": sel_rng}
             if children:
                 out["children"] = children
             return out
@@ -187,26 +254,28 @@ class StdlibPythonLsp:
                 out_syms.append(sym)
         return out_syms
 
-    @staticmethod
-    def _word_at(text: str, line: int, character: int) -> str:
+    @classmethod
+    def _word_at(cls, text: str, line: int, character: int) -> str:
         lines = text.splitlines()
         if line < 0 or line >= len(lines):
             return ""
         row = lines[line]
+        cp_col, _ = cls._utf16_to_codepoint_and_utf8(row, character)
         for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", row):
-            if m.start() <= character <= m.end():
+            if m.start() <= cp_col <= m.end():
                 return m.group(0)
         return ""
 
-    @staticmethod
-    def _cursor_symbol(text: str, line: int, character: int) -> tuple[str | None, str, bool]:
-        """Return `(receiver_chain, ident, is_attribute_access)` at 0-based `(line, character)`."""
+    @classmethod
+    def _cursor_symbol(cls, text: str, line: int, character: int) -> tuple[str | None, str, bool, int]:
+        """Return `(receiver_chain, ident, is_attribute_access, utf8_col)` at 0-based `(line, utf16_character)`."""
         lines = text.splitlines()
         if line < 0 or line >= len(lines):
-            return None, "", False
+            return None, "", False, 0
         row = lines[line]
+        cp_col, utf8_col = cls._utf16_to_codepoint_and_utf8(row, character)
         for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*", row):
-            if m.start() <= character <= m.end():
+            if m.start() <= cp_col <= m.end():
                 prefix = row[:m.start()]
                 is_attr = prefix.rstrip().endswith(".")
                 recv_match = re.search(
@@ -214,15 +283,24 @@ class StdlibPythonLsp:
                     prefix,
                 )
                 if recv_match:
-                    return re.sub(r"\s+", "", recv_match.group(1)), m.group(0), True
-                return None, m.group(0), is_attr
-        return None, "", False
+                    return re.sub(r"\s+", "", recv_match.group(1)), m.group(0), True, utf8_col
+                return None, m.group(0), is_attr, utf8_col
+        return None, "", False, utf8_col
 
     def _parse_file(self, path: Path) -> ast.Module | None:
+        key = path.resolve()
+        text = self._text(path)
+        cached = self._ast_cache.get(key)
+        if cached is not None and cached[0] == len(text) and cached[1] == text:
+            return cached[2]
         try:
-            return ast.parse(self._text(path), filename=str(path))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree: ast.Module | None = ast.parse(text, filename=str(path))
         except SyntaxError:
-            return None
+            tree = None
+        self._ast_cache[key] = (len(text), text, tree)
+        return tree
 
     @staticmethod
     def _iter_scope_stmts(stmts: list[ast.stmt]) -> list[ast.stmt]:
@@ -642,15 +720,16 @@ class StdlibPythonLsp:
 
     def _resolve_defs_at(self, path: Path, line: int, character: int) -> tuple[str, list[tuple[Path, ast.AST]]]:
         text = self._text(path)
-        receiver, ident, is_attr = self._cursor_symbol(text, line, character)
+        receiver, ident, is_attr, utf8_col = self._cursor_symbol(text, line, character)
         if not ident:
             return "", []
         tree = self._parse_file(path)
         if tree is None:
             return ident, []
 
+        path = path.resolve()
         path_consts, str_consts = self._collect_module_consts(tree, path)
-        scopes = self._enclosing_scopes(tree, line + 1, character)
+        scopes = self._enclosing_scopes(tree, line + 1, utf8_col)
 
         if is_attr:
             if receiver is None:
@@ -696,7 +775,6 @@ class StdlibPythonLsp:
                         return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set())
                     return ident, self._top_level_defs_in_module(cur_mod, ident, set())
 
-                # `head` might itself be a local/imported ClassDef (e.g. `StdlibPythonLsp._word_at`).
                 cls_direct = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
                 if cls_direct is not None and len(recv_parts) == 1:
                     return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set())
@@ -707,6 +785,31 @@ class StdlibPythonLsp:
                         return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set())
                 return ident, []
             return ident, []
+
+        # Declaration header of a function, method, or class (`def method(self):` inside `class Foo:`).
+        inner = scopes[-1]
+        if (
+            isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and inner.name == ident
+            and getattr(inner, "lineno", 0) == line + 1
+        ):
+            return ident, [(path, inner)]
+
+        # Original symbol name in `from mod import orig as alias`.
+        inner_body = getattr(inner, "body", None)
+        if isinstance(inner_body, list):
+            for stmt in self._iter_scope_stmts(inner_body):
+                if isinstance(stmt, ast.ImportFrom):
+                    s_ln = getattr(stmt, "lineno", 0)
+                    e_ln = getattr(stmt, "end_lineno", s_ln)
+                    if s_ln <= line + 1 <= e_ln:
+                        for alias in stmt.names:
+                            if alias.name == ident and alias.name != "*":
+                                mod_file = self._resolve_module_file(stmt.module or "", stmt.level or 0, path)
+                                if mod_file is not None:
+                                    sym_defs = self._top_level_defs_in_module(mod_file, alias.name, set())
+                                    if sym_defs:
+                                        return ident, sym_defs
 
         for sc in self._lexical_scopes_for_lookup(scopes):
             defs, _, _, _ = self._lookup_in_scope(sc, ident, path, tree, path_consts, str_consts)
@@ -740,42 +843,146 @@ class StdlibPythonLsp:
         locs = []
         seen: set[tuple[str, int, int]] = set()
         for def_path, node in defs:
+            def_lines = self._text(def_path).splitlines()
             ln = max(0, getattr(node, "lineno", 1) - 1)
-            col = max(0, getattr(node, "col_offset", 0))
+            def_row = def_lines[ln] if ln < len(def_lines) else ""
+            utf8_col = max(0, getattr(node, "col_offset", 0))
+            u16_col = self._utf8_col_to_utf16(def_row, utf8_col)
             uri = path_to_uri(def_path)
-            key = (uri, ln, col)
+            key = (uri, ln, u16_col)
             if key in seen:
                 continue
             seen.add(key)
             locs.append({
                 "uri": uri,
-                "range": {"start": {"line": ln, "character": col},
-                          "end": {"line": ln, "character": col + max(1, len(ident))}},
+                "range": {"start": {"line": ln, "character": u16_col},
+                          "end": {"line": ln, "character": u16_col + max(1, self._utf16_len(ident))}},
             })
         return locs
 
-    def _references(self, path: Path, line: int, character: int) -> list[dict]:
-        ident = self._word_at(self._text(path), line, character)
+    @staticmethod
+    def _safe_name_tokens(src: str, ident: str) -> list[tuple[int, int, int]]:
+        """Yield `(line0, cp_start, cp_end)` for `ident` tokens without failing on invalid indentation or syntax."""
+        tokens: list[tuple[int, int, int]] = []
+        last_line0 = -1
+        lines = src.splitlines(keepends=True)
+        it = iter(lines)
+        try:
+            for tok in tokenize.generate_tokens(lambda: next(it)):
+                last_line0 = max(last_line0, tok.start[0] - 1)
+                if tok.type == tokenize.NAME and tok.string == ident:
+                    tokens.append((tok.start[0] - 1, tok.start[1], tok.end[1]))
+            return tokens
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            pass
+        # Fallback lexical scan for lines past a broken indentation or unterminated token during live editing.
+        pat = re.compile(rf"\b{re.escape(ident)}\b")
+        plain_lines = src.splitlines()
+        for ln0 in range(max(0, last_line0 + 1), len(plain_lines)):
+            code_part = plain_lines[ln0].split("#", 1)[0]
+            for m in pat.finditer(code_part):
+                tokens.append((ln0, m.start(), m.end()))
+        return tokens
+
+    @staticmethod
+    def _def_key(def_path: Path, node: ast.AST) -> tuple[Path, int, int]:
+        return (def_path.resolve(), getattr(node, "lineno", 1), getattr(node, "col_offset", 0))
+
+    def _local_function_span(
+        self, path: Path, target_defs: list[tuple[Path, ast.AST]]
+    ) -> tuple[int, int] | None:
+        """If every definition is bound inside an enclosing function of `path`, return its 0-based `(start, end)` lines."""
+        resolved = path.resolve()
+        tree = self._parse_file(resolved)
+        if tree is None or not target_defs:
+            return None
+        min_ln0: int | None = None
+        max_ln0: int | None = None
+        for dp, dn in target_defs:
+            if dp.resolve() != resolved:
+                return None
+            enc = self._enclosing_scopes(tree, getattr(dn, "lineno", 1), getattr(dn, "col_offset", 0))
+            binding_scope = enc[-2] if (len(enc) >= 2 and enc[-1] is dn) else enc[-1]
+            if not isinstance(binding_scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return None
+            s0 = max(0, getattr(binding_scope, "lineno", 1) - 1)
+            e0 = max(s0, getattr(binding_scope, "end_lineno", s0 + 1) - 1)
+            min_ln0 = s0 if min_ln0 is None else min(min_ln0, s0)
+            max_ln0 = e0 if max_ln0 is None else max(max_ln0, e0)
+        return (min_ln0, max_ln0) if min_ln0 is not None and max_ln0 is not None else None
+
+    def _references(
+        self, path: Path, line: int, character: int, *, include_declaration: bool = True
+    ) -> list[dict]:
+        path = path.resolve()
+        text = self._text(path)
+        ident, target_defs = self._resolve_defs_at(path, line, character)
         if not ident:
             return []
+        if not target_defs:
+            # If `path` is currently syntactically invalid mid-edit, return safe same-file token matches; otherwise [].
+            if self._parse_file(path) is not None:
+                return []
+            src_lines = text.splitlines()
+            broken_refs: list[dict] = []
+            for ln0, cp_start, cp_end in self._safe_name_tokens(text, ident):
+                row = src_lines[ln0] if ln0 < len(src_lines) else ""
+                broken_refs.append({
+                    "uri": path_to_uri(path),
+                    "range": {
+                        "start": {"line": ln0, "character": self._codepoint_col_to_utf16(row, cp_start)},
+                        "end": {"line": ln0, "character": self._codepoint_col_to_utf16(row, cp_end)},
+                    },
+                })
+            return broken_refs
+
+        target_keys = {self._def_key(dp, dn) for dp, dn in target_defs}
+        local_span = self._local_function_span(path, target_defs)
+        cand_files = (
+            [path]
+            if local_span is not None
+            else [path, *(f.resolve() for f in self._workspace_py_files() if f.resolve() != path)]
+        )
+
         refs: list[dict] = []
-        for p in [path, *(f for f in self._workspace_py_files() if f != path)]:
-            src = self._text(p)
+        for cand_file in cand_files:
+            src = self._text(cand_file)
             if ident not in src:
                 continue
-            try:
-                lines_iter = iter(src.splitlines(keepends=True))
-                for tok in tokenize.generate_tokens(lambda it=lines_iter: next(it)):
-                    if tok.type == tokenize.NAME and tok.string == ident:
-                        ln = tok.start[0] - 1
-                        col = tok.start[1]
-                        refs.append({
-                            "uri": path_to_uri(p),
-                            "range": {"start": {"line": ln, "character": col},
-                                      "end": {"line": ln, "character": col + len(ident)}},
-                        })
-            except tokenize.TokenError:
-                continue
+            src_lines = src.splitlines()
+            for ln0, cp_start, cp_end in self._safe_name_tokens(src, ident):
+                if local_span is not None and not (local_span[0] <= ln0 <= local_span[1]):
+                    continue
+                row = src_lines[ln0] if ln0 < len(src_lines) else ""
+                u16_start = self._codepoint_col_to_utf16(row, cp_start)
+                u16_end = self._codepoint_col_to_utf16(row, cp_end)
+                _, cand_defs = self._resolve_defs_at(cand_file, ln0, u16_start)
+                cand_keys = {self._def_key(dp, dn) for dp, dn in cand_defs}
+                if not (cand_keys & target_keys):
+                    continue
+                if not include_declaration:
+                    tok_utf8 = len(row[:cp_start].encode("utf-8"))
+                    is_decl = any(
+                        dp.resolve() == cand_file
+                        and getattr(dn, "lineno", 1) - 1 == ln0
+                        and (
+                            getattr(dn, "col_offset", -1) == tok_utf8
+                            or (
+                                isinstance(dn, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                                and dn.name == ident
+                            )
+                        )
+                        for dp, dn in target_defs
+                    )
+                    if is_decl:
+                        continue
+                refs.append({
+                    "uri": path_to_uri(cand_file),
+                    "range": {
+                        "start": {"line": ln0, "character": u16_start},
+                        "end": {"line": ln0, "character": u16_end},
+                    },
+                })
         return refs
 
     def serve(self) -> int:
@@ -794,90 +1001,110 @@ class StdlibPythonLsp:
             msg_id = msg.get("id")
             raw_params = msg.get("params")
             params = raw_params if isinstance(raw_params, dict) else {}
-            if method == "initialize":
-                root_uri = params.get("rootUri")
-                if root_uri:
-                    self.root = uri_to_path(root_uri)
-                self._send({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "capabilities": {
-                            "textDocumentSync": 1,
-                            "documentSymbolProvider": True,
-                            "workspaceSymbolProvider": True,
-                            "definitionProvider": True,
-                            "referencesProvider": True,
-                            "hoverProvider": True,
+            try:
+                if method == "initialize":
+                    root_uri = params.get("rootUri")
+                    if root_uri:
+                        self.root = uri_to_path(root_uri)
+                    self._send({
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {
+                            "capabilities": {
+                                "positionEncoding": "utf-16",
+                                "textDocumentSync": 1,
+                                "documentSymbolProvider": True,
+                                "workspaceSymbolProvider": True,
+                                "definitionProvider": True,
+                                "referencesProvider": True,
+                                "hoverProvider": True,
+                            },
+                            "serverInfo": {"name": "recto-stdlib-python-lsp", "version": "1.0"},
                         },
-                        "serverInfo": {"name": "recto-stdlib-python-lsp", "version": "1.0"},
-                    },
-                })
-            elif method == "shutdown":
-                self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
-            elif method == "exit":
-                return 0
-            elif method == "textDocument/didOpen":
-                td = params.get("textDocument") or {}
-                uri = td.get("uri", "")
-                text = td.get("text", "")
-                version = td.get("version")
-                p = uri_to_path(uri)
-                self.docs[p] = text
-                pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
-                if isinstance(version, int):
-                    pub_params["version"] = version
-                self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
-            elif method == "textDocument/didChange":
-                td = params.get("textDocument") or {}
-                uri = td.get("uri", "")
-                version = td.get("version")
-                changes = params.get("contentChanges") or []
-                if changes:
+                    })
+                elif method == "shutdown":
+                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
+                elif method == "exit":
+                    return 0
+                elif method == "textDocument/didOpen":
+                    td = params.get("textDocument") or {}
+                    uri = td.get("uri", "")
+                    text = td.get("text", "")
+                    version = td.get("version")
                     p = uri_to_path(uri)
-                    text = changes[-1].get("text", "")
                     self.docs[p] = text
-                    pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                    self._ast_cache.pop(p, None)
+                    pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
                     if isinstance(version, int):
                         pub_params["version"] = version
                     self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
-            elif method == "textDocument/didClose":
-                td = params.get("textDocument") or {}
-                uri = td.get("uri", "")
-                if uri:
-                    self.docs.pop(uri_to_path(uri), None)
-            elif method == "textDocument/documentSymbol":
-                p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                self._send({"jsonrpc": "2.0", "id": msg_id, "result": self._doc_symbols(self._text(p))})
-            elif method == "workspace/symbol":
-                query = (params.get("query") or "").lower()
-                found = []
-                for p in self._workspace_py_files():
-                    for s in self._doc_symbols(self._text(p)):
-                        if not query or query in s["name"].lower():
-                            found.append({
-                                "name": s["name"],
-                                "kind": s["kind"],
-                                "location": {"uri": path_to_uri(p), "range": s["range"]},
-                            })
-                self._send({"jsonrpc": "2.0", "id": msg_id, "result": found[:100]})
-            elif method == "textDocument/definition":
-                p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                pos = params.get("position") or {}
-                self._send({"jsonrpc": "2.0", "id": msg_id,
-                            "result": self._definitions(p, pos.get("line", 0), pos.get("character", 0))})
-            elif method == "textDocument/references":
-                p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                pos = params.get("position") or {}
-                self._send({"jsonrpc": "2.0", "id": msg_id,
-                            "result": self._references(p, pos.get("line", 0), pos.get("character", 0))})
-            elif method == "textDocument/hover":
-                p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                pos = params.get("position") or {}
-                self._send({"jsonrpc": "2.0", "id": msg_id,
-                            "result": self._hover(p, pos.get("line", 0), pos.get("character", 0))})
-            elif msg_id is not None:
-                self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
+                elif method == "textDocument/didChange":
+                    td = params.get("textDocument") or {}
+                    uri = td.get("uri", "")
+                    version = td.get("version")
+                    changes = params.get("contentChanges") or []
+                    if changes:
+                        p = uri_to_path(uri)
+                        text = changes[-1].get("text", "")
+                        self.docs[p] = text
+                        self._ast_cache.pop(p, None)
+                        pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                        if isinstance(version, int):
+                            pub_params["version"] = version
+                        self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
+                elif method == "textDocument/didClose":
+                    td = params.get("textDocument") or {}
+                    uri = td.get("uri", "")
+                    if uri:
+                        closed = uri_to_path(uri)
+                        self.docs.pop(closed, None)
+                        self._ast_cache.pop(closed, None)
+                elif method == "textDocument/documentSymbol":
+                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": self._doc_symbols(self._text(p))})
+                elif method == "workspace/symbol":
+                    query = (params.get("query") or "").lower()
+                    found = []
+                    for p in self._workspace_py_files():
+                        for s in self._doc_symbols(self._text(p)):
+                            if not query or query in s["name"].lower():
+                                found.append({
+                                    "name": s["name"],
+                                    "kind": s["kind"],
+                                    "location": {"uri": path_to_uri(p), "range": s["range"]},
+                                })
+                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": found[:100]})
+                elif method == "textDocument/definition":
+                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                    pos = params.get("position") or {}
+                    self._send({"jsonrpc": "2.0", "id": msg_id,
+                                "result": self._definitions(p, pos.get("line", 0), pos.get("character", 0))})
+                elif method == "textDocument/references":
+                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                    pos = params.get("position") or {}
+                    ctx = params.get("context")
+                    inc_decl = bool(ctx.get("includeDeclaration", True)) if isinstance(ctx, dict) else True
+                    self._send({
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": self._references(
+                            p, pos.get("line", 0), pos.get("character", 0), include_declaration=inc_decl
+                        ),
+                    })
+                elif method == "textDocument/hover":
+                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                    pos = params.get("position") or {}
+                    self._send({"jsonrpc": "2.0", "id": msg_id,
+                                "result": self._hover(p, pos.get("line", 0), pos.get("character", 0))})
+                elif msg_id is not None:
+                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
+            except Exception as exc:
+                if msg_id is not None:
+                    self._send({
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {"code": -32603, "message": str(exc)},
+                    })
         return 0
 
 

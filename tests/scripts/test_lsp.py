@@ -232,6 +232,111 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
             self.assertEqual(top_defs[0]["uri"], mod_a.resolve().as_uri())
             self.assertEqual(top_defs[0]["range"]["start"]["line"], 0)
 
+    def test_builtin_lsp_indentation_errors_scoped_references_and_utf16_positions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            scripts_dir = ws / "scripts"
+            scripts_dir.mkdir()
+
+            bad_indent = scripts_dir / "bad_indent.py"
+            bad_indent.write_text("def first():\n    value = 1\n  return value\n", encoding="utf-8")
+
+            scoped_refs_file = scripts_dir / "scoped_refs.py"
+            scoped_refs_file.write_text(
+                "def first():\n    value = 1\n    return value\n\n"
+                "def second():\n    value = 2\n    return value\n",
+                encoding="utf-8",
+            )
+            (scripts_dir / "unrelated_value.py").write_text("value = 999\n", encoding="utf-8")
+
+            unicode_bmp = scripts_dir / "unicode_bmp.py"
+            unicode_bmp.write_text("\u00e9 = 1; target = 2\n", encoding="utf-8")
+
+            unicode_astral = scripts_dir / "unicode_astral.py"
+            unicode_astral.write_text('\u00e9 = "\U0001f680"; target = 3\n_ = target\n', encoding="utf-8")
+
+            client = LSP_MCP.LspClient(
+                "python",
+                [sys.executable, "-B", str(SCRIPTS / "python-lsp.py"), "--builtin"],
+                ws,
+            )
+            try:
+                # 1. Invalid indentation publishes a diagnostic AND does not crash `references` or terminate `serve()`.
+                indent_diags = client.diagnostics_for(bad_indent, wait_seconds=5.0)
+                self.assertEqual(len(indent_diags), 1)
+                bad_uri = bad_indent.resolve().as_uri()
+                broken_refs = client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": bad_uri},
+                        "position": {"line": 1, "character": 4},
+                        "context": {"includeDeclaration": True},
+                    },
+                )
+                self.assertEqual([r["range"]["start"]["line"] for r in broken_refs], [1, 2])
+
+                # 2. Scoped references return only the selected function's `value` binding, not `second()` or other files.
+                self.assertEqual(client.diagnostics_for(scoped_refs_file, wait_seconds=5.0), [])
+                scoped_uri = scoped_refs_file.resolve().as_uri()
+                refs_incl = client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": scoped_uri},
+                        "position": {"line": 1, "character": 4},
+                        "context": {"includeDeclaration": True},
+                    },
+                )
+                self.assertEqual([(r["uri"], r["range"]["start"]["line"]) for r in refs_incl],
+                                 [(scoped_uri, 1), (scoped_uri, 2)])
+                refs_excl = client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": scoped_uri},
+                        "position": {"line": 1, "character": 4},
+                        "context": {"includeDeclaration": False},
+                    },
+                )
+                self.assertEqual([(r["uri"], r["range"]["start"]["line"]) for r in refs_excl],
+                                 [(scoped_uri, 2)])
+
+                # 3. UTF-16 character columns on BMP (`\u00e9 = 1; target = 2` -> col 7) and astral (`\U0001f680` -> col 10).
+                self.assertEqual(client.diagnostics_for(unicode_bmp, wait_seconds=5.0), [])
+                bmp_uri = unicode_bmp.resolve().as_uri()
+                bmp_syms = client.request("textDocument/documentSymbol", {"textDocument": {"uri": bmp_uri}})
+                target_sym = next(s for s in bmp_syms if s["name"] == "target")
+                self.assertEqual(target_sym["range"]["start"]["character"], 7)
+                self.assertEqual(target_sym["selectionRange"]["start"]["character"], 7)
+                bmp_defs = client.request(
+                    "textDocument/definition",
+                    {"textDocument": {"uri": bmp_uri}, "position": {"line": 0, "character": 7}},
+                )
+                self.assertEqual(bmp_defs[0]["range"]["start"]["character"], 7)
+
+                self.assertEqual(client.diagnostics_for(unicode_astral, wait_seconds=5.0), [])
+                astral_uri = unicode_astral.resolve().as_uri()
+                astral_syms = client.request("textDocument/documentSymbol", {"textDocument": {"uri": astral_uri}})
+                astral_target = next(s for s in astral_syms if s["name"] == "target")
+                self.assertEqual(astral_target["range"]["start"]["character"], 10)
+                astral_defs = client.request(
+                    "textDocument/definition",
+                    {"textDocument": {"uri": astral_uri}, "position": {"line": 0, "character": 10}},
+                )
+                self.assertEqual(astral_defs[0]["range"]["start"]["character"], 10)
+                astral_refs = client.request(
+                    "textDocument/references",
+                    {
+                        "textDocument": {"uri": astral_uri},
+                        "position": {"line": 1, "character": 4},
+                        "context": {"includeDeclaration": True},
+                    },
+                )
+                self.assertEqual(
+                    [(r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in astral_refs],
+                    [(0, 10), (1, 4)],
+                )
+            finally:
+                client.stop()
+
 
 class LspMcpBridge(unittest.TestCase):
     """scripts/lsp_mcp.py serves MCP JSON-RPC tools over Python and C++23 language servers and cleans up children."""
