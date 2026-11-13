@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 60 | Checklist items: 354
+Sections: 60 | Checklist items: 355
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -30,7 +30,7 @@ Sections: 60 | Checklist items: 354
 | [x]    | D00 T04 §1  | ASan and plain builds in separate output folders                                         | windows-host | 7     |
 | [x]    | D00 T04 §2  | ARM64 off the local build, built in CI, deferred to after Recto v1                       | windows-host | 4     |
 | [x]    | D00 T04 §3  | MSBuild and compiler parallelism set by free memory                                      | windows-host | 6     |
-| [ ]    | D00 T04 §4  | Precompiled headers for every project                                                    | windows-host | 4     |
+| [ ]    | D00 T04 §4  | Precompiled headers for every project                                                    | windows-host | 5     |
 | [ ]    | D00 T04 §5  | Tiered gates: touched tests while building, the full suite at stamp                      | windows-host | 4     |
 | [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
@@ -953,4 +953,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 107/882 verified sections, 58 ready to run now.
 
-Checklist: 719/6518 items completed (includes Commit items).
+Checklist: 719/6519 items completed (includes Commit items).
