@@ -498,14 +498,68 @@ class StdlibPythonLsp:
         e_col = getattr(node, "end_col_offset", s_col)
         return (s_ln, s_col) <= (line1, col) <= (e_ln, e_col)
 
+    _TYPE_PARAM_NODES: tuple[type[ast.AST], ...] = tuple(
+        getattr(ast, attr) for attr in ("TypeVar", "ParamSpec", "TypeVarTuple") if hasattr(ast, attr)
+    )
+
     @classmethod
     def _enclosing_scopes(cls, tree: ast.Module, line1: int, col: int) -> list[ast.AST]:
         scopes: list[ast.AST] = [tree]
 
         def walk_node(node: ast.AST) -> None:
             for child in ast.iter_child_nodes(node):
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # Decorators and parameter default expressions are evaluated in the enclosing scope.
+                    strict_outer: list[ast.AST] = [
+                        *child.decorator_list,
+                        *child.args.defaults,
+                        *(d for d in child.args.kw_defaults if d is not None),
+                    ]
+                    hit_outer = next((e for e in strict_outer if cls._node_contains(e, line1, col)), None)
+                    if hit_outer is not None:
+                        walk_node(hit_outer)
+                        return
                     if cls._node_contains(child, line1, col):
+                        type_params = list(getattr(child, "type_params", ()) or ())
+                        all_fn_args = [
+                            *child.args.posonlyargs,
+                            *child.args.args,
+                            *child.args.kwonlyargs,
+                            *([child.args.vararg] if child.args.vararg else []),
+                            *([child.args.kwarg] if child.args.kwarg else []),
+                        ]
+                        ann_exprs: list[ast.AST] = [
+                            *type_params,
+                            *(a.annotation for a in all_fn_args if a.annotation is not None),
+                            *([child.returns] if child.returns is not None else []),
+                        ]
+                        hit_ann = next((e for e in ann_exprs if cls._node_contains(e, line1, col)), None)
+                        if hit_ann is not None:
+                            scopes.extend(type_params)
+                            walk_node(hit_ann)
+                            return
+                        scopes.extend(type_params)
+                        scopes.append(child)
+                        walk_node(child)
+                        return
+                elif isinstance(child, ast.ClassDef):
+                    hit_dec = next((d for d in child.decorator_list if cls._node_contains(d, line1, col)), None)
+                    if hit_dec is not None:
+                        walk_node(hit_dec)
+                        return
+                    if cls._node_contains(child, line1, col):
+                        type_params = list(getattr(child, "type_params", ()) or ())
+                        cls_header_exprs: list[ast.AST] = [
+                            *type_params,
+                            *child.bases,
+                            *(kw.value for kw in child.keywords),
+                        ]
+                        hit_cls_hdr = next((e for e in cls_header_exprs if cls._node_contains(e, line1, col)), None)
+                        if hit_cls_hdr is not None:
+                            scopes.extend(type_params)
+                            walk_node(hit_cls_hdr)
+                            return
+                        scopes.extend(type_params)
                         scopes.append(child)
                         walk_node(child)
                         return
@@ -521,12 +575,12 @@ class StdlibPythonLsp:
                         return
                 elif isinstance(child, ast.Lambda):
                     if cls._node_contains(child, line1, col):
-                        in_default = any(
-                            d is not None and cls._node_contains(d, line1, col)
-                            for d in (*child.args.defaults, *child.args.kw_defaults)
-                        )
-                        if not in_default:
-                            scopes.append(child)
+                        lam_defaults = [d for d in (*child.args.defaults, *child.args.kw_defaults) if d is not None]
+                        hit_lam_def = next((d for d in lam_defaults if cls._node_contains(d, line1, col)), None)
+                        if hit_lam_def is not None:
+                            walk_node(hit_lam_def)
+                            return
+                        scopes.append(child)
                         walk_node(child)
                         return
                 else:
@@ -628,6 +682,43 @@ class StdlibPythonLsp:
                                 matches.append((cls_path, t))
         return matches
 
+    @classmethod
+    def _stmt_header_expr_contains(cls, stmt: ast.AST, line1: int, col: int) -> bool:
+        """True if `(line1, col)` sits inside a declaration header expression evaluated BEFORE `stmt` binds its name."""
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            all_fn_args = [
+                *stmt.args.posonlyargs,
+                *stmt.args.args,
+                *stmt.args.kwonlyargs,
+                *([stmt.args.vararg] if stmt.args.vararg else []),
+                *([stmt.args.kwarg] if stmt.args.kwarg else []),
+            ]
+            exprs: list[ast.AST] = [
+                *stmt.decorator_list,
+                *(getattr(stmt, "type_params", ()) or ()),
+                *stmt.args.defaults,
+                *(d for d in stmt.args.kw_defaults if d is not None),
+                *(a.annotation for a in all_fn_args if a.annotation is not None),
+                *([stmt.returns] if stmt.returns is not None else []),
+            ]
+            return any(cls._node_contains(e, line1, col) for e in exprs)
+        if isinstance(stmt, ast.ClassDef):
+            cls_exprs: list[ast.AST] = [
+                *stmt.decorator_list,
+                *(getattr(stmt, "type_params", ()) or ()),
+                *stmt.bases,
+                *(kw.value for kw in stmt.keywords),
+            ]
+            return any(cls._node_contains(e, line1, col) for e in cls_exprs)
+        if isinstance(stmt, ast.Assign) and stmt.value is not None:
+            return cls._node_contains(stmt.value, line1, col)
+        if isinstance(stmt, ast.AnnAssign):
+            return (
+                (stmt.annotation is not None and cls._node_contains(stmt.annotation, line1, col))
+                or (stmt.value is not None and cls._node_contains(stmt.value, line1, col))
+            )
+        return False
+
     def _lookup_in_scope(
         self,
         scope: ast.AST,
@@ -636,8 +727,14 @@ class StdlibPythonLsp:
         tree: ast.Module,
         path_consts: dict[str, Path],
         str_consts: dict[str, str],
+        cursor_pos: tuple[int, int] | None = None,
     ) -> tuple[list[tuple[Path, ast.AST]], Path | None, bool, str | None]:
         """Return `(definitions, module_path, is_external_import, constructed_class_expr)` for `ident` in `scope`."""
+        if self._TYPE_PARAM_NODES and isinstance(scope, self._TYPE_PARAM_NODES):
+            if getattr(scope, "name", None) == ident:
+                return [(path, scope)], None, False, None
+            return [], None, False, None
+
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
             all_args = [
                 *scope.args.posonlyargs,
@@ -676,6 +773,21 @@ class StdlibPythonLsp:
         cls_expr: str | None = None
 
         for stmt in self._iter_scope_stmts(body):
+            if cursor_pos is not None and self._stmt_header_expr_contains(stmt, *cursor_pos):
+                binds_ident = (
+                    (isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == ident)
+                    or (
+                        isinstance(stmt, ast.Assign)
+                        and any(nm.id == ident for t in stmt.targets for nm in self._extract_target_names(t))
+                    )
+                    or (
+                        isinstance(stmt, ast.AnnAssign)
+                        and any(nm.id == ident for nm in self._extract_target_names(stmt.target))
+                    )
+                )
+                if binds_ident:
+                    # Header/RHS expressions execute before `stmt` (or later statements) rebinds `ident`.
+                    break
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == ident:
                 defs.append((path, stmt))
             elif isinstance(stmt, ast.Import):
@@ -854,7 +966,7 @@ class StdlibPythonLsp:
             head = recv_parts[0]
             for sc in self._lexical_scopes_for_lookup(scopes):
                 defs, mod_target, is_ext, cls_expr = self._lookup_in_scope(
-                    sc, head, path, tree, path_consts, str_consts
+                    sc, head, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
                 )
                 if not defs and mod_target is None and not is_ext and cls_expr is None:
                     continue
@@ -903,26 +1015,47 @@ class StdlibPythonLsp:
             and inner.name == ident
             and getattr(inner, "lineno", 0) == line + 1
         ):
-            return ident, [(path, inner)]
+            in_param = isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                self._node_contains(a, line + 1, utf8_col)
+                for a in (
+                    *inner.args.posonlyargs,
+                    *inner.args.args,
+                    *inner.args.kwonlyargs,
+                    *([inner.args.vararg] if inner.args.vararg else []),
+                    *([inner.args.kwarg] if inner.args.kwarg else []),
+                )
+            )
+            if not in_param:
+                return ident, [(path, inner)]
 
-        # Original symbol name in `from mod import orig as alias`.
+        # Original symbol/module name in `from mod import orig as alias` or `import mod as alias`.
         inner_body = getattr(inner, "body", None)
         if isinstance(inner_body, list):
             for stmt in self._iter_scope_stmts(inner_body):
+                s_ln = getattr(stmt, "lineno", 0)
+                e_ln = getattr(stmt, "end_lineno", s_ln)
+                if not (s_ln <= line + 1 <= e_ln):
+                    continue
                 if isinstance(stmt, ast.ImportFrom):
-                    s_ln = getattr(stmt, "lineno", 0)
-                    e_ln = getattr(stmt, "end_lineno", s_ln)
-                    if s_ln <= line + 1 <= e_ln:
-                        for alias in stmt.names:
-                            if alias.name == ident and alias.name != "*":
-                                mod_file = self._resolve_module_file(stmt.module or "", stmt.level or 0, path)
-                                if mod_file is not None:
-                                    sym_defs = self._top_level_defs_in_module(mod_file, alias.name, set())
-                                    if sym_defs:
-                                        return ident, sym_defs
+                    for alias in stmt.names:
+                        if alias.name == ident and alias.name != "*":
+                            mod_file = self._resolve_module_file(stmt.module or "", stmt.level or 0, path)
+                            if mod_file is not None:
+                                sym_defs = self._top_level_defs_in_module(mod_file, alias.name, set())
+                                if sym_defs:
+                                    return ident, sym_defs
+                elif isinstance(stmt, ast.Import):
+                    for alias in stmt.names:
+                        if alias.asname and ident in (alias.name, alias.name.split(".")[-1]):
+                            mod_file = self._resolve_module_file(alias.name, 0, path)
+                            if mod_file is not None:
+                                mod_tree = self._parse_file(mod_file)
+                                return ident, [(mod_file, mod_tree or stmt)]
 
         for sc in self._lexical_scopes_for_lookup(scopes):
-            defs, _, _, _ = self._lookup_in_scope(sc, ident, path, tree, path_consts, str_consts)
+            defs, _, _, _ = self._lookup_in_scope(
+                sc, ident, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
+            )
             if defs:
                 return ident, defs
         return ident, []
@@ -970,29 +1103,89 @@ class StdlibPythonLsp:
             })
         return locs
 
-    @staticmethod
-    def _safe_name_tokens(src: str, ident: str) -> list[tuple[int, int, int]]:
+    @classmethod
+    def _safe_name_tokens(cls, src: str, ident: str) -> list[tuple[int, int, int]]:
         """Yield `(line0, cp_start, cp_end)` for `ident` tokens without failing on invalid indentation or syntax."""
-        tokens: list[tuple[int, int, int]] = []
+        return [(ln0, cs, ce) for ln0, cs, ce, _ in cls._safe_name_tokens_multi(src, {ident})]
+
+    @staticmethod
+    def _safe_name_tokens_multi(src: str, names: set[str]) -> list[tuple[int, int, int, str]]:
+        """Yield `(line0, cp_start, cp_end, token)` for any `NAME` token in `names`."""
+        if not names:
+            return []
+        tokens: list[tuple[int, int, int, str]] = []
         last_line0 = -1
         lines = src.splitlines(keepends=True)
         it = iter(lines)
         try:
             for tok in tokenize.generate_tokens(lambda: next(it)):
                 last_line0 = max(last_line0, tok.start[0] - 1)
-                if tok.type == tokenize.NAME and tok.string == ident:
-                    tokens.append((tok.start[0] - 1, tok.start[1], tok.end[1]))
+                if tok.type == tokenize.NAME and tok.string in names:
+                    tokens.append((tok.start[0] - 1, tok.start[1], tok.end[1], tok.string))
             return tokens
         except (tokenize.TokenError, IndentationError, SyntaxError):
             pass
         # Fallback lexical scan for lines past a broken indentation or unterminated token during live editing.
-        pat = re.compile(rf"\b{re.escape(ident)}\b")
+        alt = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True) if n)
+        if not alt:
+            return tokens
+        pat = re.compile(rf"\b(?:{alt})\b")
         plain_lines = src.splitlines()
         for ln0 in range(max(0, last_line0 + 1), len(plain_lines)):
             code_part = plain_lines[ln0].split("#", 1)[0]
             for m in pat.finditer(code_part):
-                tokens.append((ln0, m.start(), m.end()))
+                tokens.append((ln0, m.start(), m.end(), m.group(0)))
         return tokens
+
+    @classmethod
+    def _declared_symbol_name(cls, def_path: Path, node: ast.AST) -> str | None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return node.name
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.arg):
+            return node.arg
+        if isinstance(node, ast.Attribute):
+            return node.attr
+        if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            return node.name
+        if isinstance(node, ast.MatchMapping):
+            return node.rest
+        if cls._TYPE_PARAM_NODES and isinstance(node, cls._TYPE_PARAM_NODES):
+            return getattr(node, "name", None)
+        if isinstance(node, ast.Module):
+            return def_path.parent.name if def_path.stem == "__init__" else def_path.stem
+        return None
+
+    def _expand_import_alias_names(self, cand_files: list[Path], seed_names: set[str]) -> set[str]:
+        """Expand `seed_names` across `import ... as ...` and `from ... import ... as ...` aliases in `cand_files`."""
+        names = {n for n in seed_names if n}
+        alias_pairs: list[tuple[str, str]] = []
+        for cand_file in cand_files:
+            tree = self._parse_file(cand_file)
+            if tree is None:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        if alias.asname and alias.name != "*":
+                            alias_pairs.append((alias.name, alias.asname))
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        if alias.asname:
+                            alias_pairs.append((alias.name.split(".")[-1], alias.asname))
+                            alias_pairs.append((alias.name.split(".")[0], alias.asname))
+        changed = True
+        while changed:
+            changed = False
+            for orig, asname in alias_pairs:
+                if orig in names and asname not in names:
+                    names.add(asname)
+                    changed = True
+                elif asname in names and orig not in names:
+                    names.add(orig)
+                    changed = True
+        return names
 
     @staticmethod
     def _def_key(def_path: Path, node: ast.AST) -> tuple[Path, int, int]:
@@ -1010,6 +1203,8 @@ class StdlibPythonLsp:
         max_ln0: int | None = None
         for dp, dn in target_defs:
             if dp.resolve() != resolved:
+                return None
+            if self._TYPE_PARAM_NODES and isinstance(dn, self._TYPE_PARAM_NODES):
                 return None
             enc = self._enclosing_scopes(tree, getattr(dn, "lineno", 1), getattr(dn, "col_offset", 0))
             binding_scope = enc[-2] if (len(enc) >= 2 and enc[-1] is dn) else enc[-1]
@@ -1057,14 +1252,21 @@ class StdlibPythonLsp:
             if local_span is not None
             else [path, *(f.resolve() for f in self._workspace_py_files() if f.resolve() != path)]
         )
+        seed_names = {ident}
+        for dp, dn in target_defs:
+            decl_name = self._declared_symbol_name(dp, dn)
+            if decl_name:
+                seed_names.add(decl_name)
+        candidate_names = self._expand_import_alias_names(cand_files, seed_names)
 
         refs: list[dict] = []
         for cand_file in cand_files:
             src = self._text(cand_file)
-            if ident not in src:
+            present_names = {n for n in candidate_names if n in src}
+            if not present_names:
                 continue
             src_lines = src.splitlines()
-            for ln0, cp_start, cp_end in self._safe_name_tokens(src, ident):
+            for ln0, cp_start, cp_end, tok_str in self._safe_name_tokens_multi(src, present_names):
                 if local_span is not None and not (local_span[0] <= ln0 <= local_span[1]):
                     continue
                 row = src_lines[ln0] if ln0 < len(src_lines) else ""
@@ -1087,7 +1289,7 @@ class StdlibPythonLsp:
                                     (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
                                      ast.ExceptHandler, ast.MatchAs, ast.MatchStar),
                                 )
-                                and dn.name == ident
+                                and dn.name == tok_str
                             )
                         )
                         for dp, dn in target_defs

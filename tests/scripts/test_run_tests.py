@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import threading
+import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("run_tests", ROOT / "scripts" / "run-tests.py")
@@ -47,6 +54,106 @@ class RunTestsCadence(unittest.TestCase):
     def test_filtered_execution_succeeds(self):
         code = RUN_TESTS.main(["--filter", "test_verify_agent_tiers", "--jobs", "1"])
         self.assertEqual(code, 0)
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True,
+                text=True,
+                creationflags=RUN_TESTS.windowless(),
+            )
+            return str(pid) in out.stdout
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def test_run_one_timeout_kills_hung_worker_and_grandchild_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            pkg = ws / "tests" / "scripts"
+            pkg.mkdir(parents=True)
+            (ws / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            pid_file = ws / "grandchild.pid"
+            (pkg / "test_hang.py").write_text(
+                "import pathlib, subprocess, sys, time, unittest\n"
+                "class HangTest(unittest.TestCase):\n"
+                "    def test_hang(self):\n"
+                "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                f"        pathlib.Path({str(pid_file)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+                "        time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            mod, code, dt, out = RUN_TESTS.run_one("tests.scripts.test_hang", ws, timeout_s=0.6)
+            self.assertEqual(mod, "tests.scripts.test_hang")
+            self.assertEqual(code, 124)
+            self.assertIn("timed out", out)
+            self.assertLess(dt, 15.0)
+            self.assertTrue(pid_file.is_file(), f"worker never started: {out}")
+            grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and self._pid_alive(grandchild_pid):
+                time.sleep(0.05)
+            self.assertFalse(self._pid_alive(grandchild_pid), f"grandchild PID {grandchild_pid} leaked after timeout")
+
+    def test_keyboard_interrupt_cancels_queued_suites_and_terminates_running_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            pkg = ws / "tests" / "scripts"
+            pkg.mkdir(parents=True)
+            (ws / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (pkg / "__init__.py").write_text("", encoding="utf-8")
+            started_marker = ws / "mod1.started"
+            pid_file = ws / "mod1_child.pid"
+            queued_marker = ws / "queued.ran"
+
+            (pkg / "test_a_first.py").write_text(
+                "import pathlib, subprocess, sys, time, unittest\n"
+                "class FirstTest(unittest.TestCase):\n"
+                "    def test_slow(self):\n"
+                "        child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                f"        pathlib.Path({str(pid_file)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+                f"        pathlib.Path({str(started_marker)!r}).write_text('1', encoding='utf-8')\n"
+                "        time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            for idx in range(2, 6):
+                (pkg / f"test_b_queued_{idx}.py").write_text(
+                    "import pathlib, unittest\n"
+                    "class QueuedTest(unittest.TestCase):\n"
+                    "    def test_should_not_run(self):\n"
+                    f"        pathlib.Path({str(queued_marker)!r}).write_text('{idx}', encoding='utf-8')\n",
+                    encoding="utf-8",
+                )
+
+            def interrupt_once_started(futures):
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline and not started_marker.is_file():
+                    time.sleep(0.02)
+                raise KeyboardInterrupt()
+                yield  # pragma: no cover
+
+            t0 = time.perf_counter()
+            with (
+                mock.patch.object(RUN_TESTS, "ROOT", ws),
+                mock.patch.object(RUN_TESTS, "as_completed", side_effect=interrupt_once_started),
+            ):
+                rc = RUN_TESTS.main(["--full", "--jobs", "1", "--timeout", "30"])
+            elapsed = time.perf_counter() - t0
+
+            self.assertEqual(rc, 130)
+            self.assertLess(elapsed, 15.0)
+            self.assertTrue(started_marker.is_file())
+            self.assertFalse(queued_marker.exists(), "queued test modules must not execute after KeyboardInterrupt")
+            grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            deadline = time.monotonic() + 3.0
+            while time.monotonic() < deadline and self._pid_alive(grandchild_pid):
+                time.sleep(0.05)
+            self.assertFalse(self._pid_alive(grandchild_pid), "running worker child tree leaked after Ctrl+C")
 
 
 if __name__ == "__main__":

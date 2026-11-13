@@ -16,8 +16,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import ctypes
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,39 +143,127 @@ def select_modules(
     return sorted(selected, key=lambda m: (0 if m in HEAVY_MODULES else 1, m))
 
 
-def run_one(module: str, root: Path = ROOT) -> tuple[str, int, float, str]:
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            creationflags=windowless(),
+        )
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _run_bounded_process(
+    cmd: list[str],
+    cwd: Path,
+    *,
+    env: dict[str, str] | None = None,
+    timeout_s: float = 300.0,
+    cancel_event: threading.Event | None = None,
+    active_procs: set[subprocess.Popen] | None = None,
+    procs_lock: threading.Lock | None = None,
+) -> tuple[int, float, str]:
     t0 = time.perf_counter()
-    env = os.environ.copy()
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    done = subprocess.run(
-        [sys.executable, "-B", "-m", "unittest", module],
-        cwd=root,
+    if cancel_event is not None and cancel_event.is_set():
+        return 130, 0.0, "cancelled"
+
+    spawn_kwargs: dict = (
+        {"creationflags": windowless() | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
         env=env,
-        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        creationflags=windowless(),
+        **spawn_kwargs,
     )
-    elapsed = time.perf_counter() - t0
-    combined = (done.stdout + "\n" + done.stderr).strip()
-    return module, done.returncode, elapsed, combined
+    if active_procs is not None and procs_lock is not None:
+        with procs_lock:
+            if cancel_event is not None and cancel_event.is_set():
+                _kill_process_tree(proc)
+                proc.communicate()
+                return 130, time.perf_counter() - t0, "cancelled"
+            active_procs.add(proc)
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        out, err = proc.communicate()
+        combined = ((out or "") + "\n" + (err or "")).strip()
+        return 124, time.perf_counter() - t0, f"timed out after {timeout_s:g}s\n{combined}".strip()
+    except BaseException:
+        _kill_process_tree(proc)
+        proc.communicate()
+        raise
+    finally:
+        if active_procs is not None and procs_lock is not None:
+            with procs_lock:
+                active_procs.discard(proc)
+
+    if cancel_event is not None and cancel_event.is_set():
+        return 130, time.perf_counter() - t0, "cancelled"
+    combined = ((out or "") + "\n" + (err or "")).strip()
+    return proc.returncode, time.perf_counter() - t0, combined
 
 
-def run_quick_graph_gates(root: Path = ROOT) -> tuple[bool, float, str]:
+def run_one(
+    module: str,
+    root: Path = ROOT,
+    *,
+    timeout_s: float = 300.0,
+    cancel_event: threading.Event | None = None,
+    active_procs: set[subprocess.Popen] | None = None,
+    procs_lock: threading.Lock | None = None,
+) -> tuple[str, int, float, str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    code, elapsed, combined = _run_bounded_process(
+        [sys.executable, "-B", "-m", "unittest", module],
+        root,
+        env=env,
+        timeout_s=timeout_s,
+        cancel_event=cancel_event,
+        active_procs=active_procs,
+        procs_lock=procs_lock,
+    )
+    return module, code, elapsed, combined
+
+
+def run_quick_graph_gates(
+    root: Path = ROOT,
+    *,
+    timeout_s: float = 300.0,
+    cancel_event: threading.Event | None = None,
+    active_procs: set[subprocess.Popen] | None = None,
+    procs_lock: threading.Lock | None = None,
+) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
     for subcmd in (["validate"], ["plan", "--check"]):
-        done = subprocess.run(
+        code, _, detail = _run_bounded_process(
             [sys.executable, "-B", "scripts/todo-graph.py", *subcmd],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=windowless(),
+            root,
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+            active_procs=active_procs,
+            procs_lock=procs_lock,
         )
-        if done.returncode != 0:
-            return False, time.perf_counter() - t0, (done.stdout + "\n" + done.stderr).strip()
+        if code != 0:
+            return False, time.perf_counter() - t0, detail
     return True, time.perf_counter() - t0, "todo-graph validate + plan --check"
 
 
@@ -182,10 +272,14 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--quick", action="store_true", help="fast local cadence with change-aware promotion (default)")
     mode.add_argument("--full", action="store_true", help="run 100%% of tests/scripts and scripts/tests")
-    parser.add_argument("--filter", default="", help="only run modules whose dotted name contains this substring")
-    parser.add_argument("--jobs", type=int, default=0, help="parallel worker count (0 = RAM/CPU auto)")
+    parser.add_argument("-k", "--filter", default="", help="only run modules whose dotted name contains this substring")
+    parser.add_argument("-j", "--jobs", type=int, default=0, help="parallel worker count (0 = RAM/CPU auto)")
+    parser.add_argument("--timeout", type=float, default=300.0, help="per-suite timeout in seconds (default: 300)")
     parser.add_argument("--list", action="store_true", help="list selected modules and exit")
     args = parser.parse_args(argv)
+    if args.timeout <= 0:
+        print("--timeout must be greater than 0", file=sys.stderr)
+        return 2
 
     all_mods = discover_modules(ROOT)
     changed = [] if args.full else dirty_paths(ROOT)
@@ -208,22 +302,59 @@ def main(argv: list[str] | None = None) -> int:
 
     started = time.perf_counter()
     failures: list[tuple[str, str]] = []
+    cancel_event = threading.Event()
+    active_procs: set[subprocess.Popen] = set()
+    procs_lock = threading.Lock()
+    pool = ThreadPoolExecutor(max_workers=workers)
+    completed_cleanly = False
+    try:
+        if not args.full and not args.filter and "tests.scripts.test_todo_graph" not in selected:
+            ok, dt, detail = run_quick_graph_gates(
+                ROOT,
+                timeout_s=args.timeout,
+                cancel_event=cancel_event,
+                active_procs=active_procs,
+                procs_lock=procs_lock,
+            )
+            status = "PASS" if ok else "FAIL"
+            print(f"  [{status}] {dt:5.2f}s  todo-graph (validate + plan --check)")
+            if not ok:
+                failures.append(("todo-graph", detail))
 
-    if not args.full and not args.filter and "tests.scripts.test_todo_graph" not in selected:
-        ok, dt, detail = run_quick_graph_gates(ROOT)
-        status = "PASS" if ok else "FAIL"
-        print(f"  [{status}] {dt:5.2f}s  todo-graph (validate + plan --check)")
-        if not ok:
-            failures.append(("todo-graph", detail))
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        future_map = {pool.submit(run_one, mod, ROOT): mod for mod in selected}
+        future_map = {
+            pool.submit(
+                run_one,
+                mod,
+                ROOT,
+                timeout_s=args.timeout,
+                cancel_event=cancel_event,
+                active_procs=active_procs,
+                procs_lock=procs_lock,
+            ): mod
+            for mod in selected
+        }
         for fut in as_completed(future_map):
+            if cancel_event.is_set():
+                break
             mod, code, dt, out = fut.result()
-            status = "PASS" if code == 0 else "FAIL"
+            status = "PASS" if code == 0 else ("TIME" if code == 124 else "FAIL")
             print(f"  [{status}] {dt:5.2f}s  {mod}")
             if code != 0:
                 failures.append((mod, out))
+        completed_cleanly = True
+    except KeyboardInterrupt:
+        print("\nInterrupted: cancelled queued suites and terminated running test workers.", file=sys.stderr)
+        return 130
+    finally:
+        if completed_cleanly:
+            pool.shutdown(wait=True, cancel_futures=False)
+        else:
+            cancel_event.set()
+            with procs_lock:
+                running = list(active_procs)
+            for proc in running:
+                _kill_process_tree(proc)
+            pool.shutdown(wait=True, cancel_futures=True)
 
     total = time.perf_counter() - started
     if failures:

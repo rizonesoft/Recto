@@ -191,12 +191,15 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
         assert hover is not None
         self.assertIn("def windowless()", hover["contents"]["value"])
 
-        # Loop-variable binding on live `scripts/run-tests.py:133` (`triggers = HEAVY_MODULES.get(mod)` -> line 132 `for mod`).
+        # Loop-variable binding on live `scripts/run-tests.py` (`triggers = HEAVY_MODULES.get(mod)` -> preceding `for mod`).
         run_tests_py = (ROOT / "scripts" / "run-tests.py").resolve()
-        mod_defs = lsp._definitions(run_tests_py, 132, 41)
+        rt_lines = run_tests_py.read_text(encoding="utf-8").splitlines()
+        trig_ln = next(i for i, ln in enumerate(rt_lines) if "triggers = HEAVY_MODULES.get(mod)" in ln)
+        mod_col = rt_lines[trig_ln].index("(mod)") + 1
+        mod_defs = lsp._definitions(run_tests_py, trig_ln, mod_col)
         self.assertEqual(len(mod_defs), 1, mod_defs)
         self.assertEqual(mod_defs[0]["uri"], run_tests_py.as_uri())
-        self.assertEqual(mod_defs[0]["range"]["start"]["line"], 131)
+        self.assertEqual(mod_defs[0]["range"]["start"]["line"], trig_ln - 1)
 
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
@@ -273,6 +276,64 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
                     b_defs = scoped._definitions(bindings_file, use_ln, use_col)
                     self.assertEqual(len(b_defs), 1, b_defs)
                     self.assertEqual(b_defs[0]["range"]["start"]["line"], expected_ln)
+
+            # 8. Python header scoping: decorators, parameter defaults, annotations, and class bases evaluate in enclosing scope.
+            header_scope_file = pkg / "header_scopes.py"
+            header_scope_file.write_text(
+                "x = 1\n"
+                "def wrap(fn):\n"
+                "    return fn\n"
+                "@wrap\n"
+                "def f(x: x = x) -> x:\n"
+                "    return x\n"
+                "class Base:\n"
+                "    pass\n"
+                "class Base(Base):\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            # Line 4: `def f(x: x = x) -> x:` -> param `x` (col 6) -> line 4; `: x` (col 9), `= x` (col 13), `-> x` (col 19) -> line 0;
+            # Line 5: `    return x` (col 11) -> line 4; Line 8: `class Base(Base):` -> decl (col 6) -> line 8, base (col 11) -> line 6.
+            for h_ln, h_col, expected_ln in (
+                (4, 6, 4),
+                (4, 9, 0),
+                (4, 13, 0),
+                (4, 19, 0),
+                (5, 11, 4),
+                (8, 6, 8),
+                (8, 11, 6),
+            ):
+                with self.subTest(header_pos=(h_ln, h_col)):
+                    h_defs = scoped._definitions(header_scope_file, h_ln, h_col)
+                    self.assertEqual(len(h_defs), 1, h_defs)
+                    self.assertEqual(h_defs[0]["range"]["start"]["line"], expected_ln)
+
+            # 9. Cross-file `from ... import ... as ...` alias references resolve both ways without false positives.
+            alias_caller = pkg / "alias_caller.py"
+            alias_caller.write_text(
+                "from helper_mod import shared_name as sn\n"
+                "val = sn()\n",
+                encoding="utf-8",
+            )
+            unrelated_alias = pkg / "unrelated_sn.py"
+            unrelated_alias.write_text("sn = 42\n_ = sn\n", encoding="utf-8")
+
+            helper_uri = mod_a.resolve().as_uri()
+            alias_uri = alias_caller.resolve().as_uri()
+            unrelated_uri = unrelated_alias.resolve().as_uri()
+
+            refs_from_def = scoped._references(mod_a, 0, 4, include_declaration=True)
+            ref_sites = {(r["uri"], r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in refs_from_def}
+            self.assertIn((helper_uri, 0, 4), ref_sites)
+            self.assertIn((alias_uri, 0, 23), ref_sites)  # `shared_name` in `from helper_mod import shared_name as sn`
+            self.assertIn((alias_uri, 0, 38), ref_sites)  # `sn` in `as sn`
+            self.assertIn((alias_uri, 1, 6), ref_sites)   # `sn` in `val = sn()`
+            self.assertTrue(all(r["uri"] != unrelated_uri for r in refs_from_def))
+
+            refs_from_alias_excl = scoped._references(alias_caller, 1, 6, include_declaration=False)
+            excl_sites = {(r["uri"], r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in refs_from_alias_excl}
+            self.assertNotIn((helper_uri, 0, 4), excl_sites)
+            self.assertIn((alias_uri, 1, 6), excl_sites)
 
     def test_builtin_lsp_indentation_errors_scoped_references_and_utf16_positions(self):
         with tempfile.TemporaryDirectory() as tmp:

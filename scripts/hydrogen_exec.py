@@ -508,6 +508,8 @@ def _validate_python_argv(tokens: list[str]) -> str | None:
                 j += 1
             elif rest[j] in ("-j", "--jobs") and j + 1 < len(rest) and rest[j + 1].isdigit():
                 j += 2
+            elif rest[j] == "--timeout" and j + 1 < len(rest) and re.match(r"^(?:[1-9]\d*(?:\.\d+)?|0\.\d*[1-9]\d*)$", rest[j + 1]):
+                j += 2
             elif rest[j] in ("-k", "--filter") and j + 1 < len(rest):
                 j += 2
             else:
