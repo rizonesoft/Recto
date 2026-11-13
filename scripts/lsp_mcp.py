@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+import tokenize
 from urllib.parse import unquote, urlparse
 
 HERE = Path(__file__).resolve().parent
@@ -61,6 +62,17 @@ def uri_to_rel(uri: str, root: Path) -> str:
         return p.relative_to(root.resolve()).as_posix()
     except ValueError:
         return p.as_posix()
+
+
+def _read_source_text(path: Path) -> str:
+    """Read source text from disk, honoring PEP 263 (UTF-8 BOM and coding cookies) for Python files."""
+    if path.suffix.lower() in PY_EXTS:
+        try:
+            with tokenize.open(path) as handle:
+                return handle.read()
+        except (OSError, SyntaxError, LookupError, UnicodeDecodeError):
+            pass
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 class LspClient:
@@ -248,7 +260,10 @@ class LspClient:
                 self.notify("textDocument/didClose", {"textDocument": {"uri": prev_uri}})
                 watched_events.append({"uri": prev_uri, "type": 3})
                 continue
-            cur_text = prev_path.read_text(encoding="utf-8", errors="replace")
+            try:
+                cur_text = _read_source_text(prev_path)
+            except OSError:
+                continue
             if cur_text == prev_text:
                 continue
             with self._diag_cond:
@@ -270,7 +285,7 @@ class LspClient:
         uri = resolved.as_uri()
         key = _uri_key(uri)
         self.refresh_opened_files(exclude_key=key)
-        text = resolved.read_text(encoding="utf-8", errors="replace")
+        text = _read_source_text(resolved)
         lang_id = "python" if resolved.suffix.lower() in PY_EXTS else "cpp"
         with self._diag_cond:
             self._sync_seq += 1

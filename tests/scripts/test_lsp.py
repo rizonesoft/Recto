@@ -807,6 +807,66 @@ class LspMcpBridge(unittest.TestCase):
                 ["initialize", "initialized", "shutdown", "exit"],
             )
 
+    def test_python_utf8_bom_and_pep263_encoding_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            scripts_dir = ws / "scripts"
+            scripts_dir.mkdir(parents=True)
+
+            bom_file = scripts_dir / "bom_mod.py"
+            bom_file.write_bytes(b"\xef\xbb\xbfdef valid() -> int:\n    return 1\n\nx = valid()\n")
+
+            latin_file = scripts_dir / "latin_mod.py"
+            latin_file.write_bytes(b"# -*- coding: latin-1 -*-\ncaf\xe9 = 1\nres = caf\xe9\n")
+
+            conflict_file = scripts_dir / "conflict_mod.py"
+            conflict_file.write_bytes(b"\xef\xbb\xbf# -*- coding: latin-1 -*-\nx = 1\n")
+
+            # 1. Direct StdlibPythonLsp disk and in-memory BOM handling.
+            lsp = PYTHON_LSP.StdlibPythonLsp(ws)
+            self.assertEqual(lsp._diagnostics(bom_file, lsp._text(bom_file)), [])
+            self.assertEqual(lsp._diagnostics(bom_file, "\ufeffdef valid() -> int:\n    return 1\n"), [])
+            self.assertEqual([s["name"] for s in lsp._doc_symbols(lsp._text(bom_file))], ["valid", "x"])
+            self.assertEqual([s["name"] for s in lsp._doc_symbols("\ufeffdef valid():\n    return 1\n")], ["valid"])
+            bom_defs = lsp._definitions(bom_file, 3, 4)
+            self.assertEqual(len(bom_defs), 1)
+            self.assertEqual(bom_defs[0]["range"]["start"], {"line": 0, "character": 0})
+
+            self.assertEqual(lsp._diagnostics(latin_file, lsp._text(latin_file)), [])
+            latin_defs = lsp._definitions(latin_file, 2, 6)
+            self.assertEqual(len(latin_defs), 1)
+            self.assertEqual(latin_defs[0]["range"]["start"], {"line": 1, "character": 0})
+
+            conflict_diags = lsp._diagnostics(conflict_file, lsp._text(conflict_file))
+            self.assertEqual(len(conflict_diags), 1)
+            self.assertIn("encoding problem", conflict_diags[0]["message"])
+
+            # 2. Full LspMcpServer end-to-end with `--builtin` backend.
+            srv = LSP_MCP.LspMcpServer(ws)
+            srv.clients["python"] = LSP_MCP.LspClient(
+                "python", [sys.executable, str(ROOT / "scripts" / "python-lsp.py"), "--builtin"], ws
+            )
+            try:
+                self.assertEqual(
+                    srv.tool_diagnostics({"file": "scripts/bom_mod.py"}),
+                    "scripts/bom_mod.py: 0 diagnostics",
+                )
+                self.assertIn("scripts/bom_mod.py:1 [function] valid", srv.tool_symbols({"file_or_query": "scripts/bom_mod.py"}))
+                self.assertEqual(
+                    srv.tool_definition({"file": "scripts/bom_mod.py", "line": 4, "character": 5}),
+                    "scripts/bom_mod.py:1:1",
+                )
+                self.assertEqual(
+                    srv.tool_diagnostics({"file": "scripts/latin_mod.py"}),
+                    "scripts/latin_mod.py: 0 diagnostics",
+                )
+                self.assertIn(
+                    "encoding problem",
+                    srv.tool_diagnostics({"file": "scripts/conflict_mod.py"}),
+                )
+            finally:
+                srv.shutdown_all()
+
     @unittest.skipUnless(CLANGD_LSP.find_clangd(), "clangd not installed on this machine")
     def test_cpp23_clangd_diagnostics_symbols_and_hover(self):
         GEN.write_database(ROOT / "build" / "compile_commands.json", ROOT)

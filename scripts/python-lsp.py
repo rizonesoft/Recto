@@ -12,6 +12,7 @@ packages.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 from pathlib import Path
@@ -64,6 +65,20 @@ def path_to_uri(path: Path) -> str:
     return path.resolve().as_uri()
 
 
+def _read_python_source(path: Path) -> str:
+    """Decode Python source from disk per PEP 263 (UTF-8 BOM and coding cookies)."""
+    try:
+        with tokenize.open(path) as handle:
+            return handle.read()
+    except (SyntaxError, LookupError, UnicodeDecodeError):
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+    except OSError:
+        return ""
+
+
 class StdlibPythonLsp:
     """Lightweight, zero-dependency LSP server over stdio using Python's `ast` and `tokenize` modules."""
 
@@ -113,13 +128,25 @@ class StdlibPythonLsp:
         sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw)
         sys.stdout.buffer.flush()
 
-    def _text(self, path: Path) -> str:
-        if path in self.docs:
-            return self.docs[path]
+    @staticmethod
+    def _normalize_python_text(text: str) -> str:
+        """Strip a PEP 263-valid initial UTF-8 BOM (`U+FEFF`), keeping conflicting BOM+cookie headers intact."""
+        if not text.startswith("\ufeff"):
+            return text
+        head = "".join(text.splitlines(keepends=True)[:2]).encode("utf-8")
         try:
-            return path.read_text(encoding="utf-8")
-        except OSError:
-            return ""
+            tokenize.detect_encoding(io.BytesIO(head).readline)
+        except (SyntaxError, LookupError):
+            return text
+        return text[1:]
+
+    def _text(self, path: Path) -> str:
+        resolved = path.resolve()
+        if resolved in self.docs:
+            return self._normalize_python_text(self.docs[resolved])
+        if path in self.docs:
+            return self._normalize_python_text(self.docs[path])
+        return _read_python_source(resolved)
 
     def _workspace_py_files(self) -> list[Path]:
         files: list[Path] = []
@@ -165,7 +192,25 @@ class StdlibPythonLsp:
 
     def _diagnostics(self, path: Path, text: str) -> list[dict]:
         diags: list[dict] = []
+        raw_text = text
+        text = self._normalize_python_text(raw_text)
         try:
+            head = "".join(raw_text.splitlines(keepends=True)[:2]).encode("utf-8")
+            tokenize.detect_encoding(io.BytesIO(head).readline)
+            if "\ufffd" in raw_text and path.is_file():
+                try:
+                    fallback_disk = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    fallback_disk = None
+                if fallback_disk == raw_text:
+                    try:
+                        with tokenize.open(path) as handle:
+                            handle.read()
+                    except UnicodeDecodeError:
+                        try:
+                            ast.parse(path.read_bytes(), filename=str(path))
+                        except OSError:
+                            pass
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
                 tree = ast.parse(text, filename=str(path))
@@ -197,6 +242,7 @@ class StdlibPythonLsp:
 
     @classmethod
     def _doc_symbols(cls, text: str) -> list[dict]:
+        text = cls._normalize_python_text(text)
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
@@ -263,6 +309,7 @@ class StdlibPythonLsp:
 
     @classmethod
     def _word_at(cls, text: str, line: int, character: int) -> str:
+        text = cls._normalize_python_text(text)
         lines = text.splitlines()
         if line < 0 or line >= len(lines):
             return ""
@@ -277,6 +324,7 @@ class StdlibPythonLsp:
     @classmethod
     def _cursor_symbol(cls, text: str, line: int, character: int) -> tuple[str | None, str, bool, int]:
         """Return `(receiver_chain, ident, is_attribute_access, utf8_col)` at 0-based `(line, utf16_character)`."""
+        text = cls._normalize_python_text(text)
         lines = text.splitlines()
         if line < 0 or line >= len(lines):
             return None, "", False, 0
@@ -1226,6 +1274,7 @@ class StdlibPythonLsp:
         """Yield `(line0, cp_start, cp_end, token)` for any `NAME` token in `names`."""
         if not names:
             return []
+        src = StdlibPythonLsp._normalize_python_text(src)
         tokens: list[tuple[int, int, int, str]] = []
         last_line0 = -1
         lines = src.splitlines(keepends=True)
@@ -1473,7 +1522,7 @@ class StdlibPythonLsp:
                     text = td.get("text", "")
                     version = td.get("version")
                     p = uri_to_path(uri)
-                    self.docs[p] = text
+                    self.docs[p] = self._normalize_python_text(text)
                     self._ast_cache.pop(p, None)
                     pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
                     if isinstance(version, int):
@@ -1487,7 +1536,7 @@ class StdlibPythonLsp:
                     if changes:
                         p = uri_to_path(uri)
                         text = changes[-1].get("text", "")
-                        self.docs[p] = text
+                        self.docs[p] = self._normalize_python_text(text)
                         self._ast_cache.pop(p, None)
                         pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
                         if isinstance(version, int):
