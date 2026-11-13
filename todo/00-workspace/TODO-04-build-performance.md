@@ -50,7 +50,7 @@ track: M0
 | 1 | §1 | ASan and plain builds in separate output folders | -- | [x] |
 | 2 | §2 | ARM64 off the local build, built in CI, deferred to after Recto v1 | -- | [x] |
 | 3 | §3 | MSBuild and compiler parallelism set by free memory | §1 | [x] |
-| 4 | §4 | Precompiled headers for every project | §3 | [ ] |
+| 4 | §4 | Precompiled headers for every project | §3 | [x] |
 | 5 | §5 | Tiered gates: touched tests while building, the full suite at stamp | §2 | [ ] |
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [ ] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [ ] |
@@ -177,6 +177,9 @@ No project uses a precompiled header, so `windows.h`, Direct2D, DirectWrite, WIC
 - [x] Commit: `build: precompiled headers for every project`
 
 **Test checkpoint:** a clean `build.ps1 -Platform x64 -Configuration Debug` passes with 0 warnings and every project's log shows `/Yc` on `pch.cpp` and `/Yu` on consumers (`PdfError.*` included), an immediate second Debug build recompiles zero units while editing `src/ui/pch.h` rebuilds `recto-ui`'s `.pch` and consumers and passes `Ui.*`, `python -m unittest tests.scripts.test_build_ps1 tests.scripts.test_lsp tests.scripts.test_check_ui_boundary tests.scripts.test_ui_module_boundary` and `clangd --check` pass, and including a `src/pdf` header in `src/ui/pch.h` fails the boundary check.
+
+> **Verified:** 2026-11-13 | §4 | e2d6a824e22083c560774603f33dac65ceb702a1
+> **Review:** `docs/reviews/d00-t04-s4.json`
 
 ## 5. Tiered gates: touched tests while building, the full suite at stamp
 

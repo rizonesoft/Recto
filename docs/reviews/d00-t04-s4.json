@@ -1,0 +1,83 @@
+{
+  "ref": "D00 T04 \u00a74",
+  "title": "Precompiled headers for every project",
+  "implementation_sha": "e2d6a824e22083c560774603f33dac65ceb702a1",
+  "date": "2026-11-13",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s4.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build.ps1 -Platform x64 -Configuration Debug -> 0 Warning(s), 8/8 /Yc pch.cpp + 8/8 /Yu consumers, 504/504 passed (PdfError.* 17/17); no-change Debug -> 0 cl.exe compiles; src/ui/pch.h edit -> 2 CL.exe lines + 35/35 Ui.*; planted src/pdf/error.h in src/ui/pch.h -> exit 1 (breaks D13); python -m unittest tests.scripts.test_build_ps1 tests.scripts.test_lsp tests.scripts.test_check_ui_boundary tests.scripts.test_ui_module_boundary -> 87 tests OK (0 skipped); clangd --check=src/core/core.cpp -> All checks completed, 0 errors"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s4.md",
+    "verdict": "reconciled",
+    "candidate": "e2d6a824e22083c560774603f33dac65ceb702a1",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s4.md",
+    "candidate": "ce751910d41c32e100d25deb400bdfeb5c1ed805",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "ce751910d41c32e100d25deb400bdfeb5c1ed805",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "effort": "medium",
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    }
+  },
+  "passes_spent": 4,
+  "pass_cap": 33
+}
