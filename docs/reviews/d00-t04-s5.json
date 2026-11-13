@@ -1,0 +1,85 @@
+{
+  "ref": "D00 T04 \u00a75",
+  "title": "Tiered gates: touched tests while building, the full suite at stamp",
+  "implementation_sha": "0473c6434c1dea06a311305af9422a6641c51436",
+  "date": "2026-11-13",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s5.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    ".\\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*' -> 0 Warning(s), 0 Error(s), Running 17 tests from 1 test suite, 17 passed (pwsh and cmd.exe)",
+    "python -m unittest discover -s scripts/tests; python -m unittest tests.scripts.test_todo_graph tests.scripts.test_build_ps1; python scripts/todo-graph.py validate -> Ran 420 tests in 317.003s OK (skipped=84); Ran 164 tests in 370.880s OK; valid: 882 sections",
+    ".\\build.cmd -> Debug|x64: 0 Warning(s), 0 Error(s), 504 passed, 4 skipped; Release|x64: 0 Warning(s), 0 Error(s), 505 passed, 3 skipped; Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s5.md",
+    "verdict": "reconciled",
+    "candidate": "0473c6434c1dea06a311305af9422a6641c51436",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s5.md",
+    "candidate": "ecab6e517b62ba0daea3155c34d1ee540abb8c2c",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "ecab6e517b62ba0daea3155c34d1ee540abb8c2c",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "effort": "medium",
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    }
+  },
+  "passes_spent": 4,
+  "pass_cap": 33
+}
