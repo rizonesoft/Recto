@@ -1,0 +1,86 @@
+{
+  "ref": "D00 T04 \u00a72",
+  "title": "ARM64 off the local build, built in CI, deferred to after Recto v1",
+  "implementation_sha": "b3d6e340f0ae792c9653bd204f2306e1da219fd9",
+  "date": "2026-11-13",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_build_ps1 -> Ran 19 tests in 11.390s / OK",
+    ".\\build.cmd -> === Recto Debug|x64, === Recto Release|x64, Debug|x64 504 PASSED 4 SKIPPED 0 FAILED, Release|x64 504 PASSED 4 SKIPPED 0 FAILED, Recto build complete., ARM64_LINES_IN_DEFAULT=0",
+    ".\\build.cmd -Platform ARM64 -SkipTests -> === Recto Debug|ARM64 0 Error(s), === Recto Release|ARM64 0 Error(s), Recto build complete.",
+    "gh run view 43404697028 (job 131816069273 on b3d6e340f0ae792c9653bd204f2306e1da219fd9) -> === Recto Debug|ARM64 0 Error(s) Recto build complete. and === Recto Release|ARM64 0 Error(s) Recto build complete.; python scripts/ci_status.py --gate -> ci gate: green at b3d6e340f0ae"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s2.md",
+    "verdict": "reconciled",
+    "candidate": "b3d6e340f0ae792c9653bd204f2306e1da219fd9",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s2.md",
+    "candidate": "9e0161ab14d604fab08b59229e9410213ff84d6c",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "9e0161ab14d604fab08b59229e9410213ff84d6c",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "effort": "medium",
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    }
+  },
+  "passes_spent": 4,
+  "pass_cap": 33
+}

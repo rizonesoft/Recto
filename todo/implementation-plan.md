@@ -28,7 +28,7 @@ Sections: 60 | Checklist items: 354
 | [x]    | D00 T03 §5  | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
 | [x]    | D00 T03 §6  | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
 | [x]    | D00 T04 §1  | ASan and plain builds in separate output folders                                         | windows-host | 7     |
-| [ ]    | D00 T04 §2  | ARM64 off the local build, built in CI, deferred to after Recto v1                       | windows-host | 4     |
+| [x]    | D00 T04 §2  | ARM64 off the local build, built in CI, deferred to after Recto v1                       | windows-host | 4     |
 | [ ]    | D00 T04 §3  | MSBuild and compiler parallelism set by free memory                                      | windows-host | 6     |
 | [ ]    | D00 T04 §4  | Precompiled headers for every project                                                    | windows-host | 4     |
 | [ ]    | D00 T04 §5  | Tiered gates: touched tests while building, the full suite at stamp                      | windows-host | 4     |
@@ -951,6 +951,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 105/882 verified sections, 58 ready to run now.
+Progress: 106/882 verified sections, 58 ready to run now.
 
-Checklist: 712/6518 items completed (includes Commit items).
+Checklist: 713/6518 items completed (includes Commit items).
