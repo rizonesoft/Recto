@@ -77,20 +77,30 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
-      - name: Validate the TODO tree and generated plan
-        run: |
-          python scripts/todo-graph.py validate
-          python scripts/todo-graph.py plan --check
-      - name: Check reviewer pin, campaign guard self-test and agent tiers
-        run: |
-          python scripts/review_pin.py --check --all
-          python scripts/campaign_guard.py --self-test
-          node scripts/verify-agent-tiers.mjs
-      - name: Check portable clangd compilation database generator
-        run: |
-          python scripts/gen-compile-commands.py
-          python scripts/gen-compile-commands.py --check
+      - name: Validate the TODO tree
+        shell: pwsh
+        run: python scripts/todo-graph.py validate
+      - name: Check generated implementation plan is current
+        shell: pwsh
+        run: python scripts/todo-graph.py plan --check
+      - name: Check reviewer pin and historical receipts
+        shell: pwsh
+        run: python scripts/review_pin.py --check --all
+      - name: Run campaign guard self-test
+        shell: pwsh
+        run: python scripts/campaign_guard.py --self-test
+      - name: Verify Claude agent model tiers
+        shell: pwsh
+        run: node scripts/verify-agent-tiers.mjs
+      - name: Generate portable clangd compilation database
+        shell: pwsh
+        run: python scripts/gen-compile-commands.py
+      - name: Verify portable clangd compilation database round-trips
+        shell: pwsh
+        run: python scripts/gen-compile-commands.py --check
       - name: Check the user demand ledger (D07 T03 §6)
+        shell: pwsh
         run: python scripts/check-user-demand.py
       - name: Run full Recto and Conclave kit Python test suites in parallel
+        shell: pwsh
         run: python scripts/run-tests.py --full

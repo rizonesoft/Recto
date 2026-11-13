@@ -201,6 +201,15 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
         self.assertEqual(mod_defs[0]["uri"], run_tests_py.as_uri())
         self.assertEqual(mod_defs[0]["range"]["start"]["line"], trig_ln - 1)
 
+        # `global _WIN32` on live `scripts/review-dispatch.py` keeps declaration, `global`, reads, and reassignments unified.
+        review_dispatch_py = (ROOT / "scripts" / "review-dispatch.py").resolve()
+        rd_lines = review_dispatch_py.read_text(encoding="utf-8").splitlines()
+        win32_decl_ln = next(i for i, ln in enumerate(rd_lines) if ln.startswith("_WIN32 = None"))
+        win32_refs = lsp._references(review_dispatch_py, win32_decl_ln, 0, include_declaration=True)
+        win32_ref_lines = [r["range"]["start"]["line"] for r in win32_refs if r["uri"] == review_dispatch_py.as_uri()]
+        expected_win32_lines = [i for i, ln in enumerate(rd_lines) if "_WIN32" in ln]
+        self.assertEqual(win32_ref_lines, expected_win32_lines)
+
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)
             pkg = ws / "scripts"
@@ -334,6 +343,24 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
             excl_sites = {(r["uri"], r["range"]["start"]["line"], r["range"]["start"]["character"]) for r in refs_from_alias_excl}
             self.assertNotIn((helper_uri, 0, 4), excl_sites)
             self.assertIn((alias_uri, 1, 6), excl_sites)
+
+            # 10. `nonlocal` reassignments resolve to the enclosing function binding rather than creating a local shadow.
+            closure_file = pkg / "closure_nonlocal.py"
+            closure_file.write_text(
+                "def make_counter():\n"
+                "    count = 0\n"
+                "    def inc():\n"
+                "        nonlocal count\n"
+                "        count += 1\n"
+                "        return count\n"
+                "    return inc\n",
+                encoding="utf-8",
+            )
+            nl_defs = scoped._definitions(closure_file, 4, 8)
+            self.assertEqual(len(nl_defs), 1, nl_defs)
+            self.assertEqual(nl_defs[0]["range"]["start"]["line"], 1)
+            nl_refs = scoped._references(closure_file, 1, 4, include_declaration=True)
+            self.assertEqual([r["range"]["start"]["line"] for r in nl_refs], [1, 3, 4, 5])
 
     def test_builtin_lsp_indentation_errors_scoped_references_and_utf16_positions(self):
         with tempfile.TemporaryDirectory() as tmp:

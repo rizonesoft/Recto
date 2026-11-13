@@ -55,6 +55,10 @@ class RunTestsCadence(unittest.TestCase):
         code = RUN_TESTS.main(["--filter", "test_verify_agent_tiers", "--jobs", "1"])
         self.assertEqual(code, 0)
 
+    def test_plan_workflow_runs_each_gate_as_its_own_step(self):
+        plan_yml = (ROOT / ".github" / "workflows" / "plan.yml").read_text(encoding="utf-8")
+        self.assertNotIn("run: |", plan_yml, "plan.yml must not stack multiple native commands in a single pwsh block")
+
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         if os.name == "nt":

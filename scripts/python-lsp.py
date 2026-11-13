@@ -894,6 +894,71 @@ class StdlibPythonLsp:
 
         return defs, mod_target, is_ext, cls_expr
 
+    def _scope_directives(self, scope: ast.AST) -> tuple[set[str], set[str]]:
+        """Return `(global_names, nonlocal_names)` declared directly inside `scope`."""
+        body = getattr(scope, "body", None)
+        if not isinstance(body, list) or isinstance(scope, ast.Module):
+            return set(), set()
+        globals_set: set[str] = set()
+        nonlocals_set: set[str] = set()
+        for stmt in self._iter_scope_stmts(body):
+            if isinstance(stmt, ast.Global):
+                globals_set.update(stmt.names)
+            elif isinstance(stmt, ast.Nonlocal):
+                nonlocals_set.update(stmt.names)
+        return globals_set, nonlocals_set
+
+    def _global_declared_defs_in_module(self, path: Path, tree: ast.Module, ident: str) -> list[tuple[Path, ast.AST]]:
+        """Fallback when a module binds `ident` only inside functions via `global <ident>` without a top-level target."""
+        found: list[tuple[Path, ast.AST]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            g_names, _ = self._scope_directives(node)
+            if ident not in g_names:
+                continue
+            for stmt in self._iter_scope_stmts(node.body):
+                if isinstance(stmt, ast.Assign):
+                    for t in stmt.targets:
+                        for nm in self._extract_target_names(t):
+                            if nm.id == ident:
+                                found.append((path, nm))
+                elif isinstance(stmt, ast.AnnAssign):
+                    for nm in self._extract_target_names(stmt.target):
+                        if nm.id == ident:
+                            found.append((path, nm))
+        return found
+
+    def _lookup_across_scopes(
+        self,
+        scopes: list[ast.AST],
+        ident: str,
+        path: Path,
+        tree: ast.Module,
+        path_consts: dict[str, Path],
+        str_consts: dict[str, str],
+        cursor_pos: tuple[int, int] | None = None,
+    ) -> tuple[list[tuple[Path, ast.AST]], Path | None, bool, str | None]:
+        """Resolve `ident` across lexical `scopes` while honoring `global` and `nonlocal` declarations."""
+        force_global = False
+        for sc in self._lexical_scopes_for_lookup(scopes):
+            if force_global and not isinstance(sc, ast.Module):
+                continue
+            g_names, nl_names = self._scope_directives(sc)
+            if ident in g_names:
+                force_global = True
+                continue
+            if ident in nl_names:
+                continue
+            defs, mod_target, is_ext, cls_expr = self._lookup_in_scope(
+                sc, ident, path, tree, path_consts, str_consts, cursor_pos=cursor_pos
+            )
+            if isinstance(sc, ast.Module) and not defs and not mod_target and not is_ext and cls_expr is None:
+                defs = self._global_declared_defs_in_module(path, tree, ident)
+            if defs or mod_target is not None or is_ext or cls_expr is not None:
+                return defs, mod_target, is_ext, cls_expr
+        return [], None, False, None
+
     def _lexical_scopes_for_lookup(self, scopes: list[ast.AST]) -> list[ast.AST]:
         """Python LEGB: a `ClassDef` body is only searched for unqualified names when the cursor is directly inside it."""
         ordered: list[ast.AST] = []
@@ -915,29 +980,25 @@ class StdlibPythonLsp:
     ) -> tuple[Path, ast.ClassDef] | None:
         parts = cls_expr.split(".")
         if len(parts) == 1:
-            for sc in self._lexical_scopes_for_lookup(scopes):
-                defs, _, _, _ = self._lookup_in_scope(sc, parts[0], path, tree, path_consts, str_consts)
-                for def_path, node in defs:
-                    if isinstance(node, ast.ClassDef):
-                        return def_path, node
+            defs, _, _, _ = self._lookup_across_scopes(scopes, parts[0], path, tree, path_consts, str_consts)
+            for def_path, node in defs:
+                if isinstance(node, ast.ClassDef):
+                    return def_path, node
             return None
         # Dotted class expression such as `LSP_MCP.LspMcpServer`.
-        for sc in self._lexical_scopes_for_lookup(scopes):
-            defs, mod_target, is_ext, _ = self._lookup_in_scope(sc, parts[0], path, tree, path_consts, str_consts)
-            if is_ext:
-                return None
-            if mod_target is not None:
-                cur_mod = mod_target
-                for seg in parts[1:-1]:
-                    nxt = self._resolve_module_file(seg, 0, cur_mod)
-                    if nxt is None:
-                        return None
-                    cur_mod = nxt
-                for def_path, node in self._top_level_defs_in_module(cur_mod, parts[-1], set()):
-                    if isinstance(node, ast.ClassDef):
-                        return def_path, node
-            if defs:
-                break
+        defs, mod_target, is_ext, _ = self._lookup_across_scopes(scopes, parts[0], path, tree, path_consts, str_consts)
+        if is_ext:
+            return None
+        if mod_target is not None:
+            cur_mod = mod_target
+            for seg in parts[1:-1]:
+                nxt = self._resolve_module_file(seg, 0, cur_mod)
+                if nxt is None:
+                    return None
+                cur_mod = nxt
+            for def_path, node in self._top_level_defs_in_module(cur_mod, parts[-1], set()):
+                if isinstance(node, ast.ClassDef):
+                    return def_path, node
         return None
 
     def _resolve_defs_at(self, path: Path, line: int, character: int) -> tuple[str, list[tuple[Path, ast.AST]]]:
@@ -964,48 +1025,46 @@ class StdlibPythonLsp:
 
             recv_parts = receiver.split(".")
             head = recv_parts[0]
-            for sc in self._lexical_scopes_for_lookup(scopes):
-                defs, mod_target, is_ext, cls_expr = self._lookup_in_scope(
-                    sc, head, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
-                )
-                if not defs and mod_target is None and not is_ext and cls_expr is None:
-                    continue
-                if is_ext:
-                    return ident, []
-                if mod_target is not None:
-                    cur_mod = mod_target
-                    cur_cls: tuple[Path, ast.ClassDef] | None = None
-                    for seg in recv_parts[1:]:
-                        if cur_cls is not None:
-                            sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, set())
-                            cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
-                            if cls_match is None:
-                                return ident, []
-                            cur_cls = cls_match
-                        else:
-                            sym_defs = self._top_level_defs_in_module(cur_mod, seg, set())
-                            cls_match = next(((p, n) for p, n in sym_defs if isinstance(n, ast.ClassDef)), None)
-                            if cls_match is not None:
-                                cur_cls = cls_match
-                                continue
-                            sub_mod = self._resolve_module_file(seg, 0, cur_mod)
-                            if sub_mod is not None:
-                                cur_mod = sub_mod
-                                continue
-                            return ident, []
-                    if cur_cls is not None:
-                        return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set())
-                    return ident, self._top_level_defs_in_module(cur_mod, ident, set())
-
-                cls_direct = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
-                if cls_direct is not None and len(recv_parts) == 1:
-                    return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set())
-
-                if cls_expr and len(recv_parts) == 1:
-                    resolved_cls = self._resolve_class_expr(cls_expr, scopes, path, tree, path_consts, str_consts)
-                    if resolved_cls is not None:
-                        return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set())
+            defs, mod_target, is_ext, cls_expr = self._lookup_across_scopes(
+                scopes, head, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
+            )
+            if not defs and mod_target is None and not is_ext and cls_expr is None:
                 return ident, []
+            if is_ext:
+                return ident, []
+            if mod_target is not None:
+                cur_mod = mod_target
+                cur_cls: tuple[Path, ast.ClassDef] | None = None
+                for seg in recv_parts[1:]:
+                    if cur_cls is not None:
+                        sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, set())
+                        cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
+                        if cls_match is None:
+                            return ident, []
+                        cur_cls = cls_match
+                    else:
+                        sym_defs = self._top_level_defs_in_module(cur_mod, seg, set())
+                        cls_match = next(((p, n) for p, n in sym_defs if isinstance(n, ast.ClassDef)), None)
+                        if cls_match is not None:
+                            cur_cls = cls_match
+                            continue
+                        sub_mod = self._resolve_module_file(seg, 0, cur_mod)
+                        if sub_mod is not None:
+                            cur_mod = sub_mod
+                            continue
+                        return ident, []
+                if cur_cls is not None:
+                    return ident, self._class_member_defs(cur_cls[0], cur_cls[1], ident, set())
+                return ident, self._top_level_defs_in_module(cur_mod, ident, set())
+
+            cls_direct = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
+            if cls_direct is not None and len(recv_parts) == 1:
+                return ident, self._class_member_defs(cls_direct[0], cls_direct[1], ident, set())
+
+            if cls_expr and len(recv_parts) == 1:
+                resolved_cls = self._resolve_class_expr(cls_expr, scopes, path, tree, path_consts, str_consts)
+                if resolved_cls is not None:
+                    return ident, self._class_member_defs(resolved_cls[0], resolved_cls[1], ident, set())
             return ident, []
 
         # Declaration header of a function, method, or class (`def method(self):` inside `class Foo:`).
@@ -1052,13 +1111,10 @@ class StdlibPythonLsp:
                                 mod_tree = self._parse_file(mod_file)
                                 return ident, [(mod_file, mod_tree or stmt)]
 
-        for sc in self._lexical_scopes_for_lookup(scopes):
-            defs, _, _, _ = self._lookup_in_scope(
-                sc, ident, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
-            )
-            if defs:
-                return ident, defs
-        return ident, []
+        defs, _, _, _ = self._lookup_across_scopes(
+            scopes, ident, path, tree, path_consts, str_consts, cursor_pos=(line + 1, utf8_col)
+        )
+        return ident, defs
 
     def _hover(self, path: Path, line: int, character: int) -> dict | None:
         ident, defs = self._resolve_defs_at(path, line, character)
@@ -1208,6 +1264,11 @@ class StdlibPythonLsp:
                 return None
             enc = self._enclosing_scopes(tree, getattr(dn, "lineno", 1), getattr(dn, "col_offset", 0))
             binding_scope = enc[-2] if (len(enc) >= 2 and enc[-1] is dn) else enc[-1]
+            decl_sym = self._declared_symbol_name(dp, dn)
+            if decl_sym:
+                g_names, _ = self._scope_directives(binding_scope)
+                if decl_sym in g_names:
+                    return None
             if not isinstance(
                 binding_scope,
                 (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
