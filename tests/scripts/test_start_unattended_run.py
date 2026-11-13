@@ -96,7 +96,7 @@ class Launcher(unittest.TestCase):
     def test_the_session_runs_unattended_on_the_newest_opus_and_cannot_ask(self):
         run, seen = self.run_launcher()
         self.assertEqual(seen["args"], ["--dangerously-skip-permissions", "--disallowedTools", "AskUserQuestion",
-                                        "--model", "opus"])
+                                        "--model", "opus", "--name", "Recto Claude campaign"])
         self.assertTrue(seen["goal"].startswith("/goal "))
 
     def test_the_goal_names_the_clone_the_launcher_is_in(self):

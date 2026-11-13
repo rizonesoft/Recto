@@ -89,7 +89,10 @@ if ($InstallShortcut) {
 }
 
 $runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Gemini 4 Carbon)' }[$Runner]
-try { $Host.UI.RawUI.WindowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner] } catch {}
+# One name for the window and, for Claude Code, the session: claude.exe overwrites the terminal title with its own
+# session topic unless it is given --name, so the title alone would not tell the operator which repo a window is.
+$windowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
+try { $Host.UI.RawUI.WindowTitle = $windowTitle } catch {}
 
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000
 # characters.
@@ -169,7 +172,7 @@ if ($Runner -ne 'claude') {
 if ($Runner -eq 'claude') {
     Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
     # --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
-    $runArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, $goal)
+    $runArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, '--name', $windowTitle, $goal)
 } else {
     Write-Host "Model: $carbon, permission prompts off, goal of $($goal.Length) characters."
     # -i runs the opening prompt and keeps the conversation open, as Claude Code does with its prompt argument.
