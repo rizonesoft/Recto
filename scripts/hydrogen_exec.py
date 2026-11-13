@@ -38,18 +38,137 @@ GIT_GLOBAL_BOOL_FLAGS = {
     "--no-pager", "-p", "--paginate", "-P", "--no-replace-objects",
     "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks",
 }
-GIT_READONLY_SUBCOMMANDS = {
-    "status", "diff", "log", "show", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list",
-    "cat-file", "describe", "shortlog", "for-each-ref", "name-rev", "merge-base", "check-attr",
-    "check-ignore", "verify-commit", "verify-tag", "version",
+
+# Strict positive exact-spelling option allowlists per read-only Git subcommand: `(bool_flags, value_flags, eq_prefixes, allow_count_short)`.
+_LOG_BOOL_FLAGS = {
+    "--oneline", "--graph", "--decorate", "--no-decorate", "--all", "--branches", "--tags", "--remotes",
+    "--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "-p", "-u", "--patch",
+    "-s", "--no-patch", "--raw", "--first-parent", "--no-merges", "--merges", "--reverse", "--follow", "-z",
+    "--abbrev-commit", "--no-abbrev-commit", "--full-history", "--simplify-by-decoration", "--date-order",
+    "--author-date-order", "--topo-order", "--no-color", "--color", "-w", "--ignore-all-space", "-b",
+    "--ignore-space-change", "-M", "-C",
 }
-GIT_BRANCH_READONLY_FLAGS = {
-    "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l",
-    "--show-current", "--contains", "--no-contains", "--merged", "--no-merged",
+_LOG_VAL_FLAGS = {
+    "-n", "--max-count", "--skip", "--since", "--after", "--until", "--before",
+    "--author", "--committer", "--grep", "-S", "-G", "-L", "--format", "--pretty", "--date", "--diff-filter",
 }
-GIT_BRANCH_MUTATE_FLAGS = {
-    "-d", "-D", "-m", "-M", "-c", "-C", "-f", "--force", "--delete", "--move", "--copy",
-    "--edit-description", "--set-upstream-to", "-u", "--unset-upstream",
+_LOG_EQ_PREFIXES = (
+    "--max-count=", "--skip=", "--since=", "--after=", "--until=", "--before=",
+    "--author=", "--committer=", "--grep=", "--format=", "--pretty=", "--date=",
+    "--diff-filter=", "--decorate=", "--color=", "--abbrev=",
+)
+
+GIT_SUBCOMMAND_SPECS: dict[str, tuple[set[str], set[str], tuple[str, ...], bool]] = {
+    "status": (
+        {"-s", "--short", "-b", "--branch", "-sb", "-bs", "--porcelain", "-u", "-uno", "-unormal", "-uall",
+         "--ignored", "-z", "--long", "--ahead-behind", "--no-ahead-behind", "--renames", "--no-renames"},
+        set(),
+        ("--porcelain=", "--untracked-files=", "--ignored="),
+        False,
+    ),
+    "diff": (
+        {"--stat", "--numstat", "--shortstat", "--name-only", "--name-status", "--summary", "--patch", "-p", "-u",
+         "--raw", "--cached", "--staged", "--check", "--minimal", "--patience", "--histogram", "-w",
+         "--ignore-all-space", "-b", "--ignore-space-change", "--ignore-space-at-eol", "--ignore-cr-at-eol",
+         "-M", "-C", "-B", "-D", "-R", "-z", "--no-renames", "--no-color", "--color", "--word-diff",
+         "--exit-code", "--quiet"},
+        {"-U", "--unified", "--diff-filter", "--relative"},
+        ("--unified=", "--diff-filter=", "--word-diff=", "--stat=", "--find-renames=", "--find-copies=",
+         "--color=", "--relative=", "--abbrev="),
+        False,
+    ),
+    "log": (_LOG_BOOL_FLAGS, _LOG_VAL_FLAGS, _LOG_EQ_PREFIXES, True),
+    "show": (_LOG_BOOL_FLAGS, _LOG_VAL_FLAGS, _LOG_EQ_PREFIXES, True),
+    "shortlog": (
+        {"-s", "--summary", "-n", "--numbered", "-e", "--email", "--all", "--no-merges"},
+        {"--group", "--format"},
+        ("--group=", "--format="),
+        False,
+    ),
+    "grep": (
+        {"-n", "--line-number", "-i", "--ignore-case", "-w", "--word-regexp", "-v", "--invert-match",
+         "-l", "--files-with-matches", "-L", "--files-without-match", "-c", "--count", "-h", "-H", "-I",
+         "-E", "--extended-regexp", "-F", "--fixed-strings", "-P", "--perl-regexp", "-G", "--basic-regexp",
+         "-z", "--null", "--untracked", "--cached", "--recurse-submodules", "--heading", "--break",
+         "--full-name", "-q", "--quiet", "--all-match", "--and", "--or", "--not", "--no-color", "--color"},
+        {"-e", "-A", "-B", "-C", "--max-depth", "--threads"},
+        ("--max-depth=", "--threads=", "--color="),
+        False,
+    ),
+    "blame": (
+        {"-l", "-t", "-s", "-p", "--porcelain", "--line-porcelain", "-w", "-M", "-C", "-n", "-f", "-e",
+         "--show-email", "--show-name", "--show-number", "--root", "--incremental"},
+        {"-L", "--date"},
+        ("--date=", "--abbrev="),
+        False,
+    ),
+    "ls-files": (
+        {"-c", "--cached", "-d", "--deleted", "-m", "--modified", "-o", "--others", "-i", "--ignored",
+         "-s", "--stage", "-u", "--unmerged", "-k", "--killed", "-z", "--exclude-standard", "--full-name",
+         "--error-unmatch", "--recurse-submodules"},
+        {"-x", "--exclude"},
+        ("--exclude=",),
+        False,
+    ),
+    "ls-tree": (
+        {"-d", "-r", "-t", "-l", "--long", "-z", "--name-only", "--name-status", "--object-only",
+         "--full-name", "--full-tree"},
+        {"--abbrev", "--format"},
+        ("--abbrev=", "--format="),
+        False,
+    ),
+    "rev-parse": (
+        {"--verify", "-q", "--quiet", "--short", "--symbolic", "--symbolic-full-name", "--abbrev-ref",
+         "--all", "--branches", "--tags", "--remotes", "--show-toplevel", "--show-prefix", "--show-cdup",
+         "--git-dir", "--git-common-dir", "--is-inside-work-tree", "--is-inside-git-dir",
+         "--is-bare-repository", "--is-shallow-repository"},
+        set(),
+        ("--short=", "--abbrev-ref=", "--branches=", "--tags=", "--remotes="),
+        False,
+    ),
+    "rev-list": (
+        {"--count", "--objects", "--all", "--branches", "--tags", "--remotes", "--first-parent",
+         "--no-merges", "--merges", "--reverse", "--topo-order", "--date-order", "--header", "--oneline", "--quiet"},
+        {"-n", "--max-count", "--skip", "--since", "--after", "--until", "--before", "--format", "--pretty"},
+        ("--max-count=", "--skip=", "--format=", "--pretty="),
+        True,
+    ),
+    "cat-file": (
+        {"-t", "-s", "-e", "-p", "--batch-check", "--batch-all-objects"},
+        set(),
+        ("--batch-check=",),
+        False,
+    ),
+    "describe": (
+        {"--dirty", "--all", "--tags", "--contains", "--exact-match", "--always", "--long", "--first-parent"},
+        {"--abbrev", "--candidates", "--match", "--exclude"},
+        ("--dirty=", "--abbrev=", "--candidates=", "--match=", "--exclude="),
+        False,
+    ),
+    "for-each-ref": (
+        {"--ignore-case"},
+        {"--count", "--sort", "--format", "--points-at", "--merged", "--no-merged", "--contains", "--no-contains"},
+        ("--count=", "--sort=", "--format=", "--points-at=", "--merged=", "--no-merged=",
+         "--contains=", "--no-contains="),
+        False,
+    ),
+    "name-rev": (
+        {"--tags", "--all", "--always", "--name-only", "--no-undefined"},
+        {"--refs", "--exclude"},
+        ("--refs=", "--exclude="),
+        False,
+    ),
+    "merge-base": (
+        {"--all", "-a", "--octopus", "--independent", "--is-ancestor", "--fork-point"},
+        set(),
+        (),
+        False,
+    ),
+    "check-attr": ({"-a", "--all", "--cached", "-z"}, set(), (), False),
+    "check-ignore": ({"-q", "--quiet", "-v", "--verbose", "-n", "--non-matching", "--no-index", "-z"}, set(), (), False),
+    "verify-commit": ({"-v", "--verbose", "--raw"}, set(), (), False),
+    "verify-tag": ({"-v", "--verbose", "--raw"}, set(), (), False),
+    "version": (set(), set(), (), False),
 }
 PYTHON_SAFE_FLAGS = {"-B", "-u", "-S", "-E", "-I"}
 UNITTEST_BOOL_FLAGS = {
@@ -155,14 +274,58 @@ def tokenize_command(command: str) -> tuple[list[str] | None, str | None]:
     return tokens, None
 
 
+def _scan_exact_git_opts(
+    sub: str,
+    rest: list[str],
+    bool_flags: set[str],
+    val_flags: set[str],
+    eq_prefixes: tuple[str, ...],
+    *,
+    allow_count_short: bool = False,
+) -> tuple[list[str] | None, str | None]:
+    """Validate `rest` against exact option spellings so Git's option-prefix abbreviations cannot smuggle flags."""
+    positionals: list[str] = []
+    j = 0
+    while j < len(rest):
+        arg = rest[j]
+        if arg == "--":
+            positionals.extend(rest[j + 1:])
+            break
+        if arg.startswith("-") and arg != "-":
+            if arg in bool_flags:
+                j += 1
+                continue
+            if arg in val_flags:
+                if j + 1 >= len(rest):
+                    return None, f"git {sub} option {arg!r} requires a value"
+                j += 2
+                continue
+            if any(arg.startswith(pfx) and len(arg) > len(pfx) for pfx in eq_prefixes):
+                j += 1
+                continue
+            if allow_count_short and re.fullmatch(r"-(?:n)?\d+", arg):
+                j += 1
+                continue
+            if sub == "diff" and re.fullmatch(r"-U\d+", arg):
+                j += 1
+                continue
+            if sub == "grep" and re.fullmatch(r"-[ABC]\d+", arg):
+                j += 1
+                continue
+            return None, f"git {sub} option {arg!r} is not in the Hydrogen exact-spelling read-only allowlist"
+        positionals.append(arg)
+        j += 1
+    return positionals, None
+
+
 def _validate_git_argv(tokens: list[str]) -> str | None:
+    if len(tokens) == 2 and tokens[1] in ("--version", "--help", "-h"):
+        return None
     i = 1
     while i < len(tokens):
         tok = tokens[i]
-        if tok in ("--version", "--help", "-h"):
-            return None
         if tok == "-C":
-            if i + 1 >= len(tokens) or not _is_safe_relpath(tokens[i + 1]) and tokens[i + 1] != ".":
+            if i + 1 >= len(tokens) or (not _is_safe_relpath(tokens[i + 1]) and tokens[i + 1] != "."):
                 return "git -C must name '.' or a repository-relative path"
             i += 2
             continue
@@ -198,47 +361,73 @@ def _validate_git_argv(tokens: list[str]) -> str | None:
         return "missing git subcommand"
     sub = tokens[i].lower()
     rest = tokens[i + 1:]
-    for arg in rest:
-        if (
-            arg in ("-o", "--output", "--ext-diff", "-O", "--open-files-in-pager")
-            or arg.startswith(("--output=", "--open-files-in-pager="))
-            or (arg.startswith(("-o", "-O")) and len(arg) > 2)
-        ):
-            return f"git {sub} option {arg!r} is forbidden"
 
-    if sub in GIT_READONLY_SUBCOMMANDS:
+    spec = GIT_SUBCOMMAND_SPECS.get(sub)
+    if spec is not None:
+        bool_f, val_f, eq_p, allow_cnt = spec
+        pos, err = _scan_exact_git_opts(sub, rest, bool_f, val_f, eq_p, allow_count_short=allow_cnt)
+        if err:
+            return err
+        if sub == "version" and pos:
+            return "git version takes no positional arguments"
         return None
+
     if sub == "branch":
-        if any(r in GIT_BRANCH_MUTATE_FLAGS for r in rest):
-            return "mutating git branch options are forbidden"
         if not rest or rest == ["--show-current"]:
             return None
-        has_query_mode = any(r in ("--list", "-l", "--contains", "--no-contains", "--merged", "--no-merged") for r in rest)
-        for idx, r in enumerate(rest):
-            if r in GIT_BRANCH_READONLY_FLAGS or r.startswith("--sort=") or r.startswith("--format="):
-                continue
-            if idx > 0 and rest[idx - 1] in ("--contains", "--no-contains", "--merged", "--no-merged", "--sort", "--format"):
-                continue
-            if has_query_mode and not r.startswith("-"):
-                continue
+        pos, err = _scan_exact_git_opts(
+            "branch",
+            rest,
+            {"-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l", "--show-current", "--no-color", "--color"},
+            {"--contains", "--no-contains", "--merged", "--no-merged", "--sort", "--format", "--points-at"},
+            ("--contains=", "--no-contains=", "--merged=", "--no-merged=", "--sort=", "--format=", "--points-at=", "--color="),
+        )
+        if err:
+            return err
+        has_query_mode = any(
+            r in ("--list", "-l", "--contains", "--no-contains", "--merged", "--no-merged")
+            or r.startswith(("--contains=", "--no-contains=", "--merged=", "--no-merged="))
+            for r in rest
+        )
+        if pos and not has_query_mode:
             return "creating or mutating git branches is forbidden"
         return None
+
     if sub == "tag":
         if not rest:
             return None
-        if ("-l" in rest or "--list" in rest) and not any(
-            r in ("-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "-f", "--force") for r in rest
-        ):
-            return None
-        return "creating or deleting git tags is forbidden"
-    if sub == "config":
-        has_read = any(r in ("--get", "--get-all", "--get-regexp", "--list", "-l") for r in rest)
-        has_bad = any(
-            r in ("--unset", "--unset-all", "--replace-all", "--add", "--rename-section", "--remove-section",
-                  "--edit", "-e", "--global", "--system", "-f", "--file") or r.startswith("--file=")
-            for r in rest
+        pos, err = _scan_exact_git_opts(
+            "tag",
+            rest,
+            {"-l", "--list", "-n", "--ignore-case"},
+            {"--sort", "--format", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at"},
+            ("--sort=", "--format=", "--contains=", "--no-contains=", "--merged=", "--no-merged=", "--points-at="),
         )
-        return None if (has_read and not has_bad) else "mutating git config commands are forbidden"
+        if err:
+            return err
+        if "-l" not in rest and "--list" not in rest:
+            return "creating or deleting git tags is forbidden"
+        return None
+
+    if sub == "config":
+        pos, err = _scan_exact_git_opts(
+            "config",
+            rest,
+            {"--get", "--get-all", "--get-regexp", "--list", "-l", "--local", "--worktree",
+             "--show-origin", "--show-scope", "-z", "--null", "--name-only"},
+            set(),
+            (),
+        )
+        if err or pos is None:
+            return err or "invalid git config arguments"
+        is_list = "-l" in rest or "--list" in rest
+        is_get = any(r in ("--get", "--get-all", "--get-regexp") for r in rest)
+        if is_list and not is_get and len(pos) == 0:
+            return None
+        if is_get and not is_list and 1 <= len(pos) <= 2:
+            return None
+        return "mutating git config commands are forbidden"
+
     return f"git subcommand {sub!r} is not in the Hydrogen read-only allowlist"
 
 
@@ -285,11 +474,23 @@ def _validate_python_argv(tokens: list[str]) -> str | None:
 
     script = head.replace("\\", "/").lstrip("./")
     if script == "scripts/todo-graph.py":
-        if rest and rest[0] in ("validate", "query", "resolve") and "--sync" not in rest:
+        if rest in (["validate"], ["render"], ["plan", "--check"]):
             return None
-        if rest == ["plan", "--check"]:
+        if (
+            len(rest) == 2
+            and rest[0] == "query"
+            and rest[1] in ("ready", "blocked", "stats", "deferred", "adjacency", "plan", "rounds")
+        ):
             return None
-        return "only 'todo-graph.py validate|query|resolve|plan --check' is permitted"
+        if rest and rest[0] == "resolve":
+            r_tail = rest[1:]
+            if len(r_tail) == 1 and not r_tail[0].startswith("-"):
+                return None
+            if len(r_tail) == 2 and "--context" in r_tail and any(not x.startswith("-") for x in r_tail):
+                return None
+        if len(rest) >= 2 and rest[0] == "classify" and all(not a.startswith("-") for a in rest[1:]):
+            return None
+        return "only exact 'todo-graph.py validate|render|query|resolve|classify|plan --check' options are permitted"
     if script == "scripts/ci_status.py":
         j = 0
         while j < len(rest):
@@ -452,12 +653,17 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
     base = os.path.basename(prog_norm).lower()
 
     if base in ("git", "git.exe"):
-        cmd = [
-            "git", "--no-pager", "--no-optional-locks",
-            "-c", "core.fsmonitor=false", "-c", "diff.external=",
-            *tokens[1:],
-        ]
-        return subprocess.run(cmd, cwd=root, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()).returncode
+        with tempfile.TemporaryDirectory(prefix="recto-hydrogen-git-") as tmp:
+            tmp_path = Path(tmp)
+            stage_isolated_repo(root, tmp_path)
+            cmd = [
+                "git", "--no-pager", "--no-optional-locks",
+                "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
+                *tokens[1:],
+            ]
+            return subprocess.run(
+                cmd, cwd=tmp_path, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()
+            ).returncode
 
     if base in ("node", "node.exe"):
         with tempfile.TemporaryDirectory(prefix="recto-hydrogen-node-") as tmp:
@@ -511,7 +717,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         tokens = json.loads(bytes.fromhex(args.payload).decode("utf-8"))
-    except ValueError:
+    except (ValueError, RecursionError):
         print("hydrogen-readonly: malformed hex payload", file=sys.stderr)
         return 2
     if not isinstance(tokens, list) or not all(isinstance(t, str) for t in tokens):

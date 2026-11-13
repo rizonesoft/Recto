@@ -172,7 +172,7 @@ class LspClient:
                 return
             try:
                 msg = json.loads(body.decode("utf-8", "replace"))
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             if not isinstance(msg, dict):
                 continue
@@ -639,7 +639,7 @@ class LspMcpServer:
                     framed = False
                 try:
                     req = json.loads(raw.decode("utf-8"))
-                except (UnicodeDecodeError, ValueError):
+                except (UnicodeDecodeError, ValueError, RecursionError):
                     self._write_stdio_reply(
                         {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}},
                         framed=framed,

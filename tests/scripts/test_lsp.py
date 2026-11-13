@@ -435,11 +435,19 @@ class LspMcpBridge(unittest.TestCase):
 
     def test_mcp_stdio_survives_malformed_json_and_non_dict_requests(self):
         ping_frame_body = b'{"jsonrpc":"2.0","id":9,"method":"ping"}'
+        deep_nested = (
+            b'{"jsonrpc":"2.0","id":6,"method":"ping","params":{"x":'
+            + (b"[" * 20000)
+            + (b"]" * 20000)
+            + b"}}"
+        )
         stdin_payload = (
             b"[]\n"
             b"not-json\n"
-            b'{"jsonrpc":"2.0","id":7,"method":"initialize","params":[]}\n'
-            b"Content-Length: 9223372036854775808\r\n\r\n"
+            + deep_nested
+            + b"\n"
+            + b'{"jsonrpc":"2.0","id":7,"method":"initialize","params":[]}\n'
+            + b"Content-Length: 9223372036854775808\r\n\r\n"
             + f"Content-Length: {len(ping_frame_body)}\r\n\r\n".encode("ascii")
             + ping_frame_body
             + b'\n{"jsonrpc":"2.0","id":8,"method":"ping"}\n'
@@ -458,11 +466,13 @@ class LspMcpBridge(unittest.TestCase):
         self.assertIn('"id": 9', out_text)
         self.assertIn('"id": 8', out_text)
 
-        # Oversized Content-Length also must not raise OverflowError in `python-lsp.py --builtin`.
+        # Oversized Content-Length and deeply nested JSON also must not crash `python-lsp.py --builtin`.
         shutdown_body = b'{"jsonrpc":"2.0","id":1,"method":"shutdown"}'
         exit_body = b'{"jsonrpc":"2.0","method":"exit"}'
         py_lsp_stdin = (
             b"Content-Length: 9223372036854775808\r\n\r\n"
+            + f"Content-Length: {len(deep_nested)}\r\n\r\n".encode("ascii")
+            + deep_nested
             + f"Content-Length: {len(shutdown_body)}\r\n\r\n".encode("ascii")
             + shutdown_body
             + f"Content-Length: {len(exit_body)}\r\n\r\n".encode("ascii")

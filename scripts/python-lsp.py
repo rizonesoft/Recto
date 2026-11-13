@@ -101,7 +101,7 @@ class StdlibPythonLsp:
             return None
         try:
             parsed = json.loads(body.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError):
+        except (UnicodeDecodeError, ValueError, RecursionError):
             return {"_malformed": "parse error"}
         if not isinstance(parsed, dict):
             return {"_malformed": "invalid request"}
