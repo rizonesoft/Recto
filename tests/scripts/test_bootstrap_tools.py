@@ -289,11 +289,19 @@ class BootstrapToolsScriptTests(unittest.TestCase):
                 "    Add-Type -TypeDefinition $src\n"
                 "}\n"
                 "$handler = [StalledBodyHandler]::new()\n"
+                "$dlSw = [System.Diagnostics.Stopwatch]::StartNew()\n"
+                "$dlErr = ''\n"
                 "try {\n"
                 f"    Download-Archive -Url 'https://example.invalid/tool.zip' -Destination '{dest}' -TimeoutSec 0.6 -Handler $handler\n"
+                "} catch {\n"
+                "    $dlErr = $_.Exception.Message\n"
                 "} finally {\n"
+                "    $dlSw.Stop()\n"
                 "    $handler.Dispose()\n"
                 "}\n"
+                "Write-Output ('DL_ELAPSED=' + $dlSw.Elapsed.TotalSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture))\n"
+                "if ($dlErr) { Write-Error $dlErr; exit 1 }\n"
+                "exit 0\n"
             )
             script = Path(tmp) / "stall-test.ps1"
             script.write_text(ps_code, encoding="utf-8")
@@ -301,11 +309,14 @@ class BootstrapToolsScriptTests(unittest.TestCase):
                 [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=90,
                 creationflags=_no_window(),
             )
             self.assertNotEqual(run.returncode, 0)
             self.assertIn("Download timed out", run.stdout + run.stderr)
+            elapsed_lines = [ln.split("=", 1)[1] for ln in run.stdout.splitlines() if ln.startswith("DL_ELAPSED=")]
+            self.assertEqual(len(elapsed_lines), 1, run.stdout + run.stderr)
+            self.assertLess(float(elapsed_lines[0]), 10.0)
             self.assertFalse(dest.exists(), "partial download file must be removed on timeout")
 
 

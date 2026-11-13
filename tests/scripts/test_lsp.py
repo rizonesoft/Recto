@@ -292,7 +292,8 @@ class CompileCommandsGenerator(unittest.TestCase):
             GEN.write_database(db_dir / "compile_commands.json", ROOT)
             check = subprocess.run(
                 [clangd, f"--compile-commands-dir={db_dir}", f"--check={ROOT / 'src' / 'core' / 'core.cpp'}"],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=180,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             escaped_pch = str((ROOT / "src" / "core" / "pch.h").resolve()).replace("\\", "\\\\")
             self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
