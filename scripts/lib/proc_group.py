@@ -4,23 +4,33 @@ On Windows, `taskkill /T /PID <parent>` cannot find surviving grandchildren once
 surviving descendant that inherited `stdout`/`stderr` pipes keeps `Popen.communicate()` blocked indefinitely. Starting
 the child `CREATE_SUSPENDED`, assigning it to a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Win32 Job Object before resuming
 its initial thread, and terminating that Job Object on timeout, cancellation, or completion guarantees every descendant
-is reaped even after parent exit. On POSIX, `start_new_session=True` + `os.killpg(..., SIGKILL)` provides the matching
-process-group lifetime guarantee. Standard library only.
+is reaped even after parent exit. On POSIX (Linux, WSL, macOS), descendants that call `setsid()` (`start_new_session`)
+or reparent to `init` escape a single `os.killpg(proc.pid, SIGKILL)`: we tag the child tree's environment with a unique
+`_RECTO_MANAGED_GROUP` token, freeze (`SIGSTOP`) and walk `/proc` (both `ppid` edges and `/proc/<pid>/environ`, with a
+`ps` fallback where `/proc` is absent), re-scan while frozen, and `SIGKILL` every discovered process group and PID.
+Standard library only.
 """
 from __future__ import annotations
 
+import atexit
+from collections.abc import Iterator
+from contextlib import contextmanager
 import ctypes
 import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
+import uuid
+import weakref
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_SUSPENDED = 0x00000004
 CREATE_NO_WINDOW = 0x08000000
 JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_GROUP_ENV_KEY = "_RECTO_MANAGED_GROUP"
 
 
 class _IO_COUNTERS(ctypes.Structure):
@@ -110,33 +120,291 @@ def _create_configured_job() -> int:
     return int(job)
 
 
-class ManagedProcess:
-    """Subprocess bound to a Win32 Job Object (Windows) or session PGID (POSIX) with idempotent tree termination."""
+_LIVE_MANAGED: weakref.WeakSet[ManagedProcess] = weakref.WeakSet()
+_LIVE_LOCK = threading.Lock()
 
-    def __init__(self, proc: subprocess.Popen, job: int | None = None):
+# Kernel-EOF lifeline reaper for POSIX: blocks at 0% CPU on stdin (`life_r`) until either `terminate_and_close()`
+# closes `life_w` or the parent runner dies from `SIGKILL`, then reaps every descendant across `setsid()` sessions.
+_POSIX_LIFELINE_REAPER = """
+import os, pathlib, signal, subprocess, sys
+
+root_pid = int(sys.argv[1])
+token = sys.argv[2]
+needle = ("_RECTO_MANAGED_GROUP=" + token).encode("ascii") if token else b""
+try:
+    while sys.stdin.buffer.read(4096):
+        pass
+except BaseException:
+    pass
+
+def discover():
+    me = os.getpid()
+    my_pg = os.getpgrp() if hasattr(os, "getpgrp") else -1
+    children = {}
+    pgids = {}
+    seeds = {root_pid} if root_pid > 1 else set()
+    proc_root = pathlib.Path("/proc")
+    if proc_root.is_dir():
+        for entry in proc_root.iterdir():
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid == me:
+                continue
+            try:
+                raw = (entry / "stat").read_bytes()
+                rp = raw.rfind(b")")
+                if rp > 0:
+                    f = raw[rp + 2:].split()
+                    if len(f) >= 3:
+                        ppid, pgid = int(f[1]), int(f[2])
+                        children.setdefault(ppid, set()).add(pid)
+                        pgids[pid] = pgid
+            except OSError:
+                continue
+            if needle:
+                try:
+                    env_raw = (entry / "environ").read_bytes()
+                    if needle in env_raw.split(b"\\0"):
+                        seeds.add(pid)
+                except OSError:
+                    pass
+    else:
+        try:
+            ps = subprocess.run(["ps", "-axo", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=2.0)
+            for row in ps.stdout.splitlines():
+                parts = row.split()
+                if len(parts) >= 3 and all(p.lstrip("-").isdigit() for p in parts[:3]):
+                    pid, ppid, pgid = int(parts[0]), int(parts[1]), int(parts[2])
+                    if pid != me:
+                        children.setdefault(ppid, set()).add(pid)
+                        pgids[pid] = pgid
+        except Exception:
+            pass
+    seen = set()
+    queue = list(seeds)
+    while queue:
+        cur = queue.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        queue.extend(children.get(cur, ()))
+    t_pids = {p for p in seen if p > 1 and p != me}
+    t_pgs = ({root_pid} if root_pid > 1 and root_pid != my_pg else set()) | {
+        pgids[p] for p in t_pids if pgids.get(p, 0) > 1 and pgids[p] != my_pg
+    }
+    return t_pids, t_pgs
+
+sigstop = getattr(signal, "SIGSTOP", None)
+sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+killpg = getattr(os, "killpg", None)
+p1, g1 = discover()
+if sigstop is not None:
+    for g in g1:
+        try:
+            if killpg: killpg(g, sigstop)
+        except OSError:
+            pass
+    for p in p1:
+        try:
+            os.kill(p, sigstop)
+        except OSError:
+            pass
+p2, g2 = discover()
+for g in (g1 | g2):
+    try:
+        if killpg: killpg(g, sigkill)
+    except OSError:
+        pass
+for p in (p1 | p2):
+    try:
+        os.kill(p, sigkill)
+    except OSError:
+        pass
+"""
+
+
+def _discover_posix_targets(
+    root_pid: int,
+    group_token: str | None,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> tuple[set[int], set[int]]:
+    """Find every descendant PID and PGID of `root_pid` across `setsid()` boundaries and `init` reparenting."""
+    self_pid = os.getpid()
+    getpgrp = getattr(os, "getpgrp", None)
+    raw_pgid = getpgrp() if callable(getpgrp) else -1
+    self_pgid = raw_pgid if isinstance(raw_pgid, int) else -1
+    children_by_ppid: dict[int, set[int]] = {}
+    pgid_by_pid: dict[int, int] = {}
+    seeds: set[int] = {root_pid} if root_pid > 1 else set()
+    needle = f"{_GROUP_ENV_KEY}={group_token}".encode("ascii") if group_token else b""
+
+    if proc_root.is_dir():
+        try:
+            entries = list(proc_root.iterdir())
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid == self_pid:
+                continue
+            try:
+                raw = (entry / "stat").read_bytes()
+                rparen = raw.rfind(b")")
+                if rparen > 0:
+                    fields = raw[rparen + 2:].split()
+                    if len(fields) >= 3:
+                        ppid = int(fields[1])
+                        pgid = int(fields[2])
+                        children_by_ppid.setdefault(ppid, set()).add(pid)
+                        pgid_by_pid[pid] = pgid
+            except (OSError, ValueError):
+                continue
+            if needle:
+                try:
+                    env_raw = (entry / "environ").read_bytes()
+                    if needle in env_raw.split(b"\0"):
+                        seeds.add(pid)
+                except OSError:
+                    pass
+    else:
+        try:
+            ps = subprocess.run(
+                ["ps", "-axo", "pid=,ppid=,pgid="],
+                capture_output=True,
+                text=True,
+                timeout=2.0,
+            )
+            for row in ps.stdout.splitlines():
+                parts = row.split()
+                if len(parts) >= 3 and all(p.lstrip("-").isdigit() for p in parts[:3]):
+                    pid, ppid, pgid = int(parts[0]), int(parts[1]), int(parts[2])
+                    if pid != self_pid:
+                        children_by_ppid.setdefault(ppid, set()).add(pid)
+                        pgid_by_pid[pid] = pgid
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+
+    visited: set[int] = set()
+    queue = list(seeds)
+    while queue:
+        cur = queue.pop()
+        if cur in visited:
+            continue
+        visited.add(cur)
+        queue.extend(children_by_ppid.get(cur, ()))
+
+    target_pids = {p for p in visited if p > 1 and p != self_pid}
+    target_pgids: set[int] = set()
+    if root_pid > 1 and root_pid != self_pgid:
+        target_pgids.add(root_pid)
+    for pid in target_pids:
+        pgid = pgid_by_pid.get(pid, 0)
+        if pgid > 1 and pgid != self_pgid:
+            target_pgids.add(pgid)
+    return target_pids, target_pgids
+
+
+def _kill_posix_tree(
+    root_pid: int,
+    group_token: str | None,
+    *,
+    proc_root: Path = Path("/proc"),
+) -> None:
+    """Freeze (`SIGSTOP`), re-scan, and `SIGKILL` every descendant PGID and PID across `setsid()` boundaries."""
+    killpg = getattr(os, "killpg", None)
+    sigstop = getattr(signal, "SIGSTOP", None)
+    sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+
+    pids1, pgids1 = _discover_posix_targets(root_pid, group_token, proc_root=proc_root)
+    if sigstop is not None:
+        if callable(killpg):
+            for pgid in pgids1:
+                try:
+                    killpg(pgid, sigstop)
+                except OSError:
+                    pass
+        for pid in pids1:
+            try:
+                os.kill(pid, sigstop)
+            except OSError:
+                pass
+
+    pids2, pgids2 = _discover_posix_targets(root_pid, group_token, proc_root=proc_root)
+    if callable(killpg):
+        for pgid in pgids1 | pgids2:
+            try:
+                killpg(pgid, sigkill)
+            except OSError:
+                pass
+    for pid in pids1 | pids2:
+        try:
+            os.kill(pid, sigkill)
+        except OSError:
+            pass
+
+
+class ManagedProcess:
+    """Subprocess bound to a Win32 Job Object (Windows) or lifeline-watched tree (POSIX) with idempotent cleanup."""
+
+    def __init__(
+        self,
+        proc: subprocess.Popen,
+        job: int | None = None,
+        *,
+        group_token: str | None = None,
+        lifeline_fd: int | None = None,
+        reaper_proc: subprocess.Popen | None = None,
+    ):
         self.proc = proc
         self._job = job
+        self._group_token = group_token
+        self._lifeline_fd = lifeline_fd
+        self._reaper_proc = reaper_proc
         self._lock = threading.Lock()
         self._closed = False
+        with _LIVE_LOCK:
+            _LIVE_MANAGED.add(self)
 
     def terminate_and_close(self) -> None:
-        """Terminate every surviving process in the job/group and release OS handles at most once."""
+        """Terminate every surviving process in the job/tree and release OS handles at most once."""
         with self._lock:
             if self._closed:
                 return
             self._closed = True
             job = self._job
             self._job = None
+            lifeline_fd = self._lifeline_fd
+            self._lifeline_fd = None
+            reaper_proc = self._reaper_proc
+            self._reaper_proc = None
+        with _LIVE_LOCK:
+            _LIVE_MANAGED.discard(self)
+
         if os.name == "nt":
             if job is not None:
                 kernel32, _ = _win32_apis()
                 kernel32.TerminateJobObject(job, 1)
                 kernel32.CloseHandle(job)
         else:
-            try:
-                os.killpg(self.proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, OSError):
-                pass
+            _kill_posix_tree(self.proc.pid, self._group_token)
+            if lifeline_fd is not None:
+                try:
+                    os.close(lifeline_fd)
+                except OSError:
+                    pass
+            if reaper_proc is not None:
+                try:
+                    reaper_proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        reaper_proc.kill()
+                        reaper_proc.wait(timeout=1.0)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass
         try:
             self.proc.kill()
         except OSError:
@@ -162,13 +430,57 @@ class ManagedProcess:
             return "", ""
 
 
+def _cleanup_all_live_managed() -> None:
+    with _LIVE_LOCK:
+        items = list(_LIVE_MANAGED)
+    for item in items:
+        try:
+            item.terminate_and_close()
+        except BaseException:
+            pass
+
+
+atexit.register(_cleanup_all_live_managed)
+
+
+@contextmanager
+def termination_signal_guard() -> Iterator[None]:
+    """Convert `SIGTERM`/`SIGHUP` into `KeyboardInterrupt` on the main thread so `finally` blocks reap child trees."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _raise_interrupt(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt()
+
+    saved: list[tuple[signal.Signals, object]] = []
+    for sig_name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, sig_name, None)
+        if sig is None:
+            continue
+        try:
+            prev = signal.getsignal(sig)
+            signal.signal(sig, _raise_interrupt)
+            saved.append((sig, prev))
+        except (OSError, ValueError):
+            pass
+    try:
+        yield
+    finally:
+        for sig, prev in saved:
+            try:
+                signal.signal(sig, prev)  # type: ignore[arg-type]
+            except (OSError, ValueError):
+                pass
+
+
 def spawn_managed_process(
     cmd: list[str],
     *,
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> ManagedProcess:
-    """Start `cmd` inside a lifetime-bound Win32 Job Object or POSIX session before it executes user code."""
+    """Start `cmd` inside a lifetime-bound Win32 Job Object or POSIX lifeline-watched tree."""
     if os.name == "nt":
         job = _create_configured_job()
         proc: subprocess.Popen | None = None
@@ -213,10 +525,13 @@ def spawn_managed_process(
             kernel32.CloseHandle(job)
             raise
 
+    group_token = uuid.uuid4().hex
+    child_env = dict(os.environ if env is None else env)
+    child_env[_GROUP_ENV_KEY] = group_token
     proc = subprocess.Popen(
         cmd,
         cwd=cwd,
-        env=env,
+        env=child_env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -225,4 +540,35 @@ def spawn_managed_process(
         errors="replace",
         start_new_session=True,
     )
-    return ManagedProcess(proc, None)
+    life_w: int | None = None
+    reaper: subprocess.Popen | None = None
+    try:
+        life_r, life_w = os.pipe()
+        try:
+            reaper_env = dict(os.environ)
+            reaper_env.pop(_GROUP_ENV_KEY, None)
+            reaper_env["PYTHONDONTWRITEBYTECODE"] = "1"
+            reaper = subprocess.Popen(
+                [sys.executable, "-B", "-c", _POSIX_LIFELINE_REAPER, str(proc.pid), group_token],
+                stdin=life_r,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=reaper_env,
+                start_new_session=True,
+            )
+        finally:
+            os.close(life_r)
+    except OSError:
+        if life_w is not None:
+            try:
+                os.close(life_w)
+            except OSError:
+                pass
+            life_w = None
+    return ManagedProcess(
+        proc,
+        None,
+        group_token=group_token,
+        lifeline_fd=life_w,
+        reaper_proc=reaper,
+    )

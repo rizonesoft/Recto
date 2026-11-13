@@ -75,20 +75,21 @@ def _resolve_cwd_command(cmd: list[str], cwd: Path) -> list[str]:
 
 def run_cmd(cmd: list[str], cwd: Path, timeout_s: float) -> tuple[int | None, str]:
     resolved_cmd = _resolve_cwd_command(cmd, cwd)
-    managed = proc_group.spawn_managed_process(resolved_cmd, cwd=cwd)
-    proc = managed.proc
-    try:
-        out, err = proc.communicate(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        out, err = managed.drain_after_terminate()
-        combined = ((out or "") + "\n" + (err or "")).strip()
-        tail = "\n".join(combined.splitlines()[-20:])
-        return None, (f"timed out after {timeout_s:g}s\n{tail}".strip())
-    except BaseException:
-        managed.drain_after_terminate()
-        raise
-    finally:
-        managed.terminate_and_close()
+    with proc_group.termination_signal_guard():
+        managed = proc_group.spawn_managed_process(resolved_cmd, cwd=cwd)
+        proc = managed.proc
+        try:
+            out, err = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            out, err = managed.drain_after_terminate()
+            combined = ((out or "") + "\n" + (err or "")).strip()
+            tail = "\n".join(combined.splitlines()[-20:])
+            return None, (f"timed out after {timeout_s:g}s\n{tail}".strip())
+        except BaseException:
+            managed.drain_after_terminate()
+            raise
+        finally:
+            managed.terminate_and_close()
     combined = ((out or "") + "\n" + (err or "")).strip()
     tail = "\n".join(combined.splitlines()[-20:])
     return proc.returncode, tail

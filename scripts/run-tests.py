@@ -275,40 +275,41 @@ def main(argv: list[str] | None = None) -> int:
     pool = ThreadPoolExecutor(max_workers=workers)
     completed_cleanly = False
     try:
-        if not args.full and not args.filter and "tests.scripts.test_todo_graph" not in selected:
-            ok, dt, detail = run_quick_graph_gates(
-                ROOT,
-                timeout_s=args.timeout,
-                cancel_event=cancel_event,
-                active_procs=active_procs,
-                procs_lock=procs_lock,
-            )
-            status = "PASS" if ok else "FAIL"
-            print(f"  [{status}] {dt:5.2f}s  todo-graph (validate + plan --check)")
-            if not ok:
-                failures.append(("todo-graph", detail))
+        with proc_group.termination_signal_guard():
+            if not args.full and not args.filter and "tests.scripts.test_todo_graph" not in selected:
+                ok, dt, detail = run_quick_graph_gates(
+                    ROOT,
+                    timeout_s=args.timeout,
+                    cancel_event=cancel_event,
+                    active_procs=active_procs,
+                    procs_lock=procs_lock,
+                )
+                status = "PASS" if ok else "FAIL"
+                print(f"  [{status}] {dt:5.2f}s  todo-graph (validate + plan --check)")
+                if not ok:
+                    failures.append(("todo-graph", detail))
 
-        future_map = {
-            pool.submit(
-                run_one,
-                mod,
-                ROOT,
-                timeout_s=args.timeout,
-                cancel_event=cancel_event,
-                active_procs=active_procs,
-                procs_lock=procs_lock,
-            ): mod
-            for mod in selected
-        }
-        for fut in as_completed(future_map):
-            if cancel_event.is_set():
-                break
-            mod, code, dt, out = fut.result()
-            status = "PASS" if code == 0 else ("TIME" if code == 124 else "FAIL")
-            print(f"  [{status}] {dt:5.2f}s  {mod}")
-            if code != 0:
-                failures.append((mod, out))
-        completed_cleanly = True
+            future_map = {
+                pool.submit(
+                    run_one,
+                    mod,
+                    ROOT,
+                    timeout_s=args.timeout,
+                    cancel_event=cancel_event,
+                    active_procs=active_procs,
+                    procs_lock=procs_lock,
+                ): mod
+                for mod in selected
+            }
+            for fut in as_completed(future_map):
+                if cancel_event.is_set():
+                    break
+                mod, code, dt, out = fut.result()
+                status = "PASS" if code == 0 else ("TIME" if code == 124 else "FAIL")
+                print(f"  [{status}] {dt:5.2f}s  {mod}")
+                if code != 0:
+                    failures.append((mod, out))
+            completed_cleanly = True
     except KeyboardInterrupt:
         print("\nInterrupted: cancelled queued suites and terminated running test workers.", file=sys.stderr)
         return 130

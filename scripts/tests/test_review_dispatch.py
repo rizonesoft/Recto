@@ -50,28 +50,34 @@ FAKE_CLI = textwrap.dedent('''\
         log.write(json.dumps({"cli": name, "argv": args, "stdin": stdin, "cwd": os.getcwd(), "from_file": from_file}) + "\\n")
     if mode in ("sleepchild", "floodchild"):
         # The reviewer starts a child that sleeps 60 s, then hangs (sleepchild) or floods stdout (floodchild).
+        # Writes and lifetime are independently bounded (8 MiB / 60 s) so no detached survivor can fill the disk.
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         open(os.environ["FAKE_CHILD_PID"], "w").write(str(child.pid))
-        while True:
-            if mode == "floodchild":
+        for step in range(6000):
+            if mode == "floodchild" and step < 128:
                 sys.stdout.write("x" * 65536)
                 sys.stdout.flush()
             time.sleep(0.01)
+        sys.exit(0)
     if mode == "fail":
         sys.exit(3)
     if mode == "sleep":
         time.sleep(30)
     if mode == "flood":
-        while True:
-            sys.stdout.write("x" * 65536)
-            sys.stdout.flush()
+        for step in range(6000):
+            if step < 128:
+                sys.stdout.write("x" * 65536)
+                sys.stdout.flush()
             time.sleep(0.01)
+        sys.exit(0)
     if mode == "floodfile":
         with open(args[args.index("-o") + 1], "w") as out:
-            while True:
-                out.write("x" * 65536)
-                out.flush()
+            for step in range(6000):
+                if step < 128:
+                    out.write("x" * 65536)
+                    out.flush()
                 time.sleep(0.01)
+        sys.exit(0)
     if mode == "orphan":
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         open(os.environ["FAKE_CHILD_PID"], "w").write(str(child.pid))
@@ -96,7 +102,9 @@ FAKE_CLI = textwrap.dedent('''\
         ready = os.environ["FAKE_CHILD_PID"] + ".ready"
         holder = "import sys, time; f = open(sys.argv[1], 'a'); open(sys.argv[2], 'w').close(); time.sleep(3)"
         subprocess.Popen([sys.executable, "-c", holder, args[args.index("-o") + 1], ready], cwd=os.path.dirname(sys.executable))
-        while not os.path.exists(ready):
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
             time.sleep(0.05)
 ''')
 
