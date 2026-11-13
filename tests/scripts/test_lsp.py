@@ -374,19 +374,22 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
                 "    return y\n"
                 "class ClsBody:\n"
                 "    a = x\n"
+                "    def method_default(self, v=x):\n"
+                "        return v\n"
                 "    x = x + 1\n"
                 "    b = x\n",
                 encoding="utf-8",
             )
             # `(2, 8)` (`x = x + 1` RHS in `fn_self_assign`) -> function-local line 2 (never module line 0).
             # `(4, 8)` (`y = x` before `x = 2` in `fn_read_before_write`) -> function-local line 5 (never module line 0).
-            # `(8, 8)` (`a = x` in `ClsBody`) and `(9, 8)` (`x = x + 1` RHS in `ClsBody`) -> module line 0; `(10, 8)` (`b = x`) -> line 9.
+            # `(8, 8)` (`a = x`), `(9, 31)` (`v=x` method default), and `(11, 8)` (`x = x + 1` RHS) -> module line 0; `(12, 8)` -> line 11.
             for em_ln, em_col, expected_ln in (
                 (2, 8, 2),
                 (4, 8, 5),
                 (8, 8, 0),
-                (9, 8, 0),
-                (10, 8, 9),
+                (9, 31, 0),
+                (11, 8, 0),
+                (12, 8, 11),
             ):
                 with self.subTest(exec_model_pos=(em_ln, em_col)):
                     em_defs = scoped._definitions(exec_model_file, em_ln, em_col)

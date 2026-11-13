@@ -207,6 +207,69 @@ class BuildScript(unittest.TestCase):
         self.assertIn("if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests'))", text)
         self.assertIn("$targets += 'recto-tests'", text)
 
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_restore_current_detects_cleared_nuget_package_cache(self):
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        fp_match = re.search(r"(function Get-RestoreFingerprint\b.*?^})", text, re.M | re.S)
+        rc_match = re.search(r"(function Test-RestoreCurrent\b.*?^})", text, re.M | re.S)
+        self.assertIsNotNone(fp_match)
+        self.assertIsNotNone(rc_match)
+        assert fp_match is not None and rc_match is not None and POWERSHELL is not None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "repo"
+            pkg_cache = Path(tmp) / "nuget"
+            proj_dir = ws / "src" / "app"
+            obj_dir = proj_dir / "obj"
+            obj_dir.mkdir(parents=True)
+            (ws / "Recto.sln").write_text("", encoding="utf-8")
+            (ws / "Directory.Build.props").write_text("", encoding="utf-8")
+            (ws / "Directory.Build.targets").write_text("", encoding="utf-8")
+            (ws / "vcpkg.json").write_text("{}", encoding="utf-8")
+            (ws / "vcpkg-configuration.json").write_text("{}", encoding="utf-8")
+            (proj_dir / "Recto.vcxproj").write_text(
+                '<Project><ItemGroup><PackageReference Include="Sample.Pkg" Version="1.0.0" /></ItemGroup></Project>',
+                encoding="utf-8",
+            )
+            (obj_dir / "Recto.vcxproj.nuget.g.props").write_text("<Project />", encoding="utf-8")
+            (obj_dir / "Recto.vcxproj.nuget.g.targets").write_text("<Project />", encoding="utf-8")
+
+            pkg_dir = pkg_cache / "sample.pkg" / "1.0.0"
+            (pkg_dir / "build" / "native").mkdir(parents=True)
+            (pkg_dir / ".nupkg.metadata").write_text("{}", encoding="utf-8")
+            (pkg_dir / "build" / "native" / "Sample.Pkg.targets").write_text("<Project />", encoding="utf-8")
+
+            assets = {
+                "version": 3,
+                "packageFolders": {str(pkg_cache) + "\\": {}},
+                "libraries": {
+                    "Sample.Pkg/1.0.0": {
+                        "type": "package",
+                        "path": "sample.pkg/1.0.0",
+                        "files": [".nupkg.metadata", "build/native/Sample.Pkg.targets"],
+                    }
+                },
+            }
+            (obj_dir / "project.assets.json").write_text(json.dumps(assets), encoding="utf-8")
+            stamp = ws / "build" / "restore.stamp"
+            stamp.parent.mkdir(parents=True)
+
+            ps_probe = (
+                f"{fp_match.group(1)}\n{rc_match.group(1)}\n"
+                f"$meta = Get-RestoreFingerprint -RepoRoot '{ws}'\n"
+                f"Set-Content -Path '{stamp}' -Value $meta.Hash -NoNewline\n"
+                f"$before = Test-RestoreCurrent -RepoRoot '{ws}' -StampFile '{stamp}' -Meta $meta\n"
+                f"Remove-Item -Recurse -Force '{pkg_dir}'\n"
+                f"$after = Test-RestoreCurrent -RepoRoot '{ws}' -StampFile '{stamp}' -Meta $meta\n"
+                "Write-Output \"$before,$after\"\n"
+            )
+            done = subprocess.run(
+                [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_probe],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+            self.assertEqual(done.stdout.strip(), "True,False")
+
 
 class AsanCoverage(unittest.TestCase):
     """-EnableASAN instruments into its own folders and stages the runtime for every C++ project in Recto.sln,

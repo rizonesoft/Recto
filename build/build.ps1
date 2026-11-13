@@ -79,6 +79,7 @@ function Get-RestoreFingerprint([string]$RepoRoot) {
     $files += $vcxprojs.FullName
     $builder = New-Object System.Text.StringBuilder
     [void]$builder.AppendLine("root:$([System.IO.Path]::GetFullPath($RepoRoot))")
+    [void]$builder.AppendLine("nuget:$($env:NUGET_PACKAGES)")
     $prefixLen = $RepoRoot.TrimEnd('\', '/').Length + 1
     foreach ($f in $files) {
         if (Test-Path $f) {
@@ -101,8 +102,54 @@ function Test-RestoreCurrent([string]$RepoRoot, [string]$StampFile, [hashtable]$
     foreach ($proj in $Meta.Vcxprojs) {
         $raw = Get-Content -Path $proj.FullName -Raw -ErrorAction SilentlyContinue
         if ($raw -match '<PackageReference\s') {
-            $assets = Join-Path $proj.DirectoryName 'obj\project.assets.json'
-            if (-not (Test-Path $assets)) { return $false }
+            $objDir = Join-Path $proj.DirectoryName 'obj'
+            $assets = Join-Path $objDir 'project.assets.json'
+            $gProps = Join-Path $objDir "$($proj.Name).nuget.g.props"
+            $gTargets = Join-Path $objDir "$($proj.Name).nuget.g.targets"
+            if (-not (Test-Path $assets) -or -not (Test-Path $gProps) -or -not (Test-Path $gTargets)) {
+                return $false
+            }
+            try {
+                $doc = Get-Content -Path $assets -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            } catch {
+                return $false
+            }
+            if ($null -eq $doc -or $null -eq $doc.packageFolders -or $null -eq $doc.libraries) {
+                return $false
+            }
+            $pkgFolders = @($doc.packageFolders.PSObject.Properties.Name)
+            if ($pkgFolders.Count -eq 0) { return $false }
+            foreach ($libProp in $doc.libraries.PSObject.Properties) {
+                $lib = $libProp.Value
+                if ($null -eq $lib -or $lib.type -ne 'package' -or [string]::IsNullOrWhiteSpace($lib.path)) {
+                    continue
+                }
+                $relPkg = ([string]$lib.path).Replace('/', '\')
+                $foundPkg = $false
+                foreach ($folder in $pkgFolders) {
+                    $pkgDir = Join-Path $folder $relPkg
+                    if (-not (Test-Path (Join-Path $pkgDir '.nupkg.metadata'))) {
+                        continue
+                    }
+                    $missingFile = $false
+                    if ($null -ne $lib.files) {
+                        foreach ($entry in $lib.files) {
+                            $entryStr = [string]$entry
+                            if ($entryStr -match '\.(props|targets)$') {
+                                if (-not (Test-Path (Join-Path $pkgDir ($entryStr.Replace('/', '\'))))) {
+                                    $missingFile = $true
+                                    break
+                                }
+                            }
+                        }
+                    }
+                    if (-not $missingFile) {
+                        $foundPkg = $true
+                        break
+                    }
+                }
+                if (-not $foundPkg) { return $false }
+            }
         }
     }
     return $true

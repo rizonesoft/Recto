@@ -682,6 +682,32 @@ class StdlibPythonLsp:
                                 matches.append((cls_path, t))
         return matches
 
+    @staticmethod
+    def _has_postponed_annotations(tree: ast.Module) -> bool:
+        if sys.version_info >= (3, 14):
+            return True
+        for stmt in tree.body:
+            if isinstance(stmt, ast.ImportFrom) and stmt.module == "__future__":
+                if any(alias.name == "annotations" for alias in stmt.names):
+                    return True
+        return False
+
+    @classmethod
+    def _fn_only_annotation_contains(cls, fn: ast.FunctionDef | ast.AsyncFunctionDef, line1: int, col: int) -> bool:
+        """True only for parameter/return type annotations (never defaults or decorators, which evaluate eagerly)."""
+        all_fn_args = [
+            *fn.args.posonlyargs,
+            *fn.args.args,
+            *fn.args.kwonlyargs,
+            *([fn.args.vararg] if fn.args.vararg else []),
+            *([fn.args.kwarg] if fn.args.kwarg else []),
+        ]
+        ann_exprs: list[ast.AST] = [
+            *(a.annotation for a in all_fn_args if a.annotation is not None),
+            *([fn.returns] if fn.returns is not None else []),
+        ]
+        return any(cls._node_contains(e, line1, col) for e in ann_exprs)
+
     @classmethod
     def _stmt_header_expr_contains(cls, stmt: ast.AST, line1: int, col: int) -> bool:
         """True if `(line1, col)` sits inside a declaration header expression evaluated BEFORE `stmt` binds its name."""
@@ -780,9 +806,10 @@ class StdlibPythonLsp:
         in_fn_annotation = (
             isinstance(scope, ast.ClassDef)
             and cursor_pos is not None
+            and self._has_postponed_annotations(tree)
             and any(
                 isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and self._stmt_header_expr_contains(s, *cursor_pos)
+                and self._fn_only_annotation_contains(s, *cursor_pos)
                 for s in scope_stmts
             )
         )
