@@ -759,7 +759,6 @@ class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
             "CONTRIBUTING.md",
             "AGENTS.md",
             ".conclave/automations/README.md",
-            ".agents/agents/README.md",
             "docs/todo-workflow.md",
             "docs/plan-review-prompt.md",
             "docs/review-round-prompt.md",

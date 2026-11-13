@@ -1,6 +1,6 @@
 # Agent Skills and Rules Structure
 
-Claude Code (`claude`) and Google Antigravity on Gemini 4 Carbon (`agy`) are the writers in this repository (owner directions 2026-11-10, 2026-11-12 and 2026-11-13). There is a single canonical skill tree under `.claude/skills/`: `.agents/skills.json` points Antigravity directly at `.claude/skills`, and `.agents/hooks.json` wires Antigravity's `SessionStart`, `PreToolUse` and `Stop` hooks to the same `scripts/` modules as `.claude/settings.json`, so zero skill files are ever duplicated under `.agents/skills/`. The `.codex/` writer kit removed on 2026-10-23 stays removed: Codex runs only as the read-only reviewer CLI invoked by `scripts/review-dispatch.py`, reading `AGENTS.md` directly.
+Claude Code (`claude`) and Google Antigravity on Orchestrator (Carbon) (`agy`, `gemini-pro-orchestrator`) are the writers in this repository (owner directions 2026-11-10, 2026-11-12, 2026-11-13 and 2026-11-14). There is a single canonical skill tree under `.claude/skills/`: `.agents/skills.json` points Antigravity directly at `.claude/skills`, and `.agents/hooks.json` wires Antigravity's `SessionStart`, `PreToolUse` and `Stop` hooks to the same `scripts/` modules as `.claude/settings.json`, so zero skill files are ever duplicated under `.agents/skills/`. The `.codex/` writer kit removed on 2026-10-23 stays removed: Codex runs only as the read-only reviewer CLI invoked by `scripts/review-dispatch.py`, reading `AGENTS.md` directly.
 
 ## Skill location
 
@@ -31,7 +31,7 @@ Use the word "rules" carefully:
 - Durable project behavior belongs in `AGENTS.md`, which Antigravity loads directly, Claude Code loads through the `CLAUDE.md` stub, and the reviewer reads directly.
 - `.claude/rules/` holds Claude Code output and safety rules; `.claude/settings.json` and `.agents/hooks.json` wire the shared lifecycle hooks.
 - Markdown checklists or rule references belong in a skill `references/` folder or in `docs/`.
-- Subagent definitions live in `.claude/agents/`. A subagent that writes code, tests, plan or docs runs on Fable 5.2 (`claude-fable-5-2`); Sonnet or Haiku run only read-only helpers whose output the main session verifies. `scripts/verify-agent-tiers.mjs` enforces it.
+- Claude Code subagent definitions live in `.claude/agents/`. A subagent that writes code, tests, plan or docs runs on Fable 5.2 (`claude-fable-5-2`); Sonnet or Haiku run only read-only helpers whose output the main session verifies (`scripts/verify-agent-tiers.mjs` enforces it). Antigravity uses Orchestrator (Carbon) automatically and defines zero custom subagents under `.agents/`.
 
 ## Adding a New Skill
 

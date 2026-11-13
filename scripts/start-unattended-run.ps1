@@ -1,5 +1,5 @@
 ﻿# Starts Recto's unattended plan run in Claude Code or Google Antigravity. The Desktop shortcuts "Recto Claude
-# campaign" (-Runner claude, the default) and "Recto Carbon campaign" (-Runner agy, Antigravity on Gemini 4 Carbon)
+# campaign" (-Runner claude, the default) and "Recto Carbon campaign" (-Runner agy, Antigravity on Orchestrator (Carbon))
 # run this file. It prints the state of the machine and the tree, holds Windows awake while the session runs, and
 # starts an interactive session on the runner's writer model with permission prompts off and the session goal below.
 # Setting the goal starts the work: the goal's text is the first directive, beside the run guard of the process-plan
@@ -7,7 +7,7 @@
 # heartbeat via CronCreate or schedule).
 #
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1            start the run in Claude Code
-#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -Runner agy  start it in Antigravity on Gemini 4 Carbon
+#   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -Runner agy  start it in Antigravity on Orchestrator (Carbon)
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -PrintOnly print the checks and the command, start nothing
 #   pwsh -NoProfile -File scripts\start-unattended-run.ps1 -InstallShortcut  write both Desktop shortcuts for this clone
 #
@@ -24,11 +24,12 @@
 #
 # It starts whatever the checks show: low memory, a dirty tree and a guard left by an earlier run are printed, not
 # refused, because the process-plan audit decides what to do about each (owner decision 2026-11-10: warn and start).
-# The Claude Code model is the alias opus, the newest Opus (owner direction 2026-11-10); Antigravity runs Gemini 4
-# Carbon at medium, whose model name carries its effort (owner direction 2026-11-12). AGENTS.md, "Who writes and who
-# reviews", records both. Changing one costs its line below, its test and that paragraph.
+# The Claude Code model is the alias opus, the newest Opus (owner direction 2026-11-10); Antigravity runs Orchestrator
+# (Carbon) (`gemini-pro-orchestrator`), which manages effort internally across Carbon planning and Hydrogen execution
+# (owner directions 2026-11-12 and 2026-11-14). AGENTS.md, "Who writes and who reviews", records both. Changing one
+# costs its line below, its test and that paragraph.
 param(
-    # The campaign runner: Claude Code (`claude`) or Google Antigravity on Gemini 4 Carbon (`agy`).
+    # The campaign runner: Claude Code (`claude`) or Google Antigravity on Orchestrator (Carbon) (`agy`).
     [ValidateSet('claude', 'agy')][string]$Runner = 'claude',
     [switch]$PrintOnly,
     [switch]$InstallShortcut,
@@ -44,7 +45,7 @@ Set-Location $root
 $pinnedPython = Join-Path $root 'build\python.cmd'
 
 $model = 'opus'
-$carbon = 'gemini-4-carbon-medium'
+$carbon = 'gemini-pro-orchestrator'
 $tokenVault = 'Conclave'
 $tokenItem = 'Claude Code OAuth token (1 year, setup-token)'
 
@@ -60,7 +61,7 @@ if ($InstallShortcut) {
         @{ Runner = 'claude'; Name = 'Recto Claude campaign'; Icon = 'recto-campaign-claude.ico'
            Description = 'Start the unattended Recto campaign in Claude Code' },
         @{ Runner = 'agy'; Name = 'Recto Carbon campaign'; Icon = 'recto-campaign-carbon.ico'
-           Description = 'Start the unattended Recto campaign in Google Antigravity on Gemini 4 Carbon' }
+           Description = 'Start the unattended Recto campaign in Google Antigravity on Orchestrator (Carbon)' }
     )
     foreach ($s in $shortcuts) {
         $icon = Join-Path $IconFolder $s.Icon
@@ -89,7 +90,7 @@ if ($InstallShortcut) {
     exit 0
 }
 
-$runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Gemini 4 Carbon)' }[$Runner]
+$runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Orchestrator (Carbon))' }[$Runner]
 # One name for the window and, for Claude Code, the session: claude.exe overwrites the terminal title with its own
 # session topic unless it is given --name, so the title alone would not tell the operator which repo a window is.
 $windowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
@@ -98,7 +99,7 @@ try { $Host.UI.RawUI.WindowTitle = $windowTitle } catch {}
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000
 # characters.
 $goal = @'
-/goal Recto's implementation plan (todo/implementation-plan.md in {ROOT}) is 100 percent complete: `build\python.cmd scripts/todo-graph.py query stats` shows verified equal to total, with every section built, reviewed by the pinned reviewer and stamped through the stamp command, no partial ships, and CI green on main. The goal is also met when the run has ended the way the process-plan skill allows while rows are still open: every remaining row is blocked here (an unmet dependency, a waiting Need, or a host this session cannot reach), the run file carries its PARKED line and park record, the run was ended through `scripts/campaign_guard.py end`, and the last message lists each leftover row with what blocks it. Nothing else counts as done: not an audit, not a status report, not a finished phase while another phase has a ready row. The work: process the plan through the process-plan skill, starting now, unattended. Follow AGENTS.md, design/SPEC.md and the skills exactly. Never ask the operator a question: take the industry-standard option, record it with its cost of reversing, and carry on. Self-improve and self-heal: repair any broken gate, hook, script or drifted plan claim at its owning layer with a regression test, and shape every feature to beat Adobe Acrobat, Foxit, PDFelement, UPDF, Microsoft, Apple and Google in speed, step count, smart defaults, error recovery and accessibility, proven with measurements. No shortcuts, no workarounds, no weakened tests, and no avoiding work because it is hard. Balance speed, memory and excellence: use LSP diagnostics and symbol navigation first, run fast targeted local checks while iterating (`.\build.cmd -Quick` and `build\python.cmd scripts/run-tests.py`), push candidate commits so GitHub Actions CI runs the heavy full matrix in parallel with reviews (`build\python.cmd scripts/ci_status.py --wait`), run one heavy local job at a time, wait while less than 3,000 MB is free, and in Antigravity delegate read-only mechanical lookups and test runs to `gemini-4-hydrogen-medium` helpers while keeping all writing, design, diagnosis and verdicts in Gemini 4 Carbon.
+/goal Recto's implementation plan (todo/implementation-plan.md in {ROOT}) is 100 percent complete: `build\python.cmd scripts/todo-graph.py query stats` shows verified equal to total, with every section built, reviewed by the pinned reviewer and stamped through the stamp command, no partial ships, and CI green on main. The goal is also met when the run has ended the way the process-plan skill allows while rows are still open: every remaining row is blocked here (an unmet dependency, a waiting Need, or a host this session cannot reach), the run file carries its PARKED line and park record, the run was ended through `scripts/campaign_guard.py end`, and the last message lists each leftover row with what blocks it. Nothing else counts as done: not an audit, not a status report, not a finished phase while another phase has a ready row. The work: process the plan through the process-plan skill, starting now, unattended. Follow AGENTS.md, design/SPEC.md and the skills exactly. Never ask the operator a question: take the industry-standard option, record it with its cost of reversing, and carry on. Self-improve and self-heal: repair any broken gate, hook, script or drifted plan claim at its owning layer with a regression test, and shape every feature to beat Adobe Acrobat, Foxit, PDFelement, UPDF, Microsoft, Apple and Google in speed, step count, smart defaults, error recovery and accessibility, proven with measurements. No shortcuts, no workarounds, no weakened tests, and no avoiding work because it is hard. Balance speed, memory and excellence: use LSP diagnostics and symbol navigation first, run fast targeted local checks while iterating (`.\build.cmd -Quick` and `build\python.cmd scripts/run-tests.py`), push candidate commits so GitHub Actions CI runs the heavy full matrix in parallel with reviews (`build\python.cmd scripts/ci_status.py --wait`), run one heavy local job at a time, and wait while less than 3,000 MB is free.
 '@
 $goal = $goal.Trim().Replace('{ROOT}', $root)
 if ($goal.Contains('"') -or $goal.Contains("`n")) { throw 'the goal must be one line with no double quote' }

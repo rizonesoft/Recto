@@ -43,7 +43,7 @@ Sections: 60 | Checklist items: 355
 | [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 7     |
 | [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
 | [ ]    | D00 T05 §2  | Portable C++23 and Python LSP servers and MCP bridge across runners                      | windows-host | 4     |
-| [ ]    | D00 T05 §3  | Read-only medium-effort Gemini 4 Hydrogen helpers and execution sandbox                  | none         | 4     |
+| [ ]    | D00 T05 §3  | Antigravity PreToolUse hook guards, Orchestrator alignment and mutation runner           | none         | 4     |
 | [ ]    | D00 T05 §4  | RAM-bounded build/test runner cadence and local-vs-CI gate split                         | windows-host | 4     |
 | [ ]    | D00 T05 §5  | Dual-runner unattended campaign launcher, sleep guard and clone-move recovery            | windows-host | 4     |
 | [ ]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for Claude Code and Google Antigravity: enforce background reviews, campaign question-free runs,
-and strictly read-only medium-effort Gemini 4 Hydrogen helpers.
+"""PreToolUse hook for Claude Code and Google Antigravity: enforce background reviews and question-free campaigns.
 
 A review (`scripts/review-dispatch.py ... --prompt ...`) takes minutes. Started through the runner's tracked background
 option (`run_in_background: true` in Claude Code, `WaitMsBeforeAsync: 500` with `IsDaemon: false` in Antigravity's
@@ -8,30 +7,18 @@ option (`run_in_background: true` in Claude Code, `WaitMsBeforeAsync: 500` with 
 `setsid`, `Start-Job`, `Start-Process`) or as an indefinite daemon, nothing notifies the session, and a foreground call
 blocks or times out. This hook refuses detached, daemon and foreground review launches alike, naming the fix.
 
-In Antigravity (`.agents/hooks.json`, `matcher: "*"`) it also enforces two campaign invariants:
-1. Refuses `ask_question` while `build/claude-campaign-guard.json` is live for the session's `conversationId`, matching
-   Claude Code's `--disallowedTools AskUserQuestion` in unattended campaigns while leaving attended sessions free to
-   confirm destructive or credential actions.
-2. Enforces Gemini 4 Hydrogen (`gemini-4-hydrogen-medium`) read-only helper boundaries at both `PreToolUse` and execution
-   time: spawning a Hydrogen swarm worker requires `medium` effort and `workspace: "inherit"`; inside any
-   Hydrogen turn only an explicit allowlist of read-only tools and literal read-only commands may run, and every allowed
-   `run_command` is rewritten via `overwrite` to `scripts/hydrogen_exec.py --payload <hex>`, which re-validates the
-   argv allowlist, runs `shell=False` without PowerShell evaluation, and executes test suites in an isolated temporary
-   working copy outside the shared checkout.
+In Antigravity (`.agents/hooks.json`, `matcher: "*"`) it also refuses `ask_question` while
+`build/claude-campaign-guard.json` is live for the session's `conversationId` (or `CONCLAVE_UNATTENDED_RUN=1`), matching
+Claude Code's `--disallowedTools AskUserQuestion` in unattended campaigns while leaving attended sessions free to
+confirm destructive or credential actions. Under Orchestrator (Carbon) (`gemini-pro-orchestrator`), both planning and
+execution turns remain unrestricted on normal editing, build and command tools.
 """
 from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import re
 import sys
-
-HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
-
-import hydrogen_exec  # noqa: E402
 
 # The dispatcher run as a command: after `python`, `python3`, `python.exe`, `build\python.cmd` or the `py` launcher, quoted or not, and any
 # interpreter options (`-u`, `-X dev`, `-3.14`), its path quoted or not, or in command position (the start, after `;`, `&`, `|`, `(`, a
@@ -52,26 +39,9 @@ AGY_DETACH = re.compile(POWERSHELL_DETACH.pattern + r"|\bnohup\b|\bdisown\b|\bse
 DETACH = {"Bash": BASH_DETACH, "PowerShell": POWERSHELL_DETACH}
 AGY_MAX_WAIT_MS = 1000
 
-HYDROGEN_ALLOWED_MODELS = {
-    "gemini-4-hydrogen-medium",
-    "gemini 4 hydrogen (medium)",
-}
-HYDROGEN_PURE_READ_TOOLS = {
-    "read_file", "view_file", "view_file_outline", "view_code_item",
-    "grep_search", "find_by_name", "list_dir",
-    "search_web", "read_url_content", "list_resources", "read_resource",
-    "send_message", "post_message", "read_board", "swarm_wait",
-}
-HYDROGEN_READONLY_MCP_SERVERS = {"recto-lsp", "recto-lsp_recto-lsp"}
-
 
 def _is_agy(payload: dict) -> bool:
     return isinstance(payload.get("toolCall"), dict) or payload.get("hookEventName") == "PreToolUse"
-
-
-def _is_hydrogen_worker(payload: dict) -> bool:
-    model = str(payload.get("modelName") or payload.get("model") or "").strip().lower()
-    return "hydrogen" in model
 
 
 def _campaign_owns_agy_session(payload: dict) -> bool:
@@ -95,35 +65,6 @@ def _campaign_owns_agy_session(payload: dict) -> bool:
     return isinstance(guard, dict) and str(guard.get("session_id") or "") == session
 
 
-def _hydrogen_tool_verdict(name: str, args: dict) -> str | None:
-    if name in HYDROGEN_PURE_READ_TOOLS:
-        return None
-    if name.startswith(("mcp_recto-lsp_", "mcp_gemini-api_gemini-api-docs_")):
-        return None
-    if name == "call_mcp_tool":
-        server = str(args.get("ServerName") or "")
-        if server in HYDROGEN_READONLY_MCP_SERVERS:
-            return None
-        return (f"hydrogen-readonly: MCP server {server!r} is not permitted in Gemini 4 Hydrogen helpers; "
-                "only read-only recto-lsp queries are allowed")
-    if name == "swarm":
-        if args.get("action") in ("status", "models"):
-            return None
-        return ("hydrogen-readonly: Gemini 4 Hydrogen helpers may only read swarm status, never add, re-model "
-                "or kill workers")
-    if name == "run_command":
-        cmd = args.get("CommandLine")
-        if not isinstance(cmd, str):
-            return "hydrogen-readonly: run_command requires a literal string CommandLine"
-        _, err = hydrogen_exec.parse_hydrogen_command(cmd)
-        if err:
-            return (f"hydrogen-readonly: {err} in Gemini 4 Hydrogen helpers; return findings to the "
-                    "Gemini 4 Carbon writer session, which owns all edits and arbitrary commands")
-        return None
-    return (f"hydrogen-readonly: tool {name!r} is forbidden in Gemini 4 Hydrogen helpers; helpers are strictly "
-            "read-only and return file:line citations to the Gemini 4 Carbon writer session")
-
-
 def agy_verdict(payload: dict) -> str | None:
     """Why an Antigravity PreToolUse call is refused, or None to allow it."""
     tool_call = payload.get("toolCall")
@@ -132,24 +73,6 @@ def agy_verdict(payload: dict) -> str | None:
     name = str(tool_call.get("name") or "")
     raw_args = tool_call.get("args")
     args = raw_args if isinstance(raw_args, dict) else {}
-
-    # 1. Enforce strict positive allowlist inside any Gemini 4 Hydrogen worker turn.
-    if _is_hydrogen_worker(payload):
-        why_h = _hydrogen_tool_verdict(name, args)
-        if why_h:
-            return why_h
-
-    # 2. Enforce medium-effort + inherit-workspace when spawning or switching a Gemini 4 Hydrogen worker.
-    if name == "swarm" and args.get("action") in ("add", "model"):
-        target_model = str(args.get("model") or "").strip().lower()
-        if "hydrogen" in target_model:
-            if target_model not in HYDROGEN_ALLOWED_MODELS:
-                return ("hydrogen-effort: Gemini 4 Hydrogen helpers must run at medium effort "
-                        "(model: 'gemini-4-hydrogen-medium')")
-            ws = args.get("workspace")
-            if args.get("action") == "add" and ws not in (None, "", "inherit"):
-                return ("hydrogen-readonly: Gemini 4 Hydrogen helpers are read-only and must use "
-                        "workspace: 'inherit' (never branch or share)")
 
     if name == "ask_question":
         if _campaign_owns_agy_session(payload):
@@ -204,24 +127,10 @@ def verdict(payload: dict) -> str | None:
 
 
 def agy_response(payload: dict) -> dict:
-    """Build the full Antigravity PreToolUse JSON response, rewriting allowed Hydrogen commands to hydrogen_exec.py."""
+    """Build the Antigravity PreToolUse JSON decision response."""
     why = verdict(payload)
     if why:
         return {"decision": "deny", "reason": why}
-    if _is_hydrogen_worker(payload):
-        tool_call = payload.get("toolCall")
-        if isinstance(tool_call, dict) and tool_call.get("name") == "run_command":
-            raw_args = tool_call.get("args")
-            args = raw_args if isinstance(raw_args, dict) else {}
-            cmd = args.get("CommandLine")
-            if isinstance(cmd, str):
-                tokens, err = hydrogen_exec.parse_hydrogen_command(cmd)
-                if err or tokens is None:
-                    return {"decision": "deny", "reason": f"hydrogen-readonly: {err or 'invalid command'}"}
-                return {
-                    "decision": "allow",
-                    "overwrite": {"CommandLine": hydrogen_exec.build_overwrite_command(tokens)},
-                }
     return {"decision": "allow"}
 
 
@@ -236,11 +145,8 @@ def main() -> int:
     if _is_agy(payload):
         try:
             resp = agy_response(payload)
-        except Exception as exc:
-            if _is_hydrogen_worker(payload):
-                resp = {"decision": "deny", "reason": f"hydrogen-readonly: internal guard error ({exc})"}
-            else:
-                resp = {"decision": "allow"}
+        except Exception:
+            resp = {"decision": "allow"}
         print(json.dumps(resp))
         return 0
     try:

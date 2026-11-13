@@ -6,7 +6,7 @@
 Copies only tracked + non-ignored untracked files (excluding `build/` and `.git/`) into a temporary directory, runs the
 command unmutated once to verify a green baseline, applies the exact single-occurrence replacement to `--file`, runs the
 command again, prints a structured summary (`KILLED`, `SURVIVED`, or `NOT_APPLIED`), and deletes the temporary copy.
-The live repository is never modified, so the writer session (Gemini 4 Carbon or Claude) and Claude's `mutation-tester`
+The live repository is never modified, so the writer session (Antigravity Orchestrator (Carbon) or Claude) and Claude's `mutation-tester`
 can prove tests fail without dirtying uncommitted work. Standard library only.
 """
 from __future__ import annotations

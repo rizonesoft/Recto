@@ -1910,7 +1910,7 @@ class Repository(unittest.TestCase):
         # skill files, and .agents/hooks.json wires Antigravity's hooks to the same scripts/ modules.
         canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
         self.assertEqual((tg.ROOT / ".claude/skills/create-todo/todo-template.md").read_bytes(), canonical)
-        for duplicate in (".codex", ".agents/skills"):
+        for duplicate in (".codex", ".agents/skills", ".agents/agents"):
             self.assertFalse((tg.ROOT / duplicate).exists(), f"the removed {duplicate} writer kit is back")
         skills_cfg = json.loads((tg.ROOT / ".agents/skills.json").read_text(encoding="utf-8"))
         self.assertEqual(skills_cfg, {"entries": [{"path": ".claude/skills"}]})

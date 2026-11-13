@@ -1,6 +1,6 @@
 """scripts/start-unattended-run.ps1, driven with a fake `op`, a fake `claude` and a fake `agy` first on PATH: the
 Claude Code session gets the 1Password token in its environment and nowhere else, cannot ask questions, and is told
-the clone it runs in; the Antigravity session runs Gemini 4 Carbon and never gets that token; and both Desktop
+the clone it runs in; the Antigravity session runs Orchestrator (Carbon) and never gets that token; and both Desktop
 shortcuts are written with their runner's badged icon in pure stdlib Python."""
 import importlib.util
 import json
@@ -131,12 +131,13 @@ class Launcher(unittest.TestCase):
         self.assertNotIn(TOKEN, run.stdout + run.stderr)
         self.assertIn("--disallowedTools AskUserQuestion", run.stdout)
 
-    def test_the_carbon_runner_starts_antigravity_on_gemini_4_carbon_without_claudes_token(self):
+    def test_the_carbon_runner_starts_antigravity_on_orchestrator_carbon_without_claudes_token(self):
         run, seen = self.run_launcher("-Runner", "agy", inherited_token="inherited-token-abc")
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(seen["program"], "agy")
-        self.assertEqual(seen["args"], ["--model", "gemini-4-carbon-medium", "--dangerously-skip-permissions", "-i"])
+        self.assertEqual(seen["args"], ["--model", "gemini-pro-orchestrator", "--dangerously-skip-permissions", "-i"])
         self.assertTrue(seen["goal"].startswith("/goal "))
+        self.assertNotIn("hydrogen", seen["goal"].lower())
         self.assertFalse(seen["token_set"])
         self.assertEqual(seen["unattended_env"], "1")
         self.assertNotIn("1Password", run.stdout + run.stderr)
@@ -165,7 +166,7 @@ class Launcher(unittest.TestCase):
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
         self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
         for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
-                                                  ("Google Antigravity on Gemini 4 Carbon", "Claude Code")):
+                                                  ("Google Antigravity on Orchestrator (Carbon)", "Claude Code")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
             self.assertEqual(shortcut["arguments"],
                              f'-NoLogo -NoExit -NoProfile -ExecutionPolicy Bypass -File "{LAUNCHER}" -Runner {runner}')
