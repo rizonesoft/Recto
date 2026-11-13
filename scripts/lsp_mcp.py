@@ -71,6 +71,7 @@ class LspClient:
         self.cmd = cmd
         self.root = root
         self.proc: subprocess.Popen | None = None
+        self._lifecycle_lock = threading.Lock()
         self._lock = threading.Lock()
         self._next_id = 1
         self._pending: dict[int, queue.Queue] = {}
@@ -82,44 +83,70 @@ class LspClient:
         self.last_used = time.monotonic()
 
     def ensure_started(self) -> None:
-        if self.proc is not None and self.proc.poll() is None:
+        with self._lifecycle_lock:
+            if self.proc is not None and self.proc.poll() is None:
+                self.last_used = time.monotonic()
+                return
+            if self.proc is not None and self.proc.stdout is not None:
+                try:
+                    self.proc.stdout.close()
+                except Exception:
+                    pass
+            with self._diag_cond:
+                self._opened.clear()
+                self._diagnostics.clear()
+                self._closed_reason = None
+            proc = subprocess.Popen(
+                self.cmd,
+                cwd=self.root,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=windowless(),
+            )
+            self.proc = proc
+            reader = threading.Thread(target=self._reader_loop, args=(proc,), daemon=True)
+            reader.start()
+            try:
+                self.request("initialize", {
+                    "processId": os.getpid(),
+                    "rootUri": self.root.resolve().as_uri(),
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"relatedInformation": True, "versionSupport": True},
+                            "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
+                            "hover": {"contentFormat": ["markdown", "plaintext"]},
+                        }
+                    },
+                }, timeout=45.0)
+                self.notify("initialized", {})
+            except Exception:
+                self.proc = None
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+                try:
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+                except Exception:
+                    pass
+                raise
             self.last_used = time.monotonic()
-            return
-        with self._diag_cond:
-            self._opened.clear()
-            self._diagnostics.clear()
-            self._closed_reason = None
-        self.proc = subprocess.Popen(
-            self.cmd,
-            cwd=self.root,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            creationflags=windowless(),
-        )
-        reader = threading.Thread(target=self._reader_loop, daemon=True)
-        reader.start()
-        self.request("initialize", {
-            "processId": os.getpid(),
-            "rootUri": self.root.resolve().as_uri(),
-            "capabilities": {
-                "textDocument": {
-                    "publishDiagnostics": {"relatedInformation": True, "versionSupport": True},
-                    "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
-                    "hover": {"contentFormat": ["markdown", "plaintext"]},
-                }
-            },
-        }, timeout=45.0)
-        self.notify("initialized", {})
-        self.last_used = time.monotonic()
 
-    def _reader_loop(self) -> None:
-        assert self.proc is not None and self.proc.stdout is not None
-        stream = self.proc.stdout
+    def _reader_loop(self, proc: subprocess.Popen) -> None:
+        assert proc.stdout is not None
+        stream = proc.stdout
         while True:
             headers: dict[str, str] = {}
             while True:
-                line = stream.readline()
+                try:
+                    line = stream.readline()
+                except ValueError:
+                    line = b""
                 if not line:
                     self._fail_all("language server exited")
                     return
@@ -132,7 +159,10 @@ class LspClient:
             length = int(headers.get("content-length", "0"))
             if length <= 0:
                 continue
-            body = stream.read(length)
+            try:
+                body = stream.read(length)
+            except ValueError:
+                body = b""
             if not body:
                 self._fail_all("language server stream closed")
                 return
@@ -237,44 +267,48 @@ class LspClient:
                 self._diag_cond.wait(timeout=min(0.25, remaining))
 
     def stop(self) -> None:
-        proc = self.proc
-        self.proc = None
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            self.request("shutdown", {}, timeout=2.0)
-            self.notify("exit", {})
-        except Exception:
-            pass
-        try:
-            if proc.stdin is not None:
-                proc.stdin.close()
-        except Exception:
-            pass
-        try:
-            proc.wait(timeout=3)
-            if proc.stdout is not None:
-                proc.stdout.close()
-            return
-        except Exception:
-            pass
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-                creationflags=windowless(),
-            )
-        try:
-            proc.kill()
-            proc.wait(timeout=2)
-        except Exception:
-            pass
-        finally:
+        with self._lifecycle_lock:
+            proc = self.proc
+            if proc is None:
+                return
             try:
-                if proc.stdout is not None:
-                    proc.stdout.close()
-            except Exception:
-                pass
+                if proc.poll() is None:
+                    try:
+                        self.request("shutdown", {}, timeout=2.0)
+                        self.notify("exit", {})
+                    except Exception:
+                        pass
+                    try:
+                        if proc.stdin is not None:
+                            proc.stdin.close()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=3)
+                    except Exception:
+                        if os.name == "nt":
+                            subprocess.run(
+                                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                capture_output=True,
+                                creationflags=windowless(),
+                            )
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=2)
+                        except Exception:
+                            pass
+            finally:
+                self.proc = None
+                try:
+                    if proc.stdin is not None:
+                        proc.stdin.close()
+                except Exception:
+                    pass
+                try:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+                except Exception:
+                    pass
 
 
 class LspMcpServer:

@@ -302,6 +302,61 @@ class LspMcpBridge(unittest.TestCase):
             finally:
                 crash_srv.shutdown_all()
 
+    def test_stop_sends_lsp_shutdown_and_exit_before_clearing_proc(self):
+        import time
+
+        handshake_server = (
+            "import json, pathlib, sys, time\n"
+            "log_file = pathlib.Path(sys.argv[1])\n"
+            "seen = []\n"
+            "def read_msg():\n"
+            "    hdr = {}\n"
+            "    while True:\n"
+            "        line = sys.stdin.buffer.readline()\n"
+            "        if not line: return None\n"
+            "        if line in (b'\\r\\n', b'\\n'): break\n"
+            "        if b':' in line:\n"
+            "            k, v = line.decode('ascii').split(':', 1)\n"
+            "            hdr[k.strip().lower()] = v.strip()\n"
+            "    body = sys.stdin.buffer.read(int(hdr.get('content-length', '0')))\n"
+            "    return json.loads(body.decode('utf-8')) if body else None\n"
+            "def send(obj):\n"
+            "    raw = json.dumps(obj).encode('utf-8')\n"
+            "    sys.stdout.buffer.write(f'Content-Length: {len(raw)}\\r\\n\\r\\n'.encode('ascii') + raw)\n"
+            "    sys.stdout.buffer.flush()\n"
+            "while True:\n"
+            "    msg = read_msg()\n"
+            "    if msg is None:\n"
+            "        time.sleep(10)\n"
+            "        break\n"
+            "    m = msg.get('method')\n"
+            "    seen.append(m)\n"
+            "    log_file.write_text(json.dumps(seen), encoding='utf-8')\n"
+            "    if m == 'initialize':\n"
+            "        send({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': {'textDocumentSync': 1}}})\n"
+            "    elif m == 'shutdown':\n"
+            "        send({'jsonrpc': '2.0', 'id': msg['id'], 'result': None})\n"
+            "    elif m == 'exit':\n"
+            "        sys.exit(0)\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            methods_log = ws / "methods.json"
+            client = LSP_MCP.LspClient("python", [sys.executable, "-c", handshake_server, str(methods_log)], ws)
+            client.ensure_started()
+            proc = client.proc
+            self.assertIsNotNone(proc)
+            t0 = time.monotonic()
+            client.stop()
+            elapsed = time.monotonic() - t0
+            self.assertIsNone(client.proc)
+            self.assertIsNotNone(proc.poll())
+            self.assertLess(elapsed, 2.5, "stop() fell through to 3s timeout instead of clean LSP shutdown/exit")
+            self.assertEqual(
+                json.loads(methods_log.read_text(encoding="utf-8")),
+                ["initialize", "initialized", "shutdown", "exit"],
+            )
+
     @unittest.skipUnless(CLANGD_LSP.find_clangd(), "clangd not installed on this machine")
     def test_cpp23_clangd_diagnostics_symbols_and_hover(self):
         GEN.write_database(ROOT / "build" / "compile_commands.json", ROOT)

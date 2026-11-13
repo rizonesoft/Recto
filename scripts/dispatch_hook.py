@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse hook for Claude Code and Google Antigravity: enforce background reviews, campaign question-free runs,
-and read-only high-effort Gemini 4 Hydrogen helpers.
+and strictly read-only high-effort Gemini 4 Hydrogen helpers.
 
 A review (`scripts/review-dispatch.py ... --prompt ...`) takes minutes. Started through the runner's tracked background
 option (`run_in_background: true` in Claude Code, `WaitMsBeforeAsync: 500` with `IsDaemon: false` in Antigravity's
@@ -8,24 +8,30 @@ option (`run_in_background: true` in Claude Code, `WaitMsBeforeAsync: 500` with 
 `setsid`, `Start-Job`, `Start-Process`) or as an indefinite daemon, nothing notifies the session, and a foreground call
 blocks or times out. This hook refuses detached, daemon and foreground review launches alike, naming the fix.
 
-In Antigravity it also enforces two campaign invariants:
+In Antigravity (`.agents/hooks.json`, `matcher: "*"`) it also enforces two campaign invariants:
 1. Refuses `ask_question` while `build/claude-campaign-guard.json` is live for the session's `conversationId`, matching
    Claude Code's `--disallowedTools AskUserQuestion` in unattended campaigns while leaving attended sessions free to
    confirm destructive or credential actions.
-2. Enforces Gemini 4 Hydrogen (`gemini-4-hydrogen-high`) read-only helper boundaries: spawning a Hydrogen swarm worker
-   requires `high` (or `xhigh`) effort and `workspace: "inherit"`, and inside any Hydrogen worker turn all file writes,
-   edits, subagent spawns, operator prompts and mutating shell/git/todo commands are denied so 100% of writing,
-   architecture, diagnosis and verdicts remain in the Gemini 4 Carbon writer session.
-
-Wired in `.claude/settings.json` on `Bash|PowerShell` (exit 2 + stderr message refuses) and in `.agents/hooks.json` on
-`run_command|ask_question|write_file|edit_file|swarm|invoke_subagent` (stdout JSON `{"decision": "deny", "reason": ...}`
-refuses, `{"decision": "allow"}` passes).
+2. Enforces Gemini 4 Hydrogen (`gemini-4-hydrogen-high`) read-only helper boundaries at both `PreToolUse` and execution
+   time: spawning a Hydrogen swarm worker requires `high` (or `xhigh`) effort and `workspace: "inherit"`; inside any
+   Hydrogen turn only an explicit allowlist of read-only tools and literal read-only commands may run, and every allowed
+   `run_command` is rewritten via `overwrite` to `scripts/hydrogen_exec.py --payload <hex>`, which re-validates the
+   argv allowlist, runs `shell=False` without PowerShell evaluation, and executes test suites in an isolated temporary
+   working copy outside the shared checkout.
 """
+from __future__ import annotations
+
 import json
 import os
+from pathlib import Path
 import re
-import shlex
 import sys
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import hydrogen_exec  # noqa: E402
 
 # The dispatcher run as a command: after `python`, `python3`, `python.exe` or the `py` launcher, quoted or not, and any
 # interpreter options (`-u`, `-X dev`, `-3.14`), its path quoted or not, or in command position (the start, after `;`, `&`, `|`, `(`, a
@@ -52,140 +58,13 @@ HYDROGEN_ALLOWED_MODELS = {
     "gemini 4 hydrogen (high)",
     "gemini 4 hydrogen (xhigh)",
 }
-
-GIT_GLOBAL_VALUE_FLAGS = {
-    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--config-env",
+HYDROGEN_PURE_READ_TOOLS = {
+    "read_file", "view_file", "view_file_outline", "view_code_item",
+    "grep_search", "find_by_name", "list_dir",
+    "search_web", "read_url_content", "list_resources", "read_resource",
+    "send_message", "post_message", "read_board", "swarm_wait",
 }
-GIT_GLOBAL_BOOL_FLAGS = {
-    "--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--bare",
-    "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks",
-}
-GIT_READONLY_SUBCOMMANDS = {
-    "status", "diff", "log", "show", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list",
-    "cat-file", "describe", "shortlog", "for-each-ref", "name-rev", "merge-base", "check-attr",
-    "check-ignore", "verify-commit", "verify-tag", "version", "help",
-}
-GIT_BRANCH_READONLY_FLAGS = {
-    "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l",
-    "--show-current", "--contains", "--no-contains", "--merged", "--no-merged", "--sort", "--format",
-}
-HYDROGEN_TOOL_MUTATE = re.compile(
-    r"todo-graph\.py\b[^\n;|&]*\b(?:stamp|unstamp)\b"
-    r"|todo-graph\.py\b[^\n;|&]*\bplan\b[^\n;|&]*--sync\b"
-    r"|campaign_guard\.py\b[^\n;|&]*\b(?:acquire|end|park)\b"
-    r"|review-dispatch\.py\b[^\n;|&]*(?:--prompt|--record)\b"
-    r"|merge_prs\.py\b(?![^\n;|&]*--dry-run\b)",
-    re.IGNORECASE,
-)
-HYDROGEN_SHELL_MUTATE = re.compile(
-    r"\b(?:Set-Content|Add-Content|Out-File|Clear-Content|Remove-Item|Move-Item|Copy-Item|New-Item|Rename-Item|Tee-Object)\b"
-    r"|(?:^|[\n;|&(]\s*)(?:rm|del|erase|rmdir|rd|mv|cp|ni|ri|mi|cpi|rni|sc|ac|clc|mkdir|md|touch|truncate)\s+\S"
-    r"|(?<![-\w>=&])1?>>?(?![>&])\s*(?!(?:\$null|/dev/null|nul)\b)\S"
-    r"|\.(?:write_text|write_bytes)\s*\("
-    r"|\bopen\s*\([^)]*,\s*['\"][wa+x]"
-    r"|\bos\.(?:remove|unlink|replace|rename|makedirs|mkdir|rmdir)\b"
-    r"|\bshutil\.(?:rmtree|move|copy\w*)\b",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def _git_tokens_violation(tokens: list[str], start: int) -> str | None:
-    """Validate one `git ...` invocation starting at `tokens[start]` against a strict read-only allowlist."""
-    i = start + 1
-    while i < len(tokens):
-        tok = tokens[i]
-        if tok in ("--version", "--help", "-h"):
-            return None
-        if tok in GIT_GLOBAL_VALUE_FLAGS:
-            i += 2
-            continue
-        if any(tok.startswith(flag + "=") for flag in GIT_GLOBAL_VALUE_FLAGS if flag.startswith("--")):
-            i += 1
-            continue
-        if (tok.startswith("-C") or tok.startswith("-c")) and len(tok) > 2:
-            i += 1
-            continue
-        if tok in GIT_GLOBAL_BOOL_FLAGS:
-            i += 1
-            continue
-        if tok.startswith("-"):
-            return f"unsupported or mutating git global option {tok!r} is forbidden"
-        break
-    if i >= len(tokens):
-        return None
-    sub = tokens[i].lower()
-    rest = tokens[i + 1:]
-    if any(r == "-o" or r == "--output" or r.startswith("--output=") or r.startswith("-o") and len(r) > 2
-           for r in rest if isinstance(r, str)):
-        return f"git {sub} with --output/-o file write is forbidden"
-    if sub in GIT_READONLY_SUBCOMMANDS:
-        return None
-    if sub == "branch":
-        if not rest:
-            return None
-        if "--list" in rest or "-l" in rest or "--show-current" in rest:
-            bad = [r for r in rest if r in ("-d", "-D", "-m", "-M", "-c", "-C", "-f", "--force", "--delete", "--move", "--copy")]
-            return None if not bad else "mutating git branch options are forbidden"
-        for r in rest:
-            if r.startswith("--sort=") or r.startswith("--format="):
-                continue
-            if r not in GIT_BRANCH_READONLY_FLAGS:
-                return "creating or mutating git branches is forbidden"
-        return None
-    if sub == "tag":
-        if not rest or ("-l" in rest or "--list" in rest):
-            bad = [r for r in rest if r in ("-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "-f", "--force")]
-            return None if not bad else "creating or deleting git tags is forbidden"
-        return "creating or mutating git tags is forbidden"
-    if sub == "config":
-        has_read = any(r in ("--get", "--get-all", "--get-regexp", "--list", "-l") for r in rest)
-        has_write = any(r in ("--unset", "--unset-all", "--replace-all", "--add", "--rename-section",
-                              "--remove-section", "--edit", "-e") for r in rest)
-        if has_read and not has_write:
-            return None
-        return "mutating git config commands are forbidden"
-    return f"mutating git subcommand {sub!r} is forbidden"
-
-
-def _split_shell_segments(command: str) -> list[str]:
-    """Split a shell/PowerShell command on unquoted separators and subshell boundaries (`;`, `\\n`, `|`, `&`, `(`, `)`, `` ` ``)."""
-    segments: list[str] = []
-    buf: list[str] = []
-    quote: str | None = None
-    for ch in command:
-        if quote is not None:
-            buf.append(ch)
-            if ch == quote:
-                quote = None
-        elif ch in ("'", '"'):
-            quote = ch
-            buf.append(ch)
-        elif ch in ";\n|&()`":
-            segments.append("".join(buf))
-            buf = []
-        else:
-            buf.append(ch)
-    if buf:
-        segments.append("".join(buf))
-    return segments
-
-
-def _hydrogen_git_violation(command: str) -> str | None:
-    if not re.search(r"\bgit(?:\.exe)?\b", command, re.IGNORECASE):
-        return None
-    for segment in _split_shell_segments(command):
-        try:
-            raw_tokens = shlex.split(segment, posix=False)
-        except ValueError:
-            return "unparseable quoted git command is forbidden"
-        tokens = [t.strip("\"'") for t in raw_tokens if t.strip("\"'") not in ("&", "")]
-        for idx, tok in enumerate(tokens):
-            base = os.path.basename(tok.replace("\\", "/")).lower()
-            if base in ("git", "git.exe"):
-                violation = _git_tokens_violation(tokens, idx)
-                if violation:
-                    return violation
-    return None
+HYDROGEN_READONLY_MCP_SERVERS = {"recto-lsp", "recto-lsp_recto-lsp"}
 
 
 def _is_agy(payload: dict) -> bool:
@@ -195,17 +74,6 @@ def _is_agy(payload: dict) -> bool:
 def _is_hydrogen_worker(payload: dict) -> bool:
     model = str(payload.get("modelName") or payload.get("model") or "").strip().lower()
     return "hydrogen" in model
-
-
-def _hydrogen_mutating_command(command: str) -> str | None:
-    git_why = _hydrogen_git_violation(command)
-    if git_why:
-        return git_why
-    if HYDROGEN_TOOL_MUTATE.search(command):
-        return "mutating todo-graph, campaign_guard, review-dispatch or merge_prs commands are forbidden"
-    if HYDROGEN_SHELL_MUTATE.search(command):
-        return "writing, copying, moving or deleting files from the shell is forbidden"
-    return None
 
 
 def _campaign_owns_agy_session(payload: dict) -> bool:
@@ -229,36 +97,49 @@ def _campaign_owns_agy_session(payload: dict) -> bool:
     return isinstance(guard, dict) and str(guard.get("session_id") or "") == session
 
 
+def _hydrogen_tool_verdict(name: str, args: dict) -> str | None:
+    if name in HYDROGEN_PURE_READ_TOOLS:
+        return None
+    if name.startswith(("mcp_recto-lsp_", "mcp_gemini-api_gemini-api-docs_")):
+        return None
+    if name == "call_mcp_tool":
+        server = str(args.get("ServerName") or "")
+        if server in HYDROGEN_READONLY_MCP_SERVERS:
+            return None
+        return (f"hydrogen-readonly: MCP server {server!r} is not permitted in Gemini 4 Hydrogen helpers; "
+                "only read-only recto-lsp queries are allowed")
+    if name == "swarm":
+        if args.get("action") in ("status", "models"):
+            return None
+        return ("hydrogen-readonly: Gemini 4 Hydrogen helpers may only read swarm status, never add, re-model "
+                "or kill workers")
+    if name == "run_command":
+        cmd = args.get("CommandLine")
+        if not isinstance(cmd, str):
+            return "hydrogen-readonly: run_command requires a literal string CommandLine"
+        _, err = hydrogen_exec.parse_hydrogen_command(cmd)
+        if err:
+            return (f"hydrogen-readonly: {err} in Gemini 4 Hydrogen helpers; return findings to the "
+                    "Gemini 4 Carbon writer session, which owns all edits and arbitrary commands")
+        return None
+    return (f"hydrogen-readonly: tool {name!r} is forbidden in Gemini 4 Hydrogen helpers; helpers are strictly "
+            "read-only and return file:line citations to the Gemini 4 Carbon writer session")
+
+
 def agy_verdict(payload: dict) -> str | None:
     """Why an Antigravity PreToolUse call is refused, or None to allow it."""
     tool_call = payload.get("toolCall")
     if not isinstance(tool_call, dict):
         return None
-    name = tool_call.get("name")
+    name = str(tool_call.get("name") or "")
     raw_args = tool_call.get("args")
     args = raw_args if isinstance(raw_args, dict) else {}
 
-    # 1. Enforce read-only boundaries inside any Gemini 4 Hydrogen worker turn.
+    # 1. Enforce strict positive allowlist inside any Gemini 4 Hydrogen worker turn.
     if _is_hydrogen_worker(payload):
-        if name in ("write_file", "edit_file"):
-            return ("hydrogen-readonly: Gemini 4 Hydrogen helpers are strictly read-only; return findings with "
-                    "file:line citations to the Gemini 4 Carbon writer session, which owns all edits")
-        if name == "ask_question":
-            return ("hydrogen-readonly: Gemini 4 Hydrogen helpers never ask the operator questions; report back to "
-                    "the Gemini 4 Carbon coordinator")
-        if name == "invoke_subagent":
-            return ("hydrogen-readonly: Gemini 4 Hydrogen helpers do not spawn subagents; return findings directly "
-                    "to the Gemini 4 Carbon coordinator")
-        if name == "swarm" and args.get("action") not in ("status", "models"):
-            return ("hydrogen-readonly: Gemini 4 Hydrogen helpers may only read swarm status, never add, re-model "
-                    "or kill workers")
-        if name == "run_command":
-            cmd = args.get("CommandLine")
-            if isinstance(cmd, str):
-                why_mut = _hydrogen_mutating_command(cmd)
-                if why_mut:
-                    return (f"hydrogen-readonly: {why_mut} in Gemini 4 Hydrogen helpers; return conclusions to the "
-                            "Gemini 4 Carbon writer session")
+        why_h = _hydrogen_tool_verdict(name, args)
+        if why_h:
+            return why_h
 
     # 2. Enforce high-effort + inherit-workspace when spawning or switching a Gemini 4 Hydrogen worker.
     if name == "swarm" and args.get("action") in ("add", "model"):
@@ -301,8 +182,7 @@ def agy_verdict(payload: dict) -> str | None:
 
 
 def verdict(payload: dict) -> str | None:
-    """Why this tool call is refused, or None to let it run. This reads shell text, so it is an early warning for the
-    launch forms a session really uses, not a proof that no spelling gets past it."""
+    """Why this tool call is refused, or None to let it run."""
     if _is_agy(payload):
         return agy_verdict(payload)
     tool = str(payload.get("tool_name") or "")
@@ -325,6 +205,28 @@ def verdict(payload: dict) -> str | None:
     return None
 
 
+def agy_response(payload: dict) -> dict:
+    """Build the full Antigravity PreToolUse JSON response, rewriting allowed Hydrogen commands to hydrogen_exec.py."""
+    why = verdict(payload)
+    if why:
+        return {"decision": "deny", "reason": why}
+    if _is_hydrogen_worker(payload):
+        tool_call = payload.get("toolCall")
+        if isinstance(tool_call, dict) and tool_call.get("name") == "run_command":
+            raw_args = tool_call.get("args")
+            args = raw_args if isinstance(raw_args, dict) else {}
+            cmd = args.get("CommandLine")
+            if isinstance(cmd, str):
+                tokens, err = hydrogen_exec.parse_hydrogen_command(cmd)
+                if err or tokens is None:
+                    return {"decision": "deny", "reason": f"hydrogen-readonly: {err or 'invalid command'}"}
+                return {
+                    "decision": "allow",
+                    "overwrite": {"CommandLine": hydrogen_exec.build_overwrite_command(tokens)},
+                }
+    return {"decision": "allow"}
+
+
 def main() -> int:
     raw = sys.stdin.read()
     try:
@@ -333,13 +235,20 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
+    if _is_agy(payload):
+        try:
+            resp = agy_response(payload)
+        except Exception as exc:
+            if _is_hydrogen_worker(payload):
+                resp = {"decision": "deny", "reason": f"hydrogen-readonly: internal guard error ({exc})"}
+            else:
+                resp = {"decision": "allow"}
+        print(json.dumps(resp))
+        return 0
     try:
         why = verdict(payload)
     except Exception:
         why = None
-    if _is_agy(payload):
-        print(json.dumps({"decision": "deny", "reason": why} if why else {"decision": "allow"}))
-        return 0
     if why:
         print(why, file=sys.stderr)
         return 2

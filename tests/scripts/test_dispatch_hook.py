@@ -205,11 +205,19 @@ class DispatchHook(unittest.TestCase):
             self.assertIn("hydrogen-readonly", body["reason"])
 
     def test_hydrogen_worker_is_strictly_read_only(self):
+        repo = HOOK.parents[1]
+        hooks_cfg = json.loads((repo / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(hooks_cfg["recto-campaign"]["PreToolUse"][0]["matcher"], "*")
+
         for denied_tool, args in (
             ("write_file", {"Path": "D:/Recto/x.txt", "Content": "x"}),
             ("edit_file", {"Path": "D:/Recto/x.txt", "Target": "a", "Replacement": "b"}),
             ("ask_question", {"questions": []}),
             ("invoke_subagent", {"TypeName": "self", "Role": "r", "Prompt": "p"}),
+            ("define_subagent", {"Name": "x", "Description": "d", "SystemPrompt": "s"}),
+            ("manage_task", {"Action": "kill", "TaskId": "t"}),
+            ("schedule", {"Prompt": "p", "DurationSeconds": 10}),
+            ("call_mcp_tool", {"ServerName": "data-agent-kit-plugin_dak-notebook", "ToolName": "insert_cell", "Arguments": {}}),
             ("swarm", {"action": "add", "name": "x", "brief": "b"}),
         ):
             with self.subTest(tool=denied_tool):
@@ -220,13 +228,23 @@ class DispatchHook(unittest.TestCase):
 
         status_ok = run(agy_call("swarm", {"action": "status"}, model_name="gemini-4-hydrogen-high"))
         self.assertEqual(json.loads(status_ok.stdout), {"decision": "allow"})
+        lsp_ok = run(agy_call("call_mcp_tool",
+                              {"ServerName": "recto-lsp", "ToolName": "lsp_symbols", "Arguments": {"file_or_query": "main"}},
+                              model_name="gemini-4-hydrogen-high"))
+        self.assertEqual(json.loads(lsp_ok.stdout), {"decision": "allow"})
 
         for bad_cmd in (
+            '[System.IO.File]::WriteAllText("AGENTS.md", "replacement")',
+            '[IO.File]::Delete("AGENTS.md")',
+            'pwsh -NoProfile -Command "Set-Content AGENTS.md x"',
+            'cmd /c del AGENTS.md',
             "git commit -m 'bad'",
             "git checkout -b feat",
             "git reset --hard",
             "git -C . add src/pdf/object.h",
             "git -c user.name=x commit -m 'bypass'",
+            "git -c diff.external=evil diff",
+            "git -C ../outside status",
             "git --git-dir=.git --work-tree=. reset --hard",
             "git -C. checkout -- src/pdf/object.h",
             "git branch new-feature",
@@ -240,12 +258,15 @@ class DispatchHook(unittest.TestCase):
             "python scripts/todo-graph.py stamp 'D00 T01 s1' --sha abc",
             "python scripts/todo-graph.py plan --sync",
             "python -c \"from pathlib import Path; Path('a').write_text('b')\"",
+            r".\build.cmd -Quick",
+            "build/bin/x64/Debug/recto-tests/recto-tests.exe --gtest_output=xml:AGENTS.md",
+            "python scripts/mutate-check.py --file a.py --old x --new y -- pwsh -c evil",
         ):
             with self.subTest(bad_cmd=bad_cmd):
                 res = run(agy_call("run_command", {"CommandLine": bad_cmd, "WaitMsBeforeAsync": 5000},
                                    model_name="gemini-4-hydrogen-high"))
                 body = json.loads(res.stdout)
-                self.assertEqual(body["decision"], "deny")
+                self.assertEqual(body["decision"], "deny", bad_cmd)
                 self.assertIn("hydrogen-readonly", body["reason"])
 
         for ok_cmd in (
@@ -257,13 +278,68 @@ class DispatchHook(unittest.TestCase):
             "git log -n 5 --oneline",
             "git diff HEAD -- scripts/",
             "python scripts/todo-graph.py validate",
+            "python scripts/run-tests.py --quick",
             "python -m unittest tests.scripts.test_dispatch_hook 2>&1",
-            r".\build.cmd -Quick -TestFilter Pdf*",
+            "build/bin/x64/Debug/recto-tests/recto-tests.exe --gtest_filter=PdfObject.*",
+            "python scripts/mutate-check.py --file scripts/ci_status.py --old a --new b -- python -m unittest tests.scripts.test_ci_status",
         ):
             with self.subTest(ok_cmd=ok_cmd):
                 res = run(agy_call("run_command", {"CommandLine": ok_cmd, "WaitMsBeforeAsync": 5000},
                                    model_name="gemini-4-hydrogen-high"))
-                self.assertEqual(json.loads(res.stdout), {"decision": "allow"})
+                body = json.loads(res.stdout)
+                self.assertEqual(body["decision"], "allow", ok_cmd)
+                self.assertIn("overwrite", body)
+                rewritten = body["overwrite"]["CommandLine"]
+                self.assertIn("hydrogen_exec.py", rewritten)
+                self.assertIn("--payload ", rewritten)
+
+    def test_hydrogen_exec_isolates_checkout_and_rejects_forged_payloads_at_execution_time(self):
+        import importlib.util
+        import tempfile
+
+        spec = importlib.util.spec_from_file_location("hydrogen_exec", HOOK.parent / "hydrogen_exec.py")
+        assert spec is not None and spec.loader is not None
+        hexec = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hexec)
+
+        # Forged payload with a PowerShell expression or python -c is rejected at execution time (exit 2).
+        forged_hex = json.dumps(['[System.IO.File]::WriteAllText("AGENTS.md", "x")']).encode("utf-8").hex()
+        forged = subprocess.run(
+            [sys.executable, str(HOOK.parent / "hydrogen_exec.py"), "--payload", forged_hex],
+            capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(forged.returncode, 2)
+        self.assertIn("hydrogen-readonly", forged.stderr)
+
+        # Allowed unittest runs execute inside a staged temp directory so writes inside the test never touch `repo`.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / "AGENTS.md").write_text("canonical-agents-rules\n", encoding="utf-8")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "test_probe.py").write_text(
+                "import pathlib, unittest\n"
+                "class Probe(unittest.TestCase):\n"
+                "    def test_attempt_write(self):\n"
+                "        root = pathlib.Path(__file__).resolve().parents[1]\n"
+                "        (root / 'AGENTS.md').write_text('clobbered', encoding='utf-8')\n"
+                "        (root / 'NEW_FILE.txt').write_text('created', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            for git_args in (
+                ["init", "-q"],
+                ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"],
+                ["config", "commit.gpgsign", "false"],
+                ["add", "-A"],
+                ["commit", "-qm", "init"],
+            ):
+                subprocess.run(["git", "-C", str(repo), *git_args], check=True, capture_output=True)
+
+            rc = hexec.execute_hydrogen_argv(["python", "-m", "unittest", "tests.test_probe"], root=repo)
+            self.assertEqual(rc, 0)
+            self.assertEqual((repo / "AGENTS.md").read_text(encoding="utf-8"), "canonical-agents-rules\n")
+            self.assertFalse((repo / "NEW_FILE.txt").exists())
 
     def test_mutate_check_runs_in_temp_copy_without_touching_live_tree(self):
         import tempfile
