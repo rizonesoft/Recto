@@ -281,18 +281,23 @@ class CompileCommandsGenerator(unittest.TestCase):
             )
             self.assertEqual([a for a in by_file[(proj_c / "c.cpp").resolve()]["arguments"] if a.startswith("/FI")], [])
 
-        if os.name == "nt":
-            clangd = CLANGD_LSP.find_clangd()
-            if clangd:
-                with tempfile.TemporaryDirectory() as tmp:
-                    db_dir = Path(tmp).resolve()
-                    GEN.write_database(db_dir / "compile_commands.json", ROOT)
-                    check = subprocess.run(
-                        [clangd, f"--compile-commands-dir={db_dir}", f"--check={ROOT / 'src' / 'core' / 'core.cpp'}"],
-                        capture_output=True, text=True, timeout=60,
-                    )
-                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-                    self.assertIn("All checks completed, 0 errors", check.stdout + check.stderr)
+    def test_real_clangd_check_passes_on_consumer_unit_with_forced_pch(self):
+        if os.name != "nt":
+            self.skipTest("Windows MSVC/SDK headers required for real clangd --check")
+        clangd = CLANGD_LSP.find_clangd()
+        if not clangd:
+            self.skipTest("clangd not installed on this host")
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = Path(tmp).resolve()
+            GEN.write_database(db_dir / "compile_commands.json", ROOT)
+            check = subprocess.run(
+                [clangd, f"--compile-commands-dir={db_dir}", f"--check={ROOT / 'src' / 'core' / 'core.cpp'}"],
+                capture_output=True, text=True, timeout=60,
+            )
+            escaped_pch = str((ROOT / "src" / "core" / "pch.h").resolve()).replace("\\", "\\\\")
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            self.assertIn(f"/FI{escaped_pch}", check.stdout + check.stderr)
+            self.assertIn("All checks completed, 0 errors", check.stdout + check.stderr)
 
 
 class BuiltinStdlibPythonLsp(unittest.TestCase):
