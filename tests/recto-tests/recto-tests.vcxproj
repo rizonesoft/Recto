@@ -42,7 +42,7 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>..\..\src\pdf;..\..\src\core;..\..\src\services;..\..\src\ui\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PreprocessorDefinitions>GTEST_LINKED_AS_SHARED_LIBRARY=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -55,6 +55,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="pch.h" />
     <ClInclude Include="cancel_test_support.h" />
     <ClInclude Include="test_support.h" />
     <ClInclude Include="ui_render_harness.h" />
@@ -64,6 +65,7 @@
     <Manifest Include="recto-tests.manifest" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>
     <ClCompile Include="corpus_tests.cpp" />
     <ClCompile Include="pdf_crypto_tests.cpp" />
     <ClCompile Include="pdf_display_list_tests.cpp" />

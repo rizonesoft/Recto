@@ -682,5 +682,81 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     self.assertEqual(calls, [], f"MSBuild should not start on {label}: {out}")
 
 
+@unittest.skipUnless(MSBUILD, "needs MSBuild (Windows with Visual Studio)")
+class PrecompiledHeadersConfiguration(unittest.TestCase):
+    """Every Recto.sln project builds through its own system-only pch.h/pch.cpp with /Yc on pch.cpp and /Yu + /FIpch.h
+    on consumer units, shared WIN32_LEAN_AND_MEAN/NOMINMAX definitions, and zero project or TU-configured headers."""
+
+    PROJECTS = (
+        ("recto-pdf", ROOT / "src" / "pdf" / "recto-pdf.vcxproj"),
+        ("recto-core", ROOT / "src" / "core" / "recto-core.vcxproj"),
+        ("recto-services", ROOT / "src" / "services" / "recto-services.vcxproj"),
+        ("recto-ui", ROOT / "src" / "ui" / "recto-ui.vcxproj"),
+        ("Recto", ROOT / "src" / "app" / "Recto.vcxproj"),
+        ("recto-cli", ROOT / "src" / "cli" / "recto-cli.vcxproj"),
+        ("recto-tests", ROOT / "tests" / "recto-tests" / "recto-tests.vcxproj"),
+        ("recto-fuzz", ROOT / "fuzz" / "recto-fuzz.vcxproj"),
+    )
+
+    def test_every_project_pch_header_contains_only_system_and_third_party_headers(self):
+        forbidden_angles = ("recto/", "traceloggingprovider.h", "xmmintrin.h", "sanitizer/")
+        for proj_name, vcxproj in self.PROJECTS:
+            pch_h = vcxproj.parent / "pch.h"
+            pch_cpp = vcxproj.parent / "pch.cpp"
+            with self.subTest(project=proj_name):
+                self.assertTrue(pch_h.is_file(), f"missing {pch_h}")
+                self.assertTrue(pch_cpp.is_file(), f"missing {pch_cpp}")
+                text = pch_h.read_text(encoding="utf-8")
+                quoted = re.findall(r'^\s*#\s*include\s*"([^"]+)"', text, re.M)
+                self.assertEqual(quoted, [], f"{pch_h} must not include quoted project headers: {quoted}")
+                angles = re.findall(r"^\s*#\s*include\s*<([^>]+)>", text, re.M)
+                self.assertTrue(angles, f"{pch_h} includes no system or standard headers")
+                for inc in angles:
+                    low = inc.strip().replace("\\", "/").lower()
+                    for bad in forbidden_angles:
+                        self.assertNotIn(bad, low, f"{pch_h} includes forbidden or TU-configured header <{inc}>")
+
+    def test_msbuild_evaluates_create_on_pch_cpp_and_forced_use_on_consumers(self):
+        for proj_name, vcxproj in self.PROJECTS:
+            for cfg, plat in (("Debug", "x64"), ("Release", "x64"), ("Debug", "ARM64")):
+                with self.subTest(project=proj_name, configuration=cfg, platform=plat):
+                    run = subprocess.run(
+                        [MSBUILD, str(vcxproj), f"-p:Configuration={cfg}", f"-p:Platform={plat}",
+                         "-getItem:ClCompile", "-nologo"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                    )
+                    self.assertEqual(run.returncode, 0, run.stdout[-500:] + run.stderr[-500:])
+                    items = json.loads(run.stdout)["Items"].get("ClCompile", [])
+                    creators = [it for it in items if Path(it["Identity"]).name.lower() == "pch.cpp"]
+                    consumers = [it for it in items if Path(it["Identity"]).name.lower() != "pch.cpp"]
+                    self.assertEqual(len(creators), 1, f"{proj_name} must have exactly one pch.cpp item")
+                    self.assertTrue(consumers, f"{proj_name} has no consumer ClCompile items")
+
+                    creator = creators[0]
+                    self.assertEqual(creator.get("PrecompiledHeader"), "Create")
+                    self.assertEqual(creator.get("PrecompiledHeaderFile"), "pch.h")
+                    self.assertTrue(creator.get("PrecompiledHeaderOutputFile", "").lower().endswith("\\pch.pch"))
+                    creator_forced = [s.strip() for s in creator.get("ForcedIncludeFiles", "").split(";") if s.strip()]
+                    self.assertEqual(creator_forced, [], f"{proj_name} pch.cpp must not force-include pch.h")
+
+                    proj_dir_norm = os.path.normcase(os.path.normpath(str(vcxproj.parent)))
+                    for unit in consumers:
+                        ident = unit.get("Identity")
+                        self.assertEqual(unit.get("PrecompiledHeader"), "Use", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("PrecompiledHeaderFile"), "pch.h", f"{proj_name}:{ident}")
+                        self.assertTrue(unit.get("PrecompiledHeaderOutputFile", "").lower().endswith("\\pch.pch"),
+                                        f"{proj_name}:{ident}")
+                        forced = [s.strip() for s in unit.get("ForcedIncludeFiles", "").split(";") if s.strip()]
+                        self.assertEqual(forced[0], "pch.h", f"{proj_name}:{ident} ForcedIncludeFiles={forced}")
+                        inc_dirs = [s.strip() for s in unit.get("AdditionalIncludeDirectories", "").split(";") if s.strip()]
+                        self.assertEqual(os.path.normcase(os.path.normpath(inc_dirs[0])), proj_dir_norm,
+                                         f"{proj_name}:{ident} must search own project dir first: {inc_dirs}")
+                        defs = {s.strip() for s in unit.get("PreprocessorDefinitions", "").split(";") if s.strip()}
+                        self.assertIn("WIN32_LEAN_AND_MEAN", defs, f"{proj_name}:{ident}")
+                        self.assertIn("NOMINMAX", defs, f"{proj_name}:{ident}")
+                        if proj_name == "recto-tests":
+                            self.assertIn("GTEST_LINKED_AS_SHARED_LIBRARY=1", defs, f"{proj_name}:{ident}")
+
+
 if __name__ == "__main__":
     unittest.main()

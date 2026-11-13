@@ -34,10 +34,10 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>
     <ClCompile Include="color.cpp" />
     <ClCompile Include="crypto.cpp" />
     <ClCompile Include="display_list.cpp" />
@@ -62,6 +62,7 @@
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="pdf.cpp" />
     <ClCompile Include="xref.cpp" />
+    <ClInclude Include="pch.h" />
     <ClInclude Include="color.h" />
     <ClInclude Include="crypto.h" />
     <ClInclude Include="display_list.h" />

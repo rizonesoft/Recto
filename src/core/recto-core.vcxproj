@@ -34,16 +34,17 @@
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>..\pdf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>
     <ClCompile Include="atomic_write.cpp" />
     <ClCompile Include="core.cpp" />
     <ClCompile Include="document_actor.cpp" />
     <ClCompile Include="render_pool.cpp" />
     <ClCompile Include="runtime.cpp" />
     <ClCompile Include="tile_scheduler.cpp" />
+    <ClInclude Include="pch.h" />
     <ClInclude Include="atomic_write.h" />
     <ClInclude Include="cancel_token.h" />
     <ClInclude Include="document_actor.h" />

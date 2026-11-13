@@ -187,6 +187,113 @@ class CompileCommandsGenerator(unittest.TestCase):
             ok, msg = GEN.check_database(db_b, checkout_b)
             self.assertTrue(ok, msg)
 
+    def test_pch_forced_include_covers_consumers_omits_pch_cpp_and_stays_project_local(self):
+        entries = GEN.build_database(ROOT)
+        self.assertGreaterEqual(len(entries), 74)
+        pch_creators = [e for e in entries if Path(e["file"]).name.lower() == "pch.cpp"]
+        consumers = [e for e in entries if Path(e["file"]).name.lower() != "pch.cpp"]
+        self.assertEqual(len(pch_creators), 8)
+        for creator in pch_creators:
+            fi_args = [a for a in creator["arguments"] if a.startswith(("/FI", "-FI", "-include"))]
+            self.assertEqual(fi_args, [], f"pch.cpp must not carry /FI: {creator}")
+            self.assertIn("-DWIN32_LEAN_AND_MEAN", creator["arguments"])
+            self.assertIn("-DNOMINMAX", creator["arguments"])
+        for unit in consumers:
+            expected_pch = (Path(unit["directory"]) / "pch.h").resolve()
+            self.assertTrue(expected_pch.is_file(), f"missing {expected_pch}")
+            fi_args = [a for a in unit["arguments"] if a.startswith(("/FI", "-FI"))]
+            self.assertEqual(fi_args, [f"/FI{expected_pch}"], f"wrong /FI for {unit['file']}: {fi_args}")
+            self.assertIn("-DWIN32_LEAN_AND_MEAN", unit["arguments"])
+            self.assertIn("-DNOMINMAX", unit["arguments"])
+            if Path(unit["directory"]).name == "recto-tests":
+                self.assertIn("-DGTEST_LINKED_AS_SHARED_LIBRARY=1", unit["arguments"])
+
+        # Synthetic multi-project check: proj_b lists ..\proj_a in AdditionalIncludeDirectories and has a consumer in
+        # a nested subfolder; it must still force-include proj_b\pch.h (never proj_a\pch.h), omit /FI on pch.cpp, and
+        # leave a project without pch.h untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            proj_a = ws / "src" / "proj_a"
+            proj_b = ws / "src" / "proj_b"
+            proj_b_sub = proj_b / "sub"
+            proj_c = ws / "src" / "proj_c"
+            for d in (proj_a, proj_b_sub, proj_c):
+                d.mkdir(parents=True)
+            (ws / "Directory.Build.props").write_text(
+                "<Project><PropertyGroup><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>"
+                "</PropertyGroup></Project>\n",
+                encoding="utf-8",
+            )
+            (ws / "Directory.Build.targets").write_text(
+                "<Project><ItemDefinitionGroup><ClCompile>"
+                "<PreprocessorDefinitions>WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>"
+                "</ClCompile></ItemDefinitionGroup></Project>\n",
+                encoding="utf-8",
+            )
+            (proj_a / "pch.h").write_text("#pragma once\n", encoding="utf-8")
+            (proj_a / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+            (proj_a / "a.cpp").write_text("int a() { return 1; }\n", encoding="utf-8")
+            (proj_a / "proj_a.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup>\n'
+                '    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>\n'
+                '    <ClCompile Include="a.cpp" />\n'
+                '  </ItemGroup>\n'
+                '</Project>\n',
+                encoding="utf-8",
+            )
+            (proj_b / "pch.h").write_text("#pragma once\n", encoding="utf-8")
+            (proj_b / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+            (proj_b_sub / "b.cpp").write_text("int b() { return 2; }\n", encoding="utf-8")
+            (proj_b / "proj_b.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemDefinitionGroup><ClCompile>'
+                '<AdditionalIncludeDirectories>..\\proj_a;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>'
+                '</ClCompile></ItemDefinitionGroup>\n'
+                '  <ItemGroup>\n'
+                '    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>\n'
+                '    <ClCompile Include="sub\\b.cpp" />\n'
+                '  </ItemGroup>\n'
+                '</Project>\n',
+                encoding="utf-8",
+            )
+            (proj_c / "c.cpp").write_text("int c() { return 3; }\n", encoding="utf-8")
+            (proj_c / "proj_c.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup><ClCompile Include="c.cpp" /></ItemGroup>\n'
+                '</Project>\n',
+                encoding="utf-8",
+            )
+            (ws / "Recto.sln").write_text(
+                'Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "proj_a", "src\\proj_a\\proj_a.vcxproj", "{11111111-1111-1111-1111-111111111111}"\nEndProject\n'
+                'Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "proj_b", "src\\proj_b\\proj_b.vcxproj", "{22222222-2222-2222-2222-222222222222}"\nEndProject\n'
+                'Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "proj_c", "src\\proj_c\\proj_c.vcxproj", "{33333333-3333-3333-3333-333333333333}"\nEndProject\n',
+                encoding="utf-8",
+            )
+            by_file = {Path(e["file"]).resolve(): e for e in GEN.build_database(ws)}
+            self.assertEqual([a for a in by_file[(proj_b / "pch.cpp").resolve()]["arguments"] if a.startswith("/FI")], [])
+            self.assertEqual(
+                [a for a in by_file[(proj_b_sub / "b.cpp").resolve()]["arguments"] if a.startswith("/FI")],
+                [f"/FI{(proj_b / 'pch.h').resolve()}"],
+            )
+            self.assertEqual([a for a in by_file[(proj_c / "c.cpp").resolve()]["arguments"] if a.startswith("/FI")], [])
+
+        if os.name == "nt":
+            clangd = CLANGD_LSP.find_clangd()
+            if clangd:
+                with tempfile.TemporaryDirectory() as tmp:
+                    db_dir = Path(tmp).resolve()
+                    GEN.write_database(db_dir / "compile_commands.json", ROOT)
+                    check = subprocess.run(
+                        [clangd, f"--compile-commands-dir={db_dir}", f"--check={ROOT / 'src' / 'core' / 'core.cpp'}"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                    self.assertIn("All checks completed, 0 errors", check.stdout + check.stderr)
+
 
 class BuiltinStdlibPythonLsp(unittest.TestCase):
     """scripts/python-lsp.py --builtin runs with zero external dependencies when pyright-langserver is absent."""

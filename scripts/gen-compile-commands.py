@@ -188,6 +188,25 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: 
     defines: list[str] = ["UNICODE", "_UNICODE", "_DEBUG", "_WIN64", "WIN32"]
     uses_vcpkg = False
 
+    targets_file = root / "Directory.Build.targets"
+    if targets_file.is_file():
+        try:
+            targets_root = ET.parse(targets_file).getroot()
+            for group in targets_root.findall(".//msb:ItemDefinitionGroup", MSBUILD_NS) + targets_root.findall(".//ItemDefinitionGroup"):
+                cond = group.attrib.get("Condition", "")
+                if "EnableASAN" in cond:
+                    continue
+                if "Release" in cond and "Debug" not in cond:
+                    continue
+                if "ARM64" in cond and "x64" not in cond:
+                    continue
+                for def_el in group.findall(".//msb:ClCompile/msb:PreprocessorDefinitions", MSBUILD_NS) + group.findall(".//ClCompile/PreprocessorDefinitions"):
+                    for d in split_msbuild_list(def_el.text or ""):
+                        if "$(" not in d and d != "NDEBUG" and d not in defines:
+                            defines.append(d)
+        except ET.ParseError:
+            pass
+
     for prop in root_el.findall(".//msb:VcpkgEnableManifest", MSBUILD_NS):
         if (prop.text or "").strip().lower() == "true":
             uses_vcpkg = True
@@ -226,12 +245,19 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: 
             if gen_dir not in inc_dirs:
                 inc_dirs.append(gen_dir)
 
-    sources: list[Path] = []
+    sources: list[tuple[Path, bool]] = []
     seen_sources: set[Path] = set()
+    pch_header = (proj_dir / "pch.h").resolve()
+    has_pch = pch_header.is_file()
     for item in root_el.findall(".//msb:ClCompile", MSBUILD_NS):
         inc = item.attrib.get("Include")
         if not inc:
             continue
+        pch_el = item.find("msb:PrecompiledHeader", MSBUILD_NS)
+        forced_el = item.find("msb:ForcedIncludeFiles", MSBUILD_NS)
+        pch_mode = (pch_el.text or "").strip().lower() if pch_el is not None else ""
+        forced_explicit_empty = forced_el is not None and not split_msbuild_list(forced_el.text or "")
+        is_pch_creator = pch_mode in ("create", "notusing") or forced_explicit_empty
         pattern = str(proj_dir / inc.replace("\\", "/"))
         matched = sorted(Path(p).resolve() for p in glob.glob(pattern)) if any(c in inc for c in "*?") else [
             (proj_dir / inc.replace("\\", "/")).resolve()
@@ -239,7 +265,8 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: 
         for src in matched:
             if src.is_file() and src not in seen_sources:
                 seen_sources.add(src)
-                sources.append(src)
+                use_forced_pch = has_pch and not is_pch_creator and src.name.lower() != "pch.cpp"
+                sources.append((src, use_forced_pch))
 
     base_args = [
         "clang-cl.exe",
@@ -261,11 +288,14 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: 
         base_args.extend(["-imsvc", sys_inc])
 
     entries = []
-    for src in sources:
+    for src, use_forced_pch in sources:
+        unit_args = list(base_args)
+        if use_forced_pch:
+            unit_args.append(f"/FI{pch_header}")
         entries.append({
             "directory": str(proj_dir),
             "file": str(src),
-            "arguments": [*base_args, "/Zs", "-c", str(src)],
+            "arguments": [*unit_args, "/Zs", "-c", str(src)],
         })
     return entries
 

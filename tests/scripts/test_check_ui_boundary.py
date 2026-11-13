@@ -501,6 +501,27 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(boundary.EvidenceError, "without GenerateSourceDependencies"):
             boundary.include_crossings("recto-core", [silent], self.forbidden)
 
+    def test_a_crossing_inside_a_modules_forced_pch_is_caught(self):
+        # D00 T04 §4: src/ui/pch.h includes a src/pdf header, pch.cpp creates ui's PCH (/Ycpch.h), and u.cpp uses it
+        # through /Yupch.h /FIpch.h with no #include in u.cpp itself. The /sourceDependencies reports refuse it.
+        (self.root / "src/pdf").mkdir(parents=True, exist_ok=True)
+        (self.root / "obj/pdf").mkdir(parents=True, exist_ok=True)
+        secret = self.root / "src/pdf/secret.h"
+        secret.write_text("inline int pdf_secret() { return 42; }\n", encoding="utf-8")
+        (self.root / "src/ui/pch.h").write_text('#pragma once\n#include "../pdf/secret.h"\n', encoding="utf-8")
+        (self.root / "src/ui/pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+        pch_out = self.root / "obj/ui/pch.pch"
+        pch_unit = self.compile(self.root / "src/ui/pch.cpp", self.root / "obj/ui",
+                                f"/I{self.root / 'src/ui'}", "/Ycpch.h", f"/Fp{pch_out}")
+        consumer = self.root / "src/ui/consumer.cpp"
+        consumer.write_text("int ui_consumer() { return pdf_secret(); }\n", encoding="utf-8")
+        consumer_unit = self.compile(consumer, self.root / "obj/ui",
+                                     f"/I{self.root / 'src/ui'}", "/Yupch.h", "/FIpch.h", f"/Fp{pch_out}")
+        found = boundary.include_crossings("recto-ui", [pch_unit, consumer_unit],
+                                           [self.root / "src/pdf", self.root / "obj/pdf"])
+        self.assertTrue(found, "an engine header inside src/ui/pch.h must fail the boundary check")
+        self.assertTrue(any(str(boundary.normalized(secret)) in line for line in found), found)
+
 
 if __name__ == "__main__":
     unittest.main()
