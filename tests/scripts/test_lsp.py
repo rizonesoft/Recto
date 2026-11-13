@@ -1048,6 +1048,44 @@ class LspMcpBridge(unittest.TestCase):
             finally:
                 srv.shutdown_all()
 
+    def test_pyright_launcher_with_spaces_in_windows_cmd_path_starts_and_serves_lsp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            (ws / "scripts").mkdir(parents=True)
+            good_py = ws / "scripts" / "ok_mod.py"
+            good_py.write_text("def greet() -> int:\n    return 42\n", encoding="utf-8")
+            bad_py = ws / "scripts" / "bad_mod.py"
+            bad_py.write_text("def broken(:\n    pass\n", encoding="utf-8")
+
+            spaced_npm = Path(tmp) / "User Profile With Spaces" / "AppData" / "Roaming" / "npm"
+            spaced_npm.mkdir(parents=True)
+            builtin_lsp = SCRIPTS / "python-lsp.py"
+            if os.name == "nt":
+                shim = spaced_npm / "pyright-langserver.cmd"
+                shim.write_text(
+                    f'@"{sys.executable}" -B "{builtin_lsp}" --builtin %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                shim = spaced_npm / "pyright-langserver"
+                shim.write_text(
+                    f'#!/bin/sh\nexec "{sys.executable}" -B "{builtin_lsp}" --builtin "$@"\n',
+                    encoding="utf-8",
+                )
+                shim.chmod(0o755)
+
+            with unittest.mock.patch.dict(os.environ, {"RECTO_PYRIGHT_LANGSERVER": str(shim)}):
+                client = LSP_MCP.LspClient(
+                    "python",
+                    [sys.executable, "-B", str(builtin_lsp)],
+                    ws,
+                )
+                try:
+                    self.assertEqual(client.diagnostics_for(good_py, wait_seconds=5.0), [])
+                    self.assertEqual(len(client.diagnostics_for(bad_py, wait_seconds=5.0)), 1)
+                finally:
+                    client.stop()
+
     @unittest.skipUnless(CLANGD_LSP.find_clangd(), "clangd not installed on this machine")
     def test_cpp23_clangd_diagnostics_symbols_and_hover(self):
         GEN.write_database(ROOT / "build" / "compile_commands.json", ROOT)

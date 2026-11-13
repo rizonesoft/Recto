@@ -67,8 +67,6 @@ def _resolve_cwd_command(cmd: list[str], cwd: Path) -> list[str]:
     head = cmd[0]
     cand = (cwd / head).resolve() if not Path(head).is_absolute() else Path(head)
     if cand.is_file() and cand.is_relative_to(cwd.resolve()):
-        if os.name == "nt" and cand.suffix.lower() in (".cmd", ".bat"):
-            return ["cmd.exe", "/d", "/s", "/c", str(cand), *cmd[1:]]
         return [str(cand), *cmd[1:]]
     return cmd
 

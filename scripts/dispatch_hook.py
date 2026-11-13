@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse hook for Claude Code and Google Antigravity: enforce background reviews, campaign question-free runs,
-and strictly read-only high-effort Gemini 4 Hydrogen helpers.
+and strictly read-only medium-effort Gemini 4 Hydrogen helpers.
 
 A review (`scripts/review-dispatch.py ... --prompt ...`) takes minutes. Started through the runner's tracked background
 option (`run_in_background: true` in Claude Code, `WaitMsBeforeAsync: 500` with `IsDaemon: false` in Antigravity's
@@ -12,8 +12,8 @@ In Antigravity (`.agents/hooks.json`, `matcher: "*"`) it also enforces two campa
 1. Refuses `ask_question` while `build/claude-campaign-guard.json` is live for the session's `conversationId`, matching
    Claude Code's `--disallowedTools AskUserQuestion` in unattended campaigns while leaving attended sessions free to
    confirm destructive or credential actions.
-2. Enforces Gemini 4 Hydrogen (`gemini-4-hydrogen-high`) read-only helper boundaries at both `PreToolUse` and execution
-   time: spawning a Hydrogen swarm worker requires `high` (or `xhigh`) effort and `workspace: "inherit"`; inside any
+2. Enforces Gemini 4 Hydrogen (`gemini-4-hydrogen-medium`) read-only helper boundaries at both `PreToolUse` and execution
+   time: spawning a Hydrogen swarm worker requires `medium` effort and `workspace: "inherit"`; inside any
    Hydrogen turn only an explicit allowlist of read-only tools and literal read-only commands may run, and every allowed
    `run_command` is rewritten via `overwrite` to `scripts/hydrogen_exec.py --payload <hex>`, which re-validates the
    argv allowlist, runs `shell=False` without PowerShell evaluation, and executes test suites in an isolated temporary
@@ -53,10 +53,8 @@ DETACH = {"Bash": BASH_DETACH, "PowerShell": POWERSHELL_DETACH}
 AGY_MAX_WAIT_MS = 1000
 
 HYDROGEN_ALLOWED_MODELS = {
-    "gemini-4-hydrogen-high",
-    "gemini-4-hydrogen-xhigh",
-    "gemini 4 hydrogen (high)",
-    "gemini 4 hydrogen (xhigh)",
+    "gemini-4-hydrogen-medium",
+    "gemini 4 hydrogen (medium)",
 }
 HYDROGEN_PURE_READ_TOOLS = {
     "read_file", "view_file", "view_file_outline", "view_code_item",
@@ -141,13 +139,13 @@ def agy_verdict(payload: dict) -> str | None:
         if why_h:
             return why_h
 
-    # 2. Enforce high-effort + inherit-workspace when spawning or switching a Gemini 4 Hydrogen worker.
+    # 2. Enforce medium-effort + inherit-workspace when spawning or switching a Gemini 4 Hydrogen worker.
     if name == "swarm" and args.get("action") in ("add", "model"):
         target_model = str(args.get("model") or "").strip().lower()
         if "hydrogen" in target_model:
             if target_model not in HYDROGEN_ALLOWED_MODELS:
-                return ("hydrogen-effort: Gemini 4 Hydrogen helpers must run at high effort "
-                        "(model: 'gemini-4-hydrogen-high') so mechanical evidence retains full accuracy")
+                return ("hydrogen-effort: Gemini 4 Hydrogen helpers must run at medium effort "
+                        "(model: 'gemini-4-hydrogen-medium')")
             ws = args.get("workspace")
             if args.get("action") == "add" and ws not in (None, "", "inherit"):
                 return ("hydrogen-readonly: Gemini 4 Hydrogen helpers are read-only and must use "

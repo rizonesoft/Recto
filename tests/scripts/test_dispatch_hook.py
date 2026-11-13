@@ -187,19 +187,19 @@ class DispatchHook(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["decision"], "deny")
 
-    def test_hydrogen_swarm_spawn_requires_high_effort_and_inherit_workspace(self):
-        for good_model in ("gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh"):
+    def test_hydrogen_swarm_spawn_requires_medium_effort_and_inherit_workspace(self):
+        for good_model in ("gemini-4-hydrogen-medium", "Gemini 4 Hydrogen (Medium)"):
             res = run(agy_call("swarm", {"action": "add", "name": "test-runner", "model": good_model,
                                          "workspace": "inherit", "brief": "run tests"}))
             self.assertEqual(json.loads(res.stdout), {"decision": "allow"}, good_model)
-        for bad_model in ("gemini-4-hydrogen", "gemini-4-hydrogen-low", "gemini-4-hydrogen-medium"):
+        for bad_model in ("gemini-4-hydrogen", "gemini-4-hydrogen-low", "gemini-4-hydrogen-high", "gemini-4-hydrogen-xhigh"):
             res = run(agy_call("swarm", {"action": "add", "name": "test-runner", "model": bad_model,
                                          "workspace": "inherit", "brief": "run tests"}))
             body = json.loads(res.stdout)
             self.assertEqual(body["decision"], "deny", bad_model)
             self.assertIn("hydrogen-effort", body["reason"])
         for bad_ws in ("branch", "share"):
-            res = run(agy_call("swarm", {"action": "add", "name": "test-runner", "model": "gemini-4-hydrogen-high",
+            res = run(agy_call("swarm", {"action": "add", "name": "test-runner", "model": "gemini-4-hydrogen-medium",
                                          "workspace": bad_ws, "brief": "run tests"}))
             body = json.loads(res.stdout)
             self.assertEqual(body["decision"], "deny", bad_ws)
@@ -222,16 +222,16 @@ class DispatchHook(unittest.TestCase):
             ("swarm", {"action": "add", "name": "x", "brief": "b"}),
         ):
             with self.subTest(tool=denied_tool):
-                res = run(agy_call(denied_tool, args, model_name="gemini-4-hydrogen-high"))
+                res = run(agy_call(denied_tool, args, model_name="gemini-4-hydrogen-medium"))
                 body = json.loads(res.stdout)
                 self.assertEqual(body["decision"], "deny")
                 self.assertIn("hydrogen-readonly", body["reason"])
 
-        status_ok = run(agy_call("swarm", {"action": "status"}, model_name="gemini-4-hydrogen-high"))
+        status_ok = run(agy_call("swarm", {"action": "status"}, model_name="gemini-4-hydrogen-medium"))
         self.assertEqual(json.loads(status_ok.stdout), {"decision": "allow"})
         lsp_ok = run(agy_call("call_mcp_tool",
                               {"ServerName": "recto-lsp", "ToolName": "lsp_symbols", "Arguments": {"file_or_query": "main"}},
-                              model_name="gemini-4-hydrogen-high"))
+                              model_name="gemini-4-hydrogen-medium"))
         self.assertEqual(json.loads(lsp_ok.stdout), {"decision": "allow"})
 
         for bad_cmd in (
@@ -273,7 +273,7 @@ class DispatchHook(unittest.TestCase):
         ):
             with self.subTest(bad_cmd=bad_cmd):
                 res = run(agy_call("run_command", {"CommandLine": bad_cmd, "WaitMsBeforeAsync": 5000},
-                                   model_name="gemini-4-hydrogen-high"))
+                                   model_name="gemini-4-hydrogen-medium"))
                 body = json.loads(res.stdout)
                 self.assertEqual(body["decision"], "deny", bad_cmd)
                 self.assertIn("hydrogen-readonly", body["reason"])
@@ -293,7 +293,7 @@ class DispatchHook(unittest.TestCase):
         ):
             with self.subTest(ok_cmd=ok_cmd):
                 res = run(agy_call("run_command", {"CommandLine": ok_cmd, "WaitMsBeforeAsync": 5000},
-                                   model_name="gemini-4-hydrogen-high"))
+                                   model_name="gemini-4-hydrogen-medium"))
                 body = json.loads(res.stdout)
                 self.assertEqual(body["decision"], "allow", ok_cmd)
                 self.assertIn("overwrite", body)
@@ -604,6 +604,197 @@ class DispatchHook(unittest.TestCase):
                         alive = False
                         break
                 self.assertFalse(alive, f"grandchild PID {grandchild_pid} survived timeout")
+
+    def test_hydrogen_exec_cancellation_reaps_grandchild_and_cleans_staged_temp_dir(self):
+        import ctypes
+        import importlib.util
+        import tempfile
+        import time
+        from unittest import mock
+
+        spec = importlib.util.spec_from_file_location("hydrogen_exec", HOOK.parent / "hydrogen_exec.py")
+        assert spec is not None and spec.loader is not None
+        hexec = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hexec)
+
+        def assert_pid_dead(pid: int) -> None:
+            if os.name == "nt":
+                SYNCHRONIZE = 0x00100000
+                handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+                if handle:
+                    try:
+                        wait_rc = ctypes.windll.kernel32.WaitForSingleObject(handle, 3000)
+                        self.assertEqual(wait_rc, 0, f"grandchild PID {pid} survived Hydrogen cancellation")
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            else:
+                deadline = time.monotonic() + 3.0
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                        time.sleep(0.05)
+                    except ProcessLookupError:
+                        return
+                self.fail(f"grandchild PID {pid} survived Hydrogen cancellation")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = base / "repo"
+            repo.mkdir()
+            py_probe = base / "py_probe.json"
+            gtest_probe = base / "gtest_probe.json"
+
+            (repo / ".gitignore").write_text("/build/\n", encoding="utf-8")
+            (repo / "Recto.sln").write_text("Microsoft Visual Studio Solution File\n", encoding="utf-8")
+            (repo / "tests" / "recto-tests").mkdir(parents=True)
+            (repo / "tests" / "__init__.py").write_text("", encoding="utf-8")
+            (repo / "tests" / "test_hang.py").write_text(
+                "import json, os, pathlib, subprocess, sys, time, unittest\n"
+                "class Hang(unittest.TestCase):\n"
+                "    def test_hang(self):\n"
+                "        held = pathlib.Path.cwd() / 'held_open.lock'\n"
+                "        code = (\n"
+                "            'import pathlib, sys, time; '\n"
+                "            'f = open(sys.argv[1], \"wb\"); f.write(b\"lock\"); f.flush(); '\n"
+                "            'pathlib.Path(sys.argv[2]).write_text(\"1\", encoding=\"utf-8\"); time.sleep(30)'\n"
+                "        )\n"
+                "        ready = pathlib.Path.cwd() / 'grandchild.ready'\n"
+                "        child = subprocess.Popen([sys.executable, '-c', code, str(held), str(ready)])\n"
+                "        for _ in range(200):\n"
+                "            if ready.is_file(): break\n"
+                "            time.sleep(0.02)\n"
+                f"        pathlib.Path({str(py_probe)!r}).write_text(\n"
+                "            json.dumps({'pid': child.pid, 'cwd': os.getcwd()}), encoding='utf-8'\n"
+                "        )\n"
+                "        time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            for git_args in (
+                ["init", "-q"],
+                ["config", "user.email", "t@t"],
+                ["config", "user.name", "t"],
+                ["config", "commit.gpgsign", "false"],
+                ["add", "-A"],
+                ["commit", "-qm", "init"],
+            ):
+                subprocess.run(["git", "-C", str(repo), *git_args], check=True, capture_output=True)
+
+            cfg_dir = repo / "build" / "bin" / "x64" / "Debug"
+            app_dir = cfg_dir / "Recto"
+            bin_dir = cfg_dir / "recto-tests"
+            app_dir.mkdir(parents=True)
+            bin_dir.mkdir(parents=True)
+            recto_exe = app_dir / "Recto.exe"
+            gtest_exe = bin_dir / "recto-tests.exe"
+            if os.name == "nt":
+                csc_candidates = [
+                    Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                    / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+                    Path(os.environ.get("SystemRoot", r"C:\Windows"))
+                    / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+                ]
+                csc = next((p for p in csc_candidates if p.is_file()), None)
+                self.assertIsNotNone(csc)
+                app_cs = base / "fake_app.cs"
+                app_cs.write_text(
+                    "using System.IO;\nusing System.Threading;\n"
+                    "class App {\n"
+                    "    static int Main(string[] args) {\n"
+                    "        using (FileStream fs = new FileStream(args[0], FileMode.Create, FileAccess.ReadWrite, FileShare.None)) {\n"
+                    "            File.WriteAllText(args[1], \"1\");\n"
+                    "            Thread.Sleep(30000);\n"
+                    "        }\n"
+                    "        return 0;\n"
+                    "    }\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                gtest_cs = base / "fake_gtest_hang.cs"
+                probe_escaped = str(gtest_probe).replace("\\", "\\\\")
+                gtest_cs.write_text(
+                    "using System.Diagnostics;\nusing System.IO;\nusing System.Reflection;\nusing System.Threading;\n"
+                    "class GTest {\n"
+                    "    static int Main(string[] args) {\n"
+                    "        string binDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);\n"
+                    "        string cfgDir = Directory.GetParent(binDir).FullName;\n"
+                    "        string appExe = Path.Combine(cfgDir, \"Recto\", \"Recto.exe\");\n"
+                    "        string cwd = Directory.GetCurrentDirectory();\n"
+                    "        string lockFile = Path.Combine(cwd, \"app_held.lock\");\n"
+                    "        string readyFile = Path.Combine(cwd, \"app.ready\");\n"
+                    "        Process p = Process.Start(new ProcessStartInfo(appExe, \"\\\"\" + lockFile + \"\\\" \\\"\" + readyFile + \"\\\"\") { UseShellExecute = false });\n"
+                    "        for (int i = 0; i < 200 && !File.Exists(readyFile); i++) Thread.Sleep(20);\n"
+                    "        string json = \"{\\\"pid\\\": \" + p.Id + \", \\\"cwd\\\": \\\"\" + cwd.Replace(\"\\\\\", \"\\\\\\\\\") + \"\\\"}\";\n"
+                    f"        File.WriteAllText(\"{probe_escaped}\", json);\n"
+                    "        Thread.Sleep(30000);\n"
+                    "        return 0;\n"
+                    "    }\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{recto_exe}", str(app_cs)],
+                               check=True, capture_output=True, text=True, timeout=30)
+                subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{gtest_exe}", str(gtest_cs)],
+                               check=True, capture_output=True, text=True, timeout=30)
+            else:
+                recto_exe.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import pathlib, sys, time\n"
+                    "f = open(sys.argv[1], 'wb')\n"
+                    "pathlib.Path(sys.argv[2]).write_text('1', encoding='utf-8')\n"
+                    "time.sleep(30)\n",
+                    encoding="utf-8",
+                )
+                recto_exe.chmod(0o755)
+                gtest_exe.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, os, pathlib, subprocess, time\n"
+                    "app = pathlib.Path(__file__).resolve().parent.parent / 'Recto' / 'Recto.exe'\n"
+                    "cwd = pathlib.Path.cwd()\n"
+                    "ready = cwd / 'app.ready'\n"
+                    "p = subprocess.Popen([str(app), str(cwd / 'app_held.lock'), str(ready)])\n"
+                    "for _ in range(200):\n"
+                    "    if ready.is_file(): break\n"
+                    "    time.sleep(0.02)\n"
+                    f"pathlib.Path({str(gtest_probe)!r}).write_text(\n"
+                    "    json.dumps({'pid': p.pid, 'cwd': os.getcwd()}), encoding='utf-8'\n"
+                    ")\n"
+                    "time.sleep(30)\n",
+                    encoding="utf-8",
+                )
+                gtest_exe.chmod(0o755)
+
+            real_spawn = hexec.proc_group.spawn_managed_process
+
+            for label, probe_path, argv in (
+                ("unittest", py_probe, ["python", "-m", "unittest", "tests.test_hang"]),
+                ("gtest", gtest_probe, ["build/bin/x64/Debug/recto-tests/recto-tests.exe", "--gtest_filter=Hang.*"]),
+            ):
+                with self.subTest(kind=label):
+                    def spawn_and_interrupt(*s_args, _probe=probe_path, **s_kwargs):
+                        mp = real_spawn(*s_args, **s_kwargs)
+                        real_wait = mp.proc.wait
+
+                        def interrupt_once_grandchild_holds_lock(timeout=None):
+                            if timeout is not None:
+                                return real_wait(timeout=timeout)
+                            deadline = time.monotonic() + 10.0
+                            while time.monotonic() < deadline and not _probe.is_file():
+                                time.sleep(0.02)
+                            raise KeyboardInterrupt()
+
+                        mp.proc.wait = interrupt_once_grandchild_holds_lock  # type: ignore[method-assign]
+                        return mp
+
+                    with (
+                        mock.patch.object(hexec.proc_group, "spawn_managed_process", side_effect=spawn_and_interrupt),
+                        self.assertRaises(KeyboardInterrupt),
+                    ):
+                        hexec.execute_hydrogen_argv(argv, root=repo)
+
+                    self.assertTrue(probe_path.is_file(), f"{label} did not launch grandchild before interrupt")
+                    info = json.loads(probe_path.read_text(encoding="utf-8"))
+                    assert_pid_dead(int(info["pid"]))
+                    self.assertFalse(Path(info["cwd"]).exists(), f"{label} leaked staged temp dir {info['cwd']}")
 
 
 if __name__ == "__main__":

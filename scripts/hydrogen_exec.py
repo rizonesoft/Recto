@@ -18,7 +18,8 @@ At execution time this module:
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -27,8 +28,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+import lib.proc_group as proc_group
 
 GIT_SAFE_CONFIG_KEYS = {
     "color.ui", "color.diff", "color.status", "color.branch",
@@ -714,6 +719,47 @@ def stage_isolated_repo(root: Path, dest: Path) -> None:
         )
 
 
+@contextmanager
+def _isolated_temp_dir(prefix: str) -> Iterator[Path]:
+    """Create a temporary directory and retry removal briefly so terminated child file handles can release cleanly."""
+    tmp_path = Path(tempfile.mkdtemp(prefix=prefix))
+    try:
+        yield tmp_path
+    finally:
+        for attempt in range(10):
+            try:
+                shutil.rmtree(tmp_path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                if attempt == 9:
+                    shutil.rmtree(tmp_path, ignore_errors=True)
+                    break
+                time.sleep(0.05)
+
+
+def _run_managed_passthrough(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> int:
+    """Execute `cmd` inside a lifetime-bound job/tree so cancellation or early exit reaps every grandchild."""
+    with proc_group.termination_signal_guard():
+        managed = proc_group.spawn_managed_process(cmd, cwd=cwd, env=env, capture_output=False)
+        try:
+            return managed.proc.wait()
+        except BaseException:
+            managed.terminate_and_close()
+            try:
+                managed.proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+            raise
+        finally:
+            managed.terminate_and_close()
+            try:
+                managed.proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+
+
 def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
     """Execute validated `tokens` with `shell=False` and temporary-directory checkout isolation."""
     err = validate_hydrogen_argv(tokens)
@@ -728,24 +774,20 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
     base = os.path.basename(prog_norm).lower()
 
     if base in ("git", "git.exe"):
-        with tempfile.TemporaryDirectory(prefix="recto-hydrogen-git-") as tmp:
-            tmp_path = Path(tmp)
+        with _isolated_temp_dir("recto-hydrogen-git-") as tmp_path:
             stage_isolated_repo(root, tmp_path)
             cmd = [
                 "git", "--no-pager", "--no-optional-locks",
                 "-c", "core.fsmonitor=false", "-c", "diff.external=", "-c", "core.pager=cat",
                 *tokens[1:],
             ]
-            return subprocess.run(
-                cmd, cwd=tmp_path, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()
-            ).returncode
+            return _run_managed_passthrough(cmd, cwd=tmp_path, env=env)
 
     if base in ("node", "node.exe"):
-        with tempfile.TemporaryDirectory(prefix="recto-hydrogen-node-") as tmp:
-            tmp_path = Path(tmp)
+        with _isolated_temp_dir("recto-hydrogen-node-") as tmp_path:
             stage_isolated_repo(root, tmp_path)
             cmd = ["node", str(tmp_path / "scripts" / "verify-agent-tiers.mjs")]
-            return subprocess.run(cmd, cwd=tmp_path, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()).returncode
+            return _run_managed_passthrough(cmd, cwd=tmp_path, env=env)
 
     rel_bin = prog_norm.lstrip("./")
     if rel_bin in ALLOWED_GTEST_BINS:
@@ -753,18 +795,11 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
         if not exe.is_relative_to(root) or not exe.is_file():
             print(f"hydrogen-readonly: missing test executable {rel_bin}", file=sys.stderr)
             return 2
-        with tempfile.TemporaryDirectory(prefix="recto-hydrogen-gtest-") as tmp:
-            tmp_path = Path(tmp)
+        with _isolated_temp_dir("recto-hydrogen-gtest-") as tmp_path:
             stage_isolated_repo(root, tmp_path)
             staged_exe = tmp_path / rel_bin
             _stage_gtest_binary_tree(root, exe, staged_exe)
-            return subprocess.run(
-                [str(staged_exe), *tokens[1:]],
-                cwd=tmp_path,
-                stdin=subprocess.DEVNULL,
-                env=env,
-                creationflags=windowless(),
-            ).returncode
+            return _run_managed_passthrough([str(staged_exe), *tokens[1:]], cwd=tmp_path, env=env)
 
     # Read-only `--check` gates inspect gitignored `build/compile_commands.json` whose paths match `root`.
     i = 1
@@ -780,17 +815,16 @@ def execute_hydrogen_argv(tokens: list[str], root: Path = ROOT) -> int:
             print(f"hydrogen-readonly: missing script {target}", file=sys.stderr)
             return 2
         cmd = [sys.executable, "-B", *py_flags, str(script_file), "--check"]
-        return subprocess.run(cmd, cwd=root, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()).returncode
+        return _run_managed_passthrough(cmd, cwd=root, env=env)
 
     # Every other Python command executes inside an isolated staged copy outside `root`.
-    with tempfile.TemporaryDirectory(prefix="recto-hydrogen-py-") as tmp:
-        tmp_path = Path(tmp)
+    with _isolated_temp_dir("recto-hydrogen-py-") as tmp_path:
         stage_isolated_repo(root, tmp_path)
         if tokens[i] == "-m":
             cmd = [sys.executable, "-B", *py_flags, "-m", *rest]
         else:
             cmd = [sys.executable, "-B", *py_flags, str(tmp_path / target), *rest]
-        return subprocess.run(cmd, cwd=tmp_path, stdin=subprocess.DEVNULL, env=env, creationflags=windowless()).returncode
+        return _run_managed_passthrough(cmd, cwd=tmp_path, env=env)
 
 
 def main(argv: list[str] | None = None) -> int:

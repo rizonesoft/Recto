@@ -1863,26 +1863,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"python-lsp: {backend}")
         return 0
     if pyright:
-        cmd = [pyright, "--stdio"]
-        if os.name == "nt" and pyright.lower().endswith((".cmd", ".bat")):
-            cmd = ["cmd.exe", "/d", "/s", "/c", pyright, "--stdio"]
-        proc = subprocess.Popen(cmd, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, creationflags=windowless())
-        _job = None
-        if os.name == "nt":
+        if str(ROOT / "scripts") not in sys.path:
+            sys.path.insert(0, str(ROOT / "scripts"))
+        import lib.proc_group as proc_group
+
+        # Pass `[pyright, "--stdio"]` directly to `CreateProcessW` / `execve` (never `cmd.exe /d /s /c`, which strips
+        # outer quotes when `pyright` resides under a Windows user profile path containing spaces).
+        cmd = [str(Path(pyright)), "--stdio"]
+        with proc_group.termination_signal_guard():
+            managed = proc_group.spawn_managed_process(
+                cmd,
+                cwd=ROOT,
+                capture_output=False,
+                inherit_stdin=True,
+            )
             try:
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("clangd_lsp", Path(__file__).with_name("clangd-lsp.py"))
-                if spec and spec.loader:
-                    mod = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
-                    _job = mod.bind_kill_on_close_job(proc)
-            except Exception:
-                _job = None
-        try:
-            return proc.wait()
-        except KeyboardInterrupt:
-            proc.terminate()
-            return proc.wait()
+                return managed.proc.wait()
+            except KeyboardInterrupt:
+                managed.terminate_and_close()
+                try:
+                    return managed.proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    return 130
+            finally:
+                managed.terminate_and_close()
     return StdlibPythonLsp(ROOT).serve()
 
 

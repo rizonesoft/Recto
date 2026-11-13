@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import threading
+from typing import Any
 import uuid
 import weakref
 
@@ -474,13 +475,34 @@ def termination_signal_guard() -> Iterator[None]:
                 pass
 
 
+def _passthrough_stream(stream: Any) -> Any:
+    """Return `stream` when backed by a real OS file descriptor so `STARTF_USESTDHANDLES` stays populated on Windows."""
+    fileno = getattr(stream, "fileno", None)
+    if callable(fileno):
+        try:
+            fileno()
+            return stream
+        except (OSError, ValueError):
+            return None
+    return None
+
+
 def spawn_managed_process(
     cmd: list[str],
     *,
     cwd: Path,
     env: dict[str, str] | None = None,
+    capture_output: bool = True,
+    inherit_stdin: bool = False,
 ) -> ManagedProcess:
     """Start `cmd` inside a lifetime-bound Win32 Job Object or POSIX lifeline-watched tree."""
+    stdin_arg: Any = _passthrough_stream(sys.stdin) if inherit_stdin else subprocess.DEVNULL
+    stdout_arg: Any = subprocess.PIPE if capture_output else _passthrough_stream(sys.stdout)
+    stderr_arg: Any = subprocess.PIPE if capture_output else _passthrough_stream(sys.stderr)
+    text_kwargs: dict[str, Any] = (
+        {"text": True, "encoding": "utf-8", "errors": "replace"} if capture_output else {}
+    )
+
     if os.name == "nt":
         job = _create_configured_job()
         proc: subprocess.Popen | None = None
@@ -489,14 +511,13 @@ def spawn_managed_process(
                 cmd,
                 cwd=cwd,
                 env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
+                stdin=stdin_arg,
+                stdout=stdout_arg,
+                stderr=stderr_arg,
                 creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED,
+                **text_kwargs,
             )
+            assert proc is not None
             kernel32, ntdll = _win32_apis()
             raw_handle = ctypes.c_void_p(int(getattr(proc, "_handle")))
             if not kernel32.AssignProcessToJobObject(job, raw_handle):
@@ -532,13 +553,11 @@ def spawn_managed_process(
         cmd,
         cwd=cwd,
         env=child_env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+        stdin=stdin_arg,
+        stdout=stdout_arg,
+        stderr=stderr_arg,
         start_new_session=True,
+        **text_kwargs,
     )
     life_w: int | None = None
     reaper: subprocess.Popen | None = None

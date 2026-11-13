@@ -1,11 +1,11 @@
-# Gemini 4 Hydrogen Read-Only Helpers (`gemini-4-hydrogen-high`)
+# Gemini 4 Hydrogen Read-Only Helpers (`gemini-4-hydrogen-medium`)
 
-In Google Antigravity (`agy`), the main writer is **Gemini 4 Carbon** (`gemini-4-carbon-medium` in unattended campaigns, or Carbon High in attended sessions). To keep the Carbon writer's context lean and fast without losing a single bit of implementation quality, delegate purely mechanical, read-only "dummy work" to **Gemini 4 Hydrogen at High effort (`gemini-4-hydrogen-high`)** on the native swarm board.
+In Google Antigravity (`agy`), the main writer is **Gemini 4 Carbon** (`gemini-4-carbon-medium` in unattended campaigns, or Carbon High in attended sessions). To keep the Carbon writer's context lean and fast without losing a single bit of implementation quality, delegate purely mechanical, read-only "dummy work" to **Gemini 4 Hydrogen at Medium effort (`gemini-4-hydrogen-medium`)** on the native swarm board.
 
 ## Why implementation quality stays at 100%
 
 1. **Zero writing by Hydrogen:** `scripts/dispatch_hook.py` (wired in `.agents/hooks.json` on `PreToolUse` with `matcher: "*"`) enforces a strict positive allowlist of read-only tools and literal read-only commands inside any `gemini-4-hydrogen*` turn, and rewrites every allowed `run_command` via `overwrite` to `scripts/hydrogen_exec.py --payload <hex>` so execution runs `shell=False` without PowerShell evaluation and stages test runs in an isolated temporary directory outside the checkout.
-2. **High effort enforced:** `scripts/dispatch_hook.py` refuses `swarm` `add` or `model` calls that name a Hydrogen model below `high` effort (`gemini-4-hydrogen-low` and `gemini-4-hydrogen-medium` are blocked) or a workspace other than `inherit`.
+2. **Medium effort enforced:** `scripts/dispatch_hook.py` refuses `swarm` `add` or `model` calls that name a Hydrogen model other than `medium` effort (`gemini-4-hydrogen-low`, `gemini-4-hydrogen-high` and `gemini-4-hydrogen-xhigh` are blocked) or a workspace other than `inherit`.
 3. **Carbon owns every decision:** Gemini 4 Carbon writes every line of C++23, Python, SPEC and TODO text, diagnoses root causes, designs algorithms, verifies exit codes and `file:line` citations returned by helpers, and decides every review action.
 4. **Zero idle cost:** Swarm workers in `waiting` state sleep on the board at zero token, memory and CPU cost, so a campaign session spawns only the helper it needs once and `@mention`s it on later sections.
 
@@ -15,7 +15,7 @@ Spawn a helper with `swarm`:
 
 - `action`: `"add"`
 - `name`: `"code-explorer"` | `"git-runner"` | `"test-runner"` | `"debug-evidence"`
-- `model`: `"gemini-4-hydrogen-high"`
+- `model`: `"gemini-4-hydrogen-medium"`
 - `workspace`: `"inherit"`
 
 ### Role Briefs
