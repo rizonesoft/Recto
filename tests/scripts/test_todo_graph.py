@@ -1926,6 +1926,77 @@ class Repository(unittest.TestCase):
         # Antigravity skips workspace rule files larger than 24,000 bytes; keep AGENTS.md under that ceiling.
         self.assertLessEqual(len((tg.ROOT / "AGENTS.md").read_bytes()), 24_000)
 
+    def _check_tiered_build_gates(self, texts: dict[str, str]) -> None:
+        iter_cmd = r".\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'"
+        stamp_cmd = r".\build.cmd"
+        skills = (
+            ".claude/skills/process-todo-section/SKILL.md",
+            ".claude/skills/review-todo-section/SKILL.md",
+            ".claude/skills/process-phase/SKILL.md",
+        )
+        for rel in (*skills, "AGENTS.md"):
+            body = texts[rel]
+            if iter_cmd not in body:
+                raise AssertionError(f"{rel} is missing exact iteration gate command: {iter_cmd}")
+            if stamp_cmd not in body:
+                raise AssertionError(f"{rel} is missing stamp gate command: {stamp_cmd}")
+            if re.search(r"(?<!build\.cmd )(?:\.\\build\\)?build\.ps1 -Platform x64 -Configuration Debug -TestFilter", body):
+                raise AssertionError(f"{rel} invokes build.ps1 directly instead of .\\build.cmd wrapper")
+        for rel in skills:
+            body = texts[rel]
+            for token in ("C++", "Python-only", "mixed", "unittest", "python scripts/run-tests.py"):
+                if token not in body:
+                    raise AssertionError(f"{rel} is missing section-type handling token {token!r}")
+            low = body.lower()
+            if "googletest" not in low or "unrelated c++ tests" not in low:
+                raise AssertionError(f"{rel} must forbid representing Python-only work as a GoogleTest filter or unrelated C++ tests")
+            if r"Reserve local full `.\build.cmd`" in body:
+                raise AssertionError(f"{rel} retains stale closeout-only wording for .\\build.cmd")
+        review_skill = texts[".claude/skills/review-todo-section/SKILL.md"]
+        step5 = review_skill.split("### 5.", 1)[1].split("### 6.", 1)[0]
+        step7 = review_skill.split("### 7.", 1)[1].split("### 8.", 1)[0]
+        if iter_cmd not in step5 or "After each fix" not in step5:
+            raise AssertionError("review-todo-section step 5 must run the iteration gate after each fix")
+        if stamp_cmd not in step7 or "--check" not in step7 or r"--check '.\build.cmd ->" not in step7:
+            raise AssertionError("review-todo-section step 7 must require quoting .\\build.cmd in stamp --check")
+        proc_skill = texts[".claude/skills/process-todo-section/SKILL.md"]
+        step4 = proc_skill.split("### 4.", 1)[1].split("### 5.", 1)[0]
+        if iter_cmd not in step4 or "after each fix" not in step4:
+            raise AssertionError("process-todo-section step 4 must name the iteration gate while building and after each fix")
+        agents_val = texts["AGENTS.md"].split("## Validation", 1)[1]
+        code_block = agents_val.split("```powershell", 1)[1].split("```", 1)[0].splitlines()
+        iter_lines = [ln for ln in code_block if ln.startswith(iter_cmd)]
+        stamp_lines = [ln for ln in code_block if ln.startswith(stamp_cmd) and not ln.startswith(stamp_cmd + " -")]
+        if len(iter_lines) != 1 or len(stamp_lines) != 1:
+            raise AssertionError(f"AGENTS.md Validation must have one line each for iteration and stamp gates: {iter_lines} / {stamp_lines}")
+
+    def test_tiered_build_gates_match_across_skills_and_agents_md(self):
+        rels = (
+            ".claude/skills/process-todo-section/SKILL.md",
+            ".claude/skills/review-todo-section/SKILL.md",
+            ".claude/skills/process-phase/SKILL.md",
+            "AGENTS.md",
+        )
+        texts = {rel: (tg.ROOT / rel).read_text(encoding="utf-8") for rel in rels}
+        self._check_tiered_build_gates(texts)
+
+        iter_cmd = r".\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'"
+        mutations = (
+            ("direct_ps1", "AGENTS.md", iter_cmd, r".\build\build.ps1 -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'"),
+            ("missing_iter", ".claude/skills/review-todo-section/SKILL.md", iter_cmd, "affected test suites"),
+            ("missing_python_only", ".claude/skills/process-todo-section/SKILL.md", "Python-only", "script-only"),
+            ("missing_unrelated_cpp_guard", ".claude/skills/review-todo-section/SKILL.md", "unrelated C++ tests", "other checks"),
+            ("missing_stamp_quote", ".claude/skills/review-todo-section/SKILL.md", r"--check '.\build.cmd ->", "--note 'build ->"),
+            ("stale_closeout_only", ".claude/skills/process-todo-section/SKILL.md", "Warnings are errors", r"Reserve local full `.\build.cmd` for closeouts. Warnings are errors"),
+        )
+        for label, target_rel, old, new in mutations:
+            with self.subTest(mutation=label):
+                mutated = dict(texts)
+                self.assertIn(old, mutated[target_rel])
+                mutated[target_rel] = mutated[target_rel].replace(old, new)
+                with self.assertRaises(AssertionError):
+                    self._check_tiered_build_gates(mutated)
+
     def test_the_stamp_command_reads_completion_as_findings_file_and_verdict(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("todo_graph_cli", REPO / "scripts/todo-graph.py")

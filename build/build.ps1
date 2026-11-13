@@ -40,6 +40,9 @@ param(
     [int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
+if ($TestFilter.Length -ge 2 -and (($TestFilter.StartsWith("'") -and $TestFilter.EndsWith("'")) -or ($TestFilter.StartsWith('"') -and $TestFilter.EndsWith('"')))) {
+    $TestFilter = $TestFilter.Substring(1, $TestFilter.Length - 2)
+}
 if (($Quick -or $EnableASAN) -and -not $PSBoundParameters.ContainsKey('Platform')) {
     $Platform = @('x64')
 }

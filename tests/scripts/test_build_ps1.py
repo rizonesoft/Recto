@@ -681,6 +681,114 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     self.assertNotEqual(rc, 0, out)
                     self.assertEqual(calls, [], f"MSBuild should not start on {label}: {out}")
 
+    @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows cmd.exe and PowerShell")
+    def test_build_cmd_iteration_gate_forwards_debug_x64_and_strips_cmd_quotes_on_test_filter(self):
+        csc_candidates = [
+            Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe",
+            Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Microsoft.NET" / "Framework" / "v4.0.30319" / "csc.exe",
+        ]
+        csc = next((p for p in csc_candidates if p.is_file()), None)
+        self.assertIsNotNone(csc, "csc.exe required to compile fake vswhere/MSBuild/recto-tests")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ws = base / "repo"
+            (ws / "build").mkdir(parents=True)
+            (ws / "scripts").mkdir(parents=True)
+            shutil.copy2(ROOT / "build.cmd", ws / "build.cmd")
+            for name in ("Recto.sln", "Directory.Build.props", "Directory.Build.targets",
+                         "vcpkg.json", "vcpkg-configuration.json"):
+                shutil.copy2(ROOT / name, ws / name)
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1"):
+                shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+
+            pf86 = base / "pf86"
+            vs_installer = pf86 / "Microsoft Visual Studio" / "Installer"
+            vs_installer.mkdir(parents=True)
+            vs_root = base / "vs2026"
+            msbuild_dir = vs_root / "MSBuild" / "Current" / "Bin"
+            msbuild_dir.mkdir(parents=True)
+
+            vswhere_cs = base / "vswhere.cs"
+            vs_escaped = str(vs_root).replace("\\", "\\\\")
+            vswhere_cs.write_text(
+                f'class V {{ static int Main() {{ System.Console.WriteLine("{vs_escaped}"); return 0; }} }}\n',
+                encoding="utf-8",
+            )
+            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{vs_installer / 'vswhere.exe'}", str(vswhere_cs)],
+                           check=True, capture_output=True, text=True, timeout=30)
+
+            msbuild_calls = base / "msbuild_calls.txt"
+            calls_escaped = str(msbuild_calls).replace("\\", "\\\\")
+            msbuild_cs = base / "msbuild.cs"
+            msbuild_cs.write_text(
+                "using System; using System.IO;\n"
+                "class M {\n"
+                "    static int Main(string[] args) {\n"
+                f'        File.AppendAllLines("{calls_escaped}", new string[] {{ string.Join(" ", args) }});\n'
+                "        foreach (string a in args) {\n"
+                '            if (a.StartsWith("/flp:logfile=")) {\n'
+                "                string lp = a.Substring(\"/flp:logfile=\".Length).Split(';')[0];\n"
+                '                File.WriteAllText(lp, "Build succeeded.\\n    0 Warning(s)\\n    0 Error(s)\\n");\n'
+                "            }\n"
+                "        }\n"
+                "        return 0;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{msbuild_dir / 'MSBuild.exe'}", str(msbuild_cs)],
+                           check=True, capture_output=True, text=True, timeout=30)
+
+            gtest_dir = ws / "build" / "bin" / "x64" / "Debug" / "recto-tests"
+            gtest_dir.mkdir(parents=True)
+            gtest_calls = base / "gtest_calls.txt"
+            gcalls_escaped = str(gtest_calls).replace("\\", "\\\\")
+            gtest_cs = base / "gtest.cs"
+            gtest_cs.write_text(
+                "using System; using System.IO;\n"
+                "class G {\n"
+                "    static int Main(string[] args) {\n"
+                f'        File.AppendAllLines("{gcalls_escaped}", new string[] {{ string.Join("|", args) }});\n'
+                "        foreach (string a in args) {\n"
+                '            if (a.StartsWith("--gtest_output=xml:")) {\n'
+                "                string xp = a.Substring(\"--gtest_output=xml:\".Length);\n"
+                '                File.WriteAllText(xp, "<testsuites tests=\\"3\\" failures=\\"0\\"></testsuites>");\n'
+                "            }\n"
+                "        }\n"
+                "        return 0;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{gtest_dir / 'recto-tests.exe'}", str(gtest_cs)],
+                           check=True, capture_output=True, text=True, timeout=30)
+
+            env = os.environ.copy()
+            env["ProgramFiles(x86)"] = str(pf86)
+            env["RECTO_BUILD_JOBS"] = "1"
+
+            for shell_kind, cmd in (
+                ("cmd", ["cmd.exe", "/d", "/c", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
+                ("pwsh", [POWERSHELL, "-NoProfile", "-Command", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
+            ):
+                with self.subTest(shell=shell_kind):
+                    if msbuild_calls.exists():
+                        msbuild_calls.unlink()
+                    if gtest_calls.exists():
+                        gtest_calls.unlink()
+                    run = subprocess.run(cmd, cwd=ws, env=env, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    m_lines = msbuild_calls.read_text(encoding="utf-8").splitlines()
+                    # Restore runs on first invocation; only Debug|x64 builds (never Release|x64).
+                    self.assertTrue(any("/p:Configuration=Debug" in ln and "/p:Platform=x64" in ln for ln in m_lines), m_lines)
+                    self.assertFalse(any("/p:Configuration=Release" in ln for ln in m_lines), m_lines)
+                    g_lines = gtest_calls.read_text(encoding="utf-8").splitlines()
+                    self.assertEqual(len(g_lines), 1, g_lines)
+                    self.assertIn("--gtest_filter=PdfError.*", g_lines[0])
+                    self.assertNotIn("'PdfError.*'", g_lines[0])
+
 
 @unittest.skipUnless(MSBUILD, "needs MSBuild (Windows with Visual Studio)")
 class PrecompiledHeadersConfiguration(unittest.TestCase):

@@ -114,7 +114,7 @@ Architecture check: on sections touching an architectural boundary the foundatio
 
 ### 5. Re-run the gates and check CI
 
-After the last fix, re-run the section's Test checkpoint and its owed local gates (affected test suites, touched build warnings clean, `validate`, the Freeze check in frozen files, ASan where the section names it), push the final candidate tip, and verify `python scripts/ci_status.py --gate` exits 0 so GitHub Actions confirms the full matrix. Quote the checkpoint output in the findings file. A red local gate or red CI reopens the candidate: fix at the owning layer, re-run to green, and re-run the affected review pass.
+After each fix, run the iteration gate while preserving the section's actual Test checkpoint commands: for C++ work, run `.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'` (with optional `-Project <vcxproj>` when narrowing compilation to a touched project, plus `-EnableASAN` for the section's ASan checkpoint when it names one); for Python-only work, run the section's Python `unittest` suites / `python scripts/run-tests.py --filter <pat>` and `python scripts/run-tests.py --quick` (never represent Python-only work as a GoogleTest `-TestFilter` or verify it solely with unrelated C++ tests); for mixed C++ and Python work, run both the filtered `.\build.cmd` iteration command and the section's Python suites, plus `python scripts/todo-graph.py validate` and the Freeze check in frozen files. Push the final candidate tip and verify `python scripts/ci_status.py --gate` exits 0 so GitHub Actions confirms the full matrix. Quote the checkpoint output in the findings file. A red local gate or red CI reopens the candidate: fix at the owning layer, re-run to green, and re-run the affected review pass.
 
 ### 6. Surface, feature, and frozen checks
 
@@ -122,10 +122,10 @@ Surface and feature completeness: 100% of every control, menu item, dialog and s
 
 ### 7. Stamp
 
-Tick nothing by hand. Confirm every checklist item except `Commit:` is `[x]`, then under the `three-pass` pin (with the last returned pass having reviewed the stamped commit):
+Before stamping, run the stamp gate once on the candidate tip that stamps: `.\build.cmd` (x64 Debug and Release, every test) alongside the section's own Test checkpoint commands (including its Python `unittest` suites on Python-only or mixed sections and its ASan checkpoint when named), and quote both the section's Test checkpoint and the full-suite `.\build.cmd` result in `--check` arguments to `stamp`. Tick nothing by hand. Confirm every checklist item except `Commit:` is `[x]`, then under the `three-pass` pin (with the last returned pass having reviewed the stamped commit):
 
 ```powershell
-python scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full tip SHA> --plan 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md' --completion 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<complete|reconciled|filed>' --review '<N>:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<clean|fixed>' --check '<checkpoint command> -> <quoted result>'
+python scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full tip SHA> --plan 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md' --completion 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<complete|reconciled|filed>' --review '<N>:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:<clean|fixed>' --check '<checkpoint command> -> <quoted result>' --check '.\build.cmd -> <quoted x64 Debug and Release full-suite result>'
 ```
 
 Under `three-pass`, `--completion` is `complete`, `reconciled` or `filed` (`completed`, `--cap-outcome` and `stopped-` verdicts are rotation-only), and `--review` names the one returned round (`1` unless an earlier attempt was an outage or incomplete reply) with `clean` or `fixed`. Under a historical rotation pin, `--completion` takes `complete`, `completed` or `filed`, `--review` lists every round, and stopped verdicts carry `--cap-outcome`. `stamp` writes `docs/reviews/<ref>.json`, ticks the `Commit:` item and Implementation Order row, appends `Verified:` and `Review:`, marks the file `done` when its last section stamps, and syncs the plan. Commit the stamp, receipt, findings file and regenerated plan together as `todo: stamp <ref>`. Add any `Deferred:` lines (each with `-> XREF:`) and `Started:` to `Duration:` notes before stamping.
