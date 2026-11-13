@@ -482,6 +482,83 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
                     self.assertEqual(len(em_defs), 1, em_defs)
                     self.assertEqual(em_defs[0]["range"]["start"]["line"], expected_ln)
 
+            # 12. Inherited class members, diamond C3 MRO, super(), subclass references, and cycle protection.
+            base_mod = pkg / "base_mod.py"
+            base_mod.write_text(
+                "class Base:\n"
+                "    def setUp(self):\n"
+                "        self.repo = 'root'\n"
+                "    def dispatch(self) -> int:\n"
+                "        return 1\n"
+                "    def over(self) -> int:\n"
+                "        return 10\n",
+                encoding="utf-8",
+            )
+            inherit_file = pkg / "inherit_mod.py"
+            inherit_file.write_text(
+                "import base_mod\n"
+                "class Child(base_mod.Base):\n"
+                "    def over(self) -> int:\n"
+                "        return super().over() + 1\n"
+                "    def run(self) -> int:\n"
+                "        _ = self.repo\n"
+                "        return self.dispatch()\n"
+                "class DiamondA:\n"
+                "    def pick(self): return 1\n"
+                "class DiamondB(DiamondA):\n"
+                "    pass\n"
+                "class DiamondC(DiamondA):\n"
+                "    def pick(self): return 2\n"
+                "class DiamondD(DiamondB, DiamondC):\n"
+                "    def go(self): return self.pick()\n"
+                "class CycleA(CycleB):\n"
+                "    def ask(self): return self.missing\n"
+                "class CycleB(CycleA):\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            # `self.dispatch()` in `Child` -> `Base.dispatch` (line 3 in `base_mod.py`).
+            inh_defs = scoped._definitions(inherit_file, 6, 20)
+            self.assertEqual(len(inh_defs), 1, inh_defs)
+            self.assertEqual(inh_defs[0]["uri"], base_mod.resolve().as_uri())
+            self.assertEqual(inh_defs[0]["range"]["start"]["line"], 3)
+            inh_hover = scoped._hover(inherit_file, 6, 20)
+            self.assertIsNotNone(inh_hover)
+            assert inh_hover is not None
+            self.assertIn("def dispatch(self) -> int", inh_hover["contents"]["value"])
+            # `self.repo` in `Child` -> `self.repo` in `Base.setUp` (line 2 in `base_mod.py`).
+            repo_defs = scoped._definitions(inherit_file, 5, 17)
+            self.assertEqual(len(repo_defs), 1, repo_defs)
+            self.assertEqual(repo_defs[0]["uri"], base_mod.resolve().as_uri())
+            self.assertEqual(repo_defs[0]["range"]["start"]["line"], 2)
+            # `super().over()` in `Child.over` skips `Child.over` and resolves to `Base.over` (line 5 in `base_mod.py`).
+            sup_defs = scoped._definitions(inherit_file, 3, 23)
+            self.assertEqual(len(sup_defs), 1, sup_defs)
+            self.assertEqual(sup_defs[0]["uri"], base_mod.resolve().as_uri())
+            self.assertEqual(sup_defs[0]["range"]["start"]["line"], 5)
+            # Diamond C3 MRO: `DiamondD(DiamondB, DiamondC)` resolves `self.pick()` to `DiamondC.pick` (line 12, not 8).
+            dia_defs = scoped._definitions(inherit_file, 14, 30)
+            self.assertEqual(len(dia_defs), 1, dia_defs)
+            self.assertEqual(dia_defs[0]["range"]["start"]["line"], 12)
+            # Cyclic bases (`CycleA(CycleB)` / `CycleB(CycleA)`) terminate cleanly without RecursionError.
+            self.assertEqual(scoped._definitions(inherit_file, 16, 31), [])
+            # References from `Base.dispatch` declaration include subclass `self.dispatch()` in `inherit_mod.py`.
+            base_refs = scoped._references(base_mod, 3, 8, include_declaration=True)
+            ref_uris_lines = {(r["uri"], r["range"]["start"]["line"]) for r in base_refs}
+            self.assertIn((base_mod.resolve().as_uri(), 3), ref_uris_lines)
+            self.assertIn((inherit_file.resolve().as_uri(), 6), ref_uris_lines)
+
+            # Also verify live `Dispatch(Harness)` inherited resolution in `scripts/tests/test_review_dispatch.py`.
+            live_rd = ROOT / "scripts" / "tests" / "test_review_dispatch.py"
+            rd_lines = live_rd.read_text(encoding="utf-8").splitlines()
+            harness_ln = next(i for i, row in enumerate(rd_lines) if row.startswith("    def dispatch(self,"))
+            call_ln = next(i for i, row in enumerate(rd_lines) if "self.dispatch(" in row)
+            call_col = rd_lines[call_ln].index("dispatch(")
+            live_lsp = PYTHON_LSP.StdlibPythonLsp(ROOT)
+            live_defs = live_lsp._definitions(live_rd, call_ln, call_col)
+            self.assertEqual(len(live_defs), 1, live_defs)
+            self.assertEqual(live_defs[0]["range"]["start"]["line"], harness_ln)
+
     def test_builtin_lsp_indentation_errors_scoped_references_and_utf16_positions(self):
         with tempfile.TemporaryDirectory() as tmp:
             ws = Path(tmp)

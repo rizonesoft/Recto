@@ -336,6 +336,8 @@ class StdlibPythonLsp:
                 ident = unicodedata.normalize("NFKC", raw_tok)
                 prefix = row[:m.start()]
                 is_attr = prefix.rstrip().endswith(".")
+                if re.search(r"\bsuper\s*\(\s*\)\s*\.\s*$", prefix):
+                    return "super()", ident, True, utf8_col
                 recv_match = re.search(
                     r"([^\W\d]\w*(?:\s*\.\s*[^\W\d]\w*)*)\s*\.\s*$",
                     prefix,
@@ -700,13 +702,31 @@ class StdlibPythonLsp:
                             matches.extend(self._top_level_defs_in_module(sub, alias.name, visited))
         return matches
 
-    def _class_member_defs(
-        self, cls_path: Path, cls_node: ast.ClassDef, attr: str, visited: set[tuple[Path, str]]
+    @staticmethod
+    def _cls_key(cls_path: Path, cls_node: ast.ClassDef) -> tuple[Path, int, int, str]:
+        return (
+            cls_path.resolve(),
+            getattr(cls_node, "lineno", 0),
+            getattr(cls_node, "col_offset", 0),
+            cls_node.name,
+        )
+
+    @classmethod
+    def _expr_to_dotted_name(cls, expr: ast.AST) -> str | None:
+        while isinstance(expr, ast.Subscript):
+            expr = expr.value
+        if isinstance(expr, ast.Name):
+            return expr.id
+        if isinstance(expr, ast.Attribute):
+            prefix = cls._expr_to_dotted_name(expr.value)
+            if prefix:
+                return f"{prefix}.{expr.attr}"
+        return None
+
+    def _direct_class_member_defs(
+        self, cls_path: Path, cls_node: ast.ClassDef, attr: str
     ) -> list[tuple[Path, ast.AST]]:
-        key = (cls_path.resolve(), cls_node.name)
-        if key in visited:
-            return []
-        visited = {*visited, key}
+        cls_path = cls_path.resolve()
         matches: list[tuple[Path, ast.AST]] = []
         for stmt in self._iter_scope_stmts(cls_node.body):
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == attr:
@@ -722,20 +742,135 @@ class StdlibPythonLsp:
                         matches.append((cls_path, nm))
         if matches:
             return matches
-        # Check `self.<attr> = ...` assignments inside `__init__`.
-        for stmt in cls_node.body:
-            if isinstance(stmt, ast.FunctionDef) and stmt.name == "__init__":
-                for sub in ast.walk(stmt):
-                    if isinstance(sub, ast.Assign):
-                        for t in sub.targets:
-                            if (
-                                isinstance(t, ast.Attribute)
-                                and isinstance(t.value, ast.Name)
-                                and t.value.id == "self"
-                                and t.attr == attr
-                            ):
-                                matches.append((cls_path, t))
+
+        # Check `self.<attr> = ...` inside `__init__` first, then other methods on `cls_node`.
+        methods = [s for s in cls_node.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        ordered_methods = [
+            *(m for m in methods if m.name == "__init__"),
+            *(m for m in methods if m.name != "__init__"),
+        ]
+        for method in ordered_methods:
+            for m_stmt in self._iter_scope_stmts(method.body):
+                if isinstance(m_stmt, ast.Assign):
+                    for t in m_stmt.targets:
+                        if (
+                            isinstance(t, ast.Attribute)
+                            and isinstance(t.value, ast.Name)
+                            and t.value.id == "self"
+                            and t.attr == attr
+                        ):
+                            matches.append((cls_path, t))
+                elif isinstance(m_stmt, ast.AnnAssign):
+                    t = m_stmt.target
+                    if (
+                        isinstance(t, ast.Attribute)
+                        and isinstance(t.value, ast.Name)
+                        and t.value.id == "self"
+                        and t.attr == attr
+                    ):
+                        matches.append((cls_path, t))
+            if matches:
+                return matches
         return matches
+
+    def _resolve_class_bases(
+        self,
+        cls_path: Path,
+        cls_node: ast.ClassDef,
+        visited: set[tuple[Path, int, int, str]] | None = None,
+    ) -> list[tuple[Path, ast.ClassDef]]:
+        cls_path = cls_path.resolve()
+        tree = self._parse_file(cls_path)
+        if tree is None or not cls_node.bases:
+            return []
+        path_consts, str_consts = self._collect_module_consts(tree, cls_path)
+        out: list[tuple[Path, ast.ClassDef]] = []
+        for base_expr in cls_node.bases:
+            dotted = self._expr_to_dotted_name(base_expr)
+            if not dotted:
+                continue
+            b_line1 = getattr(base_expr, "lineno", getattr(cls_node, "lineno", 1))
+            b_col = getattr(base_expr, "col_offset", getattr(cls_node, "col_offset", 0))
+            scopes = self._enclosing_scopes(tree, b_line1, b_col)
+            resolved = self._resolve_class_expr(
+                dotted,
+                scopes,
+                cls_path,
+                tree,
+                path_consts,
+                str_consts,
+                cursor_pos=(b_line1, b_col),
+                visited=visited,
+            )
+            if resolved is not None and all(
+                self._cls_key(p, n) != self._cls_key(resolved[0], resolved[1]) for p, n in out
+            ):
+                out.append((resolved[0].resolve(), resolved[1]))
+        return out
+
+    def _class_mro(
+        self,
+        cls_path: Path,
+        cls_node: ast.ClassDef,
+        active: set[tuple[Path, int, int, str]] | None = None,
+    ) -> list[tuple[Path, ast.ClassDef]]:
+        """Compute cycle-safe Python C3 MRO for `(cls_path, cls_node)` across same-file and imported bases."""
+        active_set = set() if active is None else set(active)
+        key = self._cls_key(cls_path, cls_node)
+        if key in active_set:
+            return []
+        active_set.add(key)
+        bases = [
+            b
+            for b in self._resolve_class_bases(cls_path, cls_node, visited=active_set)
+            if self._cls_key(b[0], b[1]) not in active_set
+        ]
+        if not bases:
+            return [(cls_path.resolve(), cls_node)]
+
+        seqs: list[list[tuple[Path, ast.ClassDef]]] = [
+            self._class_mro(bp, bn, active_set) for bp, bn in bases
+        ]
+        seqs.append([(bp.resolve(), bn) for bp, bn in bases])
+        seqs = [s for s in seqs if s]
+
+        mro: list[tuple[Path, ast.ClassDef]] = [(cls_path.resolve(), cls_node)]
+        while seqs:
+            chosen: tuple[Path, ast.ClassDef] | None = None
+            for seq in seqs:
+                cand = seq[0]
+                cand_k = self._cls_key(cand[0], cand[1])
+                if all(all(self._cls_key(t[0], t[1]) != cand_k for t in other[1:]) for other in seqs):
+                    chosen = cand
+                    break
+            if chosen is None:
+                chosen = seqs[0][0]
+            chosen_k = self._cls_key(chosen[0], chosen[1])
+            if all(self._cls_key(x[0], x[1]) != chosen_k for x in mro):
+                mro.append(chosen)
+            next_seqs: list[list[tuple[Path, ast.ClassDef]]] = []
+            for seq in seqs:
+                filtered = [item for item in seq if self._cls_key(item[0], item[1]) != chosen_k]
+                if filtered:
+                    next_seqs.append(filtered)
+            seqs = next_seqs
+        return mro
+
+    def _class_member_defs(
+        self,
+        cls_path: Path,
+        cls_node: ast.ClassDef,
+        attr: str,
+        visited: set[tuple[Path, int, int, str]] | None = None,
+    ) -> list[tuple[Path, ast.AST]]:
+        seen = set() if visited is None else set(visited)
+        if self._cls_key(cls_path, cls_node) in seen:
+            return []
+        for m_path, m_cls in self._class_mro(cls_path, cls_node, active=seen):
+            matches = self._direct_class_member_defs(m_path, m_cls, attr)
+            if matches:
+                return matches
+        return []
 
     @staticmethod
     def _has_postponed_annotations(tree: ast.Module) -> bool:
@@ -1082,28 +1217,57 @@ class StdlibPythonLsp:
         tree: ast.Module,
         path_consts: dict[str, Path],
         str_consts: dict[str, str],
+        *,
+        cursor_pos: tuple[int, int] | None = None,
+        visited: set[tuple[Path, int, int, str]] | None = None,
     ) -> tuple[Path, ast.ClassDef] | None:
         parts = cls_expr.split(".")
         if len(parts) == 1:
-            defs, _, _, _ = self._lookup_across_scopes(scopes, parts[0], path, tree, path_consts, str_consts)
+            defs, _, _, _ = self._lookup_across_scopes(
+                scopes, parts[0], path, tree, path_consts, str_consts, cursor_pos=cursor_pos
+            )
             for def_path, node in defs:
                 if isinstance(node, ast.ClassDef):
                     return def_path, node
             return None
-        # Dotted class expression such as `LSP_MCP.LspMcpServer`.
-        defs, mod_target, is_ext, _ = self._lookup_across_scopes(scopes, parts[0], path, tree, path_consts, str_consts)
+        # Dotted class expression such as `LSP_MCP.LspMcpServer` or `Outer.Inner`.
+        defs, mod_target, is_ext, _ = self._lookup_across_scopes(
+            scopes, parts[0], path, tree, path_consts, str_consts, cursor_pos=cursor_pos
+        )
         if is_ext:
             return None
         if mod_target is not None:
             cur_mod = mod_target
-            for seg in parts[1:-1]:
-                nxt = self._resolve_module_file(seg, 0, cur_mod)
-                if nxt is None:
+            cur_cls: tuple[Path, ast.ClassDef] | None = None
+            for seg in parts[1:]:
+                if cur_cls is not None:
+                    sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, visited)
+                    cls_match = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
+                    if cls_match is None:
+                        return None
+                    cur_cls = cls_match
+                else:
+                    sym_defs = self._top_level_defs_in_module(cur_mod, seg, set())
+                    cls_match = next(((p, n) for p, n in sym_defs if isinstance(n, ast.ClassDef)), None)
+                    if cls_match is not None:
+                        cur_cls = cls_match
+                        continue
+                    sub_mod = self._resolve_module_file(seg, 0, cur_mod)
+                    if sub_mod is not None:
+                        cur_mod = sub_mod
+                        continue
                     return None
-                cur_mod = nxt
-            for def_path, node in self._top_level_defs_in_module(cur_mod, parts[-1], set()):
-                if isinstance(node, ast.ClassDef):
-                    return def_path, node
+            return cur_cls
+        cls_head = next(((p, n) for p, n in defs if isinstance(n, ast.ClassDef)), None)
+        if cls_head is not None:
+            cur_cls = cls_head
+            for seg in parts[1:]:
+                sub_defs = self._class_member_defs(cur_cls[0], cur_cls[1], seg, visited)
+                nxt_cls = next(((p, n) for p, n in sub_defs if isinstance(n, ast.ClassDef)), None)
+                if nxt_cls is None:
+                    return None
+                cur_cls = nxt_cls
+            return cur_cls
         return None
 
     def _resolve_defs_at(self, path: Path, line: int, character: int) -> tuple[str, list[tuple[Path, ast.AST]]]:
@@ -1121,6 +1285,15 @@ class StdlibPythonLsp:
 
         if is_attr:
             if receiver is None:
+                return ident, []
+            if receiver == "super()":
+                for sc in reversed(scopes):
+                    if isinstance(sc, ast.ClassDef):
+                        for m_path, m_cls in self._class_mro(path, sc)[1:]:
+                            m_defs = self._direct_class_member_defs(m_path, m_cls, ident)
+                            if m_defs:
+                                return ident, m_defs
+                        return ident, []
                 return ident, []
             if receiver in ("self", "cls"):
                 for sc in reversed(scopes):
@@ -1368,6 +1541,8 @@ class StdlibPythonLsp:
         for dp, dn in target_defs:
             if dp.resolve() != resolved:
                 return None
+            if isinstance(dn, ast.Attribute):
+                return None
             if self._TYPE_PARAM_NODES and isinstance(dn, self._TYPE_PARAM_NODES):
                 return None
             enc = self._enclosing_scopes(tree, getattr(dn, "lineno", 1), getattr(dn, "col_offset", 0))
@@ -1448,6 +1623,7 @@ class StdlibPythonLsp:
                     continue
                 if not include_declaration:
                     tok_utf8 = len(row[:cp_start].encode("utf-8"))
+                    tok_end_utf8 = len(row[:cp_end].encode("utf-8"))
                     is_decl = any(
                         dp.resolve() == cand_file
                         and getattr(dn, "lineno", 1) - 1 == ln0
@@ -1460,6 +1636,11 @@ class StdlibPythonLsp:
                                      ast.ExceptHandler, ast.MatchAs, ast.MatchStar),
                                 )
                                 and dn.name == tok_str
+                            )
+                            or (
+                                isinstance(dn, ast.Attribute)
+                                and dn.attr == tok_str
+                                and getattr(dn, "end_col_offset", -1) == tok_end_utf8
                             )
                         )
                         for dp, dn in target_defs
