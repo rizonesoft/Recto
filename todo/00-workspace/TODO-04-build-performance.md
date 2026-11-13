@@ -157,6 +157,8 @@ MSBuild `/m` starts one project build per core and `MultiProcessorCompilation` o
 
 No project uses a precompiled header, so `windows.h`, Direct2D, DirectWrite, WIC and the standard library are parsed again for every one of 67 files. This section adds one precompiled header per project, made of the system and standard headers only (no project header, so it does not change what depends on what), and measures the clean build.
 
+**Corrected 2026-11-13:** `src/ui/recto-ui.vcxproj` and `src/app/Recto.vcxproj` (`D10 T01 §1..§2`) already carry `pch.h`, `pch.cpp`, and `<PrecompiledHeader>Use</PrecompiledHeader>` across 6 `.cpp` files without `/FI`, while `src/pdf`, `src/core`, `src/services`, `src/cli`, `tests/recto-tests`, and `fuzz` still set `<PrecompiledHeader>NotUsing</PrecompiledHeader>` across 62 `.cpp` files (68 `.cpp` files across all eight projects today, 74 after adding `pch.cpp` to those six). `Directory.Build.targets` unifies `<PrecompiledHeader>Use</PrecompiledHeader>`, `<PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>`, `<PrecompiledHeaderOutputFile>$(IntDir)pch.pch</PrecompiledHeaderOutputFile>`, and `<ForcedIncludeFiles>pch.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>` across all eight projects, with each project's `pch.cpp` setting `<PrecompiledHeader>Create</PrecompiledHeader>` and `<ForcedIncludeFiles />` and `scripts/gen-compile-commands.py` emitting `/FIpch.h` on non-`pch.cpp` units so `clangd` matches `cl.exe`.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
