@@ -20,6 +20,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import tokenize
 import unicodedata
 from urllib.parse import unquote, urlparse
@@ -82,19 +84,86 @@ def _read_python_source(path: Path) -> str:
 class StdlibPythonLsp:
     """Lightweight, zero-dependency LSP server over stdio using Python's `ast` and `tokenize` modules."""
 
-    def __init__(self, root: Path = ROOT):
+    def __init__(self, root: Path = ROOT, *, idle_timeout_s: float = 0.0):
         self.root = root
         self.docs: dict[Path, str] = {}
         self._ast_cache: dict[Path, tuple[int, str, ast.Module | None]] = {}
         self.running = True
+        self.idle_timeout_s = idle_timeout_s
+        self._last_activity = time.monotonic()
+        self._busy = False
+        self._rx_buf = bytearray()
+        self._rx_eof = False
 
     MAX_FRAME_BYTES = 16 * 1024 * 1024
+
+    def _raw_stdin_fd(self) -> int | None:
+        try:
+            return sys.stdin.fileno()
+        except (AttributeError, OSError, ValueError):
+            return None
+
+    def _read_line_raw(self, limit: int = 65536) -> bytes:
+        fd = self._raw_stdin_fd()
+        if fd is None:
+            line = sys.stdin.buffer.readline(limit)
+            if line:
+                self._last_activity = time.monotonic()
+            return line
+        while True:
+            nl = self._rx_buf.find(b"\n")
+            if nl != -1:
+                take = min(nl + 1, limit)
+                out = bytes(self._rx_buf[:take])
+                del self._rx_buf[:take]
+                return out
+            if len(self._rx_buf) >= limit:
+                out = bytes(self._rx_buf[:limit])
+                del self._rx_buf[:limit]
+                return out
+            if self._rx_eof:
+                if not self._rx_buf:
+                    return b""
+                out = bytes(self._rx_buf)
+                self._rx_buf.clear()
+                return out
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                self._rx_eof = True
+            else:
+                self._last_activity = time.monotonic()
+                self._rx_buf.extend(chunk)
+
+    def _read_exact_raw(self, length: int) -> bytes:
+        fd = self._raw_stdin_fd()
+        if fd is None:
+            body = sys.stdin.buffer.read(length)
+            if body:
+                self._last_activity = time.monotonic()
+            return body
+        while len(self._rx_buf) < length and not self._rx_eof:
+            try:
+                chunk = os.read(fd, min(65536, length - len(self._rx_buf)))
+            except OSError:
+                chunk = b""
+            if not chunk:
+                self._rx_eof = True
+            else:
+                self._last_activity = time.monotonic()
+                self._rx_buf.extend(chunk)
+        take = min(length, len(self._rx_buf))
+        out = bytes(self._rx_buf[:take])
+        del self._rx_buf[:take]
+        return out
 
     def _read_msg(self) -> dict | None:
         headers: dict[str, str] = {}
         saw_any = False
         while True:
-            line = sys.stdin.buffer.readline(65536)
+            line = self._read_line_raw(65536)
             if not line:
                 return None
             saw_any = True
@@ -112,8 +181,8 @@ class StdlibPythonLsp:
             return {"_malformed": "invalid Content-Length"}
         if length <= 0 or length > self.MAX_FRAME_BYTES:
             return {"_malformed": "invalid or oversized Content-Length"}
-        body = sys.stdin.buffer.read(length)
-        if not body:
+        body = self._read_exact_raw(length)
+        if not body or len(body) < length:
             return None
         try:
             parsed = json.loads(body.decode("utf-8"))
@@ -124,6 +193,7 @@ class StdlibPythonLsp:
         return parsed
 
     def _send(self, payload: dict) -> None:
+        self._last_activity = time.monotonic()
         raw = json.dumps(payload).encode("utf-8")
         sys.stdout.buffer.write(f"Content-Length: {len(raw)}\r\n\r\n".encode("ascii") + raw)
         sys.stdout.buffer.flush()
@@ -251,10 +321,10 @@ class StdlibPythonLsp:
             return []
         lines = text.splitlines()
 
-        def node_sym(node: ast.AST) -> dict | None:
+        def node_sym(node: ast.AST, *, in_class: bool = False) -> dict | None:
             sel_node: ast.AST = node
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                kind = 12
+                kind = 6 if in_class else 12
                 name = node.name
             elif isinstance(node, ast.ClassDef):
                 kind = 5
@@ -263,6 +333,10 @@ class StdlibPythonLsp:
                 kind = 13
                 name = node.targets[0].id
                 sel_node = node.targets[0]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                kind = 13
+                name = node.target.id
+                sel_node = node.target
             else:
                 return None
             start_ln = max(0, getattr(node, "lineno", 1) - 1)
@@ -292,9 +366,15 @@ class StdlibPythonLsp:
             children = []
             if isinstance(node, ast.ClassDef):
                 for child in node.body:
-                    cs = node_sym(child)
+                    cs = node_sym(child, in_class=True)
                     if cs is not None:
                         children.append(cs)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        cs = node_sym(child, in_class=False)
+                        if cs is not None:
+                            children.append(cs)
             out = {"name": name, "kind": kind, "range": rng, "selectionRange": sel_rng}
             if children:
                 out["children"] = children
@@ -1732,126 +1812,163 @@ class StdlibPythonLsp:
         return refs
 
     def serve(self) -> int:
-        while self.running:
-            msg = self._read_msg()
-            if msg is None:
-                break
-            if "_malformed" in msg:
-                self._send({
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32700, "message": str(msg["_malformed"])},
-                })
-                continue
-            method = msg.get("method")
-            msg_id = msg.get("id")
-            raw_params = msg.get("params")
-            params = raw_params if isinstance(raw_params, dict) else {}
-            try:
-                if method == "initialize":
-                    root_uri = params.get("rootUri")
-                    if root_uri:
-                        self.root = uri_to_path(root_uri)
+        stop_watch = threading.Event()
+        if self.idle_timeout_s > 0:
+            poll_step = min(0.25, max(0.02, self.idle_timeout_s / 4.0))
+
+            def _idle_watchdog() -> None:
+                while not stop_watch.wait(poll_step):
+                    if not self._busy and (time.monotonic() - self._last_activity) >= self.idle_timeout_s:
+                        try:
+                            sys.stdout.buffer.flush()
+                            sys.stderr.buffer.flush()
+                        except OSError:
+                            pass
+                        os._exit(0)
+
+            threading.Thread(target=_idle_watchdog, name="recto-pylsp-idle", daemon=True).start()
+
+        try:
+            while self.running:
+                self._busy = False
+                msg = self._read_msg()
+                if msg is None:
+                    break
+                self._busy = True
+                if "_malformed" in msg:
                     self._send({
                         "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "result": {
-                            "capabilities": {
-                                "positionEncoding": "utf-16",
-                                "textDocumentSync": 1,
-                                "documentSymbolProvider": True,
-                                "workspaceSymbolProvider": True,
-                                "definitionProvider": True,
-                                "referencesProvider": True,
-                                "hoverProvider": True,
-                            },
-                            "serverInfo": {"name": "recto-stdlib-python-lsp", "version": "1.0"},
-                        },
+                        "id": None,
+                        "error": {"code": -32700, "message": str(msg["_malformed"])},
                     })
-                elif method == "shutdown":
-                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
-                elif method == "exit":
-                    return 0
-                elif method == "textDocument/didOpen":
-                    td = params.get("textDocument") or {}
-                    uri = td.get("uri", "")
-                    text = td.get("text", "")
-                    version = td.get("version")
-                    p = uri_to_path(uri)
-                    self.docs[p] = self._normalize_python_text(text)
-                    self._ast_cache.pop(p, None)
-                    pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
-                    if isinstance(version, int):
-                        pub_params["version"] = version
-                    self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
-                elif method == "textDocument/didChange":
-                    td = params.get("textDocument") or {}
-                    uri = td.get("uri", "")
-                    version = td.get("version")
-                    changes = params.get("contentChanges") or []
-                    if changes:
+                    continue
+                method = msg.get("method")
+                msg_id = msg.get("id")
+                raw_params = msg.get("params")
+                params = raw_params if isinstance(raw_params, dict) else {}
+                try:
+                    if method == "initialize":
+                        root_uri = params.get("rootUri")
+                        if root_uri:
+                            self.root = uri_to_path(root_uri)
+                        self._send({
+                            "jsonrpc": "2.0",
+                            "id": msg_id,
+                            "result": {
+                                "capabilities": {
+                                    "positionEncoding": "utf-16",
+                                    "textDocumentSync": 1,
+                                    "documentSymbolProvider": True,
+                                    "workspaceSymbolProvider": True,
+                                    "definitionProvider": True,
+                                    "referencesProvider": True,
+                                    "hoverProvider": True,
+                                },
+                                "serverInfo": {"name": "recto-stdlib-python-lsp", "version": "1.0"},
+                            },
+                        })
+                    elif method == "shutdown":
+                        self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
+                    elif method == "exit":
+                        return 0
+                    elif method == "textDocument/didOpen":
+                        td = params.get("textDocument") or {}
+                        uri = td.get("uri", "")
+                        text = td.get("text", "")
+                        version = td.get("version")
                         p = uri_to_path(uri)
-                        text = changes[-1].get("text", "")
                         self.docs[p] = self._normalize_python_text(text)
                         self._ast_cache.pop(p, None)
-                        pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                        pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
                         if isinstance(version, int):
                             pub_params["version"] = version
                         self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
-                elif method == "textDocument/didClose":
-                    td = params.get("textDocument") or {}
-                    uri = td.get("uri", "")
-                    if uri:
-                        closed = uri_to_path(uri)
-                        self.docs.pop(closed, None)
-                        self._ast_cache.pop(closed, None)
-                elif method == "textDocument/documentSymbol":
-                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": self._doc_symbols(self._text(p))})
-                elif method == "workspace/symbol":
-                    query = (params.get("query") or "").lower()
-                    found = []
-                    for p in self._workspace_py_files():
-                        for s in self._doc_symbols(self._text(p)):
-                            if not query or query in s["name"].lower():
-                                found.append({
-                                    "name": s["name"],
-                                    "kind": s["kind"],
-                                    "location": {"uri": path_to_uri(p), "range": s["range"]},
-                                })
-                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": found[:100]})
-                elif method == "textDocument/definition":
-                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                    pos = params.get("position") or {}
-                    self._send({"jsonrpc": "2.0", "id": msg_id,
-                                "result": self._definitions(p, pos.get("line", 0), pos.get("character", 0))})
-                elif method == "textDocument/references":
-                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                    pos = params.get("position") or {}
-                    ctx = params.get("context")
-                    inc_decl = bool(ctx.get("includeDeclaration", True)) if isinstance(ctx, dict) else True
-                    self._send({
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "result": self._references(
-                            p, pos.get("line", 0), pos.get("character", 0), include_declaration=inc_decl
-                        ),
-                    })
-                elif method == "textDocument/hover":
-                    p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
-                    pos = params.get("position") or {}
-                    self._send({"jsonrpc": "2.0", "id": msg_id,
-                                "result": self._hover(p, pos.get("line", 0), pos.get("character", 0))})
-                elif msg_id is not None:
-                    self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
-            except Exception as exc:
-                if msg_id is not None:
-                    self._send({
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "error": {"code": -32603, "message": str(exc)},
-                    })
-        return 0
+                    elif method == "textDocument/didChange":
+                        td = params.get("textDocument") or {}
+                        uri = td.get("uri", "")
+                        version = td.get("version")
+                        changes = params.get("contentChanges") or []
+                        if changes:
+                            p = uri_to_path(uri)
+                            text = changes[-1].get("text", "")
+                            self.docs[p] = self._normalize_python_text(text)
+                            self._ast_cache.pop(p, None)
+                            pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                            if isinstance(version, int):
+                                pub_params["version"] = version
+                            self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
+                    elif method == "textDocument/didClose":
+                        td = params.get("textDocument") or {}
+                        uri = td.get("uri", "")
+                        if uri:
+                            closed = uri_to_path(uri)
+                            self.docs.pop(closed, None)
+                            self._ast_cache.pop(closed, None)
+                    elif method == "textDocument/documentSymbol":
+                        p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                        self._send({"jsonrpc": "2.0", "id": msg_id, "result": self._doc_symbols(self._text(p))})
+                    elif method == "workspace/symbol":
+                        query = (params.get("query") or "").lower()
+                        found: list[dict] = []
+
+                        def _collect_ws_syms(syms: list[dict], file_uri: str, container: str | None = None) -> None:
+                            for s in syms:
+                                if len(found) >= 100:
+                                    return
+                                sym_name = s["name"]
+                                qualified = f"{container}.{sym_name}" if container else sym_name
+                                if not query or query in sym_name.lower() or query in qualified.lower():
+                                    entry: dict[str, object] = {
+                                        "name": sym_name,
+                                        "kind": s["kind"],
+                                        "location": {"uri": file_uri, "range": s["range"]},
+                                    }
+                                    if container:
+                                        entry["containerName"] = container
+                                    found.append(entry)
+                                children = s.get("children")
+                                if isinstance(children, list) and children and len(found) < 100:
+                                    _collect_ws_syms(children, file_uri, qualified)
+
+                        for p in self._workspace_py_files():
+                            if len(found) >= 100:
+                                break
+                            _collect_ws_syms(self._doc_symbols(self._text(p)), path_to_uri(p))
+                        self._send({"jsonrpc": "2.0", "id": msg_id, "result": found[:100]})
+                    elif method == "textDocument/definition":
+                        p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                        pos = params.get("position") or {}
+                        self._send({"jsonrpc": "2.0", "id": msg_id,
+                                    "result": self._definitions(p, pos.get("line", 0), pos.get("character", 0))})
+                    elif method == "textDocument/references":
+                        p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                        pos = params.get("position") or {}
+                        ctx = params.get("context")
+                        inc_decl = bool(ctx.get("includeDeclaration", True)) if isinstance(ctx, dict) else True
+                        self._send({
+                            "jsonrpc": "2.0",
+                            "id": msg_id,
+                            "result": self._references(
+                                p, pos.get("line", 0), pos.get("character", 0), include_declaration=inc_decl
+                            ),
+                        })
+                    elif method == "textDocument/hover":
+                        p = uri_to_path((params.get("textDocument") or {}).get("uri", ""))
+                        pos = params.get("position") or {}
+                        self._send({"jsonrpc": "2.0", "id": msg_id,
+                                    "result": self._hover(p, pos.get("line", 0), pos.get("character", 0))})
+                    elif msg_id is not None:
+                        self._send({"jsonrpc": "2.0", "id": msg_id, "result": None})
+                except Exception as exc:
+                    if msg_id is not None:
+                        self._send({
+                            "jsonrpc": "2.0",
+                            "id": msg_id,
+                            "error": {"code": -32603, "message": str(exc)},
+                        })
+            return 0
+        finally:
+            stop_watch.set()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1862,32 +1979,17 @@ def main(argv: list[str] | None = None) -> int:
         backend = f"pyright-langserver ({pyright})" if pyright else "stdlib-python-lsp (built-in fallback)"
         print(f"python-lsp: {backend}")
         return 0
-    if pyright:
-        if str(ROOT / "scripts") not in sys.path:
-            sys.path.insert(0, str(ROOT / "scripts"))
-        import lib.proc_group as proc_group
+    if str(ROOT / "scripts") not in sys.path:
+        sys.path.insert(0, str(ROOT / "scripts"))
+    import lib.proc_group as proc_group
 
+    idle_s = proc_group.parse_lsp_idle_timeout()
+    if pyright:
         # Pass `[pyright, "--stdio"]` directly to `CreateProcessW` / `execve` (never `cmd.exe /d /s /c`, which strips
         # outer quotes when `pyright` resides under a Windows user profile path containing spaces).
         cmd = [str(Path(pyright)), "--stdio"]
-        with proc_group.termination_signal_guard():
-            managed = proc_group.spawn_managed_process(
-                cmd,
-                cwd=ROOT,
-                capture_output=False,
-                inherit_stdin=True,
-            )
-            try:
-                return managed.proc.wait()
-            except KeyboardInterrupt:
-                managed.terminate_and_close()
-                try:
-                    return managed.proc.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    return 130
-            finally:
-                managed.terminate_and_close()
-    return StdlibPythonLsp(ROOT).serve()
+        return proc_group.run_stdio_lsp_with_idle_timeout(cmd, cwd=ROOT, idle_timeout_s=idle_s)
+    return StdlibPythonLsp(ROOT, idle_timeout_s=idle_s).serve()
 
 
 if __name__ == "__main__":

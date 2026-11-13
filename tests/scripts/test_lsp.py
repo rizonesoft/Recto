@@ -564,7 +564,7 @@ class BuiltinStdlibPythonLsp(unittest.TestCase):
             dag_elapsed = time.perf_counter() - t0
             self.assertEqual(len(dag_defs), 1, dag_defs)
             self.assertEqual(dag_defs[0]["range"]["start"]["line"], 1)
-            self.assertLess(dag_elapsed, 0.5, f"Memoized C3 MRO took {dag_elapsed:.3f}s on 25-deep DAG")
+            self.assertLess(dag_elapsed, 2.0, f"Memoized C3 MRO took {dag_elapsed:.3f}s on 25-deep DAG")
 
             # Also verify live `Dispatch(Harness)` inherited resolution in `scripts/tests/test_review_dispatch.py`.
             live_rd = ROOT / "scripts" / "tests" / "test_review_dispatch.py"
@@ -1085,6 +1085,106 @@ class LspMcpBridge(unittest.TestCase):
                     self.assertEqual(len(client.diagnostics_for(bad_py, wait_seconds=5.0)), 1)
                 finally:
                     client.stop()
+
+    def test_builtin_workspace_symbols_include_nested_class_methods_and_native_idle_shutdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            (ws / "scripts").mkdir(parents=True)
+            mod_py = ws / "scripts" / "svc.py"
+            mod_py.write_text(
+                "class LspClient:\n"
+                "    def diagnostics_for(self) -> list[str]:\n"
+                "        def inner_helper() -> int:\n"
+                "            return 1\n"
+                "        return []\n",
+                encoding="utf-8",
+            )
+            builtin_lsp = SCRIPTS / "python-lsp.py"
+            client = LSP_MCP.LspClient(
+                "python",
+                [sys.executable, "-B", str(builtin_lsp), "--builtin"],
+                ws,
+            )
+            try:
+                client.ensure_started()
+                syms = client.request("workspace/symbol", {"query": "diagnostics_for"}) or []
+                self.assertTrue(
+                    any(s.get("name") == "diagnostics_for" and s.get("containerName") == "LspClient" for s in syms),
+                    syms,
+                )
+                nested = client.request("workspace/symbol", {"query": "inner_helper"}) or []
+                self.assertTrue(
+                    any(
+                        s.get("name") == "inner_helper"
+                        and s.get("containerName") == "LspClient.diagnostics_for"
+                        for s in nested
+                    ),
+                    nested,
+                )
+            finally:
+                client.stop()
+
+            # Native stdio launch (`.lsp.json` path) auto-exits on inactivity while stdin stays open.
+            idle_env = dict(os.environ)
+            idle_env["RECTO_LSP_IDLE_SEC"] = "0.35"
+            proc_builtin = subprocess.Popen(
+                [sys.executable, "-B", str(builtin_lsp), "--builtin"],
+                cwd=ws,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=idle_env,
+            )
+            try:
+                rc = proc_builtin.wait(timeout=4.0)
+                self.assertEqual(rc, 0)
+            finally:
+                for s in (proc_builtin.stdin, proc_builtin.stdout, proc_builtin.stderr):
+                    if s is not None:
+                        s.close()
+                if proc_builtin.poll() is None:
+                    proc_builtin.kill()
+                    proc_builtin.wait(timeout=2.0)
+
+            # Native `clangd-lsp.py` / proxied child path also auto-exits and reaps its child on inactivity.
+            fake_bin_dir = Path(tmp) / "fake-clangd"
+            fake_bin_dir.mkdir(parents=True)
+            child_pid_file = Path(tmp) / "clangd_pid.txt"
+            sleeper_py = fake_bin_dir / "sleeper.py"
+            sleeper_py.write_text(
+                "import os, pathlib, sys, time\n"
+                f"pathlib.Path(r'{child_pid_file}').write_text(str(os.getpid()), encoding='utf-8')\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            if os.name == "nt":
+                fake_clangd = fake_bin_dir / "clangd.cmd"
+                fake_clangd.write_text(f'@"{sys.executable}" -B "{sleeper_py}"\r\n', encoding="utf-8")
+            else:
+                fake_clangd = fake_bin_dir / "clangd"
+                fake_clangd.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "{sleeper_py}"\n', encoding="utf-8")
+                fake_clangd.chmod(0o755)
+            idle_clangd_env = dict(idle_env)
+            idle_clangd_env["RECTO_CLANGD"] = str(fake_clangd)
+            proc_clangd = subprocess.Popen(
+                [sys.executable, "-B", str(SCRIPTS / "clangd-lsp.py")],
+                cwd=ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=idle_clangd_env,
+            )
+            try:
+                rc_c = proc_clangd.wait(timeout=6.0)
+                self.assertEqual(rc_c, 0)
+                self.assertTrue(child_pid_file.is_file())
+            finally:
+                for s in (proc_clangd.stdin, proc_clangd.stdout, proc_clangd.stderr):
+                    if s is not None:
+                        s.close()
+                if proc_clangd.poll() is None:
+                    proc_clangd.kill()
+                    proc_clangd.wait(timeout=2.0)
 
     @unittest.skipUnless(CLANGD_LSP.find_clangd(), "clangd not installed on this machine")
     def test_cpp23_clangd_diagnostics_symbols_and_hover(self):

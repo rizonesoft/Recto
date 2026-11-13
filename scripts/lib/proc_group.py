@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
 import uuid
 import weakref
@@ -494,14 +495,19 @@ def spawn_managed_process(
     env: dict[str, str] | None = None,
     capture_output: bool = True,
     inherit_stdin: bool = False,
+    stdio_pipes: bool = False,
 ) -> ManagedProcess:
     """Start `cmd` inside a lifetime-bound Win32 Job Object or POSIX lifeline-watched tree."""
-    stdin_arg: Any = _passthrough_stream(sys.stdin) if inherit_stdin else subprocess.DEVNULL
-    stdout_arg: Any = subprocess.PIPE if capture_output else _passthrough_stream(sys.stdout)
-    stderr_arg: Any = subprocess.PIPE if capture_output else _passthrough_stream(sys.stderr)
-    text_kwargs: dict[str, Any] = (
-        {"text": True, "encoding": "utf-8", "errors": "replace"} if capture_output else {}
-    )
+    if stdio_pipes:
+        stdin_arg: Any = subprocess.PIPE
+        stdout_arg: Any = subprocess.PIPE
+        stderr_arg: Any = _passthrough_stream(sys.stderr)
+        text_kwargs: dict[str, Any] = {}
+    else:
+        stdin_arg = _passthrough_stream(sys.stdin) if inherit_stdin else subprocess.DEVNULL
+        stdout_arg = subprocess.PIPE if capture_output else _passthrough_stream(sys.stdout)
+        stderr_arg = subprocess.PIPE if capture_output else _passthrough_stream(sys.stderr)
+        text_kwargs = {"text": True, "encoding": "utf-8", "errors": "replace"} if capture_output else {}
 
     if os.name == "nt":
         job = _create_configured_job()
@@ -591,3 +597,132 @@ def spawn_managed_process(
         lifeline_fd=life_w,
         reaper_proc=reaper,
     )
+
+
+def parse_lsp_idle_timeout() -> float:
+    raw = os.environ.get("RECTO_LSP_IDLE_SEC", "300").strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return 300.0
+
+
+def run_stdio_lsp_with_idle_timeout(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    idle_timeout_s: float | None = None,
+) -> int:
+    """Proxy stdio to a managed LSP child and reap its process tree after `idle_timeout_s` seconds of inactivity."""
+    timeout_s = parse_lsp_idle_timeout() if idle_timeout_s is None else idle_timeout_s
+    with termination_signal_guard():
+        if timeout_s <= 0:
+            managed = spawn_managed_process(cmd, cwd=cwd, env=env, capture_output=False, inherit_stdin=True)
+            try:
+                return managed.proc.wait()
+            except KeyboardInterrupt:
+                managed.terminate_and_close()
+                try:
+                    return managed.proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    return 130
+            finally:
+                managed.terminate_and_close()
+
+        managed = spawn_managed_process(cmd, cwd=cwd, env=env, capture_output=False, stdio_pipes=True)
+        child_in = managed.proc.stdin
+        child_out = managed.proc.stdout
+        last_activity = [time.monotonic()]
+        stdout_done = threading.Event()
+
+        try:
+            stdin_fd: int | None = sys.stdin.fileno()
+        except (OSError, ValueError):
+            stdin_fd = None
+
+        def _pump_stdin() -> None:
+            if child_in is None:
+                return
+            if stdin_fd is None:
+                try:
+                    child_in.close()
+                except OSError:
+                    pass
+                return
+            try:
+                while True:
+                    chunk = os.read(stdin_fd, 65536)
+                    if not chunk:
+                        break
+                    last_activity[0] = time.monotonic()
+                    child_in.write(chunk)
+                    child_in.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                try:
+                    child_in.close()
+                except OSError:
+                    pass
+
+        def _pump_stdout() -> None:
+            if child_out is None:
+                stdout_done.set()
+                return
+            try:
+                out_fd = child_out.fileno()
+                while True:
+                    chunk = os.read(out_fd, 65536)
+                    if not chunk:
+                        break
+                    last_activity[0] = time.monotonic()
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            finally:
+                stdout_done.set()
+
+        in_thread = threading.Thread(target=_pump_stdin, name="recto-lsp-stdin", daemon=True)
+        out_thread = threading.Thread(target=_pump_stdout, name="recto-lsp-stdout", daemon=True)
+        in_thread.start()
+        out_thread.start()
+
+        poll_step = min(0.25, max(0.02, timeout_s / 4.0))
+        rc = 0
+        try:
+            while True:
+                polled = managed.proc.poll()
+                if polled is not None:
+                    stdout_done.wait(timeout=2.0)
+                    rc = int(polled)
+                    break
+                if (time.monotonic() - last_activity[0]) >= timeout_s:
+                    managed.terminate_and_close()
+                    rc = 0
+                    break
+                time.sleep(poll_step)
+        except KeyboardInterrupt:
+            managed.terminate_and_close()
+            rc = 130
+        finally:
+            managed.terminate_and_close()
+            for stream in (child_in, child_out):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+            try:
+                managed.proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                sys.stdout.buffer.flush()
+                sys.stderr.buffer.flush()
+            except OSError:
+                pass
+        if in_thread.is_alive():
+            os._exit(rc)
+        return rc

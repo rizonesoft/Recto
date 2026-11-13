@@ -145,22 +145,32 @@ def main(argv: list[str] | None = None) -> int:
         clangd,
         f"--compile-commands-dir={db.parent}",
         "--pch-storage=disk",
-        "--background-index",
+        "--background-index=0",
         "--limit-results=100",
         "-j=2",
         "--header-insertion=never",
         "--log=error",
         *args,
     ]
-    if os.name != "nt":
-        os.execv(clangd, cmd)
-    proc = subprocess.Popen(cmd, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, creationflags=windowless())
-    _job = bind_kill_on_close_job(proc)
-    try:
-        return proc.wait()
-    except KeyboardInterrupt:
-        proc.terminate()
-        return proc.wait()
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    import lib.proc_group as proc_group
+
+    one_shot = any(a.startswith("--check") or a in ("--version", "--help") for a in args)
+    if one_shot:
+        with proc_group.termination_signal_guard():
+            managed = proc_group.spawn_managed_process(cmd, cwd=ROOT, capture_output=False, inherit_stdin=True)
+            try:
+                return managed.proc.wait()
+            except KeyboardInterrupt:
+                managed.terminate_and_close()
+                try:
+                    return managed.proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    return 130
+            finally:
+                managed.terminate_and_close()
+    return proc_group.run_stdio_lsp_with_idle_timeout(cmd, cwd=ROOT)
 
 
 if __name__ == "__main__":
