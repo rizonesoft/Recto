@@ -40,10 +40,19 @@ function Save-FileAtomically([string]$TargetPath, [string]$Content) {
     $tmp = Join-Path $parent (".tmp-" + [System.IO.Path]::GetFileName($TargetPath) + "-" + [guid]::NewGuid().ToString('N'))
     try {
         [System.IO.File]::WriteAllText($tmp, $Content, $utf8NoBom)
-        if (Test-Path -LiteralPath $TargetPath) {
-            [System.IO.File]::Delete($TargetPath)
+        if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
+            [System.IO.File]::Replace($tmp, $TargetPath, [NullString]::Value, $true)
+        } else {
+            try {
+                [System.IO.File]::Move($tmp, $TargetPath)
+            } catch [System.IO.IOException] {
+                if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
+                    [System.IO.File]::Replace($tmp, $TargetPath, [NullString]::Value, $true)
+                } else {
+                    throw
+                }
+            }
         }
-        [System.IO.File]::Move($tmp, $TargetPath)
     } finally {
         if (Test-Path -LiteralPath $tmp) {
             Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
@@ -106,7 +115,7 @@ function Download-Archive([string]$Url, [string]$Destination, [double]$TimeoutSe
                         try { $response.Dispose() } catch {}
                         throw "Download timed out after ${TimeoutSec}s fetching $Url"
                     }
-                    $copyTask.GetAwaiter().GetResult()
+                    $null = $copyTask.GetAwaiter().GetResult()
                     $outStream.Flush()
                     $completed = $true
                 } finally {

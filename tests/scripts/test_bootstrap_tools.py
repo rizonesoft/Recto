@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -669,6 +670,81 @@ class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
             )
             self.assertEqual(trigger_run.returncode, 0, trigger_run.stderr)
             self.assertEqual(json.loads(out_marker.read_text(encoding="utf-8"))["exit"], 0)
+
+    def test_save_file_atomically_replaces_without_delete_and_preserves_existing_file_on_failure(self):
+        script_src = BOOTSTRAP_PS1.read_text(encoding="utf-8")
+        save_fn = script_src.split("function Save-FileAtomically", 1)[1].split("function Download-Archive", 1)[0]
+        self.assertIn("[System.IO.File]::Replace(", save_fn)
+        self.assertNotIn("Delete(", save_fn)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            meta = base / "cpython-exe.txt"
+            ps_test = base / "save-atomic-test.ps1"
+            ps_test.write_text(
+                "$ErrorActionPreference = 'Stop'\n"
+                f". '{BOOTSTRAP_PS1}' -NoRun\n"
+                f"$target = '{meta}'\n"
+                "Save-FileAtomically -TargetPath $target -Content 'v1-initial'\n"
+                "if ([System.IO.File]::ReadAllText($target) -ne 'v1-initial') { throw 'initial write mismatch' }\n"
+                "Save-FileAtomically -TargetPath $target -Content 'v2-replaced'\n"
+                "if ([System.IO.File]::ReadAllText($target) -ne 'v2-replaced') { throw 'atomic replace mismatch' }\n"
+                "$lockStream = [System.IO.File]::Open($target, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)\n"
+                "$failed = $false\n"
+                "try {\n"
+                "    Save-FileAtomically -TargetPath $target -Content 'v3-should-not-land'\n"
+                "} catch {\n"
+                "    $failed = $true\n"
+                "} finally {\n"
+                "    $lockStream.Dispose()\n"
+                "}\n"
+                "if (-not $failed) { throw 'expected locked replacement to fail' }\n"
+                "if ([System.IO.File]::ReadAllText($target) -ne 'v2-replaced') { throw 'previous file was not preserved' }\n"
+                f"$leftovers = @(Get-ChildItem -LiteralPath '{base}' -Filter '.tmp-*' -Force)\n"
+                "if ($leftovers.Count -ne 0) { throw 'temporary file leaked after failed replacement' }\n",
+                encoding="utf-8",
+            )
+            shells = [s for s in (shutil.which("powershell"), shutil.which("pwsh")) if s]
+            self.assertTrue(shells)
+            for shell_exe in shells:
+                meta.unlink(missing_ok=True)
+                run = subprocess.run(
+                    [shell_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_test)],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    creationflags=_no_window(),
+                )
+                self.assertEqual(run.returncode, 0, f"{shell_exe}: {run.stdout + run.stderr}")
+                self.assertEqual(meta.read_text(encoding="utf-8"), "v2-replaced")
+
+
+class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
+    """Repository user/contributor docs use build\\python.cmd rather than bare system python."""
+
+    def test_documented_windows_commands_use_pinned_python_launcher(self):
+        bare_cmd = re.compile(r"(?<![\\/\w.-])python3?\s+(?:scripts/|\.conclave/|-m\b)")
+        checked_docs = (
+            "README.md",
+            "CONTRIBUTING.md",
+            ".conclave/automations/README.md",
+            "docs/todo-workflow.md",
+            "todo/README.md",
+            "tests/corpus/README.md",
+            "docs/support/user-bugs.md",
+            "docs/support/triage.md",
+            "docs/user-demand.md",
+            "AGENTS.md",
+        )
+        offenders: list[str] = []
+        for rel in checked_docs:
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn(r"build\python.cmd", text, f"{rel} should document build\\python.cmd")
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if bare_cmd.search(line):
+                    offenders.append(f"{rel}:{lineno}: {line.strip()}")
+        self.assertEqual(offenders, [], "Found bare python commands in repository docs:\n" + "\n".join(offenders))
 
 
 if __name__ == "__main__":

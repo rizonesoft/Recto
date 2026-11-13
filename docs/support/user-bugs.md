@@ -4,7 +4,7 @@ A bug a user reported is fixed only when a test proves it, and it is closed only
 
 ## 1. Reproduce first
 
-Get the problem happening on your machine before you change any code. Use the reporter's file if they shared it; otherwise a reproducer made with `recto-cli scrub` (the command arrives with D07 T03 §3) or a synthetic file that shows the same problem (`docs/support/triage.md` explains both). Add the file to `tests/corpus/user-reports/` with a row in `tests/corpus/PROVENANCE.md` naming the issue, where the file came from and that it holds nothing private: `| user-reports/<file> | <sha-256> | CC0-1.0 | Issue #<n>, <where it came from>, no private data | <what it reproduces> |`, in sorted order with the other rows. `python scripts/build-corpus.py --check` verifies the file against that row, and regenerating the corpus keeps it.
+Get the problem happening on your machine before you change any code. Use the reporter's file if they shared it; otherwise a reproducer made with `recto-cli scrub` (the command arrives with D07 T03 §3) or a synthetic file that shows the same problem (`docs/support/triage.md` explains both). Add the file to `tests/corpus/user-reports/` with a row in `tests/corpus/PROVENANCE.md` naming the issue, where the file came from and that it holds nothing private: `| user-reports/<file> | <sha-256> | CC0-1.0 | Issue #<n>, <where it came from>, no private data | <what it reproduces> |`, in sorted order with the other rows. `build\python.cmd scripts/build-corpus.py --check` verifies the file against that row, and regenerating the corpus keeps it.
 
 ## 2. Write the test, and watch it fail
 
@@ -32,7 +32,7 @@ When the fix merges, label the issue `fixed-on-main` and comment with the commit
 When the release containing the fix is published, run:
 
 ```powershell
-python scripts/release-notes.py <previous tag> <new tag> --issues issues.json
+build\python.cmd scripts/release-notes.py <previous tag> <new tag> --issues issues.json
 ```
 
 with `issues.json` from `gh issue list --state all --limit 1000 --json number,title,labels`. A gtest id must be in its fix commit's CI test list (the script fetches `refs/notes/gtest-list` from GitHub); a Python id must be a unittest test at its fix commit. It lists the release's user fixes by kind label, prints a "Fixed in vX.Y.Z" comment for each issue, and exits 1 if any fix lacks an existing regression test. Post each comment, change the label from `fixed-on-main` to `released`, and close the issue.

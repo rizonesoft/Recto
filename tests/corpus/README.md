@@ -28,8 +28,8 @@ All encrypted fixtures under `tests/corpus/render/` use the Standard Security Ha
 ## Regeneration and Verification
 
 ```powershell
-python scripts/build-corpus.py          # atomically regenerate all corpus fixtures
-python scripts/build-corpus.py --check  # verify on-disk bytes and structure without writing
+build\python.cmd scripts/build-corpus.py          # atomically regenerate all corpus fixtures
+build\python.cmd scripts/build-corpus.py --check  # verify on-disk bytes and structure without writing
 ```
 
 ## Provenance Rule
@@ -42,4 +42,4 @@ The `Corpus.Provenance` test in `tests/recto-tests/corpus_tests.cpp` walks `test
 
 1. Never refresh golden renders to silence an unexplained test failure.
 2. Inspect the `_actual.png` and `4x`-amplified `_diff.png` diagnostic images in `build/test-failures/goldens/` for every changed page before accepting a rendering change.
-3. Run `python scripts/refresh-goldens.py` (and `python scripts/refresh-goldens.py --check`) so `tests/corpus/render/goldens/manifest.json` and [`PROVENANCE.md`](PROVENANCE.md) are updated deterministically, and commit the golden refresh in a dedicated commit citing the owning `recto-pdf` section and cause.
+3. Run `build\python.cmd scripts/refresh-goldens.py` (and `build\python.cmd scripts/refresh-goldens.py --check`) so `tests/corpus/render/goldens/manifest.json` and [`PROVENANCE.md`](PROVENANCE.md) are updated deterministically, and commit the golden refresh in a dedicated commit citing the owning `recto-pdf` section and cause.

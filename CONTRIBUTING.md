@@ -5,7 +5,7 @@ Recto is built milestone by milestone from a validated TODO graph in [`todo/`](.
 ## Before you start
 
 1. Read [`AGENTS.md`](./AGENTS.md) for the non-negotiable architecture and interface rules (`recto-pdf` owns low-level PDF parsing and serialization, one `DocumentActor` thread per open document, immutable `DisplayList`s across threads, colours only from the `recto-ui` tokens generated from `design/tokens/colors.json`, atomic file writes).
-2. Check [`todo/implementation-plan.md`](./todo/implementation-plan.md) or run `python scripts/todo-graph.py query ready` to see what work is dependency-safe right now. Every change corresponds to a section (`DNN TNN §N`), or captures a new one first under [`todo/README.md`](./todo/README.md).
+2. Check [`todo/implementation-plan.md`](./todo/implementation-plan.md) or run `build\python.cmd scripts/todo-graph.py query ready` (`./scripts/run-python.sh` on Linux/WSL) to see what work is dependency-safe right now. Every change corresponds to a section (`DNN TNN §N`), or captures a new one first under [`todo/README.md`](./todo/README.md).
 3. Review [`CLA.md`](./CLA.md). Every pull request must include the contributor license agreement confirmation statement before it can be merged.
 
 ## Validation gates
@@ -13,12 +13,12 @@ Recto is built milestone by milestone from a validated TODO graph in [`todo/`](.
 Every change to `todo/` or `scripts/` must pass the graph gates locally and in CI (`plan-gates`):
 
 ```powershell
-python scripts/todo-graph.py validate
-python scripts/todo-graph.py plan --check
-python -m unittest tests.scripts.test_todo_graph
+build\python.cmd scripts/todo-graph.py validate
+build\python.cmd scripts/todo-graph.py plan --check
+build\python.cmd -m unittest tests.scripts.test_todo_graph
 ```
 
-Never edit `todo/implementation-plan.md` by hand; regenerate it with `python scripts/todo-graph.py plan --sync`.
+Never edit `todo/implementation-plan.md` by hand; regenerate it with `build\python.cmd scripts/todo-graph.py plan --sync`.
 
 ## Commit hook
 
@@ -28,7 +28,7 @@ Once per clone, turn on the repository's hooks:
 git config core.hooksPath scripts/hooks
 ```
 
-`scripts/hooks/pre-commit` refuses a commit that stages `todo/` changes while `todo/implementation-plan.md` is stale or the TODO graph is invalid (ticking a checklist item changes the generated plan), the same check CI's `plan-gates` runs. Fix with `python scripts/todo-graph.py plan --sync`, stage the plan, and commit again.
+`scripts/hooks/pre-commit` refuses a commit that stages `todo/` changes while `todo/implementation-plan.md` is stale or the TODO graph is invalid (ticking a checklist item changes the generated plan), the same check CI's `plan-gates` runs. Fix with `build\python.cmd scripts/todo-graph.py plan --sync`, stage the plan, and commit again.
 
 ## Building the solution
 

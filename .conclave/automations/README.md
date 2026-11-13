@@ -35,7 +35,7 @@ The workflow needs the repository setting "Allow GitHub Actions to create and ap
 
 ## How you hear about it
 
-- **A pin moved:** a GitHub pull request labelled `dependencies` and `pins`, from the pins workflow or Dependabot. GitHub notifies you as for any PR (email and the GitHub app, per your notification settings), and again when `scripts/merge_prs.py` merges it once its checks are green. A pull request still open after a day has a reason: its checks failed or never ran, it conflicts, or a merge stopped. Only a stopped merge, or a failed pull or validate after one, emails you through `recto-pr-merge`, and it leaves `build/merge-prs-stopped.json`: every later run, the campaign's included, refuses (and the task emails again) until you have checked `main` and deleted that file; `python scripts/merge_prs.py --dry-run` says why each other one is waiting.
+- **A pin moved:** a GitHub pull request labelled `dependencies` and `pins`, from the pins workflow or Dependabot. GitHub notifies you as for any PR (email and the GitHub app, per your notification settings), and again when `scripts/merge_prs.py` merges it once its checks are green. A pull request still open after a day has a reason: its checks failed or never ran, it conflicts, or a merge stopped. Only a stopped merge, or a failed pull or validate after one, emails you through `recto-pr-merge`, and it leaves `build/merge-prs-stopped.json`: every later run, the campaign's included, refuses (and the task emails again) until you have checked `main` and deleted that file; `build\python.cmd scripts/merge_prs.py --dry-run` says why each other one is waiting.
 - **Something needs your decision:** a GitHub issue labelled `pins` and `pins:<check>`. It closes itself once the finding is gone, and closing it yourself dismisses that finding.
 - **Something on this PC is behind:** an email from "Recto automations" (`website@rizonetech.com`, through SMTP2GO) to `rizonetech@gmail.com`, titled "Recto: ... is available" or "has drifted", sent once per new version or state.
 - **A check broke:** on GitHub, a failed `pins` run, which GitHub emails to whoever last edited the schedule; on this PC, an email titled "Automation failed: <task> on <host>" with the log tail and how to run it again, repeated on every failing run until fixed.
@@ -60,10 +60,10 @@ pwsh .conclave/automations/install.ps1              # idempotent; re-run after e
 pwsh .conclave/automations/install.ps1 -Uninstall   # remove every \Recto\ task
 Get-ScheduledTask -TaskPath '\Recto\' | Get-ScheduledTaskInfo | Format-Table TaskName, NextRunTime, LastRunTime, LastTaskResult
 Start-ScheduledTask -TaskPath '\Recto\' -TaskName <name>   # run one now
-python .conclave/automations/run.py <name>                    # or run it in this console
-python .conclave/automations/alert.py <name> --dry-run        # preview the alert for its last run
-python -m unittest discover -s scripts/tests -p "test_automations.py"
-python -m unittest tests.scripts.test_pin_automations
+build\python.cmd .conclave/automations/run.py <name>                    # or run it in this console
+build\python.cmd .conclave/automations/alert.py <name> --dry-run        # preview the alert for its last run
+build\python.cmd -m unittest discover -s scripts/tests -p "test_automations.py"
+build\python.cmd -m unittest tests.scripts.test_pin_automations
 ```
 
 The installer reads `tasks.json` and registers every task it lists; a task under `\Recto\` that the file no longer lists is removed.
