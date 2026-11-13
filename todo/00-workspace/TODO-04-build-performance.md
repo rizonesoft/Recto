@@ -98,21 +98,23 @@ track: M0
 
 The owner decided on 2026-11-09 that the local build is x64 only until Recto v1 ships, to halve every gate on the shared development host, while ARM64 stays a ship target. This section changes the local default, keeps ARM64 built in CI so a break is still caught on every push, and records the decision in the foundation plan so later sections that need an ARM64 host (`arm64-host` Needs) are not mistaken for done.
 
+**Corrected 2026-11-13:** validated against the repository before build. Target architectures in `docs/plans/2026-10-13-recto-foundation.md` live in D15 (`Target OS and architectures`), the section 1 owner-decisions list, section 2's `Architectures` row, and section 7 Milestone M0's `Done when` cell rather than D4 (`UI framework`), so the dated `2026-11-09` owner decision is recorded in D15 and the section 1 owner-decisions list with section 2 and M0 aligned to match (`-Platform x64,ARM64` builds both in one command, while plain `.\build.cmd` defaults to `x64` locally until Recto v1). `build.cmd`, `README.md`, `CONTRIBUTING.md`, `AGENTS.md` Validation, and `build/build.ps1`'s `vswhere` missing-toolset error message also still state that plain `.\build.cmd` builds `ARM64` locally and requires the ARM64 compiler; all five are updated together, and `tests/scripts/test_build_ps1.py` locks the `@('x64')` parameter default, `-Platform ARM64` / `-Platform x64,ARM64` parsing, and `ARM64`-conditional `vswhere` component check.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Default `build/build.ps1` and `build.cmd` to x64, with `-Platform ARM64` still accepted. Done when: `.\build.cmd` builds and tests x64 Debug and Release only.
-2. Keep ARM64 in CI and record the owner decision. Done when: CI builds ARM64 Debug and Release on the pushed commit and the foundation plan carries the dated note.
+1. Default `build/build.ps1` and `build.cmd` to x64, with `-Platform ARM64` still accepted. Done when: `.\build.cmd` builds and tests x64 Debug and Release only, and `tests/scripts/test_build_ps1.py` locks the default and overrides.
+2. Keep ARM64 in CI and record the owner decision across the foundation plan and repo docs. Done when: CI builds ARM64 Debug and Release on the pushed commit and the foundation plan, `AGENTS.md`, `README.md` and `CONTRIBUTING.md` carry the updated contract.
 
-- [ ] Change the default `$Platform` in `build/build.ps1` to `x64` and its help text, keeping `-Platform x64,ARM64` and `-Platform ARM64` working. Done when: `.\build.cmd` logs only `Debug|x64` and `Release|x64`, and `build.cmd -Platform ARM64 -SkipTests` still builds ARM64.
-- [ ] Keep `.github/workflows/build.yml` passing `-Platform x64,ARM64` for both configurations, and say in its header that ARM64 is built in CI only. Done when: the pushed commit's `build.yml` run shows `Debug|ARM64` and `Release|ARM64` built.
-- [ ] Add a dated `**Corrected 2026-11-09:**` owner decision under D4 in `docs/plans/2026-10-13-recto-foundation.md`: ARM64 stays a v1 ship target, built in CI on every push, off the local build until Recto v1, with its cost of reversing (one default in `build.ps1`). Done when: the note is in the plan and `AGENTS.md`'s Validation line for `build.cmd` says x64.
+- [ ] Change the default `$Platform` in `build/build.ps1` to `@('x64')`, update the header/help comments in `build/build.ps1` and `build.cmd` and the `vswhere` missing-tools message so `ARM64` is named only when requested, keep `-Platform x64,ARM64` and `-Platform ARM64` working, and add regression coverage in `tests/scripts/test_build_ps1.py`. Done when: `python -m unittest tests.scripts.test_build_ps1` passes, `.\build.cmd` emits only `=== Recto Debug|x64` and `=== Recto Release|x64` headers and passes x64 tests, and `.\build.cmd -Platform ARM64 -SkipTests` builds `Debug|ARM64` and `Release|ARM64`. Cheaper substitute: dropping `ARM64` from `ValidateSet` or `Recto.sln`, which would break `-Platform ARM64` and CI.
+- [ ] Keep `.github/workflows/build.yml` passing `-Platform x64,ARM64` for both `Debug` and `Release`, and state in its header comment that `ARM64` is built in CI on every code push while local `.\build.cmd` defaults to `x64` (`D00 T04 §2`). Done when: `.github/workflows/build.yml` explicitly passes `-Platform x64,ARM64` on both steps and the pushed candidate's `build.yml` run builds `Debug|ARM64` and `Release|ARM64`. Cheaper substitute: letting `build.yml` rely on `build.ps1`'s default `$Platform`, which would silently stop building `ARM64` in CI.
+- [ ] Record the dated `2026-11-09` owner decision in `docs/plans/2026-10-13-recto-foundation.md` (D15, section 1 owner-decisions list, section 2 `Architectures`, and Milestone M0 `Done when`: `ARM64` stays a v1 ship target, built in CI on every code push, off the local `.\build.cmd` default until Recto v1, with reversing costing one default in `build/build.ps1`), and align `AGENTS.md` Validation, `README.md`, and `CONTRIBUTING.md`. Done when: all four documents state that `.\build.cmd` builds `x64` locally by default (`-Platform x64,ARM64` for both) while CI builds `x64` and `ARM64`. Cheaper substitute: updating `AGENTS.md` alone while leaving `README.md`, `CONTRIBUTING.md` and D15 claiming plain `.\build.cmd` builds `ARM64`.
 - [ ] Commit: `build: build x64 locally and ARM64 in CI`
 
-**Test checkpoint:** `.\build.cmd` builds only `|x64` configurations (counted from its logs), and the CI run on the same commit builds both ARM64 configurations.
+**Test checkpoint:** `python -m unittest tests.scripts.test_build_ps1` passes, `.\build.cmd` builds only `|x64` configurations (`=== Recto Debug|x64` and `=== Recto Release|x64` in its output, zero `|ARM64`), `.\build.cmd -Platform ARM64 -SkipTests` builds `Debug|ARM64` and `Release|ARM64`, and the CI `build.yml` run on the pushed commit builds both ARM64 configurations.
 
 ## 3. MSBuild and compiler parallelism set by free memory
 
