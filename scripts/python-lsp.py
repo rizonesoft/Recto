@@ -772,8 +772,31 @@ class StdlibPythonLsp:
         is_ext = False
         cls_expr: str | None = None
 
-        for stmt in self._iter_scope_stmts(body):
-            if cursor_pos is not None and self._stmt_header_expr_contains(stmt, *cursor_pos):
+        scope_stmts = self._iter_scope_stmts(body)
+        # Python execution model (`docs.python.org/3/reference/executionmodel.html#resolution-of-names`):
+        # - Function scopes bind local names across the entire block at compile time regardless of statement order.
+        # - Module and class bodies bind names sequentially as statements execute.
+        is_sequential_ns = isinstance(scope, (ast.Module, ast.ClassDef)) and cursor_pos is not None
+        in_fn_annotation = (
+            isinstance(scope, ast.ClassDef)
+            and cursor_pos is not None
+            and any(
+                isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and self._stmt_header_expr_contains(s, *cursor_pos)
+                for s in scope_stmts
+            )
+        )
+
+        for stmt in scope_stmts:
+            if (
+                isinstance(scope, ast.ClassDef)
+                and cursor_pos is not None
+                and not in_fn_annotation
+                and getattr(stmt, "lineno", 0) > cursor_pos[0]
+            ):
+                # In a class body, assignments/defs after the current line have not bound class attributes yet.
+                break
+            if is_sequential_ns and cursor_pos is not None and self._stmt_header_expr_contains(stmt, *cursor_pos):
                 binds_ident = (
                     (isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == ident)
                     or (
@@ -786,7 +809,7 @@ class StdlibPythonLsp:
                     )
                 )
                 if binds_ident:
-                    # Header/RHS expressions execute before `stmt` (or later statements) rebinds `ident`.
+                    # Module/class header and RHS expressions execute before `stmt` (or later statements) rebinds `ident`.
                     break
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and stmt.name == ident:
                 defs.append((path, stmt))
