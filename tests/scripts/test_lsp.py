@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -99,6 +100,91 @@ class CompileCommandsGenerator(unittest.TestCase):
                 self.assertEqual(GEN.find_vs_install(), vs_root)
                 if os.name == "nt":
                     self.assertIn(str(msvc_ver / "include"), GEN.discover_system_includes("99.0.0.0"))
+
+    def test_find_vs_install_skips_dotnet_only_installs_and_requires_cpp_headers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            pf86 = base / "PF86"
+            vswhere = pf86 / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+            vswhere.parent.mkdir(parents=True)
+            vswhere.write_text("", encoding="utf-8")
+
+            dotnet_vs = base / "PF" / "Microsoft Visual Studio" / "18" / "Enterprise"
+            (dotnet_vs / "MSBuild").mkdir(parents=True)
+
+            cpp_vs = base / "PF" / "Microsoft Visual Studio" / "18" / "Community"
+            (cpp_vs / "VC" / "Tools" / "MSVC" / "14.52.37025" / "include").mkdir(parents=True)
+            clangd_exe = cpp_vs / "VC" / "Tools" / "Llvm" / "x64" / "bin" / "clangd.exe"
+            clangd_exe.parent.mkdir(parents=True)
+            clangd_exe.write_text("", encoding="utf-8")
+
+            seen_cmds: list[list[str]] = []
+
+            def fake_run(cmd, *args, **kwargs):
+                seen_cmds.append(list(cmd))
+                out = f"{dotnet_vs}\n{cpp_vs}\n"
+                return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
+
+            env_patch = {
+                "VCToolsInstallDir": "",
+                "RECTO_CLANGD": "",
+                "ProgramFiles": str(base / "PF"),
+                "ProgramFiles(x86)": str(pf86),
+            }
+            with unittest.mock.patch.dict(os.environ, env_patch, clear=False):
+                with unittest.mock.patch.object(GEN.subprocess, "run", side_effect=fake_run):
+                    self.assertEqual(GEN.find_vs_install(), cpp_vs)
+                    self.assertTrue(any("-requires" in c for c in seen_cmds), seen_cmds)
+                if os.name == "nt":
+                    with unittest.mock.patch.object(CLANGD_LSP, "load_gen", return_value=GEN):
+                        with unittest.mock.patch.object(GEN.subprocess, "run", side_effect=fake_run):
+                            with unittest.mock.patch.object(CLANGD_LSP.shutil, "which", return_value=None):
+                                self.assertEqual(Path(CLANGD_LSP.find_clangd() or ""), clangd_exe)
+
+    def test_ensure_compile_commands_regenerates_after_checkout_move(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp).resolve()
+            checkout_a = parent / "checkout_a"
+            src_dir = checkout_a / "src" / "mini"
+            src_dir.mkdir(parents=True)
+            (src_dir / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+            (checkout_a / "Directory.Build.props").write_text(
+                "<Project><PropertyGroup><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>"
+                "</PropertyGroup></Project>\n",
+                encoding="utf-8",
+            )
+            (src_dir / "mini.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemDefinitionGroup Condition="\'$(Configuration)|$(Platform)\'==\'Debug|x64\'">\n'
+                "    <ClCompile><AdditionalIncludeDirectories>$(SolutionDir)src</AdditionalIncludeDirectories></ClCompile>\n"
+                "  </ItemDefinitionGroup>\n"
+                '  <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>\n'
+                "</Project>\n",
+                encoding="utf-8",
+            )
+            (checkout_a / "Recto.sln").write_text(
+                'Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mini", "src\\mini\\mini.vcxproj", '
+                '"{11111111-1111-1111-1111-111111111111}"\nEndProject\n',
+                encoding="utf-8",
+            )
+
+            db_a = CLANGD_LSP.ensure_compile_commands(checkout_a)
+            entries_a = json.loads(db_a.read_text(encoding="utf-8"))
+            self.assertTrue(entries_a[0]["directory"].startswith(str(checkout_a)))
+
+            # Move checkout keeping build/compile_commands.json with preserved timestamps.
+            checkout_b = parent / "checkout_b"
+            shutil.move(str(checkout_a), str(checkout_b))
+            db_b = CLANGD_LSP.ensure_compile_commands(checkout_b)
+            entries_b = json.loads(db_b.read_text(encoding="utf-8"))
+            for item in entries_b:
+                self.assertTrue(item["directory"].startswith(str(checkout_b)), item)
+                self.assertTrue(item["file"].startswith(str(checkout_b)), item)
+                for arg in item["arguments"]:
+                    self.assertNotIn(str(checkout_a), arg)
+            ok, msg = GEN.check_database(db_b, checkout_b)
+            self.assertTrue(ok, msg)
 
 
 class BuiltinStdlibPythonLsp(unittest.TestCase):

@@ -35,17 +35,7 @@ def load_gen():
 
 def ensure_compile_commands(root: Path = ROOT) -> Path:
     db = root / "build" / "compile_commands.json"
-    gen = load_gen()
-    sln = root / "Recto.sln"
-    needs_regen = not db.is_file()
-    if not needs_regen and sln.is_file():
-        db_mtime = db.stat().st_mtime
-        inputs = [sln, root / "Directory.Build.props", root / "Directory.Build.targets"]
-        inputs.extend(p for _, p in gen.solution_projects(sln))
-        needs_regen = any(p.is_file() and p.stat().st_mtime > db_mtime for p in inputs)
-    if needs_regen and sln.is_file():
-        gen.write_database(db, root)
-    return db
+    return load_gen().ensure_database(db, root)
 
 
 def find_clangd() -> str | None:
@@ -57,9 +47,12 @@ def find_clangd() -> str | None:
         return on_path
     if os.name == "nt":
         gen = load_gen()
-        vs = gen.find_vs_install()
         arch_order = ("ARM64", "x64") if platform.machine().lower() in ("arm64", "aarch64") else ("x64", "ARM64")
-        if vs is not None:
+        seen_vs: list[Path] = []
+        for vs in (*gen.iter_vs_installs(require_cpp=True), *gen.iter_vs_installs(require_cpp=False)):
+            if vs in seen_vs:
+                continue
+            seen_vs.append(vs)
             for arch in arch_order:
                 cand = vs / "VC" / "Tools" / "Llvm" / arch / "bin" / "clangd.exe"
                 if cand.is_file():

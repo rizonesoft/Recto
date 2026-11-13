@@ -30,29 +30,79 @@ MSBUILD_NS = {"msb": "http://schemas.microsoft.com/developer/msbuild/2003"}
 PROJECT_RE = re.compile(r'^Project\("\{[0-9A-Fa-f-]+\}"\)\s*=\s*"([^"]+)",\s*"([^"]+\.vcxproj)"', re.M)
 
 
+VC_COMPONENTS = (
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+)
+
+
 def windowless() -> int:
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
-def find_vs_install() -> Path | None:
+def _has_msvc_headers(vs_dir: Path) -> bool:
+    msvc_root = vs_dir / "VC" / "Tools" / "MSVC"
+    if not msvc_root.is_dir():
+        return False
+    try:
+        return any(d.is_dir() and (d / "include").is_dir() for d in msvc_root.iterdir())
+    except OSError:
+        return False
+
+
+def _query_vswhere(vswhere: Path, *extra_args: str) -> list[Path]:
+    try:
+        done = subprocess.run(
+            [str(vswhere), "-products", "*", "-sort", *extra_args, "-property", "installationPath"],
+            capture_output=True, text=True, timeout=15, creationflags=windowless(),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if done.returncode != 0 or not done.stdout.strip():
+        return []
+    out: list[Path] = []
+    for raw_line in done.stdout.splitlines():
+        line = raw_line.strip()
+        if line:
+            cand = Path(line)
+            if cand.is_dir() and cand not in out:
+                out.append(cand)
+    return out
+
+
+def iter_vs_installs(*, require_cpp: bool = True) -> list[Path]:
+    """Return installed Visual Studio roots newest-first, optionally requiring usable C++ MSVC headers."""
+    candidates: list[Path] = []
+
+    def add(cand: Path) -> None:
+        if not cand.is_dir():
+            return
+        if require_cpp and not _has_msvc_headers(cand):
+            return
+        if cand not in candidates:
+            candidates.append(cand)
+
     env_vc = os.environ.get("VCToolsInstallDir")
     if env_vc:
         vc_path = Path(env_vc).resolve()
         if vc_path.is_dir():
             for anc in (vc_path, *vc_path.parents):
                 if (anc / "VC" / "Tools" / "MSVC").is_dir():
-                    return anc
+                    add(anc)
+                    break
+
     pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
     vswhere = Path(pf86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
     if vswhere.is_file():
-        done = subprocess.run(
-            [str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
-            capture_output=True, text=True, timeout=15, creationflags=windowless(),
-        )
-        if done.returncode == 0 and done.stdout.strip():
-            cand = Path(done.stdout.strip().splitlines()[-1])
-            if cand.is_dir():
-                return cand
+        if require_cpp:
+            for cand in _query_vswhere(vswhere, "-version", "[18.0,19.0)", "-requiresAny", "-requires", *VC_COMPONENTS):
+                add(cand)
+            for cand in _query_vswhere(vswhere, "-requiresAny", "-requires", *VC_COMPONENTS):
+                add(cand)
+        else:
+            for cand in _query_vswhere(vswhere):
+                add(cand)
+
     for base in (os.environ.get("ProgramFiles") or r"C:\Program Files", pf86):
         vs_root = Path(base) / "Microsoft Visual Studio"
         if vs_root.is_dir():
@@ -60,10 +110,13 @@ def find_vs_install() -> Path | None:
                 if not ver_dir.is_dir():
                     continue
                 for edition in ("Enterprise", "Professional", "Community", "BuildTools"):
-                    cand = ver_dir / edition
-                    if (cand / "VC" / "Tools" / "MSVC").is_dir():
-                        return cand
-    return None
+                    add(ver_dir / edition)
+    return candidates
+
+
+def find_vs_install() -> Path | None:
+    installs = iter_vs_installs(require_cpp=True)
+    return installs[0] if installs else None
 
 
 def discover_system_includes(sdk_version: str) -> list[str]:
@@ -92,10 +145,11 @@ def discover_system_includes(sdk_version: str) -> list[str]:
     return includes
 
 
-def target_sdk_version() -> str:
-    if PROPS.is_file():
+def target_sdk_version(root: Path = ROOT) -> str:
+    props = root / "Directory.Build.props"
+    if props.is_file():
         m = re.search(r"<WindowsTargetPlatformVersion>([^<]+)</WindowsTargetPlatformVersion>",
-                      PROPS.read_text(encoding="utf-8"))
+                      props.read_text(encoding="utf-8"))
         if m:
             return m.group(1).strip()
     return "10.0.26100.0"
@@ -121,10 +175,11 @@ def split_msbuild_list(raw: str) -> list[str]:
     return out
 
 
-def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str]) -> list[dict]:
+def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: Path = ROOT) -> list[dict]:
+    root = root.resolve()
     tree = ET.parse(vcxproj)
     root_el = tree.getroot()
-    proj_dir = vcxproj.parent
+    proj_dir = vcxproj.resolve().parent
 
     inc_dirs: list[Path] = [proj_dir]
     if (proj_dir / "include").is_dir():
@@ -145,7 +200,7 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str]) -> lis
             continue
         for inc_el in group.findall(".//msb:ClCompile/msb:AdditionalIncludeDirectories", MSBUILD_NS):
             for entry in split_msbuild_list(inc_el.text or ""):
-                cleaned = entry.replace("$(ProjectDir)", str(proj_dir) + "/").replace("$(SolutionDir)", str(ROOT) + "/")
+                cleaned = entry.replace("$(ProjectDir)", str(proj_dir) + "/").replace("$(SolutionDir)", str(root) + "/")
                 if "$(" in cleaned:
                     continue
                 cand = (proj_dir / cleaned.replace("\\", "/")).resolve()
@@ -158,8 +213,8 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str]) -> lis
 
     if uses_vcpkg:
         for vcpkg_inc in (
-            ROOT / "vcpkg_installed" / "x64-windows" / "include",
-            ROOT / "build" / "vcpkg_installed" / "x64-windows" / "include",
+            root / "vcpkg_installed" / "x64-windows" / "include",
+            root / "build" / "vcpkg_installed" / "x64-windows" / "include",
         ):
             if vcpkg_inc not in inc_dirs:
                 inc_dirs.append(vcpkg_inc)
@@ -167,7 +222,7 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str]) -> lis
     # C++/WinRT generated projections when PackageReference Microsoft.Windows.CppWinRT is used
     for pkg in root_el.findall(".//msb:PackageReference", MSBUILD_NS):
         if pkg.attrib.get("Include") == "Microsoft.Windows.CppWinRT":
-            gen_dir = ROOT / "build" / "obj" / proj_name / "x64" / "Debug" / "Generated Files"
+            gen_dir = root / "build" / "obj" / proj_name / "x64" / "Debug" / "Generated Files"
             if gen_dir not in inc_dirs:
                 inc_dirs.append(gen_dir)
 
@@ -216,23 +271,27 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str]) -> lis
 
 
 def build_database(root: Path = ROOT) -> list[dict]:
+    root = root.resolve()
     sln = root / "Recto.sln"
     if not sln.is_file():
         raise FileNotFoundError(f"missing solution file: {sln}")
-    sys_includes = discover_system_includes(target_sdk_version())
+    sys_includes = discover_system_includes(target_sdk_version(root))
     entries: list[dict] = []
     for name, vcxproj in solution_projects(sln):
-        entries.extend(parse_vcxproj(name, vcxproj, sys_includes))
+        entries.extend(parse_vcxproj(name, vcxproj, sys_includes, root))
     return entries
 
 
-def write_database(out_path: Path = OUT, root: Path = ROOT) -> list[dict]:
-    entries = build_database(root)
+def _write_entries(out_path: Path, entries: list[dict]) -> list[dict]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(f"{out_path.name}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8", newline="\n")
     os.replace(tmp, out_path)
     return entries
+
+
+def write_database(out_path: Path = OUT, root: Path = ROOT) -> list[dict]:
+    return _write_entries(out_path, build_database(root))
 
 
 def _normalize_entry(entry: dict) -> tuple[str, str, tuple[str, ...]]:
@@ -246,7 +305,7 @@ def _normalize_entry(entry: dict) -> tuple[str, str, tuple[str, ...]]:
     return (file_path, directory, args)
 
 
-def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
+def _check_against_expected(out_path: Path, expected: list[dict]) -> tuple[bool, str]:
     if not out_path.is_file():
         return False, f"{out_path} is missing (run: python scripts/gen-compile-commands.py)"
     try:
@@ -255,7 +314,6 @@ def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
         return False, f"{out_path} is unreadable ({exc})"
     if not isinstance(actual, list) or not all(isinstance(e, dict) for e in actual):
         return False, f"{out_path} must be a JSON array of compile command objects"
-    expected = build_database(root)
     actual_files = sorted(str(e.get("file", "")) for e in actual)
     expected_files = sorted(str(e["file"]) for e in expected)
     if actual_files != expected_files:
@@ -272,6 +330,30 @@ def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
         )
         return False, f"{out_path} has stale directory or compiler arguments for {mismatch} (run: python scripts/gen-compile-commands.py)"
     return True, f"ok: {len(actual_files)} translation units"
+
+
+def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
+    if not out_path.is_file():
+        return False, f"{out_path} is missing (run: python scripts/gen-compile-commands.py)"
+    return _check_against_expected(out_path, build_database(root))
+
+
+def ensure_database(out_path: Path = OUT, root: Path = ROOT) -> Path:
+    """Regenerate `out_path` when missing, older than project files, or out of sync with `root` (e.g. moved checkout)."""
+    root = root.resolve()
+    sln = root / "Recto.sln"
+    if not sln.is_file():
+        return out_path
+    expected = build_database(root)
+    ok, _ = _check_against_expected(out_path, expected)
+    if ok and out_path.is_file():
+        db_mtime = out_path.stat().st_mtime
+        inputs = [sln, root / "Directory.Build.props", root / "Directory.Build.targets"]
+        inputs.extend(p for _, p in solution_projects(sln))
+        if not any(p.is_file() and p.stat().st_mtime > db_mtime for p in inputs):
+            return out_path
+    _write_entries(out_path, expected)
+    return out_path
 
 
 def main(argv: list[str] | None = None) -> int:
