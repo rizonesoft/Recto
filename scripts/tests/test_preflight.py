@@ -80,10 +80,13 @@ class Fixture(unittest.TestCase):
 
     def seed(self, agent_file):
         (self.root / "scripts").mkdir(exist_ok=True)
-        for script in ("campaign_guard.py", "codex-campaign-hook.py", "codex-hook-trust.py"):
+        for script in ("campaign_guard.py", "codex-campaign-hook.py", "codex-hook-trust.py", "run-python.sh"):
             src = TODO / "scripts" / script
             if src.is_file():
-                shutil.copyfile(src, self.root / "scripts" / script)
+                dst = self.root / "scripts" / script
+                shutil.copyfile(src, dst)
+                if script.endswith(".sh"):
+                    os.chmod(dst, 0o755)
         target = self.root / agent_file
         target.parent.mkdir(parents=True, exist_ok=True)
         src_hook = TODO / agent_file

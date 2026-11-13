@@ -98,7 +98,13 @@ class ToolsLockAndWorkflowContract(unittest.TestCase):
 class BootstrapToolsScriptTests(unittest.TestCase):
     """build/bootstrap-tools.ps1 fetches, verifies SHA-256, configures CPython ._pth, and refuses bad archives."""
 
-    def _build_fixture_lock(self, archives_dir: Path, *, ninja_ver: str = "1.13.2") -> tuple[Path, dict]:
+    def _build_fixture_lock(
+        self,
+        archives_dir: Path,
+        *,
+        ninja_ver: str = "1.13.2",
+        cpython_ver: str = "3.15.2",
+    ) -> tuple[Path, dict]:
         ninja_zip = archives_dir / f"ninja-{ninja_ver}.zip"
         ninja_sha = _write_zip(ninja_zip, {"ninja.exe": f"ninja-{ninja_ver}".encode("ascii")})
 
@@ -108,11 +114,12 @@ class BootstrapToolsScriptTests(unittest.TestCase):
         sccache_zip = archives_dir / "sccache.zip"
         sccache_sha = _write_zip(sccache_zip, {"sccache-v0.19.0-x86_64-pc-windows-msvc/sccache.exe": b"sccache-bin"})
 
-        cpython_zip = archives_dir / "cpython.zip"
+        cpython_zip = archives_dir / f"cpython-{cpython_ver}.zip"
         cpython_sha = _write_zip(
             cpython_zip,
             {
-                "python.exe": b"cpython-bin",
+                "python.exe": f"cpython-{cpython_ver}".encode("ascii"),
+                "pythonw.exe": f"cpythonw-{cpython_ver}".encode("ascii"),
                 "python315.zip": b"stdlib",
                 "python315._pth": b"python315.zip\r\n.\r\n\r\n# Uncomment to run site.main() automatically\r\n#import site\r\n",
             },
@@ -137,7 +144,7 @@ class BootstrapToolsScriptTests(unittest.TestCase):
                 "executable": "sccache-v0.19.0-x86_64-pc-windows-msvc/sccache.exe",
             },
             "cpython": {
-                "version": "3.15.2",
+                "version": cpython_ver,
                 "url": cpython_zip.resolve().as_uri(),
                 "sha256": cpython_sha,
                 "executable": "python.exe",
@@ -231,6 +238,76 @@ class BootstrapToolsScriptTests(unittest.TestCase):
             self.assertFalse((tools_dir / "ninja").exists())
             self.assertFalse((base / "escaped.txt").exists())
 
+    def test_download_body_stall_times_out_and_cleans_partial_destination(self):
+        assert POWERSHELL is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "partial.zip"
+            ps_code = (
+                f". '{BOOTSTRAP_PS1}' -NoRun\n"
+                "$src = @'\n"
+                "using System;\n"
+                "using System.IO;\n"
+                "using System.Net;\n"
+                "using System.Net.Http;\n"
+                "using System.Threading;\n"
+                "using System.Threading.Tasks;\n"
+                "public sealed class StalledBodyStream : Stream {\n"
+                "    private bool _sentFirst;\n"
+                "    private bool _closed;\n"
+                "    private readonly object _sync = new object();\n"
+                "    public override bool CanRead { get { return true; } }\n"
+                "    public override bool CanSeek { get { return false; } }\n"
+                "    public override bool CanWrite { get { return false; } }\n"
+                "    public override long Length { get { throw new NotSupportedException(); } }\n"
+                "    public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }\n"
+                "    public override void Flush() {}\n"
+                "    public override int Read(byte[] buffer, int offset, int count) {\n"
+                "        if (!_sentFirst) { _sentFirst = true; buffer[offset] = 0x50; return 1; }\n"
+                "        lock (_sync) { if (!_closed) { Monitor.Wait(_sync, 30000); } }\n"
+                "        throw new ObjectDisposedException(nameof(StalledBodyStream));\n"
+                "    }\n"
+                "    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) {\n"
+                "        if (!_sentFirst) { _sentFirst = true; buffer[offset] = 0x50; return 1; }\n"
+                "        await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);\n"
+                "        return 0;\n"
+                "    }\n"
+                "    public override long Seek(long offset, SeekOrigin origin) { throw new NotSupportedException(); }\n"
+                "    public override void SetLength(long value) { throw new NotSupportedException(); }\n"
+                "    public override void Write(byte[] buffer, int offset, int count) { throw new NotSupportedException(); }\n"
+                "    protected override void Dispose(bool disposing) { lock (_sync) { _closed = true; Monitor.PulseAll(_sync); } base.Dispose(disposing); }\n"
+                "}\n"
+                "public sealed class StalledBodyHandler : HttpMessageHandler {\n"
+                "    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {\n"
+                "        var resp = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new StalledBodyStream()) };\n"
+                "        return Task.FromResult(resp);\n"
+                "    }\n"
+                "}\n"
+                "'@\n"
+                "if ($PSVersionTable.PSVersion.Major -lt 6) {\n"
+                "    Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition $src\n"
+                "} else {\n"
+                "    Add-Type -TypeDefinition $src\n"
+                "}\n"
+                "$handler = [StalledBodyHandler]::new()\n"
+                "try {\n"
+                f"    Download-Archive -Url 'https://example.invalid/tool.zip' -Destination '{dest}' -TimeoutSec 0.6 -Handler $handler\n"
+                "} finally {\n"
+                "    $handler.Dispose()\n"
+                "}\n"
+            )
+            script = Path(tmp) / "stall-test.ps1"
+            script.write_text(ps_code, encoding="utf-8")
+            run = subprocess.run(
+                [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script)],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=_no_window(),
+            )
+            self.assertNotEqual(run.returncode, 0)
+            self.assertIn("Download timed out", run.stdout + run.stderr)
+            self.assertFalse(dest.exists(), "partial download file must be removed on timeout")
+
 
 @unittest.skipUnless(os.name == "nt", "Windows .tools/ CPython and launcher integration")
 class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
@@ -288,7 +365,9 @@ class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
                 creationflags=_no_window(),
             )
             self.assertEqual(r_script.returncode, 0, r_script.stderr)
-            self.assertEqual(r_script.stdout.strip(), f"from-sibling|{base.resolve()}")
+            prefix_val, _, raw_child_path = r_script.stdout.strip().partition("|")
+            self.assertEqual(prefix_val, "from-sibling")
+            self.assertEqual(Path(raw_child_path).resolve(), base.resolve())
 
             # 2. Dotted `-m pkg.mod` imports from CWD, and PYTHONPATH prepends custom dir.
             pkg = base / "mypkg"
@@ -444,6 +523,141 @@ class PinnedCpythonAndNoSystemPythonTests(unittest.TestCase):
                 )
                 self.assertEqual(posix_run.returncode, 0, posix_run.stderr)
                 self.assertEqual(posix_run.stdout.strip(), "POSIX_PY:hello-posix")
+
+    @unittest.skipUnless(shutil.which("pwsh"), "install.ps1 requires PowerShell 7 (pwsh)")
+    def test_install_ps1_registers_stable_cpython_current_junction_and_honors_recto_tools_dir(self):
+        pwsh = shutil.which("pwsh")
+        assert pwsh is not None
+        stripped = self._stripped_env()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = base / "repo"
+            (repo / ".conclave" / "automations").mkdir(parents=True)
+            (repo / "build").mkdir(parents=True)
+            (repo / "scripts").mkdir(parents=True)
+            for fname in ("install.ps1", "run.py", "alert.py"):
+                shutil.copy2(ROOT / ".conclave" / "automations" / fname, repo / ".conclave" / "automations" / fname)
+            shutil.copy2(BOOTSTRAP_PS1, repo / "build" / "bootstrap-tools.ps1")
+            (repo / "scripts" / "noop.py").write_text("print('ok')\n", encoding="utf-8")
+            (repo / ".conclave" / "automations" / "tasks.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "folder": "\\Demo\\",
+                        "tasks": [
+                            {
+                                "name": "demo-pins",
+                                "description": "Check demo pins",
+                                "command": ["python", "scripts/noop.py"],
+                                "trigger": {"weekly": "Monday", "at": "07:00"},
+                                "timeout_minutes": 5,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            # Seed an override RECTO_TOOLS_DIR using the real .tools/ CPython binary payload for 3.15.2, then upgrade to 3.15.99.
+            real_lock = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
+            real_ver = real_lock["cpython"]["version"]
+            real_cpython_dir = ROOT / ".tools" / "cpython" / real_ver
+            self.assertTrue(real_cpython_dir.is_dir(), f"expected bootstrapped CPython at {real_cpython_dir}")
+
+            archives = base / "archives"
+            cpython_entries = {
+                p.name: p.read_bytes()
+                for p in real_cpython_dir.iterdir()
+                if p.is_file() and p.name not in (".verified-sha256", "sitecustomize.py")
+            }
+            # Restore original commented ._pth in archive so bootstrap exercises Configure-EmbeddableCpython.
+            for k in list(cpython_entries):
+                if k.endswith("._pth"):
+                    cpython_entries[k] = b"python315.zip\r\n.\r\n#import site\r\n"
+            cp_v1_zip = archives / "cpython-v1.zip"
+            cp_v1_sha = _write_zip(cp_v1_zip, cpython_entries)
+            cp_v2_zip = archives / "cpython-v2.zip"
+            cp_v2_sha = _write_zip(cp_v2_zip, cpython_entries)
+
+            ninja_zip = archives / "ninja.zip"
+            ninja_sha = _write_zip(ninja_zip, {"ninja.exe": b"n"})
+            cmake_zip = archives / "cmake.zip"
+            cmake_sha = _write_zip(cmake_zip, {"cmake.exe": b"c"})
+            sccache_zip = archives / "sccache.zip"
+            sccache_sha = _write_zip(sccache_zip, {"sccache.exe": b"s"})
+
+            def _make_lock(cp_ver: str, cp_zip: Path, cp_sha: str) -> dict:
+                return {
+                    "ninja": {"version": "1.13.2", "url": ninja_zip.resolve().as_uri(), "sha256": ninja_sha, "executable": "ninja.exe"},
+                    "cmake": {"version": "4.5.0", "url": cmake_zip.resolve().as_uri(), "sha256": cmake_sha, "executable": "cmake.exe"},
+                    "sccache": {"version": "0.19.0", "url": sccache_zip.resolve().as_uri(), "sha256": sccache_sha, "executable": "sccache.exe"},
+                    "cpython": {"version": cp_ver, "url": cp_zip.resolve().as_uri(), "sha256": cp_sha, "executable": "python.exe"},
+                }
+
+            repo_lock = repo / "build" / "tools.lock.json"
+            repo_lock.write_text(json.dumps(_make_lock("3.15.2", cp_v1_zip, cp_v1_sha), indent=2) + "\n", encoding="utf-8")
+
+            override_tools = base / "custom-tools-dir"
+            fake_existing = base / "existing.json"
+            fake_existing.write_text("[]", encoding="utf-8")
+            fake_log = base / "scheduler.jsonl"
+            fake_log.write_text("", encoding="utf-8")
+
+            env = dict(
+                stripped,
+                RECTO_TOOLS_DIR=str(override_tools),
+                FAKE_EXISTING=str(fake_existing),
+                FAKE_LOG=str(fake_log),
+                FAKE_SCRIPT=str(repo / ".conclave" / "automations" / "install.ps1"),
+            )
+            install_run = subprocess.run(
+                [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ROOT / "tests" / "scripts" / "fixtures" / "fake-scheduler.ps1")],
+                cwd=repo,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                creationflags=_no_window(),
+            )
+            self.assertEqual(install_run.returncode, 0, install_run.stdout + install_run.stderr)
+            self.assertFalse((repo / ".tools").exists(), "install.ps1 must honor RECTO_TOOLS_DIR rather than creating <repo>/.tools")
+
+            records = [json.loads(line) for line in fake_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(records), 1)
+            registered_exe = Path(records[0]["execute"])
+            expected_current_w = override_tools / "cpython" / "current" / "pythonw.exe"
+            self.assertEqual(registered_exe, expected_current_w)
+            self.assertTrue(registered_exe.is_file())
+
+            # Upgrade CPython in lock to 3.15.99 and run bootstrap-tools.ps1: 3.15.2 is deleted, yet registered_exe still works.
+            repo_lock.write_text(json.dumps(_make_lock("3.15.99", cp_v2_zip, cp_v2_sha), indent=2) + "\n", encoding="utf-8")
+            upgrade_run = subprocess.run(
+                [pwsh, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(repo / "build" / "bootstrap-tools.ps1")],
+                cwd=repo,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                creationflags=_no_window(),
+            )
+            self.assertEqual(upgrade_run.returncode, 0, upgrade_run.stdout + upgrade_run.stderr)
+            self.assertFalse((override_tools / "cpython" / "3.15.2").exists(), "old CPython version folder must be pruned")
+            self.assertTrue((override_tools / "cpython" / "3.15.99" / "pythonw.exe").is_file())
+            self.assertTrue(registered_exe.is_file(), "registered Task Scheduler executable must survive CPython upgrades")
+
+            # Triggering the registered action runs run.py cleanly with the upgraded interpreter.
+            out_marker = repo / "build" / "automations" / "demo-pins" / "last.json"
+            trigger_run = subprocess.run(
+                [str(registered_exe), str(repo / ".conclave" / "automations" / "run.py"), "demo-pins"],
+                cwd=repo,
+                env=stripped,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                creationflags=_no_window(),
+            )
+            self.assertEqual(trigger_run.returncode, 0, trigger_run.stderr)
+            self.assertEqual(json.loads(out_marker.read_text(encoding="utf-8"))["exit"], 0)
 
 
 if __name__ == "__main__":

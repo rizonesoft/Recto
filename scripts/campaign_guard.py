@@ -1218,7 +1218,10 @@ def _self_test(project: str = REPO, limit: float = SELF_TEST_SECONDS,
             os.makedirs(os.path.join(workspace, folder))
         for script in ("campaign_guard.py", "codex-campaign-hook.py", "run-python.sh"):
             if os.path.isfile(os.path.join(project, "scripts", script)):
-                shutil.copyfile(os.path.join(project, "scripts", script), os.path.join(workspace, "scripts", script))
+                dst_script = os.path.join(workspace, "scripts", script)
+                shutil.copyfile(os.path.join(project, "scripts", script), dst_script)
+                if script.endswith(".sh"):
+                    os.chmod(dst_script, 0o755)
         for build_file in ("tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
             if os.path.isfile(os.path.join(project, "build", build_file)):
                 shutil.copyfile(os.path.join(project, "build", build_file), os.path.join(workspace, "build", build_file))

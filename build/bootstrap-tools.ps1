@@ -1,26 +1,10 @@
 param(
     [string]$LockFile = '',
-    [string]$ToolsDir = ''
+    [string]$ToolsDir = '',
+    [double]$DownloadTimeoutSec = 300,
+    [switch]$NoRun
 )
 $ErrorActionPreference = 'Stop'
-
-$repoRoot = Split-Path -Parent $PSScriptRoot
-if (-not $LockFile) {
-    $LockFile = Join-Path $PSScriptRoot 'tools.lock.json'
-}
-if (-not $ToolsDir) {
-    if ($env:RECTO_TOOLS_DIR -and $env:RECTO_TOOLS_DIR.Trim()) {
-        $ToolsDir = $env:RECTO_TOOLS_DIR.Trim()
-    } else {
-        $ToolsDir = Join-Path $repoRoot '.tools'
-    }
-}
-$LockFile = [System.IO.Path]::GetFullPath($LockFile)
-$ToolsDir = [System.IO.Path]::GetFullPath($ToolsDir)
-
-if (-not (Test-Path -LiteralPath $LockFile)) {
-    throw "Tools lock file not found: $LockFile"
-}
 
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -67,7 +51,10 @@ function Save-FileAtomically([string]$TargetPath, [string]$Content) {
     }
 }
 
-function Download-Archive([string]$Url, [string]$Destination) {
+function Download-Archive([string]$Url, [string]$Destination, [double]$TimeoutSec = 300, [System.Net.Http.HttpMessageHandler]$Handler = $null) {
+    if ($TimeoutSec -le 0) {
+        throw "DownloadTimeoutSec must be positive (got $TimeoutSec)."
+    }
     $uri = [System.Uri]$Url
     if ($uri.Scheme -eq 'file') {
         if (-not (Test-Path -LiteralPath $uri.LocalPath)) {
@@ -82,32 +69,86 @@ function Download-Archive([string]$Url, [string]$Destination) {
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
     } catch {}
-    $handler = [System.Net.Http.HttpClientHandler]::new()
-    $handler.AllowAutoRedirect = $true
-    $client = [System.Net.Http.HttpClient]::new($handler)
-    $client.Timeout = [TimeSpan]::FromMinutes(10)
+    $ownsHandler = $false
+    if ($null -eq $Handler) {
+        $httpHandler = [System.Net.Http.HttpClientHandler]::new()
+        $httpHandler.AllowAutoRedirect = $true
+        $Handler = $httpHandler
+        $ownsHandler = $true
+    }
+    $client = [System.Net.Http.HttpClient]::new($Handler, $ownsHandler)
+    $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
     $client.DefaultRequestHeaders.UserAgent.ParseAdd('recto-bootstrap-tools/1.0')
+    $deadlineMs = [long][Math]::Max(1.0, [Math]::Ceiling($TimeoutSec * 1000.0))
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $cts = [System.Threading.CancellationTokenSource]::new([TimeSpan]::FromMilliseconds($deadlineMs))
+    $completed = $false
     try {
-        $response = $client.GetAsync($uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
         try {
-            if (-not $response.IsSuccessStatusCode) {
-                throw "HTTP $([int]$response.StatusCode) $($response.ReasonPhrase) fetching $Url"
+            $reqWaitMs = [int][Math]::Min([double][int]::MaxValue, [double][Math]::Max(1L, $deadlineMs - $stopwatch.ElapsedMilliseconds))
+            $reqTask = $client.GetAsync($uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cts.Token)
+            if (-not $reqTask.Wait($reqWaitMs)) {
+                $cts.Cancel()
+                throw "Download timed out after ${TimeoutSec}s fetching $Url"
             }
-            $inStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
-            $outStream = [System.IO.File]::Create($Destination)
+            $response = $reqTask.GetAwaiter().GetResult()
             try {
-                $inStream.CopyTo($outStream)
+                if (-not $response.IsSuccessStatusCode) {
+                    throw "HTTP $([int]$response.StatusCode) $($response.ReasonPhrase) fetching $Url"
+                }
+                $inStream = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                $outStream = [System.IO.File]::Create($Destination)
+                try {
+                    $bodyWaitMs = [int][Math]::Min([double][int]::MaxValue, [double][Math]::Max(1L, $deadlineMs - $stopwatch.ElapsedMilliseconds))
+                    $copyTask = $inStream.CopyToAsync($outStream, 81920, $cts.Token)
+                    if (-not $copyTask.Wait($bodyWaitMs)) {
+                        $cts.Cancel()
+                        try { $response.Dispose() } catch {}
+                        throw "Download timed out after ${TimeoutSec}s fetching $Url"
+                    }
+                    $copyTask.GetAwaiter().GetResult()
+                    $outStream.Flush()
+                    $completed = $true
+                } finally {
+                    $outStream.Dispose()
+                    $inStream.Dispose()
+                }
             } finally {
-                $outStream.Dispose()
-                $inStream.Dispose()
+                $response.Dispose()
             }
-        } finally {
-            $response.Dispose()
+        } catch {
+            if ($cts.IsCancellationRequested) {
+                throw "Download timed out after ${TimeoutSec}s fetching $Url"
+            }
+            throw
         }
     } finally {
+        if (-not $completed -and (Test-Path -LiteralPath $Destination)) {
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction SilentlyContinue
+        }
+        $cts.Dispose()
         $client.Dispose()
-        $handler.Dispose()
     }
+}
+
+function Update-DirectoryJunction([string]$LinkPath, [string]$TargetPath) {
+    $targetFull = [System.IO.Path]::GetFullPath($TargetPath)
+    if (Test-Path -LiteralPath $LinkPath) {
+        $item = Get-Item -LiteralPath $LinkPath -Force
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $existingTarget = @($item.Target | Select-Object -First 1)[0]
+            if ($existingTarget) {
+                $cleanTarget = ([string]$existingTarget) -replace '^\\\?\\', ''
+                if ([string]::Equals([System.IO.Path]::GetFullPath($cleanTarget).TrimEnd('\', '/'), $targetFull.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return
+                }
+            }
+            [System.IO.Directory]::Delete($LinkPath)
+        } else {
+            Remove-Item -LiteralPath $LinkPath -Recurse -Force
+        }
+    }
+    New-Item -ItemType Junction -Path $LinkPath -Target $targetFull | Out-Null
 }
 
 function Extract-ZipSafely([string]$ZipPath, [string]$DestinationDir) {
@@ -279,6 +320,29 @@ function Test-ToolReady([string]$ToolName, [string]$FinalDir, [string]$Executabl
     return $true
 }
 
+if ($NoRun) {
+    $global:LASTEXITCODE = 0
+    return
+}
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+if (-not $LockFile) {
+    $LockFile = Join-Path $PSScriptRoot 'tools.lock.json'
+}
+if (-not $ToolsDir) {
+    if ($env:RECTO_TOOLS_DIR -and $env:RECTO_TOOLS_DIR.Trim()) {
+        $ToolsDir = $env:RECTO_TOOLS_DIR.Trim()
+    } else {
+        $ToolsDir = Join-Path $repoRoot '.tools'
+    }
+}
+$LockFile = [System.IO.Path]::GetFullPath($LockFile)
+$ToolsDir = [System.IO.Path]::GetFullPath($ToolsDir)
+
+if (-not (Test-Path -LiteralPath $LockFile)) {
+    throw "Tools lock file not found: $LockFile"
+}
+
 $mutexName = 'Local\RectoBootstrapTools-' + (Get-StringSha256 ($ToolsDir.ToLowerInvariant())).Substring(0, 24)
 $mutex = [System.Threading.Mutex]::new($false, $mutexName)
 $acquired = $false
@@ -328,9 +392,16 @@ try {
         $toolRoot = Join-Path $ToolsDir $tool
         $finalDir = Join-Path $toolRoot $version
         if (Test-ToolReady -ToolName $tool -FinalDir $finalDir -ExecutableRel $exeRel -ExpectedHash $expectedHash) {
+            if ($tool -eq 'cpython') {
+                Update-DirectoryJunction -LinkPath (Join-Path $toolRoot 'current') -TargetPath $finalDir
+            }
             if (Test-Path -LiteralPath $toolRoot) {
-                Get-ChildItem -LiteralPath $toolRoot -Directory | Where-Object { $_.Name -ne $version } | ForEach-Object {
-                    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+                Get-ChildItem -LiteralPath $toolRoot -Directory -Force | Where-Object { $_.Name -ne $version -and $_.Name -ne 'current' } | ForEach-Object {
+                    if (($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                        [System.IO.Directory]::Delete($_.FullName)
+                    } else {
+                        Remove-Item -LiteralPath $_.FullName -Recurse -Force
+                    }
                 }
             }
             continue
@@ -342,7 +413,7 @@ try {
         $stageParent = Join-Path $ToolsDir ".staging-$tool-$id"
         $stageDir = Join-Path $stageParent $version
         try {
-            Download-Archive -Url $url -Destination $tempZip
+            Download-Archive -Url $url -Destination $tempZip -TimeoutSec $DownloadTimeoutSec
             $actualHash = Get-FileSha256 -Path $tempZip
             if ($actualHash -ne $expectedHash) {
                 throw "SHA-256 mismatch for $tool ($version): expected $expectedHash, actual $actualHash"
@@ -375,8 +446,16 @@ try {
                 throw
             }
 
-            Get-ChildItem -LiteralPath $toolRoot -Directory | Where-Object { $_.Name -ne $version } | ForEach-Object {
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force
+            if ($tool -eq 'cpython') {
+                Update-DirectoryJunction -LinkPath (Join-Path $toolRoot 'current') -TargetPath $finalDir
+            }
+
+            Get-ChildItem -LiteralPath $toolRoot -Directory -Force | Where-Object { $_.Name -ne $version -and $_.Name -ne 'current' } | ForEach-Object {
+                if (($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    [System.IO.Directory]::Delete($_.FullName)
+                } else {
+                    Remove-Item -LiteralPath $_.FullName -Recurse -Force
+                }
             }
         } finally {
             if (Test-Path -LiteralPath $tempZip) {

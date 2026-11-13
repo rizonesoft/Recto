@@ -15,7 +15,9 @@ function New-ScheduledTaskSettingsSet { param([switch]$StartWhenAvailable, $Mult
   [pscustomobject]@{Limit = "$ExecutionTimeLimit"; Instances = "$MultipleInstances"} }
 function New-ScheduledTaskPrincipal { param($UserId, $LogonType, $RunLevel) [pscustomobject]@{LogonType = "$LogonType"} }
 function Register-ScheduledTask { param($TaskPath, $TaskName, $Description, $Action, $Trigger, $Settings, $Principal, [switch]$Force)
-  Add-Content $env:FAKE_LOG (ConvertTo-Json -Compress -Depth 5 @{op = 'register'; path = $TaskPath; name = $TaskName; triggers = @($Trigger); limit = $Settings.Limit; logon = $Principal.LogonType}) }
+  Add-Content $env:FAKE_LOG (ConvertTo-Json -Compress -Depth 5 @{op = 'register'; path = $TaskPath; name = $TaskName; execute = $Action.Execute; argument = $Action.Argument; triggers = @($Trigger); limit = $Settings.Limit; logon = $Principal.LogonType})
+  $cur = @((Get-Content -Raw $env:FAKE_EXISTING | ConvertFrom-Json) | Where-Object { -not ($_.path -eq $TaskPath -and $_.name -eq $TaskName) }) + @([pscustomobject]@{path = $TaskPath; name = $TaskName})
+  ConvertTo-Json -InputObject @($cur) -Compress | Set-Content $env:FAKE_EXISTING }
 function Unregister-ScheduledTask { param($TaskPath, $TaskName, [switch]$Confirm)
   Add-Content $env:FAKE_LOG (ConvertTo-Json -Compress @{op = 'unregister'; path = $TaskPath; name = $TaskName}) }
   $left = @((Get-Content -Raw $env:FAKE_EXISTING | ConvertFrom-Json) | Where-Object { -not ($_.path -eq $TaskPath -and $_.name -eq $TaskName) })

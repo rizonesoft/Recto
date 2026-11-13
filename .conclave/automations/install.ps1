@@ -23,18 +23,21 @@ $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
 $repo = (Resolve-Path (Join-Path $here '..\..')).Path
 $bootstrap = Join-Path $repo 'build\bootstrap-tools.ps1'
+$toolsDir = if ($env:RECTO_TOOLS_DIR -and $env:RECTO_TOOLS_DIR.Trim()) {
+  [System.IO.Path]::GetFullPath($env:RECTO_TOOLS_DIR.Trim())
+} else {
+  Join-Path $repo '.tools'
+}
 $pythonw = $null
 if (Test-Path -LiteralPath $bootstrap) {
-  & $bootstrap
+  & $bootstrap -ToolsDir $toolsDir
   if ($LASTEXITCODE -ne 0) { throw "bootstrap-tools.ps1 failed (exit $LASTEXITCODE)" }
-  $ptr = Join-Path $repo '.tools\cpython-exe.txt'
-  if (Test-Path -LiteralPath $ptr) {
-    $pinnedExe = ([System.IO.File]::ReadAllText($ptr)).Trim()
-    $candidateW = Join-Path (Split-Path -Parent $pinnedExe) 'pythonw.exe'
-    if (Test-Path -LiteralPath $candidateW) { $pythonw = $candidateW }
+  $candidateW = Join-Path $toolsDir 'cpython\current\pythonw.exe'
+  if (-not (Test-Path -LiteralPath $candidateW)) {
+    throw "Pinned pythonw.exe was not found at $candidateW after bootstrap"
   }
-}
-if (-not $pythonw) {
+  $pythonw = $candidateW
+} else {
   $pythonw = (Get-Command pythonw.exe -ErrorAction Ignore).Source  # absent is the throw below
 }
 if (-not $pythonw) { throw 'pythonw.exe is not available in .tools or on PATH; run build/bootstrap-tools.ps1 or install Python 3 for Windows first' }
