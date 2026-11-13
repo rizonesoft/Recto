@@ -235,6 +235,17 @@ def write_database(out_path: Path = OUT, root: Path = ROOT) -> list[dict]:
     return entries
 
 
+def _normalize_entry(entry: dict) -> tuple[str, str, tuple[str, ...]]:
+    directory = os.path.normcase(os.path.normpath(str(entry.get("directory", ""))))
+    file_path = os.path.normcase(os.path.normpath(str(entry.get("file", ""))))
+    raw_args = entry.get("arguments")
+    if isinstance(raw_args, list):
+        args = tuple(str(a) for a in raw_args)
+    else:
+        args = (str(entry.get("command", "")),)
+    return (file_path, directory, args)
+
+
 def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
     if not out_path.is_file():
         return False, f"{out_path} is missing (run: python scripts/gen-compile-commands.py)"
@@ -242,14 +253,24 @@ def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
         actual = json.loads(out_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return False, f"{out_path} is unreadable ({exc})"
+    if not isinstance(actual, list) or not all(isinstance(e, dict) for e in actual):
+        return False, f"{out_path} must be a JSON array of compile command objects"
     expected = build_database(root)
-    actual_files = sorted(e.get("file", "") for e in actual if isinstance(e, dict))
-    expected_files = sorted(e["file"] for e in expected)
+    actual_files = sorted(str(e.get("file", "")) for e in actual)
+    expected_files = sorted(str(e["file"]) for e in expected)
     if actual_files != expected_files:
         return False, f"{out_path} lists {len(actual_files)} files, expected {len(expected_files)} from Recto.sln"
     missing = [f for f in actual_files if not Path(f).is_file()]
     if missing:
         return False, f"{out_path} names missing source file {missing[0]}"
+    actual_norm = sorted(_normalize_entry(e) for e in actual)
+    expected_norm = sorted(_normalize_entry(e) for e in expected)
+    if actual_norm != expected_norm:
+        mismatch = next(
+            (a[0] for a, b in zip(actual_norm, expected_norm) if a != b),
+            actual_files[0] if actual_files else str(out_path),
+        )
+        return False, f"{out_path} has stale directory or compiler arguments for {mismatch} (run: python scripts/gen-compile-commands.py)"
     return True, f"ok: {len(actual_files)} translation units"
 
 

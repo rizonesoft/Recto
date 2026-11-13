@@ -80,6 +80,16 @@ class CompileCommandsGenerator(unittest.TestCase):
             ok, msg = GEN.check_database(out, ROOT)
             self.assertTrue(ok, msg)
 
+            # Changing compiler flags or directory without regenerating fails --check.
+            tampered = json.loads(out.read_text(encoding="utf-8"))
+            tampered[0]["arguments"] = [
+                "/std:c++14" if a == "/std:c++23preview" else a for a in tampered[0]["arguments"]
+            ]
+            out.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+            ok_stale, msg_stale = GEN.check_database(out, ROOT)
+            self.assertFalse(ok_stale)
+            self.assertIn("stale directory or compiler arguments", msg_stale)
+
     def test_find_vs_install_resolves_vctoolsinstalldir_to_vs_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             vs_root = (Path(tmp) / "VS2026" / "Community").resolve()

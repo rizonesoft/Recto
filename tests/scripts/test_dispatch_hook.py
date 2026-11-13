@@ -261,6 +261,7 @@ class DispatchHook(unittest.TestCase):
             r".\build.cmd -Quick",
             "build/bin/x64/Debug/recto-tests/recto-tests.exe --gtest_output=xml:AGENTS.md",
             "python scripts/mutate-check.py --file a.py --old x --new y -- pwsh -c evil",
+            "python scripts/mutate-check.py --file tests/scripts/test_run_tests.py --old 'import unittest' --new 'import os' -- python -m unittest tests.scripts.test_run_tests",
         ):
             with self.subTest(bad_cmd=bad_cmd):
                 res = run(agy_call("run_command", {"CommandLine": bad_cmd, "WaitMsBeforeAsync": 5000},
@@ -281,7 +282,6 @@ class DispatchHook(unittest.TestCase):
             "python scripts/run-tests.py --quick",
             "python -m unittest tests.scripts.test_dispatch_hook 2>&1",
             "build/bin/x64/Debug/recto-tests/recto-tests.exe --gtest_filter=PdfObject.*",
-            "python scripts/mutate-check.py --file scripts/ci_status.py --old a --new b -- python -m unittest tests.scripts.test_ci_status",
         ):
             with self.subTest(ok_cmd=ok_cmd):
                 res = run(agy_call("run_command", {"CommandLine": ok_cmd, "WaitMsBeforeAsync": 5000},
@@ -364,6 +364,17 @@ class DispatchHook(unittest.TestCase):
             self.assertEqual(killed.returncode, 0, killed.stdout + killed.stderr)
             self.assertIn("OUTCOME: KILLED", killed.stdout)
             self.assertEqual((repo / "calc.py").read_bytes(), before)
+
+            # Mutating a native C++ source file with a pre-built binary (without recompiling) is refused up front.
+            (repo / "sample.cpp").write_text("int f() { return 1; }\n", encoding="utf-8")
+            refused_cpp = subprocess.run(
+                [sys.executable, str(mutate_script), "--root", str(repo), "--file", "sample.cpp",
+                 "--old", "return 1;", "--new", "return 0;", "--",
+                 "build/bin/x64/Debug/recto-tests/recto-tests.exe", "--gtest_filter=PdfError.*"],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(refused_cpp.returncode, 2)
+            self.assertIn("requires a build-and-test command", refused_cpp.stderr)
 
     def test_mutate_check_timeout_kills_descendant_process_tree(self):
         import ctypes

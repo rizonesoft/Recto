@@ -242,7 +242,7 @@ def _validate_git_argv(tokens: list[str]) -> str | None:
     return f"git subcommand {sub!r} is not in the Hydrogen read-only allowlist"
 
 
-def _validate_python_argv(tokens: list[str], *, allow_mutate_check: bool) -> str | None:
+def _validate_python_argv(tokens: list[str]) -> str | None:
     base = tokens[0].lower()
     i = 1
     while i < len(tokens):
@@ -250,7 +250,7 @@ def _validate_python_argv(tokens: list[str], *, allow_mutate_check: bool) -> str
         if tok in PYTHON_SAFE_FLAGS:
             i += 1
             continue
-        if base in ("py", "py.exe") and re.match(r"^ -3(?:\.\d+)?$".replace(" ", ""), tok):
+        if base in ("py", "py.exe") and re.match(r"^-3(?:\.\d+)?$", tok):
             i += 1
             continue
         break
@@ -329,41 +329,12 @@ def _validate_python_argv(tokens: list[str], *, allow_mutate_check: bool) -> str
     if script in CHECK_ONLY_SCRIPTS:
         return None if rest == ["check"] else f"only '{script} check' is permitted"
     if script == "scripts/mutate-check.py":
-        if not allow_mutate_check:
-            return "nested mutate-check.py invocation is forbidden"
-        if "--" not in rest:
-            return "mutate-check.py requires '--' followed by an allowlisted test command"
-        sep = rest.index("--")
-        opts = rest[:sep]
-        inner = rest[sep + 1:]
-        if not inner:
-            return "mutate-check.py requires a test command after '--'"
-        seen: set[str] = set()
-        j = 0
-        while j < len(opts):
-            flag = opts[j]
-            if flag in ("--file", "--old", "--new", "--timeout") and j + 1 < len(opts):
-                val = opts[j + 1]
-                if flag == "--file" and not _is_safe_relpath(val):
-                    return "mutate-check.py --file must be a repository-relative path"
-                if flag == "--timeout":
-                    try:
-                        if float(val) <= 0:
-                            return "mutate-check.py --timeout must be positive"
-                    except ValueError:
-                        return "mutate-check.py --timeout must be numeric"
-                seen.add(flag)
-                j += 2
-            else:
-                return f"mutate-check.py option {flag!r} is forbidden in Hydrogen helpers"
-        if not {"--file", "--old", "--new"} <= seen:
-            return "mutate-check.py requires --file, --old and --new"
-        inner_err = validate_hydrogen_argv(inner, allow_mutate_check=False)
-        return f"mutate-check inner command rejected: {inner_err}" if inner_err else None
+        return ("mutate-check.py executes caller-supplied code replacements and may only run in the Gemini 4 Carbon "
+                "writer session, never in read-only Hydrogen helpers")
     return f"python script {script!r} is not in the Hydrogen read-only allowlist"
 
 
-def validate_hydrogen_argv(tokens: list[str], *, allow_mutate_check: bool = True) -> str | None:
+def validate_hydrogen_argv(tokens: list[str]) -> str | None:
     """Return None when `tokens` is an explicitly allowlisted read-only command, or a refusal reason."""
     if not tokens:
         return "empty command is forbidden"
@@ -373,7 +344,7 @@ def validate_hydrogen_argv(tokens: list[str], *, allow_mutate_check: bool = True
     if prog_norm.lower() == base and base in ("git", "git.exe"):
         return _validate_git_argv(tokens)
     if prog_norm.lower() == base and base in ("python", "python3", "python.exe", "python3.exe", "py", "py.exe"):
-        return _validate_python_argv(tokens, allow_mutate_check=allow_mutate_check)
+        return _validate_python_argv(tokens)
     if prog_norm.lower() == base and base in ("node", "node.exe"):
         if len(tokens) == 2 and tokens[1].replace("\\", "/").lstrip("./") == "scripts/verify-agent-tiers.mjs":
             return None
