@@ -15,6 +15,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -45,12 +46,56 @@ def stage_tree(root: Path, dest: Path) -> None:
         shutil.copy2(src, out)
 
 
-def run_cmd(cmd: list[str], cwd: Path, timeout_s: int) -> tuple[int, str]:
-    done = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout_s, creationflags=windowless())
-    combined = ((done.stdout or "") + "\n" + (done.stderr or "")).strip()
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            creationflags=windowless(),
+        )
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def run_cmd(cmd: list[str], cwd: Path, timeout_s: float) -> tuple[int | None, str]:
+    spawn_kwargs: dict = (
+        {"creationflags": windowless() | subprocess.CREATE_NEW_PROCESS_GROUP}
+        if os.name == "nt"
+        else {"start_new_session": True}
+    )
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        **spawn_kwargs,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        out, err = proc.communicate()
+        combined = ((out or "") + "\n" + (err or "")).strip()
+        tail = "\n".join(combined.splitlines()[-20:])
+        return None, (f"timed out after {timeout_s:g}s\n{tail}".strip())
+    except BaseException:
+        _kill_process_tree(proc)
+        proc.communicate()
+        raise
+    combined = ((out or "") + "\n" + (err or "")).strip()
     tail = "\n".join(combined.splitlines()[-20:])
-    return done.returncode, tail
+    return proc.returncode, tail
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", required=True, help="repository-relative file to mutate inside the temp copy")
     parser.add_argument("--old", required=True, help="exact text to replace (must occur once)")
     parser.add_argument("--new", required=True, help="replacement text")
-    parser.add_argument("--timeout", type=int, default=180, help="per-run command timeout in seconds")
+    parser.add_argument("--timeout", type=float, default=180.0, help="per-run command timeout in seconds")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="test command after --")
     args = parser.parse_args(argv)
 
@@ -91,12 +136,18 @@ def main(argv: list[str] | None = None) -> int:
         copy_root.mkdir()
         stage_tree(root, copy_root)
         base_rc, base_tail = run_cmd(cmd, copy_root, args.timeout)
+        if base_rc is None:
+            print(f"OUTCOME: BASELINE_TIMEOUT\n{base_tail}")
+            return 1
         if base_rc != 0:
             print(f"OUTCOME: BASELINE_RED (exit={base_rc})\n{base_tail}")
             return 1
         mutated = original.replace(args.old, args.new, 1)
         (copy_root / rel).write_text(mutated, encoding="utf-8", newline="\n")
         mut_rc, mut_tail = run_cmd(cmd, copy_root, args.timeout)
+        if mut_rc is None:
+            print(f"OUTCOME: KILLED (timeout)\n{mut_tail}")
+            return 0
         if mut_rc != 0:
             print(f"OUTCOME: KILLED (exit={mut_rc})\n{mut_tail}")
             return 0

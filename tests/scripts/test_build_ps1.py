@@ -177,6 +177,36 @@ class BuildScript(unittest.TestCase):
         self.assertIn("build\\restore.stamp", text)
         self.assertIn("Win32_OperatingSystem", text)
 
+    @unittest.skipUnless(POWERSHELL, "needs PowerShell")
+    def test_project_mode_resolves_solution_targets_and_relinks_recto_tests(self):
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        fn_match = re.search(r"(function Resolve-SolutionTarget\b.*?^})", text, re.M | re.S)
+        self.assertIsNotNone(fn_match, "Resolve-SolutionTarget helper missing from build/build.ps1")
+        fn_body = fn_match.group(1)
+        probe = (
+            f"{fn_body}\n"
+            f"$r = '{ROOT}'\n"
+            "Write-Output (Resolve-SolutionTarget -RepoRoot $r -Requested 'recto-pdf')\n"
+            "Write-Output (Resolve-SolutionTarget -RepoRoot $r -Requested 'src\\pdf\\recto-pdf.vcxproj')\n"
+            "Write-Output (Resolve-SolutionTarget -RepoRoot $r -Requested 'src/app/Recto.vcxproj')\n"
+        )
+        ok = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", probe],
+                            capture_output=True, text=True, timeout=60)
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.assertEqual(ok.stdout.strip().splitlines(), ["recto-pdf", "recto-pdf", "Recto"])
+
+        bad = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+             f"{fn_body}\nResolve-SolutionTarget -RepoRoot '{ROOT}' -Requested 'no-such-project'"],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("Unknown project", bad.stdout + bad.stderr)
+
+        # When running tests on x64 with -Project, recto-tests must be appended to -t: so it is relinked before running.
+        self.assertIn("if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests'))", text)
+        self.assertIn("$targets += 'recto-tests'", text)
+
 
 class AsanCoverage(unittest.TestCase):
     """-EnableASAN instruments into its own folders and stages the runtime for every C++ project in Recto.sln,

@@ -108,6 +108,38 @@ function Test-RestoreCurrent([string]$RepoRoot, [string]$StampFile, [hashtable]$
     return $true
 }
 
+function Resolve-SolutionTarget([string]$RepoRoot, [string]$Requested) {
+    $slnPath = Join-Path $RepoRoot 'Recto.sln'
+    $rx = [regex]'^Project\("\{[0-9A-Fa-f-]+\}"\)\s*=\s*"([^"]+)",\s*"([^"]+\.vcxproj)"'
+    $entries = @()
+    foreach ($line in (Get-Content -Path $slnPath)) {
+        $m = $rx.Match($line)
+        if ($m.Success) {
+            $name = $m.Groups[1].Value
+            $rel = $m.Groups[2].Value
+            $full = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $rel))
+            $entries += [pscustomobject]@{ Name = $name; RelPath = $rel; FullPath = $full }
+        }
+    }
+    $trimmed = $Requested.Trim()
+    $reqNorm = $trimmed.Replace('/', '\').TrimStart('.', '\')
+    $reqFull = if ([System.IO.Path]::IsPathRooted($trimmed)) {
+        [System.IO.Path]::GetFullPath($trimmed)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $trimmed))
+    }
+    $reqStem = [System.IO.Path]::GetFileNameWithoutExtension($trimmed)
+    foreach ($entry in $entries) {
+        if ($entry.Name.Equals($trimmed, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $entry.RelPath.Equals($reqNorm, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $entry.FullPath.Equals($reqFull, [System.StringComparison]::OrdinalIgnoreCase) -or
+            ($trimmed -match '\.vcxproj$' -and $entry.Name.Equals($reqStem, [System.StringComparison]::OrdinalIgnoreCase))) {
+            return $entry.Name.Replace('.', '_')
+        }
+    }
+    throw "Unknown project '$Requested'. Valid projects in Recto.sln: $($entries.Name -join ', ')"
+}
+
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $required = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64')
 if ($Platform -contains 'ARM64') {
@@ -179,6 +211,10 @@ if ((Test-Path $genCompileDb) -and (Get-Command python -ErrorAction SilentlyCont
 }
 
 $asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
+$resolvedProject = if ($Project) { Resolve-SolutionTarget -RepoRoot $root -Requested $Project } else { '' }
+if ($EnableASAN -and $resolvedProject -and ($asanProjects -notcontains $resolvedProject)) {
+    throw "Project '$resolvedProject' is not supported under -EnableASAN."
+}
 $binFolder = if ($EnableASAN) { 'bin-asan' } else { 'bin' }
 
 foreach ($plat in $Platform) {
@@ -192,9 +228,8 @@ foreach ($plat in $Platform) {
             if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
         }
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
-        $buildTarget = if ($Project -and (Test-Path $Project)) { $Project } else { 'Recto.sln' }
         $msbuildArgs = @(
-            $buildTarget,
+            'Recto.sln',
             "/p:Configuration=$cfg",
             "/p:Platform=$plat",
             "/p:TreatWarningsAsErrors=true",
@@ -205,14 +240,17 @@ foreach ($plat in $Platform) {
             '/nr:false',
             '/nologo'
         )
-        if ($EnableASAN) {
-                $msbuildArgs += "-t:$($asanProjects -join ';')"
+        if ($resolvedProject) {
+            $targets = @($resolvedProject)
+            if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests')) {
+                $targets += 'recto-tests'
+            }
+            $msbuildArgs += "-t:$($targets -join ';')"
+            $asanNote = if ($EnableASAN) { ', ASan' } else { '' }
+            Write-Host "=== Recto $cfg|$plat ($($targets -join ';')$asanNote)"
+        } elseif ($EnableASAN) {
+            $msbuildArgs += "-t:$($asanProjects -join ';')"
             Write-Host "=== Recto $cfg|$plat (ASan)"
-        } elseif ($Project -and ($buildTarget -eq 'Recto.sln')) {
-            $msbuildArgs += "-t:$Project"
-            Write-Host "=== Recto $cfg|$plat ($Project)"
-        } elseif ($Project) {
-            Write-Host "=== Recto $cfg|$plat ($Project)"
         } else {
             Write-Host "=== Recto $cfg|$plat"
         }

@@ -120,7 +120,11 @@ def bind_kill_on_close_job(proc: subprocess.Popen):
         if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
             kernel32.CloseHandle(job)
             return None
-        kernel32.AssignProcessToJobObject(job, int(proc._handle))
+        handle = getattr(proc, "_handle", None)
+        if handle is None:
+            kernel32.CloseHandle(job)
+            return None
+        kernel32.AssignProcessToJobObject(job, int(handle))
         return job
     except Exception:
         return None

@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tokenize
 from urllib.parse import unquote, urlparse
+import warnings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -117,7 +118,10 @@ class StdlibPythonLsp:
     def _diagnostics(self, path: Path, text: str) -> list[dict]:
         diags: list[dict] = []
         try:
-            ast.parse(text, filename=str(path))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", SyntaxWarning)
+                tree = ast.parse(text, filename=str(path))
+                compile(tree, str(path), "exec")
         except SyntaxError as exc:
             ln = max(0, (exc.lineno or 1) - 1)
             col = max(0, (exc.offset or 1) - 1)
@@ -296,20 +300,26 @@ class StdlibPythonLsp:
                 td = params.get("textDocument") or {}
                 uri = td.get("uri", "")
                 text = td.get("text", "")
+                version = td.get("version")
                 p = uri_to_path(uri)
                 self.docs[p] = text
-                self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                            "params": {"uri": uri, "diagnostics": self._diagnostics(p, text)}})
+                pub_params: dict = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                if isinstance(version, int):
+                    pub_params["version"] = version
+                self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
             elif method == "textDocument/didChange":
                 td = params.get("textDocument") or {}
                 uri = td.get("uri", "")
+                version = td.get("version")
                 changes = params.get("contentChanges") or []
                 if changes:
                     p = uri_to_path(uri)
                     text = changes[-1].get("text", "")
                     self.docs[p] = text
-                    self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-                                "params": {"uri": uri, "diagnostics": self._diagnostics(p, text)}})
+                    pub_params = {"uri": uri, "diagnostics": self._diagnostics(p, text)}
+                    if isinstance(version, int):
+                        pub_params["version"] = version
+                    self._send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": pub_params})
             elif method == "textDocument/didClose":
                 td = params.get("textDocument") or {}
                 uri = td.get("uri", "")

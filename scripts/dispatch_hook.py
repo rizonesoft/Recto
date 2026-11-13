@@ -24,6 +24,7 @@ refuses, `{"decision": "allow"}` passes).
 import json
 import os
 import re
+import shlex
 import sys
 
 # The dispatcher run as a command: after `python`, `python3`, `python.exe` or the `py` launcher, quoted or not, and any
@@ -52,13 +53,22 @@ HYDROGEN_ALLOWED_MODELS = {
     "gemini 4 hydrogen (xhigh)",
 }
 
-HYDROGEN_GIT_MUTATE = re.compile(
-    r"\bgit(?:\.exe)?\s+(?:-[^\s]+\s+)*"
-    r"(?:commit|push|pull|fetch|reset|checkout|switch|restore|clean|merge|rebase|cherry-pick|revert|"
-    r"stash|tag|am|apply|add|rm|mv|worktree|init|clone|gc|prune|notes|"
-    r"branch\s+-[dDmMcC]|config\s+(?!--get\b|--list\b|-l\b))\b",
-    re.IGNORECASE,
-)
+GIT_GLOBAL_VALUE_FLAGS = {
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--exec-path", "--config-env",
+}
+GIT_GLOBAL_BOOL_FLAGS = {
+    "--no-pager", "-p", "--paginate", "-P", "--no-replace-objects", "--bare",
+    "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks",
+}
+GIT_READONLY_SUBCOMMANDS = {
+    "status", "diff", "log", "show", "blame", "grep", "ls-files", "ls-tree", "rev-parse", "rev-list",
+    "cat-file", "describe", "shortlog", "for-each-ref", "name-rev", "merge-base", "check-attr",
+    "check-ignore", "verify-commit", "verify-tag", "version", "help",
+}
+GIT_BRANCH_READONLY_FLAGS = {
+    "-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose", "--list", "-l",
+    "--show-current", "--contains", "--no-contains", "--merged", "--no-merged", "--sort", "--format",
+}
 HYDROGEN_TOOL_MUTATE = re.compile(
     r"todo-graph\.py\b[^\n;|&]*\b(?:stamp|unstamp)\b"
     r"|todo-graph\.py\b[^\n;|&]*\bplan\b[^\n;|&]*--sync\b"
@@ -79,6 +89,105 @@ HYDROGEN_SHELL_MUTATE = re.compile(
 )
 
 
+def _git_tokens_violation(tokens: list[str], start: int) -> str | None:
+    """Validate one `git ...` invocation starting at `tokens[start]` against a strict read-only allowlist."""
+    i = start + 1
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("--version", "--help", "-h"):
+            return None
+        if tok in GIT_GLOBAL_VALUE_FLAGS:
+            i += 2
+            continue
+        if any(tok.startswith(flag + "=") for flag in GIT_GLOBAL_VALUE_FLAGS if flag.startswith("--")):
+            i += 1
+            continue
+        if (tok.startswith("-C") or tok.startswith("-c")) and len(tok) > 2:
+            i += 1
+            continue
+        if tok in GIT_GLOBAL_BOOL_FLAGS:
+            i += 1
+            continue
+        if tok.startswith("-"):
+            return f"unsupported or mutating git global option {tok!r} is forbidden"
+        break
+    if i >= len(tokens):
+        return None
+    sub = tokens[i].lower()
+    rest = tokens[i + 1:]
+    if any(r == "-o" or r == "--output" or r.startswith("--output=") or r.startswith("-o") and len(r) > 2
+           for r in rest if isinstance(r, str)):
+        return f"git {sub} with --output/-o file write is forbidden"
+    if sub in GIT_READONLY_SUBCOMMANDS:
+        return None
+    if sub == "branch":
+        if not rest:
+            return None
+        if "--list" in rest or "-l" in rest or "--show-current" in rest:
+            bad = [r for r in rest if r in ("-d", "-D", "-m", "-M", "-c", "-C", "-f", "--force", "--delete", "--move", "--copy")]
+            return None if not bad else "mutating git branch options are forbidden"
+        for r in rest:
+            if r.startswith("--sort=") or r.startswith("--format="):
+                continue
+            if r not in GIT_BRANCH_READONLY_FLAGS:
+                return "creating or mutating git branches is forbidden"
+        return None
+    if sub == "tag":
+        if not rest or ("-l" in rest or "--list" in rest):
+            bad = [r for r in rest if r in ("-d", "--delete", "-a", "--annotate", "-s", "--sign", "-u", "-f", "--force")]
+            return None if not bad else "creating or deleting git tags is forbidden"
+        return "creating or mutating git tags is forbidden"
+    if sub == "config":
+        has_read = any(r in ("--get", "--get-all", "--get-regexp", "--list", "-l") for r in rest)
+        has_write = any(r in ("--unset", "--unset-all", "--replace-all", "--add", "--rename-section",
+                              "--remove-section", "--edit", "-e") for r in rest)
+        if has_read and not has_write:
+            return None
+        return "mutating git config commands are forbidden"
+    return f"mutating git subcommand {sub!r} is forbidden"
+
+
+def _split_shell_segments(command: str) -> list[str]:
+    """Split a shell/PowerShell command on unquoted separators and subshell boundaries (`;`, `\\n`, `|`, `&`, `(`, `)`, `` ` ``)."""
+    segments: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    for ch in command:
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch in ";\n|&()`":
+            segments.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        segments.append("".join(buf))
+    return segments
+
+
+def _hydrogen_git_violation(command: str) -> str | None:
+    if not re.search(r"\bgit(?:\.exe)?\b", command, re.IGNORECASE):
+        return None
+    for segment in _split_shell_segments(command):
+        try:
+            raw_tokens = shlex.split(segment, posix=False)
+        except ValueError:
+            return "unparseable quoted git command is forbidden"
+        tokens = [t.strip("\"'") for t in raw_tokens if t.strip("\"'") not in ("&", "")]
+        for idx, tok in enumerate(tokens):
+            base = os.path.basename(tok.replace("\\", "/")).lower()
+            if base in ("git", "git.exe"):
+                violation = _git_tokens_violation(tokens, idx)
+                if violation:
+                    return violation
+    return None
+
+
 def _is_agy(payload: dict) -> bool:
     return isinstance(payload.get("toolCall"), dict) or payload.get("hookEventName") == "PreToolUse"
 
@@ -89,8 +198,9 @@ def _is_hydrogen_worker(payload: dict) -> bool:
 
 
 def _hydrogen_mutating_command(command: str) -> str | None:
-    if HYDROGEN_GIT_MUTATE.search(command):
-        return "mutating git commands are forbidden"
+    git_why = _hydrogen_git_violation(command)
+    if git_why:
+        return git_why
     if HYDROGEN_TOOL_MUTATE.search(command):
         return "mutating todo-graph, campaign_guard, review-dispatch or merge_prs commands are forbidden"
     if HYDROGEN_SHELL_MUTATE.search(command):
@@ -104,7 +214,8 @@ def _campaign_owns_agy_session(payload: dict) -> bool:
     session = str(payload.get("conversationId") or "")
     if not session:
         return False
-    workspaces = payload.get("workspacePaths") if isinstance(payload.get("workspacePaths"), list) else []
+    raw_ws = payload.get("workspacePaths")
+    workspaces = raw_ws if isinstance(raw_ws, list) else []
     ws_root = next((w for w in workspaces if isinstance(w, str) and w), "")
     root = str(os.environ.get("CLAUDE_PROJECT_DIR") or ws_root or payload.get("cwd") or "")
     if not root:
@@ -124,7 +235,8 @@ def agy_verdict(payload: dict) -> str | None:
     if not isinstance(tool_call, dict):
         return None
     name = tool_call.get("name")
-    args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
+    raw_args = tool_call.get("args")
+    args = raw_args if isinstance(raw_args, dict) else {}
 
     # 1. Enforce read-only boundaries inside any Gemini 4 Hydrogen worker turn.
     if _is_hydrogen_worker(payload):
@@ -193,10 +305,11 @@ def verdict(payload: dict) -> str | None:
     launch forms a session really uses, not a proof that no spelling gets past it."""
     if _is_agy(payload):
         return agy_verdict(payload)
-    tool = payload.get("tool_name")
+    tool = str(payload.get("tool_name") or "")
     detach = DETACH.get(tool)
-    tool_input = payload.get("tool_input") or {}
-    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    raw_input = payload.get("tool_input")
+    tool_input = raw_input if isinstance(raw_input, dict) else {}
+    command = tool_input.get("command")
     if detach is None or not isinstance(command, str) or "--prompt" not in command:
         return None
     launched = tool == "PowerShell" and "review-dispatch.py" in command and POWERSHELL_LAUNCHER.search(command)

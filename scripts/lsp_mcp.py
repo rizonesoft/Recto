@@ -41,6 +41,16 @@ def windowless() -> int:
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
+def _uri_key(uri: str) -> str:
+    parsed = urlparse(uri)
+    if parsed.scheme.lower() == "file":
+        raw = unquote(parsed.path)
+        if os.name == "nt" and raw.startswith("/") and len(raw) >= 3 and raw[2] == ":":
+            raw = raw[1:]
+        return os.path.normcase(os.path.normpath(raw))
+    return unquote(uri).lower()
+
+
 def uri_to_rel(uri: str, root: Path) -> str:
     parsed = urlparse(uri)
     raw = unquote(parsed.path)
@@ -64,8 +74,10 @@ class LspClient:
         self._lock = threading.Lock()
         self._next_id = 1
         self._pending: dict[int, queue.Queue] = {}
-        self._diagnostics: dict[str, list[dict]] = {}
-        self._diag_events: dict[str, threading.Event] = {}
+        self._diag_cond = threading.Condition()
+        self._sync_seq = 0
+        self._diagnostics: dict[str, tuple[int, int | None, list[dict]]] = {}
+        self._closed_reason: str | None = None
         self._opened: dict[str, int] = {}
         self.last_used = time.monotonic()
 
@@ -73,8 +85,10 @@ class LspClient:
         if self.proc is not None and self.proc.poll() is None:
             self.last_used = time.monotonic()
             return
-        self._opened.clear()
-        self._diagnostics.clear()
+        with self._diag_cond:
+            self._opened.clear()
+            self._diagnostics.clear()
+            self._closed_reason = None
         self.proc = subprocess.Popen(
             self.cmd,
             cwd=self.root,
@@ -90,7 +104,7 @@ class LspClient:
             "rootUri": self.root.resolve().as_uri(),
             "capabilities": {
                 "textDocument": {
-                    "publishDiagnostics": {"relatedInformation": True},
+                    "publishDiagnostics": {"relatedInformation": True, "versionSupport": True},
                     "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
                     "hover": {"contentFormat": ["markdown", "plaintext"]},
                 }
@@ -133,15 +147,23 @@ class LspClient:
             elif msg.get("method") == "textDocument/publishDiagnostics":
                 params = msg.get("params") or {}
                 uri = params.get("uri", "")
-                self._diagnostics[uri.lower()] = params.get("diagnostics") or []
-                ev = self._diag_events.get(uri.lower())
-                if ev is not None:
-                    ev.set()
+                pub_ver = params.get("version")
+                diags = params.get("diagnostics") or []
+                with self._diag_cond:
+                    self._diagnostics[_uri_key(uri)] = (
+                        self._sync_seq,
+                        int(pub_ver) if isinstance(pub_ver, int) else None,
+                        diags,
+                    )
+                    self._diag_cond.notify_all()
 
     def _fail_all(self, reason: str) -> None:
         for _, q in list(self._pending.items()):
             q.put({"error": {"message": reason}})
         self._pending.clear()
+        with self._diag_cond:
+            self._closed_reason = reason
+            self._diag_cond.notify_all()
 
     def _write(self, payload: dict) -> None:
         assert self.proc is not None and self.proc.stdin is not None
@@ -171,31 +193,48 @@ class LspClient:
             raise RuntimeError(err.get("message", str(err)) if isinstance(err, dict) else str(err))
         return reply.get("result")
 
-    def sync_file(self, path: Path) -> tuple[str, threading.Event]:
+    def sync_file(self, path: Path) -> tuple[str, int, int]:
         self.ensure_started()
         uri = path.resolve().as_uri()
-        key = uri.lower()
-        ev = threading.Event()
-        self._diag_events[key] = ev
+        key = _uri_key(uri)
         text = path.read_text(encoding="utf-8", errors="replace")
         lang_id = "python" if path.suffix.lower() in PY_EXTS else "cpp"
-        if key not in self._opened:
-            self._opened[key] = 1
+        with self._diag_cond:
+            self._sync_seq += 1
+            expected_seq = self._sync_seq
+            ver = self._opened.get(key, 0) + 1
+            self._opened[key] = ver
+        if ver == 1:
             self.notify("textDocument/didOpen", {
                 "textDocument": {"uri": uri, "languageId": lang_id, "version": 1, "text": text}
             })
         else:
-            self._opened[key] += 1
             self.notify("textDocument/didChange", {
-                "textDocument": {"uri": uri, "version": self._opened[key]},
+                "textDocument": {"uri": uri, "version": ver},
                 "contentChanges": [{"text": text}],
             })
-        return uri, ev
+        return uri, expected_seq, ver
 
-    def diagnostics_for(self, path: Path, wait_seconds: float = 10.0) -> list[dict]:
-        uri, ev = self.sync_file(path)
-        ev.wait(timeout=wait_seconds)
-        return self._diagnostics.get(uri.lower(), [])
+    def diagnostics_for(self, path: Path, wait_seconds: float = 30.0) -> list[dict]:
+        uri, expected_seq, expected_ver = self.sync_file(path)
+        key = _uri_key(uri)
+        deadline = time.monotonic() + wait_seconds
+        with self._diag_cond:
+            while True:
+                entry = self._diagnostics.get(key)
+                if entry is not None:
+                    arrived_seq, pub_ver, diags = entry
+                    if arrived_seq >= expected_seq and (pub_ver is None or pub_ver >= expected_ver):
+                        return diags
+                if self._closed_reason is not None or self.proc is None or self.proc.poll() is not None:
+                    detail = self._closed_reason or "process terminated"
+                    raise RuntimeError(f"{self.lang} language server exited before publishing diagnostics ({detail})")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"{self.lang} language server timed out waiting for diagnostics after {wait_seconds:g}s"
+                    )
+                self._diag_cond.wait(timeout=min(0.25, remaining))
 
     def stop(self) -> None:
         proc = self.proc
@@ -295,7 +334,7 @@ class LspMcpServer:
         cand = (self.root / raw).resolve() if raw else None
         if cand is not None and cand.is_file() and cand.is_relative_to(self.root):
             target, client = self._resolve_file(raw)
-            uri, _ = client.sync_file(target)
+            uri, *_ = client.sync_file(target)
             res = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}}) or []
             rel = target.relative_to(self.root).as_posix()
             lines: list[str] = []
@@ -338,7 +377,7 @@ class LspMcpServer:
 
     def _pos_request(self, method: str, args: dict, extra_params: dict | None = None):
         target, client = self._resolve_file(str(args["file"]))
-        uri, _ = client.sync_file(target)
+        uri, *_ = client.sync_file(target)
         line = max(0, int(args.get("line", 1)) - 1)
         col = max(0, int(args.get("character", 1)) - 1)
         params = {"textDocument": {"uri": uri}, "position": {"line": line, "character": col}}
@@ -458,8 +497,9 @@ class LspMcpServer:
         if method == "tools/list":
             return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": self.TOOLS}}
         if method == "tools/call":
-            name = params.get("name")
-            args = params.get("arguments") or {}
+            name = str(params.get("name") or "")
+            raw_args = params.get("arguments")
+            args = raw_args if isinstance(raw_args, dict) else {}
             dispatch = {
                 "lsp_diagnostics": self.tool_diagnostics,
                 "lsp_symbols": self.tool_symbols,

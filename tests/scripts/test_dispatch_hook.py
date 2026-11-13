@@ -225,6 +225,15 @@ class DispatchHook(unittest.TestCase):
             "git commit -m 'bad'",
             "git checkout -b feat",
             "git reset --hard",
+            "git -C . add src/pdf/object.h",
+            "git -c user.name=x commit -m 'bypass'",
+            "git --git-dir=.git --work-tree=. reset --hard",
+            "git -C. checkout -- src/pdf/object.h",
+            "git branch new-feature",
+            "git tag v9.9.9",
+            "git config user.email x@y.z",
+            "git log -n 1 --output=out.txt",
+            "Write-Host $(git -C . add src/pdf/object.h)",
             "Set-Content foo.txt 'bar'",
             "Remove-Item foo.txt",
             "echo hi > foo.txt",
@@ -241,6 +250,10 @@ class DispatchHook(unittest.TestCase):
 
         for ok_cmd in (
             "git status -sb",
+            "git -C . status -sb",
+            "git -c color.ui=false log -n 5 --format=\"%h (%s)\"",
+            "git --no-pager branch --show-current",
+            "git config --get core.hooksPath",
             "git log -n 5 --oneline",
             "git diff HEAD -- scripts/",
             "python scripts/todo-graph.py validate",
@@ -275,6 +288,55 @@ class DispatchHook(unittest.TestCase):
             self.assertEqual(killed.returncode, 0, killed.stdout + killed.stderr)
             self.assertIn("OUTCOME: KILLED", killed.stdout)
             self.assertEqual((repo / "calc.py").read_bytes(), before)
+
+    def test_mutate_check_timeout_kills_descendant_process_tree(self):
+        import ctypes
+        import importlib.util
+        import os
+        import tempfile
+        import time
+
+        spec = importlib.util.spec_from_file_location("mutate_check", HOOK.parent / "mutate-check.py")
+        assert spec is not None and spec.loader is not None
+        mutate_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mutate_mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            pid_file = tmp_path / "grandchild.pid"
+            spawner = tmp_path / "spawner.py"
+            spawner.write_text(
+                "import pathlib, subprocess, sys, time\n"
+                f"child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+                f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            code, tail = mutate_mod.run_cmd([sys.executable, str(spawner)], tmp_path, timeout_s=0.6)
+            self.assertIsNone(code)
+            self.assertIn("timed out", tail)
+            self.assertTrue(pid_file.is_file(), "spawner did not record grandchild PID before timeout")
+            grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
+            if os.name == "nt":
+                SYNCHRONIZE = 0x00100000
+                handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, grandchild_pid)
+                if handle:
+                    try:
+                        wait_rc = ctypes.windll.kernel32.WaitForSingleObject(handle, 2000)
+                        self.assertEqual(wait_rc, 0, f"grandchild PID {grandchild_pid} survived timeout")
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            else:
+                deadline = time.monotonic() + 2.0
+                alive = True
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(grandchild_pid, 0)
+                        time.sleep(0.05)
+                    except ProcessLookupError:
+                        alive = False
+                        break
+                self.assertFalse(alive, f"grandchild PID {grandchild_pid} survived timeout")
 
 
 if __name__ == "__main__":

@@ -36,8 +36,12 @@ def windowless() -> int:
 
 def find_vs_install() -> Path | None:
     env_vc = os.environ.get("VCToolsInstallDir")
-    if env_vc and Path(env_vc).is_dir():
-        return Path(env_vc).parents[2]
+    if env_vc:
+        vc_path = Path(env_vc).resolve()
+        if vc_path.is_dir():
+            for anc in (vc_path, *vc_path.parents):
+                if (anc / "VC" / "Tools" / "MSVC").is_dir():
+                    return anc
     pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
     vswhere = Path(pf86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
     if vswhere.is_file():
