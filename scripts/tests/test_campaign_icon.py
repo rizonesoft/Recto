@@ -106,12 +106,13 @@ class BadgeTest(unittest.TestCase):
     def test_a_mark_is_drawn_from_32_pixels_up_and_not_below(self):
         def whites(out, size):
             return sum(1 for i in range(size * size) if out[i * 4:i * 4 + 3] == bytearray((255, 255, 255)))
-        plain_16, mark_16 = icon.badge_frame(16, solid(16), "#D97757", None), self.badge("claude", 16)
-        self.assertEqual(plain_16, mark_16, "a mark was drawn at 16 pixels")
-        plain_64, mark_64 = icon.badge_frame(64, solid(64), "#D97757", None), self.badge("claude", 64)
-        self.assertGreater(whites(mark_64, 64), whites(plain_64, 64) + 20, "no mark at 64 pixels")
-        self.assertEqual(self.badge("codex", 64), icon.badge_frame(64, solid(64), "#10A37F", None),
-                         "the Codex badge carries its colour alone")
+        for runner, (colour, _) in icon.RUNNERS.items():
+            with self.subTest(runner=runner):
+                plain_16 = icon.badge_frame(16, solid(16), colour, None)
+                self.assertEqual(plain_16, self.badge(runner, 16), "a mark was drawn at 16 pixels")
+                plain_64 = icon.badge_frame(64, solid(64), colour, None)
+                self.assertGreater(whites(self.badge(runner, 64), 64), whites(plain_64, 64) + 20,
+                                   "no runner mark at 64 pixels")
 
     def test_the_command_writes_an_icon_with_every_size(self):
         with tempfile.TemporaryDirectory() as tmp:

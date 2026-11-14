@@ -6,12 +6,12 @@
 
 `badge` draws, on every frame of the project's icon, a circle in the runner's colour with a white outline at the
 bottom right, and from 32 pixels up the runner's mark in white inside it: Claude Code's orange spark for `claude`,
-Antigravity's blue sparkle for `agy` (the Carbon runner), Codex's green for `codex`. `frames` builds a Windows icon
+Antigravity's blue sparkle for `agy` (the Carbon runner), Codex's green knot for `codex`. `frames` builds a Windows icon
 from two large renders of a project's icon, the detailed one for 96 pixels and up and the heavy one below.
 
 The marks are the official Claude symbol and Google Gemini sparkle (path data from their Wikimedia Commons files,
 Claude_AI_symbol.svg and Google_Gemini_icon_2025.svg), trademarks of Anthropic and Google, drawn only into a
-launcher icon on the operator's own machine; the Codex badge carries its colour alone. Everything here is the Python
+launcher icon on the operator's own machine; the Codex badge carries its white knot mark. Everything here is the Python
 standard library: PNG is read and written with zlib, the marks are rasterised from their path data, and every edge
 is supersampled.
 """

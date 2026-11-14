@@ -87,6 +87,17 @@ class Fixture(unittest.TestCase):
                 shutil.copyfile(src, dst)
                 if script.endswith(".sh"):
                     os.chmod(dst, 0o755)
+        # The installed Windows hook invokes the repository's pinned launcher.
+        (self.root / "build").mkdir(exist_ok=True)
+        for name in ("python.cmd", "tools.lock.json", "bootstrap-tools.ps1"):
+            source = TODO / "build" / name
+            if source.is_file():
+                shutil.copyfile(source, self.root / "build" / name)
+        tools = TODO / ".tools"
+        if tools.is_dir():
+            patch = unittest.mock.patch.dict(os.environ, {"RECTO_TOOLS_DIR": str(tools)})
+            patch.start()
+            self.addCleanup(patch.stop)
         target = self.root / agent_file
         target.parent.mkdir(parents=True, exist_ok=True)
         src_hook = TODO / agent_file

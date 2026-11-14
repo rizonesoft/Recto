@@ -7,6 +7,9 @@
 # Earlier stamps (panel era 2026-10-28 and rotation era through 2026-11-12)
 # replay against the pin committed at their plan or stamp commit.
 
+# Codex uses Orchestrator (Carbon) through agy, with no fallback.
+# Scheduled effort is omitted: Orchestrator manages its own effort. Astra also
+# uses its CLI configuration; its entry-level effort applies only without a schedule.
 schema_version = 1
 
 [reviewers.astra]
@@ -16,7 +19,7 @@ effort = "high"
 
 [reviewers.carbon]
 cli = "agy"
-model = "gemini-4-carbon-medium"
+model = "gemini-pro-orchestrator"
 
 [routes]
 codex = ["carbon"]
@@ -35,18 +38,14 @@ pass_cap = 33
 blocking = ["P1", "P2"]
 
 [schedule.plan]
-effort = "medium"
 lenses = ["plan"]
 
 # `design` runs only when `--surface` is passed (Surface: yes sections).
 [[schedule.rounds]]
-effort = "medium"
 lenses = ["adversarial", "integration", "source-defect", "consistency", "quality", "optimization", "design"]
 
 [schedule.completion]
-effort = "medium"
 lenses = ["plan-delivery", "record"]
 
 [schedule.reconciliation]
-effort = "medium"
 lenses = ["adversarial", "integration", "plan-delivery", "record"]
