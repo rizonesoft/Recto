@@ -1,15 +1,9 @@
-# Codex campaign
+# Codex reviewer only
 
-Run `scripts/start-unattended-run.ps1 -Runner codex`, or open "Recto Codex campaign" on the Windows Desktop. This starts Codex as writer using its configured model at medium reasoning effort and its existing account. Claude credentials are never required or passed to it.
+On 2026-11-14 the owner retired the Codex writer campaign and Antigravity independent reviewer route. Claude Code and Antigravity are the only writers, one session at a time under the existing campaign guard. Codex reviews through its read-only sandbox and never writes.
 
-Codex follows `.codex/skills/process-plan/SKILL.md`, using the existing plan, campaign guard and review dispatcher. Its Stop hook is `.codex/hooks.json`; approve this project's hook in Codex after changing it. Its reviewer route is `codex -> carbon`, preserving the project's review schedule. Only one writer may own the tree. A stopped or crashed campaign is not restarted by a background service.
+Start the writer with `scripts/start-unattended-run.ps1 -Runner claude` or `-Runner agy`. Run `scripts/start-unattended-run.ps1 -InstallShortcut` to refresh the Claude and Carbon Desktop shortcuts and remove the retired Codex campaign shortcut. No campaign starts during shortcut installation.
 
-The owner authorised Codex as an additional campaign writer on 2026-11-14. Existing Claude and Carbon launchers remain available. The Codex-specific session and timer rules in its process-plan skill take precedence over the Claude-specific examples in the shared workflow documents.
+Both writer routes select GPT-6 Astra (`gpt-6-astra`) through Codex CLI. Plan, initial round and completion use medium effort; follow-up rounds and reconciliation use low effort. Review lenses, blocking severities and the 33-pass cap are preserved. A timeout, empty response or malformed verdict is never approval. Antigravity remains the Orchestrator (Carbon) writer (`gemini-pro-orchestrator`), not an independent reviewer.
 
-## Independent reviewer
-
-Codex routes to Orchestrator (Carbon), `gemini-pro-orchestrator`, through the Antigravity CLI (`agy`) in sandboxed plan mode. Claude and Antigravity writers still route to GPT-6 Astra through Codex. The three-pass policy, lenses, blocking severities and 33-pass cap are unchanged.
-
-The shared schedule sets no effort override because Orchestrator manages its own effort. This also removes the previous medium override for Astra: scheduled reviews now use the Codex CLI configuration, not the reviewer entry's `high` value (that value applies only without a schedule). Reversing the model choice requires changing the Carbon entry and restoring only compatible scheduled efforts.
-
-Validate with `build\python.cmd scripts/review-dispatch.py --check-pin --json`. A live review must return all required lens lines, a consistent severity and a valid final verdict. Timeout, empty output and malformed replies are failed attempts, never approval.
+The Codex writer skill and campaign Stop hook are retired. Historical review records describe their original candidate and do not authorise a current writer route.

@@ -146,6 +146,36 @@ class ThreePass(Harness):
         return built
 
 
+class ReviewerEffortChain(ThreePass):
+    def test_scoped_efforts_reach_cli_and_recorded_schedule(self):
+        pin = PIN.replace('effort = "medium"\n', '') + '\n[schedule.efforts.sol]\nplan = "medium"\nrounds = ["medium", "low"]\ncompletion = "medium"\nreconciliation = "low"\n'
+        candidate = self.commit("scoped efforts", {".conclave/reviewers.toml": pin})
+        plan = self.ok("plan", candidate)
+        self.assertEqual(plan["effort"], "medium")
+        first = self.ok("round", candidate)
+        self.assertEqual(first["effort"], "medium")
+        self.assertEqual(self.calls()[-1]["argv"][4], "model_reasoning_effort=medium")
+        module = self.module()
+        recorded = module.read_rounds(self.record.read_text())
+        scheduled = module.scheduled(module.load_pin(self.repo / ".conclave/reviewers.toml")["schedule"],
+                                     "round", recorded, False, reviewer="sol")
+        self.assertEqual(scheduled["effort"], "low")
+
+    def test_ad_hoc_followup_runs_low_and_empty_attempt_does_not_advance(self):
+        pin = PIN.replace('effort = "medium"\n', '') + '\n[schedule.efforts.sol]\nplan = "medium"\nrounds = ["medium", "low"]\ncompletion = "medium"\nreconciliation = "low"\n'
+        self.commit("scoped efforts", {".conclave/reviewers.toml": pin})
+        self.record = self.repo / "build/effort-rounds.md"
+        args = ['--writer', 'claude', '--prompt', str(self.prompt), '--record', str(self.record)]
+        failed, summary = self.dispatch(*args, codex='empty')
+        self.assertEqual(failed.returncode, 1)
+        self.assertIsNone(summary['reviewer'])
+        for expected in ('medium', 'low'):
+            result, summary = self.dispatch(*args, codex='say', say=reply('round', LENSES['round']))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(summary['effort'], expected)
+            self.assertIn('model_reasoning_effort=' + expected, self.calls()[-1]['argv'])
+
+
 class Chain(ThreePass):
     def test_a_whole_chain_runs_and_reads_back(self):
         plan = self.ok("plan", self.base, gaps=True, top="P2")

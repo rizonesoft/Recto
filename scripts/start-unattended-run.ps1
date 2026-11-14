@@ -30,7 +30,7 @@
 # costs its line below, its test and that paragraph.
 param(
     # The campaign runner: Claude Code (`claude`) or Google Antigravity on Orchestrator (Carbon) (`agy`).
-    [ValidateSet('claude', 'agy', 'codex')][string]$Runner = 'claude',
+    [ValidateSet('claude', 'agy')][string]$Runner = 'claude',
     [switch]$PrintOnly,
     [switch]$InstallShortcut,
     [int]$TokenTimeoutSeconds = 120,
@@ -61,9 +61,7 @@ if ($InstallShortcut) {
         @{ Runner = 'claude'; Name = 'Recto Claude campaign'; Icon = 'recto-campaign-claude.ico'
            Description = 'Start the unattended Recto campaign in Claude Code' },
         @{ Runner = 'agy'; Name = 'Recto Carbon campaign'; Icon = 'recto-campaign-carbon.ico'
-           Description = 'Start the unattended Recto campaign in Google Antigravity on Orchestrator (Carbon)' },
-        @{ Runner = 'codex'; Name = 'Recto Codex campaign'; Icon = 'recto-campaign-codex.ico'
-           Description = 'Start the unattended Recto campaign with Codex as writer' }
+           Description = 'Start the unattended Recto campaign in Google Antigravity on Orchestrator (Carbon)' }
     )
     foreach ($s in $shortcuts) {
         $icon = Join-Path $IconFolder $s.Icon
@@ -89,13 +87,18 @@ if ($InstallShortcut) {
         Remove-Item -LiteralPath $old
         Write-Host "Removed the earlier shortcut: $old"
     }
+    $retired = Join-Path $ShortcutFolder 'Recto Codex campaign.lnk'
+    if (Test-Path -LiteralPath $retired) {
+        Remove-Item -LiteralPath $retired
+        Write-Host "Removed the retired Codex writer shortcut: $retired"
+    }
     exit 0
 }
 
-$runnerName = @{ codex = 'Codex'; claude = 'Claude Code'; agy = 'Google Antigravity (Orchestrator (Carbon))' }[$Runner]
+$runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Orchestrator (Carbon))' }[$Runner]
 # One name for the window and, for Claude Code, the session: claude.exe overwrites the terminal title with its own
 # session topic unless it is given --name, so the title alone would not tell the operator which repo a window is.
-$windowTitle = @{ codex = 'Recto Codex campaign'; claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
+$windowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
 try { $Host.UI.RawUI.WindowTitle = $windowTitle } catch {}
 
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000
@@ -128,7 +131,7 @@ if ($dirty.Count -gt 0) { Write-Warning "$($dirty.Count) uncommitted file(s) in 
 if (Test-Path (Join-Path $root 'build\claude-campaign-guard.json')) {
     Write-Warning 'build\claude-campaign-guard.json exists: an earlier run did not end, or another session is running. The run reconciles it.'
 }
-$hookFile = @{ codex = '.codex/hooks.json'; claude = '.claude/settings.json'; agy = '.agents/hooks.json' }[$Runner]
+$hookFile = @{ claude = '.claude/settings.json'; agy = '.agents/hooks.json' }[$Runner]
 $guardOut = & $pinnedPython (Join-Path $PSScriptRoot 'campaign_guard.py') --self-test --hook-file $hookFile 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Stop hook self-test failed ($hookFile): $guardOut"
@@ -173,10 +176,7 @@ if ($Runner -ne 'claude') {
     Write-Warning "Sign-in: 1Password did not give the token ($tokenItem, vault $tokenVault); starting on the stored Claude Code login."
 }
 
-if ($Runner -eq 'codex') {
-    $goal = $goal.Substring(6) + ' Set this as your Codex session goal. Read docs/codex-campaign.md and use the Codex process-plan skill; writer codex.'
-    $runArgs = @('--dangerously-bypass-approvals-and-sandbox', '-c', 'model_reasoning_effort=medium', $goal)
-} elseif ($Runner -eq 'claude') {
+if ($Runner -eq 'claude') {
     Write-Host "Model: $model, permission prompts off, questions off, goal of $($goal.Length) characters."
     # --disallowedTools takes a list, so an option follows it and the goal stays the last, positional argument.
     $runArgs = @('--dangerously-skip-permissions', '--disallowedTools', 'AskUserQuestion', '--model', $model, '--name', $windowTitle, $goal)

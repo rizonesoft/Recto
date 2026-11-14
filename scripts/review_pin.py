@@ -24,6 +24,8 @@ Three-pass (`policy = "three-pass"`): `plan`, exactly one `[[schedule.rounds]]` 
     pass_cap = 33                  the most returned passes a section may take in all (3 to 999; absent reads as 33)
     no_progress_cap = 3            the most passes in a row that return gaps no less severe than the pass before
     blocking = ["P1", "P2"]        the severities that hold the stamp; absent, every finding does
+    [schedule.efforts.<reviewer>]  plan, completion, reconciliation and rounds (initial, optional follow-up)
+                                   override only that reviewer's effort; Antigravity takes no such override
     [schedule.lenses]              extra lens names, each with the question the reviewer is given
     [[schedule.conditional]]       lenses, passes, paths: the lenses join those passes only for a section whose
                                    changed files fall under one of the repository-relative path prefixes
@@ -31,7 +33,8 @@ Three-pass (`policy = "three-pass"`): `plan`, exactly one `[[schedule.rounds]]` 
 Under three-pass a lens belongs to one of plan, the round and completion (reconciliation may repeat lenses). A
 conditional entry may not hand one of those owned lenses to another of the three; a lens that exists only in a
 conditional entry joins exactly the passes that entry names. An Antigravity reviewer's model name must end with
-every effort the schedule sets. `effort` is optional everywhere: with a schedule, the step alone decides, and a step
+every shared effort the schedule sets. Reviewer-specific efforts override only the named reviewer.
+`effort` is optional everywhere: with a schedule, the resolved step decides, and a step
 without one passes no effort to the reviewer's CLI, whose own configuration then decides; without a schedule the
 reviewer's `effort` does, or the CLI's configuration when it has none. Standard library only.
 """
@@ -186,6 +189,7 @@ def load_pin(path=PIN, data=None):
         routed = list(dict.fromkeys(chain[0] for chain in routes.values()))
         check_schedule(pin["schedule"], {reviewers[name]["cli"] for name in routed})
         if pin["schedule"].get("policy") == THREE_PASS:
+            check_reviewer_efforts(pin["schedule"], reviewers)
             for name in routed:
                 if reviewers[name]["cli"] == "agy":
                     check_agy_effort(name, reviewers[name]["model"], pin["schedule"])
@@ -383,6 +387,7 @@ def faults(path=PIN, data=None):
                       into(per["conditional"], check_conditional_paths, n, entry)]
             if all(fields) and owners is not None and listed["reconciliation"]:
                 into(per["conditional"], check_conditional_overlap, n, entry, schedule, owners)
+    into(per.get("efforts", late), check_reviewer_efforts, schedule, good)
     if all(sound.values()):
         for name in routed:
             if good[name]["cli"] == "agy":
@@ -424,7 +429,7 @@ LENSES = {
 STEP_KEYS = {"effort", "lenses"}
 ROTATION_KEYS = {"plan", "completion", "rounds", "rotation", "escalation", "severity_stop_after"}
 THREE_PASS_KEYS = {"policy", "plan", "completion", "rounds", "reconciliation"}
-THREE_PASS_OPTIONAL = {"pass_cap", "no_progress_cap", "blocking", "lenses", "conditional"}
+THREE_PASS_OPTIONAL = {"pass_cap", "no_progress_cap", "blocking", "lenses", "conditional", "efforts"}
 CONDITIONAL_KEYS = {"lenses", "passes", "paths"}
 
 
@@ -465,6 +470,31 @@ def check_step(where, step, efforts, table=LENSES, lenses="required"):
     check_step_keys(where, step, lenses)
     check_step_effort(where, step, efforts)
     check_step_lenses(where, step, table)
+
+
+def check_reviewer_efforts(schedule, reviewers=None):
+    """Reviewer-specific effort schedules never change lenses, routing or pass caps."""
+    overrides = schedule.get("efforts", {})
+    if not isinstance(overrides, dict):
+        raise Refused("[schedule] efforts needs a table keyed by reviewer")
+    keys = {"plan", "rounds", "completion", "reconciliation"}
+    for name, own in overrides.items():
+        where = f"[schedule.efforts.{name}]"
+        if not NAME.fullmatch(name) or not isinstance(own, dict) or set(own) != keys:
+            raise Refused(f"{where} needs exactly plan, rounds, completion and reconciliation")
+        allowed = EFFORTS["claude"]
+        if reviewers is not None:
+            if name not in reviewers:
+                raise Refused(f"{where} names an undefined reviewer")
+            cli = reviewers[name]["cli"]
+            if cli not in EFFORTS:
+                raise Refused(f"{where} cannot override effort for {cli}")
+            allowed = EFFORTS[cli]
+        rounds = own["rounds"]
+        if not isinstance(rounds, list) or not 1 <= len(rounds) <= 2:
+            raise Refused(f"{where} rounds needs initial effort and optional follow-up effort")
+        if any(not _one_of(value, allowed) for value in [own[k] for k in keys - {"rounds"}] + rounds):
+            raise Refused(f"{where} needs efforts from {', '.join(allowed)}")
 
 
 def check_agy_effort(name, model, schedule):
@@ -647,6 +677,7 @@ def check_conditional_overlap(n, entry, schedule, owners):
 def check_three_pass(schedule, efforts):
     """The three-pass schedule, in the order `load_pin` has always refused in."""
     check_three_pass_keys(schedule)
+    check_reviewer_efforts(schedule)
     extra = schedule.get("lenses", {})
     check_extra_lenses_table(extra)
     for name, question in extra.items():
@@ -753,13 +784,17 @@ def lenses_for(schedule, kind, changed_paths=(), surface=True):
 
 
 def effective(schedule, reviewer=None):
-    """Historical panel compatibility: apply [schedule.efforts.<reviewer>] over the shared steps when present."""
+    """Apply reviewer effort overrides, preserving historical panel schedules."""
     own = (schedule.get("efforts") or {}).get(reviewer) if reviewer else None
     if own is None:
         return schedule
     out = {key: value for key, value in schedule.items() if key != "efforts"}
     out["plan"] = {**schedule["plan"], "effort": own["plan"]}
     out["completion"] = {**schedule["completion"], "effort": own["completion"]}
+    if schedule.get("policy") == THREE_PASS:
+        out["reconciliation"] = {**schedule["reconciliation"], "effort": own["reconciliation"]}
+        out["rounds"] = [{**schedule["rounds"][0], "effort": effort} for effort in own["rounds"]]
+        return out
     out["rotation"] = {**schedule["rotation"], "effort": own["rotation"]}
     out["escalation"] = {**schedule["escalation"], "effort": own["escalation"]}
     out["rounds"] = [{**step, "effort": effort} for step, effort in zip(schedule["rounds"], own["rounds"])]
@@ -770,7 +805,8 @@ def scheduled(schedule, kind, rounds, surface, changed_paths=(), reviewer=None):
     """The effort and lenses for the next pass, from the pin's schedule and the rounds already recorded. `effort` is
     None for a step that sets none.
 
-    Three-pass: the pass's lenses with its conditional ones (`lenses_for`); the one round's position is 1.
+    Three-pass: the pass's lenses with its conditional ones (`lenses_for`); reviewer effort overrides
+    select the first round effort, then reuse the optional follow-up effort for later returned rounds.
 
     Rotation: the position counts returned reviews only (`returned_review`): an outage, a self-review and a reply
     without the final OVERALL line do not move it. Rounds past the fixed list rotate through `rotation`'s lenses, one
@@ -788,7 +824,7 @@ def scheduled(schedule, kind, rounds, surface, changed_paths=(), reviewer=None):
     returned = [r for r in rounds if returned_review(r)]
     position = len(returned) + 1
     if three_pass:
-        return {"position": position, "effort": schedule["rounds"][0].get("effort"),
+        return {"position": position, "effort": schedule["rounds"][min(position - 1, len(schedule["rounds"]) - 1)].get("effort"),
                 "lenses": lenses_for(schedule, "round", changed_paths, surface), "escalated": False}
     last = returned[-1] if returned else None
     rot_effort = schedule["rotation"].get("effort")

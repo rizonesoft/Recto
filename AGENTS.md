@@ -40,9 +40,9 @@ The writer decides and acts, in attended sessions as in unattended runs (owner d
 
 ## Who writes and who reviews
 
-Claude Code (`claude`), Antigravity (`agy`) and Codex are authorised writers, one session at a time. Claude's agents use Fable 5.2 (`claude-fable-5-2`, checked by `scripts/verify-agent-tiers.mjs`); its unattended launcher uses `opus`. Antigravity uses Orchestrator (Carbon), `gemini-pro-orchestrator`, pairing Carbon planning/review with Hydrogen execution and no custom subagent definitions. Both share `.claude/skills/` (Antigravity via `.agents/skills.json`) and lifecycle hooks. Codex follows the campaign instructions below.
+Claude Code (`claude`) and Antigravity (`agy`) are the only authorised writers, one session at a time. Claude's agents use Fable 5.2 (`claude-fable-5-2`, checked by `scripts/verify-agent-tiers.mjs`); its unattended launcher uses `opus`. Antigravity uses Orchestrator (Carbon), `gemini-pro-orchestrator`, pairing Carbon planning/review with Hydrogen execution and no custom subagent definitions. Both share `.claude/skills/` (Antigravity via `.agents/skills.json`) and lifecycle hooks. Codex is a read-only reviewer, never a writer.
 
-`.conclave/reviewers.toml` owns independent review routing: Claude and Antigravity use GPT-6 Astra through Codex's read-only sandbox; Codex uses Orchestrator (Carbon), `gemini-pro-orchestrator`, through `agy` in sandboxed plan mode. Pass `--writer claude`, `--writer agy` or `--writer codex` to `scripts/review-dispatch.py`. Reviewers never edit. Shared scheduled effort overrides are omitted: Orchestrator manages its effort and Astra uses its CLI configuration, not its entry-level effort.
+`.conclave/reviewers.toml` owns independent review routing: both writers use GPT-6 Astra through Codex's read-only sandbox, with no fallback. Pass `--writer claude` or `--writer agy` to `scripts/review-dispatch.py`. Reviewers never edit. Astra uses medium for plan, initial round and completion, low for follow-up rounds and reconciliation.
 
 The Conclave-SDK `kits/reviewer` three-pass schedule is unchanged: plan before build; one round across adversarial, integration, source-defect, consistency, quality, optimization and (on surface sections) design; completion on the final candidate across plan-delivery and record; reconciliation for completion P1/P2 gaps. The cap is 33 returned passes. `scripts/review_pin.py`, `scripts/review-prompt.py` and `scripts/review-dispatch.py` enforce it. Historical converge and panel stamps (`D01 T02 §33`, `D01 T02 §42`, `D01 T01 §11`) replay against the pin at their plan or stamp commit. Prompts carry settled items (`- Filed:`, `- Not taken:`, `- Settled:`), reopened only with new evidence, and define P1 by its consequence on a real path.
 
@@ -134,6 +134,6 @@ build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Py
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.
 
-## Codex campaign writer (owner, 2026-11-14)
+## Codex reviewer only (owner, 2026-11-14)
 
-Codex may write under the existing campaign guard, superseding earlier read-only restrictions. Follow `docs/codex-campaign.md` and `.codex/skills/process-plan/SKILL.md`; canonical workflow skills are shared procedures Codex may read. Use `--writer codex` for independent Carbon review. Existing plan, quality and review requirements remain unchanged.
+The owner restored the two-writer workflow: only Claude Code and Antigravity write code, tests, plans and docs. Codex only reviews and never runs a writer campaign. This supersedes the earlier Codex writer authorisation. The launcher accepts only `claude` and `agy`; installing shortcuts removes the retired Codex campaign shortcut. See `docs/codex-campaign.md`.

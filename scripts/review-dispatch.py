@@ -1483,7 +1483,7 @@ def main(argv=None):
                     raise Unrecorded(f"{args.record} cannot be read back (a round heading or line is not in the "
                                      f"format --record writes{unreadable_heading(existing)}; {RESERVED_NAMES}), so "
                                      f"no round was run")
-            plan = scheduled(schedule, args.kind, rounds, args.surface, paths)
+            plan = scheduled(schedule, args.kind, rounds, args.surface, paths, reviewer=review_pin.route_for(pin, args.writer))
         settled = settled_items([args.record]) if args.record else ()
         result = review(pin, args.writer, args.prompt, args.timeout, plan, args.kind, settled)
     except (Refused, Unrecorded, OSError) as exc:

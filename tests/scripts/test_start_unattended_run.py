@@ -77,14 +77,11 @@ class Launcher(unittest.TestCase):
             seen = json.loads(record.read_text(encoding="utf-8-sig")) if record.exists() else None
             return run, seen
 
-    def test_codex_uses_its_native_flags_and_no_claude_credentials(self):
+    def test_codex_cannot_start_a_writer_campaign(self):
         run, seen = self.run_launcher("-Runner", "codex", inherited_token=TOKEN)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(seen["program"], "codex")
-        self.assertEqual(seen["args"], ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=medium"])
-        self.assertFalse(seen["token_set"])
-        self.assertFalse(seen["goal"].startswith("/goal"))
-        self.assertIn("Codex", seen["goal"])
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIsNone(seen)
+        self.assertNotIn(TOKEN, run.stdout + run.stderr)
 
     def test_the_session_gets_the_token_in_its_environment_and_never_on_screen_or_in_arguments(self):
         run, seen = self.run_launcher()
@@ -160,7 +157,8 @@ class Launcher(unittest.TestCase):
         folder = "(Split-Path $env:RECTO_TEST_RECORD)"
         before = (f"$desk = Join-Path {folder} 'desk'; $icons = Join-Path {folder} 'icons'; "
                   "New-Item -ItemType Directory $desk | Out-Null; "
-                  "Set-Content (Join-Path $desk 'Recto - Process Plan (Unattended).lnk') 'old'")
+                  "Set-Content (Join-Path $desk 'Recto - Process Plan (Unattended).lnk') 'old'; "
+                  "Set-Content (Join-Path $desk 'Recto Codex campaign.lnk') 'retired'")
         after = ("$shell = New-Object -ComObject WScript.Shell; "
                  "$found = @(Get-ChildItem $desk | Sort-Object Name | ForEach-Object { "
                  "$s = $shell.CreateShortcut($_.FullName); @{ name = $_.Name; target = $s.TargetPath; "
@@ -173,7 +171,7 @@ class Launcher(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIsNone(seen)  # installing the shortcuts starts no session
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
-        self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk", "Recto Codex campaign.lnk"])
+        self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
         for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
                                                   ("Google Antigravity on Orchestrator (Carbon)", "Claude Code")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
@@ -216,7 +214,7 @@ class Launcher(unittest.TestCase):
                                                 before=before, after=after)
             self.assertEqual(run_sc.returncode, 0, run_sc.stdout + run_sc.stderr)
             self.assertIsNone(seen_sc)
-            self.assertIn("SHORTCUT_COUNT=3", run_sc.stdout)
+            self.assertIn("SHORTCUT_COUNT=2", run_sc.stdout)
 
 
 class CampaignIcon(unittest.TestCase):

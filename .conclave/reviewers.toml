@@ -7,9 +7,7 @@
 # Earlier stamps (panel era 2026-10-28 and rotation era through 2026-11-12)
 # replay against the pin committed at their plan or stamp commit.
 
-# Codex uses Orchestrator (Carbon) through agy, with no fallback.
-# Scheduled effort is omitted: Orchestrator manages its own effort. Astra also
-# uses its CLI configuration; its entry-level effort applies only without a schedule.
+# Codex is the independent reviewer only. Claude and Antigravity are writers.
 schema_version = 1
 
 [reviewers.astra]
@@ -17,12 +15,7 @@ cli = "codex"
 model = "gpt-6-astra"
 effort = "high"
 
-[reviewers.carbon]
-cli = "agy"
-model = "gemini-pro-orchestrator"
-
 [routes]
-codex = ["carbon"]
 claude = ["astra"]
 agy = ["astra"]
 
@@ -49,3 +42,10 @@ lenses = ["plan-delivery", "record"]
 
 [schedule.reconciliation]
 lenses = ["adversarial", "integration", "plan-delivery", "record"]
+
+# Astra: medium initial reviews, low follow-ups.
+[schedule.efforts.astra]
+plan = "medium"
+rounds = ["medium", "low"]
+completion = "medium"
+reconciliation = "low"

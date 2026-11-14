@@ -687,5 +687,39 @@ class CommandLine(unittest.TestCase):
         self.assertIn("three-pass", rotation.stderr)
 
 
+class ReviewerEfforts(Cases):
+    def pin(self):
+        text = THREE_PASS.replace('effort = "medium"\n', '')
+        text = text.replace('[routes]', '[reviewers.carbon]\ncli = "agy"\nmodel = "gemini-pro-orchestrator"\n\n[routes]\ncodex = ["carbon"]')
+        return text + '\n[schedule.efforts.astra]\nplan = "medium"\nrounds = ["medium", "low"]\ncompletion = "medium"\nreconciliation = "low"\n'
+
+    def test_reviewer_efforts_keep_orchestrator_unset_and_followups_low(self):
+        pin = load(self.pin())
+        schedule = pin['schedule']
+        good = {'reviewer': 'astra', 'writer': 'claude', 'cli': 'codex',
+                'review': 'HIGHEST: none\nOVERALL: approve'}
+        outage = {'reviewer': None, 'writer': 'claude', 'review': None}
+        for history, expected in (([], 'medium'), ([outage], 'medium'), ([good], 'low'), ([good] * 5, 'low')):
+            own = review_pin.scheduled(schedule, 'round', history, False, reviewer='astra')
+            carbon = review_pin.scheduled(schedule, 'round', history, False, reviewer='carbon')
+            self.assertEqual(own['effort'], expected)
+            self.assertIsNone(carbon['effort'])
+            self.assertEqual(own['lenses'], carbon['lenses'])
+        for kind, expected in (('plan', 'medium'), ('completion', 'medium'), ('reconciliation', 'low')):
+            self.assertEqual(review_pin.scheduled(schedule, kind, [], False, reviewer='astra')['effort'], expected)
+            self.assertIsNone(review_pin.scheduled(schedule, kind, [], False, reviewer='carbon')['effort'])
+        self.assertEqual(review_pin.faults(data=self.pin().encode()), [])
+
+    def test_bad_reviewer_effort_overrides_are_refused(self):
+        for old, new in (('efforts.astra', 'efforts.unknown'), ('efforts.astra', 'efforts.carbon'),
+                         ('rounds = ["medium", "low"]', 'rounds = []'),
+                         ('rounds = ["medium", "low"]', 'rounds = ["medium", "max"]'),
+                         ('reconciliation = "low"', 'reconciliation = "max"'),
+                         ('reconciliation = "low"', 'unknown = "low"')):
+            with self.subTest(new=new):
+                text = self.pin().replace(old, new)
+                self.refuses(text, 'efforts')
+                self.assertTrue(review_pin.faults(data=text.encode()))
+
 if __name__ == "__main__":
     unittest.main()
