@@ -83,7 +83,7 @@ Load the SVGs with `SvgImageSource`. Pick the light or dark file through theme r
 From the repository root:
 
 ```
-python design/tools/build_resources.py --newsreader <path to Newsreader[opsz,wght].ttf>
+build\python.cmd design/tools/build_resources.py --newsreader <path to Newsreader[opsz,wght].ttf>
 ```
 
-Needs Python with fontTools and Pillow, Edge or Chrome for rasterising, and Segoe UI (`--ui-font` and `--label-font`, defaults under `C:\Windows\Fonts`) for the brand captions and the PDF badge. The Newsreader variable font is under the SIL Open Font License 1.1 and is available from the Google Fonts repository (`ofl/newsreader`). The wordmark and the "PDF" badge are converted to outlines, so the app never ships either font.
+On Linux or WSL, invoke `./scripts/run-python.sh design/tools/build_resources.py --newsreader <path to Newsreader[opsz,wght].ttf>` instead. Uses only the Python standard library on Recto's pinned `.tools/` CPython (no third-party Python packages), Edge or Chrome (or `RECTO_RENDER_BROWSER`) for rasterising, and Segoe UI (`--ui-font` and `--label-font`, defaults under `C:\Windows\Fonts`) for the brand captions and the PDF badge. The Newsreader variable font is under the SIL Open Font License 1.1 and is available from the Google Fonts repository (`ofl/newsreader`). The wordmark and the "PDF" badge are converted to outlines, so the app never ships either font.

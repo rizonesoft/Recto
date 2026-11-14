@@ -738,7 +738,7 @@ class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
         "todo/templates/TODO-template.md",
     })
     BARE_PY_RE = re.compile(
-        r"(?<![\\/\w.-])(?:python3?|py)\s+(?:-[A-Za-z]+\s+)*(?:\./|\.\\)?(?:scripts[\\/]|tests[\\/]|\.conclave[\\/]|todo[\\/]|-m\s+unittest\b)"
+        r"(?<![\\/\w.-])(?:python3?|py)\s+(?:-[A-Za-z]+\s+)*(?:\./|\.\\)?(?:[\w./\\-]+\.py\b|(?:scripts|tests|\.conclave|todo|design|resources)[\\/]|-m\s+\w+\b)"
     )
 
     def _operational_markdown_files(self, root: Path = ROOT) -> list[str]:
@@ -759,6 +759,8 @@ class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
             "CONTRIBUTING.md",
             "AGENTS.md",
             ".conclave/automations/README.md",
+            "design/SPEC.md",
+            "resources/README.md",
             "docs/todo-workflow.md",
             "docs/plan-review-prompt.md",
             "docs/review-round-prompt.md",
@@ -782,7 +784,7 @@ class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
             for lineno, line in enumerate(text.splitlines(), 1):
                 if self.BARE_PY_RE.search(line):
                     offenders.append(f"{rel}:{lineno}: {line.strip()}")
-        for rel in ("scripts/start-unattended-run.ps1",):
+        for rel in ("scripts/start-unattended-run.ps1", "design/tools/build_resources.py"):
             text = (ROOT / rel).read_text(encoding="utf-8")
             for lineno, line in enumerate(text.splitlines(), 1):
                 if self.BARE_PY_RE.search(line):
@@ -800,6 +802,9 @@ class DocumentedWindowsPythonCommandsTests(unittest.TestCase):
             "The run ends when `python3 scripts/todo-graph.py query stats` shows verified.",
             "Run `python -m unittest tests.scripts.test_todo_graph`.",
             "Reproduce with `python .conclave/automations/run.py recto-ci-watch`.",
+            "Rebuild assets with `python design/tools/build_resources.py --newsreader font.ttf`.",
+            "Run `python custom_tool.py --check`.",
+            "Install packages with `python -m pip install fonttools`.",
         ):
             self.assertIsNotNone(self.BARE_PY_RE.search(bad), bad)
         for good in (
