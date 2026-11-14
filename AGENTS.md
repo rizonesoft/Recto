@@ -129,3 +129,7 @@ build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Py
 ```
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.
+
+## Codex campaign writer (owner, 2026-11-14)
+
+Codex is also an authorised writer, one session at a time under the existing campaign guard. This supersedes earlier statements restricting writers to Claude or Antigravity. Follow `docs/codex-campaign.md` and `.codex/skills/process-plan/SKILL.md`; the repository's canonical workflow skills are shared procedure documents that Codex may read. Independent review uses `--writer codex` and the Carbon route, never Codex reviewing itself. Existing plan, quality and review requirements are unchanged.

@@ -14,7 +14,12 @@ cli = "codex"
 model = "gpt-6-astra"
 effort = "high"
 
+[reviewers.carbon]
+cli = "agy"
+model = "gemini-4-carbon-medium"
+
 [routes]
+codex = ["carbon"]
 claude = ["astra"]
 agy = ["astra"]
 

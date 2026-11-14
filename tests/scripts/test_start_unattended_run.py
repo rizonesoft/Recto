@@ -51,7 +51,7 @@ class Launcher(unittest.TestCase):
                      inherited_token: str = "") -> tuple[subprocess.CompletedProcess, dict | None]:
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            for runner in ("claude", "agy"):  # both runners take the same fake, which records its own name
+            for runner in ("claude", "agy", "codex"):  # each fake records its own name
                 (tmp / f"{runner}.ps1").write_text(FAKE_CLAUDE, encoding="utf-8")
             if with_op:
                 # op is started as a process, so the fake is a batch file; a hanging one stands for an unanswered prompt.
@@ -76,6 +76,15 @@ class Launcher(unittest.TestCase):
                                  timeout=180, env=env, creationflags=no_window())
             seen = json.loads(record.read_text(encoding="utf-8-sig")) if record.exists() else None
             return run, seen
+
+    def test_codex_uses_its_native_flags_and_no_claude_credentials(self):
+        run, seen = self.run_launcher("-Runner", "codex", inherited_token=TOKEN)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(seen["program"], "codex")
+        self.assertEqual(seen["args"], ["--dangerously-bypass-approvals-and-sandbox", "-c", "model_reasoning_effort=medium"])
+        self.assertFalse(seen["token_set"])
+        self.assertFalse(seen["goal"].startswith("/goal"))
+        self.assertIn("Codex", seen["goal"])
 
     def test_the_session_gets_the_token_in_its_environment_and_never_on_screen_or_in_arguments(self):
         run, seen = self.run_launcher()
@@ -164,7 +173,7 @@ class Launcher(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIsNone(seen)  # installing the shortcuts starts no session
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
-        self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
+        self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk", "Recto Codex campaign.lnk"])
         for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
                                                   ("Google Antigravity on Orchestrator (Carbon)", "Claude Code")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
@@ -207,7 +216,7 @@ class Launcher(unittest.TestCase):
                                                 before=before, after=after)
             self.assertEqual(run_sc.returncode, 0, run_sc.stdout + run_sc.stderr)
             self.assertIsNone(seen_sc)
-            self.assertIn("SHORTCUT_COUNT=2", run_sc.stdout)
+            self.assertIn("SHORTCUT_COUNT=3", run_sc.stdout)
 
 
 class CampaignIcon(unittest.TestCase):

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/run-python.sh scripts/codex-campaign-hook.py",
+            "commandWindows": "build\\python.cmd scripts/codex-campaign-hook.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
