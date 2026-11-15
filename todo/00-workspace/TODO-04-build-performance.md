@@ -52,7 +52,7 @@ track: M0
 | 3 | §3 | MSBuild and compiler parallelism set by free memory | §1 | [x] |
 | 4 | §4 | Precompiled headers for every project | §3 | [x] |
 | 5 | §5 | Tiered gates: touched tests while building, the full suite at stamp | §2 | [x] |
-| 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [ ] |
+| 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [x] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [ ] |
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4 | [ ] |
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
@@ -238,6 +238,9 @@ No build tool is pinned in the repository, and the scripts and hooks run on what
 - [x] Commit: `build: fetch pinned Ninja, CMake, sccache and CPython into .tools`
 
 **Test checkpoint:** `build/bootstrap-tools.ps1` on an empty `.tools/` fetches and verifies all four tools and a corrupted hash in the lock stops it, `build\python.cmd -m unittest discover -s tests/scripts` and `build\python.cmd -m unittest discover -s scripts/tests` pass, `build.cmd`, `scripts/start-unattended-run.ps1`, hooks, and LSP/MCP entry points run with system Python absent from `PATH`, and `build\python.cmd scripts/check-tool-pins.py check` and `build\python.cmd scripts/check-python-pin.py check` exit 0.
+
+> **Verified:** 2026-11-15 | §6 | 07704059eb5c1247003e8b035c9aeee8fda4bd25
+> **Review:** `docs/reviews/d00-t04-s6.json`
 
 ## 7. sccache as the compiler cache for MSVC
 

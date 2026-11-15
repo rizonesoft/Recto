@@ -32,7 +32,7 @@ Sections: 60 | Checklist items: 355
 | [x]    | D00 T04 §3  | MSBuild and compiler parallelism set by free memory                                      | windows-host | 6     |
 | [x]    | D00 T04 §4  | Precompiled headers for every project                                                    | windows-host | 5     |
 | [x]    | D00 T04 §5  | Tiered gates: touched tests while building, the full suite at stamp                      | windows-host | 4     |
-| [ ]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
+| [x]    | D00 T04 §6  | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`                     | windows-host | 7     |
 | [ ]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
 | [x]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 17    |
@@ -951,6 +951,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 109/882 verified sections, 56 ready to run now.
+Progress: 110/882 verified sections, 56 ready to run now.
 
 Checklist: 735/6519 items completed (includes Commit items).

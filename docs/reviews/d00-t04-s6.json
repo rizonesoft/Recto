@@ -1,0 +1,84 @@
+{
+  "ref": "D00 T04 \u00a76",
+  "title": "Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/`",
+  "implementation_sha": "07704059eb5c1247003e8b035c9aeee8fda4bd25",
+  "date": "2026-11-15",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s6.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "build.cmd exited 0: Debug|x64 0 warnings, check-ui-boundary clean, 504/508 passed (4 skipped, 3 disabled); Release|x64 0 warnings, check-ui-boundary clean, 505/508 passed (3 skipped, 3 disabled)",
+    "test_bootstrap_tools (13/13), test_build_resources (9/9 Windows + 9/9 WSL POSIX), run-tests.py --quick (32/32), check-tool-pins.py check, and check-python-pin.py check passed"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s6.md",
+    "verdict": "reconciled",
+    "candidate": "07704059eb5c1247003e8b035c9aeee8fda4bd25",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s6.md",
+    "candidate": "4f81254e4a7125554d7aee009c464c252a791c80",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "4f81254e4a7125554d7aee009c464c252a791c80",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "effort": "medium",
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    }
+  },
+  "passes_spent": 7,
+  "pass_cap": 33
+}
