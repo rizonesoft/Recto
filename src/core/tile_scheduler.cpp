@@ -482,6 +482,10 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	void start_fetches(std::vector<Start>& starts) noexcept
 	{
 		for (Start& start : starts) {
+			if (start.token.is_cancelled()) {
+				arrived(start.page, start.generation, pdf::detail::cancelled_error());
+				continue;
+			}
 			const std::weak_ptr<State> self = weak_from_this();
 			DocumentHandle::DisplayListCallback done;
 			try {

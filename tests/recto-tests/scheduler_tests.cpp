@@ -761,6 +761,74 @@ TEST(Scheduler, CallbackAdmission)
 		ASSERT_TRUE(deliveries.wait_for(before + 1u));
 		EXPECT_EQ(deliveries.all.back().second.error().code, ErrorCode::OutOfMemory);
 	}
+	// A request cancelled before its fetch callback is admitted: never takes the actor's queue slot.
+	{
+		struct Compile {
+			std::atomic<bool> released{false};
+			std::atomic<bool> reached{false};
+			static void hook(CancelSite site, void* context) noexcept
+			{
+				auto& self = *static_cast<Compile*>(context);
+				if (site == CancelSite::InterpreterOperator && !self.released.load()) {
+					self.reached.store(true);
+					while (!self.released.load()) {
+						std::this_thread::yield();
+					}
+				}
+			}
+		} compile;
+		ActorOptions options;
+		options.max_queue = 1u;
+		options.poll_hook = &Compile::hook;
+		options.poll_hook_context = &compile;
+		const auto open_doc = opened(path, options);
+		ASSERT_NE(open_doc, nullptr);
+		const auto closed_doc = opened(path);
+		ASSERT_NE(closed_doc, nullptr);
+		closed_doc->close().wait();
+		auto held = open_doc->get_display_list(0u);
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		while (!compile.reached.load() && std::chrono::steady_clock::now() < until) {
+			std::this_thread::yield();
+		}
+		ASSERT_TRUE(compile.reached.load()); // actor busy on page 0; its 1-slot queue is empty
+		Deliveries sub;
+		std::atomic<int> stage{0};
+		TileScheduler* sched = nullptr;
+		SchedulerOptions sched_options;
+		sched_options.worker_count = 1u;
+		sched_options.deliver = [&](const TileKey& key, Delivered result) noexcept {
+			if (key.doc_id == 2u && key.page_index == 0u && stage.exchange(1) == 0) {
+				sched->update_viewport(2u, {tile(2u, 1u, 0u)});
+				sched->update_viewport(1u, {tile(1u, 1u, 0u)});
+			} else if (key.doc_id == 2u && key.page_index == 1u && stage.exchange(2) == 1) {
+				sched->update_viewport(1u, {tile(1u, 2u, 0u)});
+			}
+			sub.sink()(key, std::move(result));
+		};
+		auto made = TileScheduler::create(std::move(sched_options));
+		ASSERT_TRUE(made.has_value());
+		sched = made->get();
+		ASSERT_TRUE((*made)->attach(2u, closed_doc).has_value());
+		ASSERT_TRUE((*made)->attach(1u, open_doc).has_value());
+		(*made)->update_viewport(2u, {tile(2u, 0u, 0u)});
+		compile.released.store(true);
+		EXPECT_TRUE(held.get().has_value());
+		ASSERT_TRUE(sub.wait_for(4u));
+		made->reset();
+		EXPECT_EQ(sub.count(), 4u) << "a tile was answered twice";
+		bool saw_page2 = false;
+		for (const auto& [key, result] : sub.all) {
+			if (key.doc_id == 1u && key.page_index == 2u) {
+				saw_page2 = true;
+				EXPECT_TRUE(result.has_value()) << "a callback admitted after cancellation stole the actor queue slot";
+			} else {
+				ASSERT_FALSE(result.has_value());
+				EXPECT_EQ(result.error().code, ErrorCode::Cancelled);
+			}
+		}
+		EXPECT_TRUE(saw_page2);
+	}
 }
 
 // Pages drawing different numbers of fills, so the interpreter's operator count names the page it compiled; a broken page's content nests arrays past the parser's limit.
