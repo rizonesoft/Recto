@@ -359,6 +359,8 @@ The suite, not the build, is most of a gate. In the last full local run (2026-11
 
 The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Release and 60 s under AddressSanitizer, with any test that truly needs longer named with its reason. Changing it costs one number in `tests/recto-tests/time-budget.json`.
 
+**Corrected 2026-11-15:** Validated against the live repository before build: the findings file is `docs/reviews/00-workspace/D00-T04-s10.md`; local Python invocations run through `build\python.cmd` (which `build/build.ps1` already invokes via `$pinnedPython`); full x64 `-EnableASAN` test runs write `test-results-x64-$cfg-asan.xml` (matching `.github/workflows/build.yml`'s `build/test-results-*.xml` artifact upload without overwriting plain `test-results-x64-$cfg.xml`) and pass `--mode asan` to `scripts/test-times.py check`; and checkbox 11's two `build.yml` build-and-test steps are `Build Debug (x64 and ARM64) and run Debug|x64 recto-tests` and `Build Release (x64 and ARM64) and run Release|x64 recto-tests`.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
