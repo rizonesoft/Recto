@@ -177,11 +177,33 @@ void ensure_bounded_capacity(
 	constexpr uint32_t kModAdler = 65521u;
 	uint32_t s1 = 1u;
 	uint32_t s2 = 0u;
+	const uint8_t* const ptr = data.data();
+	const size_t total = data.size();
 	size_t idx = 0;
-	while (idx < data.size()) {
-		const size_t chunk = std::min<size_t>(data.size() - idx, 5552u);
-		for (size_t i = 0; i < chunk; ++i) {
-			s1 += data[idx + i];
+	while (idx < total) {
+		const size_t chunk = std::min<size_t>(total - idx, 5552u);
+		const uint8_t* p = ptr + idx;
+		size_t i = 0;
+		for (; i + 8u <= chunk; i += 8u) {
+			s1 += p[i];
+			s2 += s1;
+			s1 += p[i + 1u];
+			s2 += s1;
+			s1 += p[i + 2u];
+			s2 += s1;
+			s1 += p[i + 3u];
+			s2 += s1;
+			s1 += p[i + 4u];
+			s2 += s1;
+			s1 += p[i + 5u];
+			s2 += s1;
+			s1 += p[i + 6u];
+			s2 += s1;
+			s1 += p[i + 7u];
+			s2 += s1;
+		}
+		for (; i < chunk; ++i) {
+			s1 += p[i];
 			s2 += s1;
 		}
 		s1 %= kModAdler;
@@ -199,15 +221,16 @@ void ensure_bounded_capacity(
 // ---------------------------------------------------------------------------
 
 struct DeflateBitReader {
-	std::span<const uint8_t> bytes{};
+	const uint8_t* data{nullptr};
+	size_t size{0};
 	size_t byte_pos{0};
 	uint64_t bit_buf{0};
 	uint32_t bit_count{0};
 
 	[[nodiscard]] bool ensure_bits(uint32_t needed) noexcept
 	{
-		while (bit_count < needed && byte_pos < bytes.size()) {
-			bit_buf |= static_cast<uint64_t>(bytes[byte_pos++]) << bit_count;
+		while (bit_count < needed && byte_pos < size) {
+			bit_buf |= static_cast<uint64_t>(data[byte_pos++]) << bit_count;
 			bit_count += 8u;
 		}
 		return bit_count >= needed;
@@ -353,9 +376,12 @@ struct HuffmanTree {
 		if (empty_tree || max_len == 0) {
 			return false;
 		}
+		const uint16_t* const ft = fast_table.data();
+		const uint16_t* const cnt = count.data();
+		const uint16_t* const syms = symbols.data();
 		(void)br.ensure_bits(kFastBits);
 		if (br.bit_count > 0u) {
-			const uint16_t entry = fast_table[static_cast<uint32_t>(br.bit_buf) & (kFastSize - 1u)];
+			const uint16_t entry = ft[static_cast<uint32_t>(br.bit_buf) & (kFastSize - 1u)];
 			const uint32_t len = entry >> 11u;
 			if (len != 0u && len <= br.bit_count) {
 				br.drop_bits(len);
@@ -372,9 +398,9 @@ struct HuffmanTree {
 				return false;
 			}
 			code |= bit;
-			const uint32_t c = count[len];
+			const uint32_t c = cnt[len];
 			if (code >= first && code - first < c) {
-				out_sym = symbols[index + (code - first)];
+				out_sym = syms[index + (code - first)];
 				return true;
 			}
 			index += c;
@@ -435,7 +461,9 @@ struct HuffmanTree {
 					"FlateDecode output exceeds maximum decoded stream byte ceiling",
 					br.aligned_byte_position());
 			}
-			ensure_bounded_capacity(out, 1u, max_decoded_bytes);
+			if (out.size() == out.capacity()) {
+				ensure_bounded_capacity(out, 1u, max_decoded_bytes);
+			}
 			out.push_back(static_cast<uint8_t>(sym));
 			continue;
 		}
@@ -454,14 +482,14 @@ struct HuffmanTree {
 		}
 
 		uint32_t extra_len = 0;
-		if (!br.read_bits(kLenExtra[len_idx], extra_len)) {
+		if (!br.read_bits(kLenExtra.data()[len_idx], extra_len)) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"Truncated length extra bits in FlateDecode stream",
 				br.aligned_byte_position());
 		}
-		const size_t match_len = static_cast<size_t>(kLenBase[len_idx]) + extra_len;
+		const size_t match_len = static_cast<size_t>(kLenBase.data()[len_idx]) + extra_len;
 
 		uint16_t dist_sym = 0;
 		if (!dist_tree.decode(br, dist_sym) || dist_sym >= kDistBase.size()) {
@@ -473,14 +501,14 @@ struct HuffmanTree {
 		}
 
 		uint32_t extra_dist = 0;
-		if (!br.read_bits(kDistExtra[dist_sym], extra_dist)) {
+		if (!br.read_bits(kDistExtra.data()[dist_sym], extra_dist)) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"Truncated distance extra bits in FlateDecode stream",
 				br.aligned_byte_position());
 		}
-		const size_t distance = static_cast<size_t>(kDistBase[dist_sym]) + extra_dist;
+		const size_t distance = static_cast<size_t>(kDistBase.data()[dist_sym]) + extra_dist;
 
 		if (distance == 0 || distance > out.size()) {
 			return make_filter_error(
@@ -524,7 +552,7 @@ struct HuffmanTree {
 		{max_decoded_bytes, kMaxInitialReserveBytes, std::max<size_t>(deflate_bytes.size() * 2u, 256u)});
 	reserve_metered(out, initial_res);
 
-	DeflateBitReader br{deflate_bytes, 0, 0, 0};
+	DeflateBitReader br{deflate_bytes.data(), deflate_bytes.size(), 0, 0, 0};
 	bool is_final = false;
 
 	while (!is_final) {
@@ -576,11 +604,12 @@ struct HuffmanTree {
 					"Truncated stored block payload in FlateDecode stream",
 					raw_pos);
 			}
-			ensure_bounded_capacity(out, len, max_decoded_bytes);
-			out.insert(
-				out.end(),
-				deflate_bytes.begin() + static_cast<std::ptrdiff_t>(raw_pos),
-				deflate_bytes.begin() + static_cast<std::ptrdiff_t>(raw_pos + len));
+			if (len > 0u) {
+				ensure_bounded_capacity(out, len, max_decoded_bytes);
+				const size_t old_size = out.size();
+				out.resize(old_size + len);
+				std::memcpy(out.data() + old_size, deflate_bytes.data() + raw_pos, len);
+			}
 			br.byte_pos = raw_pos + len;
 			br.bit_buf = 0;
 			br.bit_count = 0;
@@ -1300,12 +1329,14 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 			return {dict_pool.data() + e.offset, e.length};
 		};
 
+		const uint8_t* const in_ptr = input.data();
+		const size_t in_size = input.size();
 		size_t byte_pos = 0;
 		uint64_t bit_buf = 0;
 		uint32_t bit_count = 0;
 		auto read_code_msb = [&](uint32_t bits, uint32_t& out_code) noexcept -> bool {
-			while (bit_count < bits && byte_pos < input.size()) {
-				bit_buf = (bit_buf << 8u) | static_cast<uint64_t>(input[byte_pos++]);
+			while (bit_count < bits && byte_pos < in_size) {
+				bit_buf = (bit_buf << 8u) | static_cast<uint64_t>(in_ptr[byte_pos++]);
 				bit_count += 8u;
 			}
 			if (bit_count < bits) {
@@ -1342,37 +1373,56 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 				break;
 			}
 
-			if (code < next_code) {
-				const auto span = get_code_span(code);
-				cur_seq.assign(span.begin(), span.end());
-			} else if (code == next_code && prev_code.has_value()) {
-				const auto prev_span = get_code_span(*prev_code);
-				cur_seq.assign(prev_span.begin(), prev_span.end());
-				cur_seq.push_back(prev_span[0]);
+			uint8_t first_byte = 0;
+			if (code < 256u) {
+				if (out.size() >= effective_limit) {
+					return make_filter_error(
+						ErrorCode::DecompressionLimitExceeded,
+						DiagnosticId::DecompressionLimitExceeded,
+						"LZWDecode output exceeds maximum decoded stream byte ceiling",
+						byte_pos);
+				}
+				if (out.size() == out.capacity()) {
+					ensure_bounded_capacity(out, 1u, effective_limit);
+				}
+				first_byte = static_cast<uint8_t>(code);
+				out.push_back(first_byte);
 			} else {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Out-of-range LZW code in LZWDecode stream",
-					byte_pos);
-			}
+				if (code < next_code) {
+					const auto span = get_code_span(code);
+					cur_seq.assign(span.begin(), span.end());
+				} else if (code == next_code && prev_code.has_value()) {
+					const auto prev_span = get_code_span(*prev_code);
+					cur_seq.assign(prev_span.begin(), prev_span.end());
+					cur_seq.push_back(prev_span[0]);
+				} else {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Out-of-range LZW code in LZWDecode stream",
+						byte_pos);
+				}
 
-			if (cur_seq.size() > effective_limit - out.size()) {
-				return make_filter_error(
-					ErrorCode::DecompressionLimitExceeded,
-					DiagnosticId::DecompressionLimitExceeded,
-					"LZWDecode output exceeds maximum decoded stream byte ceiling",
-					byte_pos);
+				if (cur_seq.size() > effective_limit - out.size()) {
+					return make_filter_error(
+						ErrorCode::DecompressionLimitExceeded,
+						DiagnosticId::DecompressionLimitExceeded,
+						"LZWDecode output exceeds maximum decoded stream byte ceiling",
+						byte_pos);
+				}
+				first_byte = cur_seq[0];
+				ensure_bounded_capacity(out, cur_seq.size(), effective_limit);
+				const size_t old_size = out.size();
+				out.resize(old_size + cur_seq.size());
+				std::memcpy(out.data() + old_size, cur_seq.data(), cur_seq.size());
 			}
-			ensure_bounded_capacity(out, cur_seq.size(), effective_limit);
-			out.insert(out.end(), cur_seq.begin(), cur_seq.end());
 
 			if (prev_code.has_value() && next_code < 4096u) {
 				const uint32_t pcode = *prev_code;
 				const uint32_t new_off = static_cast<uint32_t>(dict_pool.size());
 				if (pcode < 256u) {
 					dict_pool.push_back(static_cast<uint8_t>(pcode));
-					dict_pool.push_back(cur_seq[0]);
+					dict_pool.push_back(first_byte);
 					table[next_code] = LzwEntry{new_off, 2u};
 				} else {
 					const uint32_t src_off = table[pcode].offset;
@@ -1383,7 +1433,7 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 						dict_pool.data() + new_off,
 						dict_pool.data() + src_off,
 						src_len);
-					dict_pool[new_off + src_len] = cur_seq[0];
+					dict_pool[new_off + src_len] = first_byte;
 					table[next_code] = LzwEntry{new_off, new_len};
 				}
 				++next_code;

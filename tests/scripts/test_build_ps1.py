@@ -403,6 +403,40 @@ class AsanCoverage(unittest.TestCase):
         staged = set(re.findall(r"'([^']+)'", re.search(r"foreach \(\$exeProj in @\(([^)]*)\)\)", text).group(1)))
         self.assertEqual(staged, {"recto-tests", "recto-cli", "Recto"})
 
+    def test_non_debug_configurations_disable_incremental_linking(self):
+        props = (ROOT / "Directory.Build.props").read_text(encoding="utf-8-sig")
+        targets = (ROOT / "Directory.Build.targets").read_text(encoding="utf-8-sig")
+        self.assertRegex(
+            props,
+            r"<LinkIncremental Condition=\"[^\"]*'\$\(Configuration\)' != 'Debug'[^\"]*\">false</LinkIncremental>",
+        )
+        self.assertRegex(
+            targets,
+            r"Condition=\"[^\"]*'\$\(Configuration\)' != 'Debug'[^\"]*\">\s*<LinkIncremental>false</LinkIncremental>",
+        )
+        if MSBUILD:
+            projects = dict(RECTO_PROJECTS)
+            for name in ("Recto", "recto-cli", "recto-tests", "recto-fuzz"):
+                with self.subTest(project=name):
+                    run = subprocess.run(
+                        [MSBUILD, str(projects[name]), "-nologo", "-p:Configuration=Release", "-p:Platform=x64", "-getProperty:LinkIncremental"],
+                        capture_output=True, text=True, timeout=60,
+                    )
+                    self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                    self.assertEqual(run.stdout.strip().lower(), "false")
+            asan_debug = subprocess.run(
+                [MSBUILD, str(projects["recto-tests"]), "-nologo", "-p:Configuration=Debug", "-p:Platform=x64", "-p:EnableASAN=true", "-getProperty:LinkIncremental"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(asan_debug.returncode, 0, asan_debug.stdout + asan_debug.stderr)
+            self.assertEqual(asan_debug.stdout.strip().lower(), "false")
+            plain_debug = subprocess.run(
+                [MSBUILD, str(projects["recto-tests"]), "-nologo", "-p:Configuration=Debug", "-p:Platform=x64", "-getProperty:LinkIncremental"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(plain_debug.returncode, 0, plain_debug.stdout + plain_debug.stderr)
+            self.assertNotEqual(plain_debug.stdout.strip().lower(), "false")
+
 
 class BuildEvidence(unittest.TestCase):
     """build/build-evidence.ps1 against a fake build tree: it records hashes and object write times, lists every change,

@@ -148,6 +148,117 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return key == "Root" || key == "Info" || key == "Encrypt" || key == "ID" || key == "Size";
 }
 
+[[nodiscard]] bool is_pdf_token_boundary(
+	const uint8_t* data,
+	size_t size,
+	size_t pos) noexcept
+{
+	return pos == size || Lexer::is_pdf_whitespace(data[pos]) || Lexer::is_pdf_delimiter(data[pos]);
+}
+
+void skip_ws_raw(
+	const uint8_t* data,
+	size_t size,
+	size_t& pos) noexcept
+{
+	while (pos < size && Lexer::is_pdf_whitespace(data[pos])) {
+		++pos;
+	}
+}
+
+[[nodiscard]] bool match_keyword_raw(
+	const uint8_t* data,
+	size_t size,
+	size_t& pos,
+	std::string_view keyword) noexcept
+{
+	size_t p = pos;
+	skip_ws_raw(data, size, p);
+	if (p + keyword.size() > size ||
+		std::memcmp(data + p, keyword.data(), keyword.size()) != 0 ||
+		!is_pdf_token_boundary(data, size, p + keyword.size())) {
+		return false;
+	}
+	pos = p + keyword.size();
+	return true;
+}
+
+[[nodiscard]] bool scan_uint64_raw(
+	const uint8_t* data,
+	size_t size,
+	size_t& pos,
+	uint64_t& out_val) noexcept
+{
+	size_t p = pos;
+	skip_ws_raw(data, size, p);
+	if (p >= size || data[p] < '0' || data[p] > '9') {
+		return false;
+	}
+	uint64_t val = 0;
+	while (p < size && data[p] >= '0' && data[p] <= '9') {
+		const uint64_t digit = static_cast<uint64_t>(data[p] - '0');
+		if (val > (std::numeric_limits<uint64_t>::max() - digit) / 10u) {
+			return false;
+		}
+		val = val * 10u + digit;
+		++p;
+	}
+	if (!is_pdf_token_boundary(data, size, p)) {
+		return false;
+	}
+	out_val = val;
+	pos = p;
+	return true;
+}
+
+[[nodiscard]] bool scan_int64_raw(
+	const uint8_t* data,
+	size_t size,
+	size_t& pos,
+	int64_t& out_val) noexcept
+{
+	size_t p = pos;
+	skip_ws_raw(data, size, p);
+	if (p >= size) {
+		return false;
+	}
+	bool neg = false;
+	if (data[p] == '+' || data[p] == '-') {
+		neg = (data[p] == '-');
+		++p;
+	}
+	if (p >= size || data[p] < '0' || data[p] > '9') {
+		return false;
+	}
+	constexpr uint64_t kMaxPos = static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+	const uint64_t limit = neg ? (kMaxPos + 1ULL) : kMaxPos;
+	uint64_t mag = 0;
+	while (p < size && data[p] >= '0' && data[p] <= '9') {
+		const uint64_t digit = static_cast<uint64_t>(data[p] - '0');
+		if (mag > (limit - digit) / 10ULL) {
+			return false;
+		}
+		mag = mag * 10ULL + digit;
+		++p;
+	}
+	if (!is_pdf_token_boundary(data, size, p)) {
+		return false;
+	}
+	out_val = neg
+		? (mag == limit ? std::numeric_limits<int64_t>::min() : -static_cast<int64_t>(mag))
+		: static_cast<int64_t>(mag);
+	pos = p;
+	return true;
+}
+
+[[nodiscard]] int is_hex_digit_raw(uint8_t b) noexcept
+{
+	if ((b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')) {
+		return 1;
+	}
+	return 0;
+}
+
 // Fast non-allocating scanner for classic trailer dictionaries of older
 // `/Prev` revisions (`revision_count > 1`): skips allocating a temporary
 // `PdfDict` when every merged trailer key present is already populated in
@@ -155,6 +266,7 @@ constexpr std::string_view kEofMarker = "%%EOF";
 // `false` to fall back to `Parser::parse_dictionary_into` on any missing merged
 // key, nested structure, or syntax edge case.
 [[nodiscard]] bool try_scan_older_classic_trailer(
+	std::span<const uint8_t> file_bytes,
 	Lexer& lexer,
 	const PdfDict& merged_trailer,
 	std::optional<int64_t>& out_prev,
@@ -162,6 +274,182 @@ constexpr std::string_view kEofMarker = "%%EOF";
 {
 	out_prev.reset();
 	out_xref_stm.reset();
+
+	constexpr size_t kMaxFastPairs = 32;
+	constexpr size_t kMaxFastBytes = 4096;
+	constexpr size_t kMaxFastArrayElements = 8;
+
+	const auto try_raw_fast = [&]() noexcept -> bool {
+		const uint8_t* const data = file_bytes.data();
+		const size_t size = file_bytes.size();
+		size_t p = lexer.position();
+		skip_ws_raw(data, size, p);
+		if (p + 2u > size || data[p] != '<' || data[p + 1u] != '<') {
+			return false;
+		}
+		p += 2u;
+
+		size_t pair_count = 0;
+		size_t byte_budget = 0;
+		auto charge = [&](size_t n) noexcept -> bool {
+			if (n > kMaxFastBytes - byte_budget) {
+				return false;
+			}
+			byte_budget += n;
+			return true;
+		};
+		auto scan_name = [&](std::string_view& out_name) noexcept -> bool {
+			if (p >= size || data[p] != '/') {
+				return false;
+			}
+			++p;
+			const size_t start = p;
+			while (p < size && !Lexer::is_pdf_whitespace(data[p]) && !Lexer::is_pdf_delimiter(data[p])) {
+				if (data[p] == '#') {
+					return false;
+				}
+				++p;
+			}
+			out_name = std::string_view(reinterpret_cast<const char*>(data + start), p - start);
+			return charge(out_name.size());
+		};
+		auto scan_hex = [&]() noexcept -> bool {
+			if (p + 1u >= size || data[p] != '<' || data[p + 1u] == '<') {
+				return false;
+			}
+			++p;
+			size_t hex_chars = 0;
+			while (p < size && data[p] != '>') {
+				if (Lexer::is_pdf_whitespace(data[p])) {
+					++p;
+					continue;
+				}
+				if (!is_hex_digit_raw(data[p])) {
+					return false;
+				}
+				++hex_chars;
+				++p;
+			}
+			if (p >= size || data[p] != '>') {
+				return false;
+			}
+			++p;
+			return charge((hex_chars + 1u) / 2u);
+		};
+		auto scan_bool_or_null = [&]() noexcept -> bool {
+			return match_keyword_raw(data, size, p, "true") ||
+				match_keyword_raw(data, size, p, "false") ||
+				match_keyword_raw(data, size, p, "null");
+		};
+
+		while (true) {
+			skip_ws_raw(data, size, p);
+			if (p >= size) {
+				return false;
+			}
+			if (p + 2u <= size && data[p] == '>' && data[p + 1u] == '>') {
+				p += 2u;
+				lexer.seek(p);
+				lexer.record_scanned_offset(p);
+				return true;
+			}
+			if (data[p] != '/' || pair_count >= kMaxFastPairs) {
+				return false;
+			}
+			std::string_view key;
+			if (!scan_name(key)) {
+				return false;
+			}
+			if (is_merged_trailer_key(key) && !merged_trailer.contains(key)) {
+				return false;
+			}
+			const bool is_prev = (key == "Prev");
+			const bool is_xref_stm = (key == "XRefStm");
+
+			skip_ws_raw(data, size, p);
+			if (p >= size) {
+				return false;
+			}
+			const uint8_t ch = data[p];
+			if (ch == '+' || ch == '-' || (ch >= '0' && ch <= '9')) {
+				int64_t val_int = 0;
+				if (!scan_int64_raw(data, size, p, val_int)) {
+					return false;
+				}
+				size_t ref_p = p;
+				int64_t gen_int = 0;
+				if (scan_int64_raw(data, size, ref_p, gen_int)) {
+					if (!match_keyword_raw(data, size, ref_p, "R") ||
+						is_prev || is_xref_stm ||
+						val_int <= 0 ||
+						val_int > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+						gen_int < 0 ||
+						gen_int > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
+						return false;
+					}
+					p = ref_p;
+				} else {
+					if (is_prev) {
+						out_prev = val_int;
+					} else if (is_xref_stm) {
+						out_xref_stm = val_int;
+					}
+				}
+			} else if (ch == '/') {
+				std::string_view unused_name;
+				if (is_prev || is_xref_stm || !scan_name(unused_name)) {
+					return false;
+				}
+			} else if (ch == '<') {
+				if (is_prev || is_xref_stm || !scan_hex()) {
+					return false;
+				}
+			} else if (ch == '[') {
+				if (is_prev || is_xref_stm) {
+					return false;
+				}
+				++p;
+				size_t elem_count = 0;
+				while (true) {
+					skip_ws_raw(data, size, p);
+					if (p >= size) {
+						return false;
+					}
+					if (data[p] == ']') {
+						++p;
+						break;
+					}
+					if (elem_count >= kMaxFastArrayElements) {
+						return false;
+					}
+					++elem_count;
+					if (data[p] == '<') {
+						if (!scan_hex()) {
+							return false;
+						}
+					} else if (data[p] == '/') {
+						std::string_view unused_name;
+						if (!scan_name(unused_name)) {
+							return false;
+						}
+					} else if (!scan_bool_or_null()) {
+						return false;
+					}
+				}
+			} else if (is_prev || is_xref_stm || !scan_bool_or_null()) {
+				return false;
+			}
+			++pair_count;
+		}
+	};
+
+	const size_t saved_pos = lexer.position();
+	if (try_raw_fast()) {
+		return true;
+	}
+	out_prev.reset();
+	out_xref_stm.reset();
+	lexer.seek(saved_pos);
 
 	auto next_tok = [&](Token& tok) -> bool {
 		auto res = lexer.next_token();
@@ -179,9 +467,6 @@ constexpr std::string_view kEofMarker = "%%EOF";
 
 	size_t pair_count = 0;
 	size_t byte_budget = 0;
-	constexpr size_t kMaxFastPairs = 32;
-	constexpr size_t kMaxFastBytes = 4096;
-	constexpr size_t kMaxFastArrayElements = 8;
 	auto charge = [&](size_t n) noexcept -> bool {
 		if (n > kMaxFastBytes - byte_budget) {
 			return false;
@@ -2431,9 +2716,21 @@ PdfResult<XrefTable> XrefTable::parse(
 
 			lexer.seek(static_cast<size_t>(current_xref_offset));
 
+			const bool can_fast_classic = !lexer.emit_comments() && !detail::lexer_alloc_fault_active();
+			const uint8_t* const fb_data = file_bytes.data();
+			const size_t fb_size = file_bytes.size();
+			bool used_fast_xref_kw = false;
 			Token kw_tok;
 			PdfError err;
-			if (!next_non_comment_token(lexer, kw_tok, err)) {
+			if (can_fast_classic) {
+				size_t kw_pos = static_cast<size_t>(current_xref_offset);
+				if (match_keyword_raw(fb_data, fb_size, kw_pos, "xref")) {
+					lexer.seek(kw_pos);
+					lexer.record_scanned_offset(kw_pos);
+					used_fast_xref_kw = true;
+				}
+			}
+			if (!used_fast_xref_kw && !next_non_comment_token(lexer, kw_tok, err)) {
 				return try_recover(std::move(err));
 			}
 
@@ -2441,7 +2738,8 @@ PdfResult<XrefTable> XrefTable::parse(
 			std::optional<int64_t> fast_prev;
 			std::optional<int64_t> fast_xref_stm;
 			bool used_fast_trailer = false;
-			if (kw_tok.is_keyword("xref")) {
+			const bool is_classic_xref = used_fast_xref_kw || kw_tok.is_keyword("xref");
+			if (is_classic_xref) {
 				// Classic ASCII `xref` table followed by `trailer << ... >>`.
 				// Buffer this revision's classic entries so any supplemental `/XRefStm`
 				// in the same revision overrides classic compatibility entries (such as
@@ -2452,53 +2750,81 @@ PdfResult<XrefTable> XrefTable::parse(
 				classic_rev_entries.clear();
 				out_of_bounds_rows.clear();
 				while (true) {
-					Token first_tok;
-					if (!next_non_comment_token(lexer, first_tok, err)) {
-						return try_recover(std::move(err));
+					uint64_t first_id = 0;
+					uint64_t count = 0;
+					bool parsed_fast_sub = false;
+					if (can_fast_classic) {
+						size_t head_pos = lexer.position();
+						if (match_keyword_raw(fb_data, fb_size, head_pos, "trailer")) {
+							lexer.seek(head_pos);
+							lexer.record_scanned_offset(head_pos);
+							break;
+						}
+						uint64_t fast_first = 0;
+						uint64_t fast_count = 0;
+						size_t sub_pos = lexer.position();
+						if (scan_uint64_raw(fb_data, fb_size, sub_pos, fast_first) &&
+							scan_uint64_raw(fb_data, fb_size, sub_pos, fast_count) &&
+							fast_first <= std::numeric_limits<uint32_t>::max() &&
+							fast_count <= kMaxXrefSubsectionCount &&
+							fast_first + fast_count <= static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL &&
+							fast_count <= effective_max_entries - total_rows_parsed) {
+							lexer.seek(sub_pos);
+							lexer.record_scanned_offset(sub_pos);
+							first_id = fast_first;
+							count = fast_count;
+							parsed_fast_sub = true;
+						}
 					}
-					if (first_tok.is_keyword("trailer")) {
-						break;
-					}
-					if (first_tok.kind != TokenKind::Integer ||
-						first_tok.int_value < 0 ||
-						first_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
-						return try_recover(make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"Invalid first object number in xref subsection header",
-							first_tok.byte_offset));
-					}
+					if (!parsed_fast_sub) {
+						Token first_tok;
+						if (!next_non_comment_token(lexer, first_tok, err)) {
+							return try_recover(std::move(err));
+						}
+						if (first_tok.is_keyword("trailer")) {
+							break;
+						}
+						if (first_tok.kind != TokenKind::Integer ||
+							first_tok.int_value < 0 ||
+							first_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+							return try_recover(make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Invalid first object number in xref subsection header",
+								first_tok.byte_offset));
+						}
 
-					Token count_tok;
-					if (!next_non_comment_token(lexer, count_tok, err)) {
-						return try_recover(std::move(err));
-					}
-					if (count_tok.kind != TokenKind::Integer ||
-						count_tok.int_value < 0 ||
-						count_tok.int_value > static_cast<int64_t>(kMaxXrefSubsectionCount)) {
-						return try_recover(make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"Invalid or excessive object count in xref subsection header",
-							count_tok.byte_offset));
-					}
+						Token count_tok;
+						if (!next_non_comment_token(lexer, count_tok, err)) {
+							return try_recover(std::move(err));
+						}
+						if (count_tok.kind != TokenKind::Integer ||
+							count_tok.int_value < 0 ||
+							count_tok.int_value > static_cast<int64_t>(kMaxXrefSubsectionCount)) {
+							return try_recover(make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Invalid or excessive object count in xref subsection header",
+								count_tok.byte_offset));
+						}
 
-					const uint64_t first_id = static_cast<uint64_t>(first_tok.int_value);
-					const uint64_t count = static_cast<uint64_t>(count_tok.int_value);
-					if (first_id + count >
-						static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
-						return try_recover(make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"xref subsection object range overflows 32-bit object numbers",
-							first_tok.byte_offset));
-					}
-					if (count > effective_max_entries - total_rows_parsed) {
-						return make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"Cumulative xref entry count across subsections exceeds maximum budget",
-							count_tok.byte_offset);
+						first_id = static_cast<uint64_t>(first_tok.int_value);
+						count = static_cast<uint64_t>(count_tok.int_value);
+						if (first_id + count >
+							static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
+							return try_recover(make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"xref subsection object range overflows 32-bit object numbers",
+								first_tok.byte_offset));
+						}
+						if (count > effective_max_entries - total_rows_parsed) {
+							return make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Cumulative xref entry count across subsections exceeds maximum budget",
+								count_tok.byte_offset);
+						}
 					}
 					total_rows_parsed += count;
 					classic_rev_entries.reserve(
@@ -2540,8 +2866,6 @@ PdfResult<XrefTable> XrefTable::parse(
 
 					size_t fast_pos = lexer.position();
 					const bool can_fast_rows = !lexer.emit_comments();
-					const uint8_t* const fb_data = file_bytes.data();
-					const size_t fb_size = file_bytes.size();
 					for (uint64_t i = 0; i < count; ++i) {
 						if ((i & 0xFFFu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
 							return detail::cancelled_error();
@@ -2652,7 +2976,7 @@ PdfResult<XrefTable> XrefTable::parse(
 
 				if (table.revision_count_ > 1u && !lexer.emit_comments() && !detail::lexer_alloc_fault_active()) {
 					const size_t saved_trailer_pos = lexer.position();
-					if (try_scan_older_classic_trailer(lexer, table.trailer_, fast_prev, fast_xref_stm)) {
+					if (try_scan_older_classic_trailer(file_bytes, lexer, table.trailer_, fast_prev, fast_xref_stm)) {
 						used_fast_trailer = true;
 					} else {
 						lexer.seek(saved_trailer_pos);
@@ -2814,9 +3138,9 @@ PdfResult<XrefTable> XrefTable::parse(
 			// The newest section, which an incremental revision chains to and must match (D01 T02 section 5).
 			if (table.revision_count_ == 1u) {
 				table.startxref_offset_ = raw_startxref;
-				table.newest_section_ = !kw_tok.is_keyword("xref") ? XrefSectionKind::Stream
-					: rev_trailer.contains("XRefStm")              ? XrefSectionKind::Hybrid
-																	: XrefSectionKind::Classic;
+				table.newest_section_ = !is_classic_xref ? XrefSectionKind::Stream
+					: rev_trailer.contains("XRefStm")     ? XrefSectionKind::Hybrid
+														  : XrefSectionKind::Classic;
 				table.newest_trailer_ = rev_trailer;
 			}
 

@@ -21,6 +21,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 #include <atomic>
 #include <bit>
@@ -8598,35 +8599,45 @@ TEST(PdfFilters, CancelWhileRunning)
 		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "ASCII85Decode", decodes(stream));
 	}
 	{
-		std::vector<uint8_t> runs;
-		runs.reserve(64u << 20u);
+		std::vector<uint8_t> runs(64u << 20u);
+		uint8_t* dst = runs.data();
 		for (size_t i = 0; i < (32u << 20u); ++i) {
-			runs.push_back(0u);
-			runs.push_back('x');
+			dst[0] = 0u;
+			dst[1] = 'x';
+			dst += 2u;
 		}
 		const PdfStream stream = stream_with("RunLengthDecode", std::move(runs));
 		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "RunLengthDecode", decodes(stream));
 	}
 	{
 		// LZW: a clear code, then literals, 9 bits each, clearing before the table grows.
-		std::vector<uint8_t> lzw;
 		uint32_t accumulator = 0u;
 		uint32_t bits = 0u;
-		const auto code = [&](uint32_t value) {
+		const auto code = [&](std::vector<uint8_t>& out, uint32_t value) {
 			accumulator = (accumulator << 9u) | value;
 			bits += 9u;
 			while (bits >= 8u) {
-				lzw.push_back(static_cast<uint8_t>((accumulator >> (bits - 8u)) & 0xFFu));
+				out.push_back(static_cast<uint8_t>((accumulator >> (bits - 8u)) & 0xFFu));
 				bits -= 8u;
 			}
 		};
-		for (int block = 0; block < 200'000; ++block) {
-			code(256u);
+		std::vector<uint8_t> tile;
+		tile.reserve(1809u);
+		for (int block = 0; block < 8; ++block) {
+			code(tile, 256u);
 			for (int i = 0; i < 200; ++i) {
-				code('x');
+				code(tile, 'x');
 			}
 		}
-		code(257u);
+		// 8 * 201 * 9 = 14,472 bits = 1,809 bytes; bits == 0u so tiling 25,000 times matches 200,000 blocks exactly.
+		ASSERT_EQ(bits, 0u);
+		constexpr size_t kTiles = 25'000u;
+		std::vector<uint8_t> lzw(tile.size() * kTiles);
+		uint8_t* dst = lzw.data();
+		for (size_t t = 0; t < kTiles; ++t) {
+			std::memcpy(dst + t * tile.size(), tile.data(), tile.size());
+		}
+		code(lzw, 257u);
 		if (bits != 0u) {
 			lzw.push_back(static_cast<uint8_t>((accumulator << (8u - bits)) & 0xFFu));
 		}
@@ -8636,10 +8647,12 @@ TEST(PdfFilters, CancelWhileRunning)
 	{
 		// Flate with random bytes, the costly case: many literal codes.
 		std::vector<uint8_t> noise(64u << 20u);
+		uint8_t* dst = noise.data();
+		const size_t n = noise.size();
 		uint32_t state = 12345u;
-		for (uint8_t& byte : noise) {
+		for (size_t i = 0; i < n; ++i) {
 			state = state * 1664525u + 1013904223u;
-			byte = static_cast<uint8_t>(state >> 24u);
+			dst[i] = static_cast<uint8_t>(state >> 24u);
 		}
 		auto packed = flate_compress(noise);
 		ASSERT_TRUE(packed.has_value());

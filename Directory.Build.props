@@ -10,7 +10,7 @@
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture Condition="'$(PreferredToolArchitecture)' == ''">x64</PreferredToolArchitecture>
     <EnableASAN Condition="'$(EnableASAN)' == ''">false</EnableASAN>
-    <LinkIncremental Condition="'$(EnableASAN)' == 'true'">false</LinkIncremental>
+    <LinkIncremental Condition="'$(EnableASAN)' == 'true' Or '$(Configuration)' != 'Debug'">false</LinkIncremental>
     <!-- Compile flags (warning level, language standards, runtime) are
          ClCompile item metadata in VC projects, not properties; they live
          in Directory.Build.targets next to this file. -->

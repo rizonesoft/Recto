@@ -731,7 +731,11 @@ private:
 			out_.push_back(static_cast<uint8_t>(n >> 8u));
 			out_.push_back(static_cast<uint8_t>(~n));
 			out_.push_back(static_cast<uint8_t>(~n >> 8u));
-			out_.insert(out_.end(), input_.begin() + static_cast<ptrdiff_t>(s), input_.begin() + static_cast<ptrdiff_t>(s + n));
+			if (n > 0u) {
+				const size_t old_size = out_.size();
+				out_.resize(old_size + n);
+				std::memcpy(out_.data() + old_size, input_.data() + s, n);
+			}
 			s += n;
 			if (stats_ != nullptr) {
 				stats_->stored_runs++;

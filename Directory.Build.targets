@@ -7,6 +7,9 @@
     <LinkIncremental>false</LinkIncremental>
     <WholeProgramOptimization>false</WholeProgramOptimization>
   </PropertyGroup>
+  <PropertyGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(Configuration)' != 'Debug'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
   <ItemDefinitionGroup Condition="$(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto'">
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
