@@ -136,18 +136,18 @@ struct TerminatorScanner {
 	}
 }
 
-[[nodiscard]] bool peek_first_non_comment(
+[[nodiscard]] bool peek_first_non_comment_ptr(
 	Lexer& lexer,
-	Token& out_tok,
+	const Token*& out_tok,
 	PdfError& err)
 {
 	while (true) {
-		auto res = lexer.peek_token(0);
+		auto res = lexer.peek_token_ptr(0);
 		if (!res.has_value()) {
 			err = std::move(res).error();
 			return false;
 		}
-		if (res.value().kind == TokenKind::Comment) {
+		if (res.value()->kind == TokenKind::Comment) {
 			auto disc = lexer.next_token();
 			if (!disc.has_value()) {
 				err = std::move(disc).error();
@@ -155,7 +155,7 @@ struct TerminatorScanner {
 			}
 			continue;
 		}
-		out_tok = std::move(res).value();
+		out_tok = res.value();
 		return true;
 	}
 }
@@ -166,9 +166,9 @@ struct TerminatorScanner {
 	PdfValue& out,
 	PdfError& err)
 {
-	Token p1;
+	const Token* p1 = nullptr;
 	PdfError peek_err;
-	if (!peek_first_non_comment(lexer, p1, peek_err)) {
+	if (!peek_first_non_comment_ptr(lexer, p1, peek_err)) {
 		if (peek_err.code == ErrorCode::OutOfMemory ||
 			peek_err.code == ErrorCode::InternalError) {
 			err = std::move(peek_err);
@@ -178,7 +178,8 @@ struct TerminatorScanner {
 		return true;
 	}
 
-	if (p1.kind != TokenKind::Integer) {
+	// Copy scalar kind before any further lookahead call that may reallocate lookahead_buf_.
+	if (p1->kind != TokenKind::Integer) {
 		out = PdfValue(tok0.int_value);
 		return true;
 	}
@@ -187,7 +188,7 @@ struct TerminatorScanner {
 	bool is_ref = false;
 
 	if (!lexer.emit_comments()) {
-		auto p2 = lexer.peek_token(1);
+		auto p2 = lexer.peek_token_ptr(1);
 		if (!p2.has_value()) {
 			if (p2.error().code == ErrorCode::OutOfMemory ||
 				p2.error().code == ErrorCode::InternalError) {
@@ -197,7 +198,7 @@ struct TerminatorScanner {
 			out = PdfValue(tok0.int_value);
 			return true;
 		}
-		if (p2.value().is_keyword("R")) {
+		if (p2.value()->is_keyword("R")) {
 			Token gen_tok;
 			Token r_tok;
 			if (!next_non_comment(lexer, gen_tok, err) ||
@@ -213,8 +214,8 @@ struct TerminatorScanner {
 		if (!next_non_comment(lexer, gen_tok, err)) {
 			return false;
 		}
-		Token p2;
-		if (!peek_first_non_comment(lexer, p2, peek_err)) {
+		const Token* p2 = nullptr;
+		if (!peek_first_non_comment_ptr(lexer, p2, peek_err)) {
 			if (peek_err.code == ErrorCode::OutOfMemory ||
 				peek_err.code == ErrorCode::InternalError) {
 				err = std::move(peek_err);
@@ -224,7 +225,7 @@ struct TerminatorScanner {
 			out = PdfValue(tok0.int_value);
 			return true;
 		}
-		if (p2.is_keyword("R")) {
+		if (p2->is_keyword("R")) {
 			Token r_tok;
 			if (!next_non_comment(lexer, r_tok, err)) {
 				return false;
@@ -365,11 +366,12 @@ PdfResult<PdfArray> Parser::parse_array() noexcept
 	}
 }
 
-PdfResult<PdfDict> Parser::parse_dictionary() noexcept
+PdfResult<void> Parser::parse_dictionary_into(PdfDict& out) noexcept
 {
 	const size_t saved_pos = lexer_->position();
 	values_parsed_ = 0;
 	bytes_parsed_ = 0;
+	out.clear();
 	try {
 		Token open_tok;
 		PdfError err;
@@ -385,14 +387,13 @@ PdfResult<PdfDict> Parser::parse_dictionary() noexcept
 				"Expected '<<' at start of PDF dictionary",
 				open_tok.byte_offset);
 		}
-		PdfDict dict;
-		if (!parse_dictionary_body(0, open_tok.byte_offset, dict, err)) {
+		if (!parse_dictionary_body(0, open_tok.byte_offset, out, err)) {
 			if (err.code == ErrorCode::OutOfMemory) {
 				lexer_->seek(saved_pos);
 			}
 			return err;
 		}
-		return dict;
+		return PdfResult<void>::ok();
 	} catch (const std::bad_alloc&) {
 		lexer_->seek(saved_pos);
 		return PdfError{
@@ -406,6 +407,13 @@ PdfResult<PdfDict> Parser::parse_dictionary() noexcept
 			"Unexpected failure in Parser::parse_dictionary",
 			saved_pos};
 	}
+}
+
+PdfResult<PdfDict> Parser::parse_dictionary() noexcept
+{
+	PdfDict dict;
+	RECTO_PDF_RETURN_IF_ERROR(parse_dictionary_into(dict));
+	return dict;
 }
 
 PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice(
@@ -581,15 +589,16 @@ bool Parser::parse_array_body(
 		return false;
 	}
 
+	const Token* peek_tok = nullptr;
 	Token tok;
 	while (true) {
-		if (!peek_first_non_comment(*lexer_, tok, err)) {
+		if (!peek_first_non_comment_ptr(*lexer_, peek_tok, err)) {
 			return false;
 		}
-		if (tok.kind == TokenKind::ArrayClose) {
+		if (peek_tok->kind == TokenKind::ArrayClose) {
 			return next_non_comment(*lexer_, tok, err);
 		}
-		if (tok.is_eof()) {
+		if (peek_tok->is_eof()) {
 			err = make_pdf_error(
 				ErrorCode::DamagedFormat,
 				"Unterminated PDF array: unexpected EOF before ']'",
@@ -600,7 +609,7 @@ bool Parser::parse_array_body(
 			err = make_pdf_error(
 				ErrorCode::DamagedFormat,
 				"PDF array exceeds maximum element count ceiling",
-				tok.byte_offset);
+				peek_tok->byte_offset);
 			return false;
 		}
 		out.emplace_back();
@@ -624,17 +633,18 @@ bool Parser::parse_dictionary_body(
 		return false;
 	}
 
+	const Token* peek_tok = nullptr;
 	Token tok;
 	PdfValue val;
 	size_t pair_count = 0;
 	while (true) {
-		if (!peek_first_non_comment(*lexer_, tok, err)) {
+		if (!peek_first_non_comment_ptr(*lexer_, peek_tok, err)) {
 			return false;
 		}
-		if (tok.kind == TokenKind::DictClose) {
+		if (peek_tok->kind == TokenKind::DictClose) {
 			return next_non_comment(*lexer_, tok, err);
 		}
-		if (tok.is_eof()) {
+		if (peek_tok->is_eof()) {
 			err = make_pdf_error(
 				ErrorCode::DamagedFormat,
 				"Unterminated PDF dictionary: unexpected EOF before '>>'",
@@ -645,7 +655,7 @@ bool Parser::parse_dictionary_body(
 			err = make_pdf_error(
 				ErrorCode::DamagedFormat,
 				"PDF dictionary exceeds maximum entry count ceiling",
-				tok.byte_offset);
+				peek_tok->byte_offset);
 			return false;
 		}
 		if (!next_non_comment(*lexer_, tok, err)) {
@@ -888,19 +898,20 @@ PdfResult<IndirectObject> Parser::parse_indirect_object_impl(
 		return err;
 	}
 
-	if (!peek_first_non_comment(*lexer_, tok, err)) {
+	const Token* peek_tok = nullptr;
+	if (!peek_first_non_comment_ptr(*lexer_, peek_tok, err)) {
 		if (!err.object_num.has_value()) {
 			err.object_num = obj_num;
 			err.generation_num = gen_num;
 		}
 		return err;
 	}
-	if (tok.is_keyword("stream")) {
+	if (peek_tok->is_keyword("stream")) {
 		if (!body.is_dict()) {
 			return make_pdf_error(
 				ErrorCode::DamagedFormat,
 				"PDF 'stream' keyword must be preceded by a stream dictionary",
-				tok.byte_offset,
+				peek_tok->byte_offset,
 				obj_num,
 				gen_num);
 		}

@@ -131,6 +131,11 @@ public:
 	// omitting null-valued entries per ISO 32000-1 section 7.3.7.
 	[[nodiscard]] PdfResult<PdfDict> parse_dictionary() noexcept;
 
+	// Parses a PDF dictionary '<<...>>' into an existing dict (reusing its
+	// storage after clearing), omitting null-valued entries per ISO 32000-1
+	// section 7.3.7.
+	[[nodiscard]] PdfResult<void> parse_dictionary_into(PdfDict& out) noexcept;
+
 	// Parses a 'stream ... endstream' byte slice using direct /Length, an
 	// optional indirect /Length resolver callback, and a fallback scan for
 	// 'endstream' when /Length is missing, out of bounds, or does not land on

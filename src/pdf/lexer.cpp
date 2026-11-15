@@ -3,6 +3,7 @@
 #include "lexer.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <cmath>
@@ -45,6 +46,11 @@ size_t lexer_live_allocated_bytes() noexcept
 void set_lexer_alloc_fail_countdown(int countdown) noexcept
 {
 	g_lexer_alloc_fail_countdown = countdown;
+}
+
+bool lexer_alloc_fault_active() noexcept
+{
+	return g_lexer_alloc_fail_countdown >= 0;
 }
 
 } // namespace detail
@@ -161,7 +167,14 @@ Lexer::Lexer(
 
 void Lexer::clear_lookahead() noexcept
 {
-	lookahead_buf_.reset();
+	if (lookahead_buf_) {
+		lookahead_buf_.reset();
+	} else {
+		for (size_t i = 0; i < lookahead_count_; ++i) {
+			const size_t idx = (lookahead_head_ + i) % lookahead_capacity_;
+			inline_lookahead_[idx].token = Token{};
+		}
+	}
 	lookahead_head_ = 0;
 	lookahead_count_ = 0;
 	lookahead_capacity_ = 0;
@@ -172,6 +185,11 @@ bool Lexer::ensure_lookahead_slot()
 	if (lookahead_count_ < lookahead_capacity_) {
 		return true;
 	}
+	if (lookahead_capacity_ == 0 && !detail::lexer_alloc_fault_active()) {
+		lookahead_head_ = 0;
+		lookahead_capacity_ = kInlineLookahead;
+		return true;
+	}
 	if (lookahead_capacity_ >= kMaxLexerLookahead) {
 		return false;
 	}
@@ -179,9 +197,10 @@ bool Lexer::ensure_lookahead_slot()
 		? 8
 		: std::min(lookahead_capacity_ * 2, kMaxLexerLookahead);
 	auto new_buf = std::make_unique<LookaheadEntry[]>(new_cap);
+	LookaheadEntry* src = lookahead_slots();
 	for (size_t i = 0; i < lookahead_count_; ++i) {
 		const size_t idx = (lookahead_head_ + i) % lookahead_capacity_;
-		new_buf[i] = std::move(lookahead_buf_[idx]);
+		new_buf[i] = std::move(src[idx]);
 	}
 	lookahead_buf_ = std::move(new_buf);
 	lookahead_head_ = 0;
@@ -226,13 +245,14 @@ PdfResult<Token> Lexer::next_token() noexcept
 	const size_t saved_cursor = cursor_;
 	try {
 		if (lookahead_count_ > 0) {
+			LookaheadEntry* slots = lookahead_slots();
 			const size_t idx = lookahead_head_;
-			const size_t next_logical = lookahead_buf_[idx].cursor_after;
-			PdfResult<Token> result(std::move(lookahead_buf_[idx].token));
+			const size_t next_logical = slots[idx].cursor_after;
+			PdfResult<Token> result(std::move(slots[idx].token));
 			lookahead_head_ = (lookahead_head_ + 1) % lookahead_capacity_;
 			--lookahead_count_;
 			if (lookahead_count_ == 0) {
-				clear_lookahead();
+				lookahead_head_ = 0;
 			}
 			logical_cursor_ = next_logical;
 			return result;
@@ -261,7 +281,7 @@ PdfResult<Token> Lexer::next_token() noexcept
 	}
 }
 
-PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
+PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 {
 	size_t saved_cursor = cursor_;
 	try {
@@ -269,7 +289,7 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 			if (lookahead_count_ > 0) {
 				const size_t back_idx =
 					(lookahead_head_ + lookahead_count_ - 1) % lookahead_capacity_;
-				if (lookahead_buf_[back_idx].token.is_eof()) {
+				if (lookahead_slots()[back_idx].token.is_eof()) {
 					break;
 				}
 			}
@@ -290,8 +310,9 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 			}
 			const size_t tail_idx =
 				(lookahead_head_ + lookahead_count_) % lookahead_capacity_;
-			lookahead_buf_[tail_idx].token = std::move(res).value();
-			lookahead_buf_[tail_idx].cursor_after = cursor_;
+			LookaheadEntry* slots = lookahead_slots();
+			slots[tail_idx].token = std::move(res).value();
+			slots[tail_idx].cursor_after = cursor_;
 			++lookahead_count_;
 			saved_cursor = cursor_;
 		}
@@ -299,7 +320,7 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 		const size_t clamped_index = std::min(lookahead_index, lookahead_count_ - 1);
 		const size_t target_idx =
 			(lookahead_head_ + clamped_index) % lookahead_capacity_;
-		return lookahead_buf_[target_idx].token;
+		return &lookahead_slots()[target_idx].token;
 	} catch (const std::bad_alloc&) {
 		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
@@ -310,6 +331,27 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 	} catch (...) {
 		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
+		return PdfError{
+			ErrorCode::InternalError,
+			"Unexpected failure in Lexer::peek_token",
+			logical_cursor_};
+	}
+}
+
+PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
+{
+	auto ptr_res = peek_token_ptr(lookahead_index);
+	if (!ptr_res.has_value()) {
+		return std::move(ptr_res).error();
+	}
+	try {
+		return *ptr_res.value();
+	} catch (const std::bad_alloc&) {
+		return PdfError{
+			ErrorCode::OutOfMemory,
+			"Out of memory in Lexer::peek_token",
+			logical_cursor_};
+	} catch (...) {
 		return PdfError{
 			ErrorCode::InternalError,
 			"Unexpected failure in Lexer::peek_token",
@@ -557,8 +599,21 @@ PdfResult<Token> Lexer::read_name(size_t start_pos)
 			decoded.push_back(static_cast<char>(escaped_byte));
 			cursor_ += 3;
 		} else {
-			decoded.push_back(static_cast<char>(b));
+			const size_t chunk_start = cursor_;
+			const size_t rem_budget = max_token_bytes_ - decoded.size();
 			++cursor_;
+			while (cursor_ < input_.size() && (cursor_ - chunk_start) < rem_budget) {
+				const uint8_t next_b = input_[cursor_];
+				if (next_b == '#' ||
+					!is_pdf_regular(next_b) ||
+					(syntax_ == LexerSyntax::PostScriptCalculator && is_calculator_delimiter(next_b))) {
+					break;
+				}
+				++cursor_;
+			}
+			decoded.append(
+				reinterpret_cast<const char*>(input_.data() + chunk_start),
+				cursor_ - chunk_start);
 		}
 	}
 
@@ -589,7 +644,30 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos)
 	};
 
 	while (cursor_ < input_.size()) {
-		const uint8_t b = input_[cursor_++];
+		const uint8_t b = input_[cursor_];
+		if (b != '(' && b != ')' && b != '\\' && b != '\r') {
+			if (out.size() >= max_token_bytes_) {
+				++cursor_;
+				return make_pdf_error(
+					ErrorCode::DecompressionLimitExceeded,
+					"PDF literal string exceeds maximum byte ceiling",
+					start_pos);
+			}
+			const size_t rem_budget = max_token_bytes_ - out.size();
+			const size_t chunk_start = cursor_;
+			const size_t limit = std::min(input_.size(), chunk_start + rem_budget);
+			++cursor_;
+			while (cursor_ < limit) {
+				const uint8_t next_b = input_[cursor_];
+				if (next_b == '(' || next_b == ')' || next_b == '\\' || next_b == '\r') {
+					break;
+				}
+				++cursor_;
+			}
+			out.append(input_.data() + chunk_start, cursor_ - chunk_start);
+			continue;
+		}
+		++cursor_;
 		if (b == '(') {
 			++paren_depth;
 			RECTO_PDF_RETURN_IF_ERROR(append_checked('('));
@@ -689,6 +767,35 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos)
 	int pending_high_nibble = -1;
 
 	while (cursor_ < input_.size()) {
+		if (pending_high_nibble < 0 && out.size() < max_token_bytes_) {
+			const size_t max_pairs = max_token_bytes_ - out.size();
+			std::array<uint8_t, 256> chunk;
+			size_t chunk_len = 0;
+			size_t pairs_left = max_pairs;
+			while (pairs_left > 0 && cursor_ + 1 < input_.size()) {
+				const int hi = hex_digit_value(input_[cursor_]);
+				if (hi < 0) {
+					break;
+				}
+				const int lo = hex_digit_value(input_[cursor_ + 1]);
+				if (lo < 0) {
+					break;
+				}
+				chunk[chunk_len++] = static_cast<uint8_t>((hi << 4) | lo);
+				cursor_ += 2;
+				--pairs_left;
+				if (chunk_len == chunk.size()) {
+					out.append(chunk.data(), chunk_len);
+					chunk_len = 0;
+				}
+			}
+			if (chunk_len > 0) {
+				out.append(chunk.data(), chunk_len);
+			}
+			if (cursor_ >= input_.size()) {
+				break;
+			}
+		}
 		const uint8_t b = input_[cursor_++];
 		if (b == '>') {
 			if (pending_high_nibble >= 0) {
@@ -754,8 +861,47 @@ PdfResult<Token> Lexer::read_number_or_keyword(size_t start_pos)
 	}
 
 	const size_t len = cursor_ - start_pos;
+	const uint8_t* raw_ptr = input_.data() + start_pos;
+
+	// Fast path for ordinary PDF integers up to 18 digits (guaranteed to fit signed int64_t).
+	if (len > 0u && len <= 19u) {
+		size_t idx = 0u;
+		bool negative = false;
+		if (raw_ptr[0] == '-') {
+			negative = true;
+			idx = 1u;
+		} else if (raw_ptr[0] == '+') {
+			idx = 1u;
+		}
+		const size_t digit_count = len - idx;
+		if (digit_count >= 1u && digit_count <= 18u) {
+			uint64_t mag = 0u;
+			bool all_digits = true;
+			for (; idx < len; ++idx) {
+				const uint8_t ch = raw_ptr[idx];
+				if (ch < '0' || ch > '9') {
+					all_digits = false;
+					break;
+				}
+				mag = (mag * 10u) + static_cast<uint64_t>(ch - '0');
+			}
+			if (all_digits) {
+				const int64_t signed_val = negative
+					? -static_cast<int64_t>(mag)
+					: static_cast<int64_t>(mag);
+				Token tok;
+				tok.kind = TokenKind::Integer;
+				tok.byte_offset = start_pos;
+				tok.byte_length = len;
+				tok.int_value = signed_val;
+				tok.real_value = static_cast<double>(signed_val);
+				return tok;
+			}
+		}
+	}
+
 	const std::string_view raw(
-		reinterpret_cast<const char*>(input_.data() + start_pos),
+		reinterpret_cast<const char*>(raw_ptr),
 		len);
 
 	if (raw == "true") {

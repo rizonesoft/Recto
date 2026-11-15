@@ -253,9 +253,12 @@ struct DeflateBitReader {
 struct HuffmanTree {
 	static constexpr uint32_t kMaxBits = 15;
 	static constexpr uint32_t kMaxSymbols = 288;
+	static constexpr uint32_t kFastBits = 9;
+	static constexpr uint32_t kFastSize = 1u << kFastBits;
 
 	std::array<uint16_t, kMaxBits + 1> count{};
 	std::array<uint16_t, kMaxSymbols> symbols{};
+	std::array<uint16_t, kFastSize> fast_table{};
 	uint32_t max_len{0};
 	bool empty_tree{false};
 
@@ -265,6 +268,7 @@ struct HuffmanTree {
 	{
 		count.fill(0);
 		symbols.fill(0);
+		fast_table.fill(0);
 		max_len = 0;
 		empty_tree = false;
 
@@ -315,6 +319,32 @@ struct HuffmanTree {
 				symbols[offsets[len]++] = static_cast<uint16_t>(sym);
 			}
 		}
+
+		// Populate the 9-bit LSB-first fast lookup table: bits 11..14 hold the bit length (1..9), bits 0..10 hold sym.
+		std::array<uint32_t, kFastBits + 1> next_code{};
+		uint32_t canonical_code = 0;
+		for (uint32_t bits = 1; bits <= kFastBits; ++bits) {
+			canonical_code = (canonical_code + count[bits - 1u]) << 1u;
+			next_code[bits] = canonical_code;
+		}
+		for (size_t sym = 0; sym < lengths.size(); ++sym) {
+			const uint32_t len = lengths[sym];
+			if (len == 0u || len > kFastBits) {
+				continue;
+			}
+			const uint32_t msb = next_code[len]++;
+			uint32_t rev = 0;
+			for (uint32_t b = 0; b < len; ++b) {
+				if ((msb & (1u << (len - 1u - b))) != 0u) {
+					rev |= (1u << b);
+				}
+			}
+			const uint16_t packed = static_cast<uint16_t>((len << 11u) | static_cast<uint32_t>(sym));
+			const uint32_t step = 1u << len;
+			for (uint32_t slot = rev; slot < kFastSize; slot += step) {
+				fast_table[slot] = packed;
+			}
+		}
 		return true;
 	}
 
@@ -322,6 +352,16 @@ struct HuffmanTree {
 	{
 		if (empty_tree || max_len == 0) {
 			return false;
+		}
+		(void)br.ensure_bits(kFastBits);
+		if (br.bit_count > 0u) {
+			const uint16_t entry = fast_table[static_cast<uint32_t>(br.bit_buf) & (kFastSize - 1u)];
+			const uint32_t len = entry >> 11u;
+			if (len != 0u && len <= br.bit_count) {
+				br.drop_bits(len);
+				out_sym = static_cast<uint16_t>(entry & 0x07FFu);
+				return true;
+			}
 		}
 		uint32_t code = 0;
 		uint32_t first = 0;

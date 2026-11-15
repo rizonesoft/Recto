@@ -1,0 +1,6 @@
+{
+  "debug": 20,
+  "release": 5,
+  "asan": 60,
+  "exceptions": []
+}

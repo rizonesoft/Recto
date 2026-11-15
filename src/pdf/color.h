@@ -300,7 +300,28 @@ private:
 	size_t steps_ = 0; // spaces visited by the current public call, against `kMaxColorSpaceSteps`
 	// Allocation failure met while resolving a value, which the public call returns rather than a fallback.
 	std::optional<PdfError> fatal_;
-	[[nodiscard]] std::optional<PdfValue> value_of(const PdfValue& value);
+	struct ResolvedValue {
+		std::shared_ptr<const PdfValue> owner{};
+		const PdfValue* ptr{nullptr};
+
+		[[nodiscard]] bool has_value() const noexcept
+		{
+			return ptr != nullptr;
+		}
+		explicit operator bool() const noexcept
+		{
+			return ptr != nullptr;
+		}
+		const PdfValue& operator*() const noexcept
+		{
+			return *ptr;
+		}
+		const PdfValue* operator->() const noexcept
+		{
+			return ptr;
+		}
+	};
+	[[nodiscard]] ResolvedValue value_of(const PdfValue& value);
 };
 
 namespace detail {

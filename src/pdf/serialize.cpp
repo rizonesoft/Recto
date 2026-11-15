@@ -226,16 +226,36 @@ void write_string(Writer& w, const PdfString& s)
 	}
 	if (as_hex) {
 		w.put('<');
-		for (const uint8_t b : s.bytes) {
-			const std::array<char, 2> hex = {kHexDigits[b >> 4u], kHexDigits[b & 0xFu]};
-			w.put(std::string_view(hex.data(), hex.size()));
+		std::array<char, 512> chunk{};
+		for (size_t i = 0; i < s.bytes.size();) {
+			size_t out = 0;
+			const size_t batch_end = std::min(s.bytes.size(), i + chunk.size() / 2u);
+			for (; i < batch_end; ++i) {
+				const uint8_t b = s.bytes[i];
+				chunk[out++] = kHexDigits[b >> 4u];
+				chunk[out++] = kHexDigits[b & 0xFu];
+			}
+			w.put(std::string_view(chunk.data(), out));
 		}
 		t_bytes_examined += s.bytes.size();
 		w.put('>');
 		return;
 	}
+	const auto plain_unbroken = [](uint8_t b) {
+		return b >= 0x20u && b <= 0x7Eu && b != '(' && b != ')' && b != '\\';
+	};
 	w.put('(');
-	for (const uint8_t b : s.bytes) {
+	for (size_t i = 0; i < s.bytes.size();) {
+		if (plain_unbroken(s.bytes[i])) {
+			size_t j = i + 1u;
+			while (j < s.bytes.size() && plain_unbroken(s.bytes[j])) {
+				++j;
+			}
+			w.put(std::string_view(reinterpret_cast<const char*>(s.bytes.data() + i), j - i));
+			i = j;
+			continue;
+		}
+		const uint8_t b = s.bytes[i++];
 		switch (b) {
 		case '(':
 			w.put("\\(");
@@ -262,13 +282,10 @@ void write_string(Writer& w, const PdfString& s)
 			w.put("\\f");
 			break;
 		default:
-			if (plain(b)) {
-				w.put(static_cast<char>(b));
-			} else {
-				const std::array<char, 4> oct = {'\\', static_cast<char>('0' + (b >> 6u)), static_cast<char>('0' + ((b >> 3u) & 7u)),
-					static_cast<char>('0' + (b & 7u))};
-				w.put(std::string_view(oct.data(), oct.size()));
-			}
+			const std::array<char, 4> oct = {'\\', static_cast<char>('0' + (b >> 6u)), static_cast<char>('0' + ((b >> 3u) & 7u)),
+				static_cast<char>('0' + (b & 7u))};
+			w.put(std::string_view(oct.data(), oct.size()));
+			break;
 		}
 	}
 	t_bytes_examined += s.bytes.size();

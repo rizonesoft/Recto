@@ -88,7 +88,9 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		Entry* again{nullptr};       // asked for once more while its cancelled render finishes (held in `waiting`)
 		std::optional<Delivered> answer;
 		Entry* next_out{nullptr};    // the next answer handed out with it
-		std::list<Entry>::iterator self{}; // where it waits in `answered`, to be erased once delivered
+		std::list<Entry>::iterator self{}; // where it waits in `live` or `answered`, to splice/erase in O(1)
+		Entry* fetch_prev{nullptr};  // links in its page's `Fetch::entries_head/tail` while `stage == Stage::Fetching`
+		Entry* fetch_next{nullptr};
 	};
 
 	// Answers to hand out once the lock is let go: a chain through the entries, so collecting it allocates nothing (an
@@ -102,18 +104,25 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		}
 	};
 
+	using FetchOrder = std::map<uint64_t, PageKey>;
+
 	struct Fetch {
 		uint64_t generation{0};
 		size_t users{0};
 		bool started{false};
 		std::optional<CancelSource> cancel;
 		std::shared_ptr<const pdf::DisplayList> list;
-		size_t tier{4u}; // the best tier any live tile of its page wants; worked out afresh by each `plan_fetches`
+		Entry* entries_head{nullptr};
+		Entry* entries_tail{nullptr};
+		std::array<uint32_t, 4> tier_counts{}; // count of `Fetching` entries per priority tier
+		size_t queued_tier{4u};                // index in `Attached::pending_fetches` (4u when not queued)
+		FetchOrder::node_type queue_node;      // made when created, so queueing/moving tiers never allocates
 	};
 
 	struct Attached {
 		std::shared_ptr<DocumentHandle> handle;
-		size_t in_flight{0u}; // its fetches asked and not yet answered; worked out afresh by each `plan_fetches`
+		size_t in_flight{0u}; // fetches started and still waiting on their page list
+		std::array<FetchOrder, 4> pending_fetches{}; // unstarted fetches ordered by tier, then generation
 	};
 
 	struct Start {
@@ -147,6 +156,7 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 	std::unordered_map<TileKey, Entries::iterator> index; // into `live`
 	std::unordered_map<PageKey, Fetch, PageKeyHash> fetches;
 	std::array<Queue, 4> queues;
+	FetchOrder spare_fetch_queue;
 	uint64_t next_serial{1u};
 	uint64_t next_generation{1u};
 	uint64_t round{0u};
@@ -218,6 +228,101 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		entry.queue_node = queues[tier(entry.request.priority)].extract(entry.serial);
 	}
 
+	[[nodiscard]] static size_t best_tier(const Fetch& fetch) noexcept
+	{
+		for (size_t t = 0u; t < 4u; ++t) {
+			if (fetch.tier_counts[t] > 0u) {
+				return t;
+			}
+		}
+		return 4u;
+	}
+
+	void unlink_fetch_queue(Attached& doc, Fetch& fetch) noexcept
+	{
+		if (fetch.queued_tier < 4u) {
+			fetch.queue_node = doc.pending_fetches[fetch.queued_tier].extract(fetch.generation);
+			fetch.queued_tier = 4u;
+		}
+	}
+
+	void unlink_fetch_queue(uint64_t doc_id, Fetch& fetch) noexcept
+	{
+		if (fetch.queued_tier < 4u) {
+			if (const auto doc = documents.find(doc_id); doc != documents.end()) {
+				unlink_fetch_queue(doc->second, fetch);
+			} else {
+				fetch.queued_tier = 4u;
+			}
+		}
+	}
+
+	void sync_fetch_queue(const PageKey& page, Fetch& fetch) noexcept
+	{
+		const size_t wanted_tier = (!fetch.started && fetch.list == nullptr) ? best_tier(fetch) : 4u;
+		if (wanted_tier == fetch.queued_tier) {
+			return;
+		}
+		const auto doc = documents.find(page.doc_id);
+		if (doc == documents.end()) {
+			fetch.queued_tier = 4u;
+			return;
+		}
+		unlink_fetch_queue(doc->second, fetch);
+		if (wanted_tier < 4u) {
+			doc->second.pending_fetches[wanted_tier].insert(std::move(fetch.queue_node));
+			fetch.queued_tier = wanted_tier;
+		}
+	}
+
+	void link_fetching(const PageKey& page, Entry& entry, Fetch& fetch) noexcept
+	{
+		entry.stage = Stage::Fetching;
+		entry.fetch_prev = fetch.entries_tail;
+		entry.fetch_next = nullptr;
+		if (fetch.entries_tail != nullptr) {
+			fetch.entries_tail->fetch_next = &entry;
+		} else {
+			fetch.entries_head = &entry;
+		}
+		fetch.entries_tail = &entry;
+		++fetch.tier_counts[tier(entry.request.priority)];
+		sync_fetch_queue(page, fetch);
+	}
+
+	void unlink_fetching(Entry& entry, Fetch& fetch) noexcept
+	{
+		if (entry.fetch_prev != nullptr) {
+			entry.fetch_prev->fetch_next = entry.fetch_next;
+		} else {
+			fetch.entries_head = entry.fetch_next;
+		}
+		if (entry.fetch_next != nullptr) {
+			entry.fetch_next->fetch_prev = entry.fetch_prev;
+		} else {
+			fetch.entries_tail = entry.fetch_prev;
+		}
+		entry.fetch_prev = nullptr;
+		entry.fetch_next = nullptr;
+		--fetch.tier_counts[tier(entry.request.priority)];
+	}
+
+	void reprioritize_fetching(Entry& entry, TilePriority new_priority) noexcept
+	{
+		const size_t old_t = tier(entry.request.priority);
+		entry.request.priority = new_priority;
+		const size_t new_t = tier(new_priority);
+		if (old_t == new_t) {
+			return;
+		}
+		const PageKey page = page_of(entry.request.key);
+		if (const auto found = fetches.find(page); found != fetches.end()) {
+			--found->second.tier_counts[old_t];
+			++found->second.tier_counts[new_t];
+			sync_fetch_queue(page, found->second);
+		}
+	}
+
 	void release_page(const PageKey& page) noexcept
 	{
 		const auto found = fetches.find(page);
@@ -230,6 +335,13 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		if (found->second.users == 0u) {
 			if (found->second.cancel.has_value()) {
 				found->second.cancel->cancel(); // no tile of the page wants its list any more
+			}
+			if (found->second.started && found->second.list == nullptr) {
+				if (const auto doc = documents.find(page.doc_id); doc != documents.end() && doc->second.in_flight > 0u) {
+					--doc->second.in_flight;
+				}
+			} else {
+				unlink_fetch_queue(page.doc_id, found->second);
 			}
 			fetches.erase(found);
 		}
@@ -271,8 +383,16 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 				fetches.erase(fetch);
 				throw std::bad_alloc();
 			}
+			FetchOrder::node_type queue_node;
+			try {
+				queue_node = spare_fetch_queue.extract(spare_fetch_queue.emplace(next_generation, page).first);
+			} catch (...) {
+				fetches.erase(fetch);
+				throw;
+			}
 			fetch->second.generation = next_generation++;
 			fetch->second.cancel.emplace(*fetch_cancel);
+			fetch->second.queue_node = std::move(queue_node);
 		}
 		try {
 			index.emplace(entry.request.key, made.begin());
@@ -283,77 +403,65 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 			throw;
 		}
 		entry.seen = seen;
+		entry.self = made.begin();
 		++fetch->second.users;
 		live.splice(live.end(), made, made.begin());
 		if (fetch->second.list != nullptr) {
 			enqueue(entry);
+		} else {
+			link_fetching(page, entry, fetch->second);
 		}
 	}
 
 	// Answers every tile waiting on `page`'s list with `error` and forgets the fetch, so a later request asks again.
 	void fail_page(const PageKey& page, const pdf::PdfError& error, Out& out) noexcept
 	{
-		for (auto it = live.begin(); it != live.end();) {
-			const auto next = std::next(it);
-			if (page_of(it->request.key) == page && it->stage == Stage::Fetching) {
-				index.erase(it->request.key);
-				answer(live, it, error, out);
-			}
-			it = next;
+		const auto fetch_it = fetches.find(page);
+		if (fetch_it == fetches.end()) {
+			return;
 		}
-		fetches.erase(page);
+		unlink_fetch_queue(page.doc_id, fetch_it->second);
+		for (Entry* cur = fetch_it->second.entries_head; cur != nullptr;) {
+			Entry* const next = cur->fetch_next;
+			cur->fetch_prev = nullptr;
+			cur->fetch_next = nullptr;
+			index.erase(cur->request.key);
+			answer(live, cur->self, error, out);
+			cur = next;
+		}
+		fetches.erase(fetch_it);
 	}
 
 	// The page fetches to send now: for each document, the best-placed waiting pages, up to `kFetchesInFlight` asked of
 	// its actor at once, so a thumbnail backlog never stands in a visible page's way at the actor. Choosing allocates
 	// nothing; a page whose fetch cannot be queued for want of memory has its tiles answered, so none is left waiting.
-	// Each page's tier and each document's fetches in flight are worked out once, in one pass over the live tiles and one
-	// over the fetches, so a pick is one scan with constant-time checks: linear in the backlog, never cubic (a
-	// 3,000-page thumbnail backlog refused by a closed actor took minutes on the asking thread before).
+	// Each page's tier queue and each document's fetches in flight are maintained incrementally as tiles arrive, drop, or
+	// finish, so picking each fetch only inspects attached documents' queue heads instead of scanning the backlog.
 	void plan_fetches(std::vector<Start>& starts, Out& out) noexcept
 	{
-		for (auto& [id, document] : documents) {
-			document.in_flight = 0u;
-		}
-		for (auto& [page, fetch] : fetches) {
-			fetch.tier = 4u;
-			if (!fetch.started) {
-				continue;
-			}
-			if (fetch.list == nullptr) {
-				if (const auto document = documents.find(page.doc_id); document != documents.end()) {
-					++document->second.in_flight;
-				}
-			}
-		}
-		for (const Entry& entry : live) {
-			if (!entry.wanted) {
-				continue;
-			}
-			if (const auto fetch = fetches.find(page_of(entry.request.key)); fetch != fetches.end()) {
-				fetch->second.tier = std::min(fetch->second.tier, tier(entry.request.priority));
-			}
-		}
 		for (;;) {
 			Fetch* best = nullptr;
 			PageKey best_page{};
 			Attached* best_document = nullptr;
-			for (auto& [page, fetch] : fetches) {
-				if (fetch.started) {
-					continue;
+			for (size_t tier_idx = 0u; tier_idx < 4u; ++tier_idx) {
+				for (auto& [id, document] : documents) {
+					static_cast<void>(id);
+					if (document.in_flight >= kFetchesInFlight || document.pending_fetches[tier_idx].empty()) {
+						continue;
+					}
+					const auto& [gen, page] = *document.pending_fetches[tier_idx].begin();
+					const auto fetch_it = fetches.find(page);
+					if (fetch_it == fetches.end()) {
+						continue;
+					}
+					if (best == nullptr || gen < best->generation) {
+						best = &fetch_it->second;
+						best_page = page;
+						best_document = &document;
+					}
 				}
-				const auto document = documents.find(page.doc_id);
-				if (document == documents.end()) {
-					fetch.started = true; // detached: its tiles are answered, and the fetch goes with the last of them
-					continue;
-				}
-				if (document->second.in_flight >= kFetchesInFlight) {
-					continue;
-				}
-				if (best == nullptr || fetch.tier < best->tier || (fetch.tier == best->tier && fetch.generation < best->generation)) {
-					best = &fetch;
-					best_page = page;
-					best_document = &document->second;
+				if (best != nullptr) {
+					break;
 				}
 			}
 			if (best == nullptr) {
@@ -366,6 +474,7 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 				fail_page(best_page, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory asking for a page's list"), out);
 				continue;
 			}
+			unlink_fetch_queue(*best_document, chosen);
 			chosen.started = true;
 			++best_document->in_flight;
 		}
@@ -440,6 +549,14 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 		}
 		if (entry->stage == Stage::Queued) {
 			dequeue(*entry);
+		} else if (entry->stage == Stage::Fetching) {
+			const PageKey page = page_of(entry->request.key);
+			if (const auto fetch_it = fetches.find(page); fetch_it != fetches.end()) {
+				unlink_fetching(*entry, fetch_it->second);
+				if (fetch_it->second.users > 1u) {
+					sync_fetch_queue(page, fetch_it->second);
+				}
+			}
 		}
 		const TileKey key = entry->request.key;
 		index.erase(key);
@@ -470,15 +587,25 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 			if (stopping || found == fetches.end() || found->second.generation != generation) {
 				return; // nobody waits for this one any more
 			}
+			if (found->second.started && found->second.list == nullptr) {
+				if (const auto doc = documents.find(page.doc_id); doc != documents.end() && doc->second.in_flight > 0u) {
+					--doc->second.in_flight;
+				}
+			}
 			if (list.has_value()) {
 				found->second.list = std::move(*list);
 				found->second.cancel.reset();
-				for (Entry& entry : live) {
-					if (page_of(entry.request.key) == page && entry.stage == Stage::Fetching) {
-						enqueue(entry);
-						queued = true;
-					}
+				for (Entry* cur = found->second.entries_head; cur != nullptr;) {
+					Entry* const next = cur->fetch_next;
+					cur->fetch_prev = nullptr;
+					cur->fetch_next = nullptr;
+					--found->second.tier_counts[tier(cur->request.priority)];
+					enqueue(*cur);
+					queued = true;
+					cur = next;
 				}
+				found->second.entries_head = nullptr;
+				found->second.entries_tail = nullptr;
 			} else {
 				fail_page(page, list.error(), out); // a later request asks again
 			}
@@ -549,10 +676,15 @@ struct TileScheduler::State final : TileJobSource, std::enable_shared_from_this<
 					try {
 						index.emplace(key, waiting_at);
 						live.splice(live.end(), waiting, waiting_at);
-						++fetches.at(page_of(key)).users; // the page is still held by the entry just answered
-						if (fetches.at(page_of(key)).list != nullptr) {
+						again->self = waiting_at;
+						const PageKey page = page_of(key);
+						Fetch& fetch = fetches.at(page);
+						++fetch.users; // the page is still held by the entry just answered
+						if (fetch.list != nullptr) {
 							enqueue(*again);
 							queued = true;
+						} else {
+							link_fetching(page, *again, fetch);
 						}
 					} catch (const std::exception&) {
 						answer(waiting, waiting_at, make_pdf_error(ErrorCode::OutOfMemory, "Out of memory taking a tile again"), out);
@@ -672,6 +804,17 @@ void TileScheduler::detach(uint64_t doc_id) noexcept
 	{
 		const std::lock_guard lock(state_->mutex);
 		if (const auto found = state_->documents.find(doc_id); found != state_->documents.end()) {
+			for (auto& order : found->second.pending_fetches) {
+				while (!order.empty()) {
+					const auto it = order.begin();
+					const PageKey page = it->second;
+					auto node = order.extract(it);
+					if (const auto f = state_->fetches.find(page); f != state_->fetches.end()) {
+						f->second.queue_node = std::move(node);
+						f->second.queued_tier = 4u;
+					}
+				}
+			}
 			released = std::move(found->second.handle);
 			state_->documents.erase(found);
 		}
@@ -741,6 +884,8 @@ void TileScheduler::update_viewport(uint64_t doc_id, std::vector<TileRequest> ti
 					s.dequeue(entry);
 					entry.request.priority = request.priority;
 					s.enqueue(entry);
+				} else if (entry.stage == State::Stage::Fetching) {
+					s.reprioritize_fetching(entry, request.priority);
 				} else {
 					entry.request.priority = request.priority;
 				}

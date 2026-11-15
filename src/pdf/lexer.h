@@ -11,6 +11,7 @@
 #include "object.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -30,6 +31,7 @@ namespace detail {
 void lexer_deallocate(void* ptr, size_t bytes) noexcept;
 [[nodiscard]] size_t lexer_live_allocated_bytes() noexcept;
 void set_lexer_alloc_fail_countdown(int countdown) noexcept;
+[[nodiscard]] bool lexer_alloc_fault_active() noexcept;
 
 class ScopedLexerAllocFaultInjector {
 public:
@@ -75,12 +77,14 @@ enum class TokenKind : uint8_t {
 	Comment,      // '%...' (emitted when emit_comments is enabled)
 };
 
-// Proxy-free character buffer for Token::text whose default and move
-// constructors make zero heap allocations in both Debug (/MDd) and Release
-// (/MD), while copy/growth operations throw std::bad_alloc cleanly into
+// Proxy-free character buffer for Token::text whose default, small-string,
+// and move operations make zero heap allocations in both Debug (/MDd) and
+// Release (/MD), while copy/growth operations throw std::bad_alloc cleanly into
 // Lexer's try/catch boundary without triggering noexcept termination.
 class TokenText {
 public:
+	static constexpr size_t kInlineCap = 31;
+
 	using value_type = char;
 	using size_type = size_t;
 	using difference_type = ptrdiff_t;
@@ -108,14 +112,20 @@ public:
 
 	TokenText(const TokenText& other)
 	{
-		assign(other.data_, other.size_);
+		assign(other.data(), other.size_);
 	}
 
 	TokenText(TokenText&& other) noexcept
-		: data_(other.data_)
-		, size_(other.size_)
-		, capacity_(other.capacity_)
+		: size_(other.size_)
 	{
+		if (other.is_inline()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			std::memcpy(inline_, other.inline_, size_ + 1);
+		} else {
+			data_ = other.data_;
+			capacity_ = other.capacity_;
+		}
 		other.data_ = nullptr;
 		other.size_ = 0;
 		other.capacity_ = 0;
@@ -124,7 +134,7 @@ public:
 	TokenText& operator=(const TokenText& other)
 	{
 		if (this != &other) {
-			assign(other.data_, other.size_);
+			assign(other.data(), other.size_);
 		}
 		return *this;
 	}
@@ -133,9 +143,16 @@ public:
 	{
 		if (this != &other) {
 			reset();
-			data_ = other.data_;
-			size_ = other.size_;
-			capacity_ = other.capacity_;
+			if (other.is_inline()) {
+				data_ = inline_;
+				size_ = other.size_;
+				capacity_ = kInlineCap;
+				std::memcpy(inline_, other.inline_, size_ + 1);
+			} else {
+				data_ = other.data_;
+				size_ = other.size_;
+				capacity_ = other.capacity_;
+			}
 			other.data_ = nullptr;
 			other.size_ = 0;
 			other.capacity_ = 0;
@@ -180,16 +197,17 @@ public:
 
 	void reset() noexcept
 	{
-		if (data_) {
-			detail::lexer_deallocate(data_, capacity_ + 1);
-			data_ = nullptr;
-		}
+		deallocate_heap();
+		data_ = nullptr;
 		size_ = 0;
 		capacity_ = 0;
 	}
 
 	void reserve(size_t new_cap)
 	{
+		if (new_cap <= kInlineCap && try_enable_inline()) {
+			return;
+		}
 		if (new_cap <= capacity_) {
 			return;
 		}
@@ -201,9 +219,7 @@ public:
 			std::memcpy(new_buf, data_, size_);
 		}
 		new_buf[size_] = '\0';
-		if (data_) {
-			detail::lexer_deallocate(data_, capacity_ + 1);
-		}
+		deallocate_heap();
 		data_ = new_buf;
 		capacity_ = new_cap;
 	}
@@ -214,6 +230,14 @@ public:
 			clear();
 			return;
 		}
+		if (!data_ && len <= kInlineCap && !detail::lexer_alloc_fault_active()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			std::memcpy(data_, ptr, len);
+			data_[len] = '\0';
+			size_ = len;
+			return;
+		}
 		if (len > capacity_) {
 			if (len == static_cast<size_t>(-1)) {
 				throw std::bad_alloc();
@@ -221,9 +245,7 @@ public:
 			char* new_buf = static_cast<char*>(detail::lexer_allocate(len + 1));
 			std::memcpy(new_buf, ptr, len);
 			new_buf[len] = '\0';
-			if (data_) {
-				detail::lexer_deallocate(data_, capacity_ + 1);
-			}
+			deallocate_heap();
 			data_ = new_buf;
 			capacity_ = len;
 			size_ = len;
@@ -242,17 +264,45 @@ public:
 	void push_back(char ch)
 	{
 		if (size_ == capacity_) {
-			if (capacity_ >= static_cast<size_t>(-1) - 1) {
-				throw std::bad_alloc();
+			if (capacity_ != 0 || !try_enable_inline()) {
+				if (capacity_ >= static_cast<size_t>(-1) - 1) {
+					throw std::bad_alloc();
+				}
+				const size_t next_cap = (capacity_ == 0)
+					? 16
+					: ((capacity_ > (static_cast<size_t>(-1) - 1) / 2)
+						  ? (static_cast<size_t>(-1) - 1)
+						  : (capacity_ * 2));
+				reserve(next_cap);
 			}
-			const size_t next_cap = (capacity_ == 0)
-				? 16
-				: ((capacity_ > (static_cast<size_t>(-1) - 1) / 2)
-					  ? (static_cast<size_t>(-1) - 1)
-					  : (capacity_ * 2));
-			reserve(next_cap);
 		}
 		data_[size_++] = ch;
+		data_[size_] = '\0';
+	}
+
+	void append(const char* ptr, size_t len)
+	{
+		if (!ptr || len == 0) {
+			return;
+		}
+		constexpr size_t kMaxCap = static_cast<size_t>(-1) - 1;
+		if (len > kMaxCap - size_) {
+			throw std::bad_alloc();
+		}
+		const size_t new_size = size_ + len;
+		if (new_size > capacity_) {
+			if (data_ == nullptr && new_size <= kInlineCap && !detail::lexer_alloc_fault_active()) {
+				data_ = inline_;
+				capacity_ = kInlineCap;
+			} else {
+				const size_t grown = (capacity_ == 0)
+					? size_t{16}
+					: ((capacity_ > kMaxCap / 2) ? kMaxCap : (capacity_ * 2));
+				reserve(std::max(new_size, grown));
+			}
+		}
+		std::memcpy(data_ + size_, ptr, len);
+		size_ = new_size;
 		data_[size_] = '\0';
 	}
 
@@ -377,16 +427,42 @@ public:
 	}
 
 private:
+	[[nodiscard]] constexpr bool is_inline() const noexcept
+	{
+		return data_ == inline_;
+	}
+
+	void deallocate_heap() noexcept
+	{
+		if (data_ && !is_inline()) {
+			detail::lexer_deallocate(data_, capacity_ + 1);
+		}
+	}
+
+	[[nodiscard]] bool try_enable_inline() noexcept
+	{
+		if (!data_ && !detail::lexer_alloc_fault_active()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			inline_[0] = '\0';
+			return true;
+		}
+		return is_inline();
+	}
+
 	char* data_{nullptr};
 	size_t size_{0};
 	size_t capacity_{0};
+	char inline_[kInlineCap + 1]{};
 };
 
-// Proxy-free byte buffer for Token::bytes whose default and move constructors
-// make zero heap allocations in both Debug (/MDd) and Release (/MD), while
-// copy/growth operations throw std::bad_alloc cleanly into Lexer's try/catch.
+// Proxy-free byte buffer for Token::bytes whose default, small-buffer, and move
+// operations make zero heap allocations in both Debug (/MDd) and Release (/MD),
+// while copy/growth operations throw std::bad_alloc cleanly into Lexer's try/catch.
 class TokenBytes {
 public:
+	static constexpr size_t kInlineCap = 32;
+
 	using value_type = uint8_t;
 	using size_type = size_t;
 	using difference_type = ptrdiff_t;
@@ -411,10 +487,16 @@ public:
 	}
 
 	TokenBytes(TokenBytes&& other) noexcept
-		: data_(other.data_)
-		, size_(other.size_)
-		, capacity_(other.capacity_)
+		: size_(other.size_)
 	{
+		if (other.is_inline()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			std::memcpy(inline_, other.inline_, size_);
+		} else {
+			data_ = other.data_;
+			capacity_ = other.capacity_;
+		}
 		other.data_ = nullptr;
 		other.size_ = 0;
 		other.capacity_ = 0;
@@ -432,9 +514,16 @@ public:
 	{
 		if (this != &other) {
 			reset();
-			data_ = other.data_;
-			size_ = other.size_;
-			capacity_ = other.capacity_;
+			if (other.is_inline()) {
+				data_ = inline_;
+				size_ = other.size_;
+				capacity_ = kInlineCap;
+				std::memcpy(inline_, other.inline_, size_);
+			} else {
+				data_ = other.data_;
+				size_ = other.size_;
+				capacity_ = other.capacity_;
+			}
 			other.data_ = nullptr;
 			other.size_ = 0;
 			other.capacity_ = 0;
@@ -466,16 +555,17 @@ public:
 
 	void reset() noexcept
 	{
-		if (data_) {
-			detail::lexer_deallocate(data_, capacity_);
-			data_ = nullptr;
-		}
+		deallocate_heap();
+		data_ = nullptr;
 		size_ = 0;
 		capacity_ = 0;
 	}
 
 	void reserve(size_t new_cap)
 	{
+		if (new_cap <= kInlineCap && try_enable_inline()) {
+			return;
+		}
 		if (new_cap <= capacity_) {
 			return;
 		}
@@ -483,9 +573,7 @@ public:
 		if (size_ > 0 && data_) {
 			std::memcpy(new_buf, data_, size_);
 		}
-		if (data_) {
-			detail::lexer_deallocate(data_, capacity_);
-		}
+		deallocate_heap();
 		data_ = new_buf;
 		capacity_ = new_cap;
 	}
@@ -496,12 +584,17 @@ public:
 			clear();
 			return;
 		}
+		if (!data_ && len <= kInlineCap && !detail::lexer_alloc_fault_active()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			std::memcpy(data_, ptr, len);
+			size_ = len;
+			return;
+		}
 		if (len > capacity_) {
 			uint8_t* new_buf = static_cast<uint8_t*>(detail::lexer_allocate(len));
 			std::memcpy(new_buf, ptr, len);
-			if (data_) {
-				detail::lexer_deallocate(data_, capacity_);
-			}
+			deallocate_heap();
 			data_ = new_buf;
 			capacity_ = len;
 			size_ = len;
@@ -514,17 +607,45 @@ public:
 	void push_back(uint8_t b)
 	{
 		if (size_ == capacity_) {
-			if (capacity_ == static_cast<size_t>(-1)) {
-				throw std::bad_alloc();
+			if (capacity_ != 0 || !try_enable_inline()) {
+				if (capacity_ == static_cast<size_t>(-1)) {
+					throw std::bad_alloc();
+				}
+				const size_t next_cap = (capacity_ == 0)
+					? 16
+					: ((capacity_ > static_cast<size_t>(-1) / 2)
+						  ? static_cast<size_t>(-1)
+						  : (capacity_ * 2));
+				reserve(next_cap);
 			}
-			const size_t next_cap = (capacity_ == 0)
-				? 16
-				: ((capacity_ > static_cast<size_t>(-1) / 2)
-					  ? static_cast<size_t>(-1)
-					  : (capacity_ * 2));
-			reserve(next_cap);
 		}
 		data_[size_++] = b;
+	}
+
+	void append(const uint8_t* ptr, size_t len)
+	{
+		if (!ptr || len == 0) {
+			return;
+		}
+		if (len > static_cast<size_t>(-1) - size_) {
+			throw std::bad_alloc();
+		}
+		const size_t new_size = size_ + len;
+		if (new_size > capacity_) {
+			if (data_ == nullptr && new_size <= kInlineCap && !detail::lexer_alloc_fault_active()) {
+				data_ = inline_;
+				capacity_ = kInlineCap;
+			} else {
+				const size_t grown = (capacity_ == 0)
+					? size_t{16}
+					: ((capacity_ > static_cast<size_t>(-1) / 2)
+						  ? static_cast<size_t>(-1)
+						  : (capacity_ * 2));
+				reserve(std::max(new_size, grown));
+			}
+		}
+		std::memcpy(data_ + size_, ptr, len);
+		size_ = new_size;
 	}
 
 	[[nodiscard]] constexpr bool empty() const noexcept
@@ -636,9 +757,32 @@ public:
 	}
 
 private:
+	[[nodiscard]] constexpr bool is_inline() const noexcept
+	{
+		return data_ == inline_;
+	}
+
+	void deallocate_heap() noexcept
+	{
+		if (data_ && !is_inline()) {
+			detail::lexer_deallocate(data_, capacity_);
+		}
+	}
+
+	[[nodiscard]] bool try_enable_inline() noexcept
+	{
+		if (!data_ && !detail::lexer_alloc_fault_active()) {
+			data_ = inline_;
+			capacity_ = kInlineCap;
+			return true;
+		}
+		return is_inline();
+	}
+
 	uint8_t* data_{nullptr};
 	size_t size_{0};
 	size_t capacity_{0};
+	uint8_t inline_[kInlineCap]{};
 };
 
 struct Token {
@@ -746,6 +890,10 @@ public:
 	// without advancing the logical token stream.
 	[[nodiscard]] PdfResult<Token> peek_token(size_t lookahead_index = 0) noexcept;
 
+	// Zero-copy peek variant returning a non-owning pointer into the lookahead buffer.
+	// Valid until the next call on this Lexer that reads, seeks, or changes options.
+	[[nodiscard]] PdfResult<const Token*> peek_token_ptr(size_t lookahead_index = 0) noexcept;
+
 	// Enforces the ISO 32000-1 section 7.3.8.1 / ISO 32000-2 section 7.3.8.1
 	// `stream` keyword end-of-line rule:
 	// - Skips optional horizontal spaces (0x20 SP, 0x09 HT) after `stream`.
@@ -799,6 +947,13 @@ private:
 		}
 	};
 
+	static constexpr size_t kInlineLookahead = 4;
+
+	[[nodiscard]] LookaheadEntry* lookahead_slots() noexcept
+	{
+		return lookahead_buf_ ? lookahead_buf_.get() : inline_lookahead_.data();
+	}
+
 	void clear_lookahead() noexcept;
 	[[nodiscard]] bool ensure_lookahead_slot();
 
@@ -816,6 +971,7 @@ private:
 	bool emit_comments_{false};
 	LexerSyntax syntax_{LexerSyntax::Pdf};
 	size_t max_token_bytes_{kMaxLexerTokenBytes};
+	std::array<LookaheadEntry, kInlineLookahead> inline_lookahead_{};
 	std::unique_ptr<LookaheadEntry[]> lookahead_buf_{};
 	size_t lookahead_head_{0};
 	size_t lookahead_count_{0};

@@ -12,12 +12,15 @@ can prove tests fail without dirtying uncommitted work. Standard library only.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "scripts") not in sys.path:
@@ -29,23 +32,63 @@ def windowless() -> int:
     return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
 
-def stage_tree(root: Path, dest: Path) -> None:
+def _list_repo_files(root: Path) -> list[str]:
     listed = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
         capture_output=True, timeout=60, creationflags=windowless(),
     )
     if listed.returncode != 0:
         raise RuntimeError(f"git ls-files failed: {listed.stderr.decode('utf-8', 'replace').strip()}")
+    files: list[str] = []
     for raw in listed.stdout.split(b"\0"):
         if not raw:
             continue
-        rel = raw.decode("utf-8", "surrogateescape")
+        files.append(raw.decode("utf-8", "surrogateescape"))
+    return files
+
+
+def stage_tree(root: Path, dest: Path) -> None:
+    for rel in _list_repo_files(root):
         src = root / rel
         if not src.is_file() or src.is_symlink():
             continue
         out = dest / rel
         out.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, out)
+
+
+def sync_tree(root: Path, dest: Path, manifest_path: Path) -> None:
+    previous: set[str] = set()
+    if manifest_path.is_file():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                previous = {str(item) for item in loaded}
+        except (OSError, ValueError):
+            previous = set()
+    current: list[str] = []
+    current_set: set[str] = set()
+    dest_resolved = dest.resolve()
+    for rel in _list_repo_files(root):
+        src = root / rel
+        if not src.is_file() or src.is_symlink():
+            continue
+        norm_rel = rel.replace("\\", "/")
+        current.append(norm_rel)
+        current_set.add(norm_rel)
+        out = dest / norm_rel
+        data = src.read_bytes()
+        if out.is_file() and out.read_bytes() == data:
+            continue
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+    for stale_rel in previous - current_set:
+        if stale_rel.startswith("build/") or stale_rel.startswith("packages/"):
+            continue
+        stale = (dest / stale_rel).resolve()
+        if stale.is_relative_to(dest_resolved) and stale.is_file():
+            stale.unlink()
+    manifest_path.write_text(json.dumps(current, indent=2), encoding="utf-8")
 
 
 NATIVE_BUILD_EXTS = {
@@ -71,10 +114,12 @@ def _resolve_cwd_command(cmd: list[str], cwd: Path) -> list[str]:
     return cmd
 
 
-def run_cmd(cmd: list[str], cwd: Path, timeout_s: float) -> tuple[int | None, str]:
+def run_cmd(
+    cmd: list[str], cwd: Path, timeout_s: float, env: dict[str, str] | None = None
+) -> tuple[int | None, str]:
     resolved_cmd = _resolve_cwd_command(cmd, cwd)
     with proc_group.termination_signal_guard():
-        managed = proc_group.spawn_managed_process(resolved_cmd, cwd=cwd)
+        managed = proc_group.spawn_managed_process(resolved_cmd, cwd=cwd, env=env)
         proc = managed.proc
         try:
             out, err = proc.communicate(timeout=timeout_s)
@@ -100,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--old", required=True, help="exact text to replace (must occur once)")
     parser.add_argument("--new", required=True, help="replacement text")
     parser.add_argument("--timeout", type=float, default=600.0, help="per-run command timeout in seconds")
+    parser.add_argument("--work-dir", default=None, help="optional persistent work dir outside the repository to reuse builds across runs")
     parser.add_argument("command", nargs=argparse.REMAINDER, help="test command after --")
     args = parser.parse_args(argv)
 
@@ -128,26 +174,62 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    original = live_target.read_text(encoding="utf-8")
+    original_bytes = live_target.read_bytes()
+    original = original_bytes.decode("utf-8").replace("\r\n", "\n")
     count = original.count(args.old)
     if count != 1:
         print(f"OUTCOME: NOT_APPLIED (occurrences={count})")
         return 2
 
-    with tempfile.TemporaryDirectory(prefix="recto-mutate-") as tmp:
-        copy_root = Path(tmp) / "tree"
-        copy_root.mkdir()
-        stage_tree(root, copy_root)
-        base_rc, base_tail = run_cmd(cmd, copy_root, args.timeout)
+    use_work_dir = args.work_dir is not None
+    if use_work_dir:
+        work_root = Path(args.work_dir).resolve()
+        if work_root == root or work_root.is_relative_to(root):
+            print(f"mutate-check: --work-dir must live outside the repository: {work_root}", file=sys.stderr)
+            return 2
+        work_root.mkdir(parents=True, exist_ok=True)
+        ctx: contextlib.AbstractContextManager[str] = contextlib.nullcontext(str(work_root))
+    else:
+        ctx = tempfile.TemporaryDirectory(prefix="recto-mutate-")
+
+    with ctx as tmp:
+        tmp_path = Path(tmp)
+        copy_root = tmp_path / "tree"
+        copy_root.mkdir(parents=True, exist_ok=True)
+        child_tmp = tmp_path / "tmp"
+        if use_work_dir and child_tmp.exists():
+            shutil.rmtree(child_tmp, ignore_errors=True)
+        child_tmp.mkdir(parents=True, exist_ok=True)
+        child_env = os.environ.copy()
+        for key in ("TEMP", "TMP", "TMPDIR"):
+            child_env[key] = str(child_tmp)
+        if "RECTO_TOOLS_DIR" not in child_env and (root / ".tools").is_dir():
+            child_env["RECTO_TOOLS_DIR"] = str(root / ".tools")
+        if use_work_dir:
+            sync_tree(root, copy_root, tmp_path / "staged-files.json")
+        else:
+            stage_tree(root, copy_root)
+        base_rc, base_tail = run_cmd(cmd, copy_root, args.timeout, env=child_env)
         if base_rc is None:
             print(f"OUTCOME: BASELINE_TIMEOUT\n{base_tail}")
             return 1
         if base_rc != 0:
             print(f"OUTCOME: BASELINE_RED (exit={base_rc})\n{base_tail}")
             return 1
+        target = copy_root / rel
         mutated = original.replace(args.old, args.new, 1)
-        (copy_root / rel).write_text(mutated, encoding="utf-8", newline="\n")
-        mut_rc, mut_tail = run_cmd(cmd, copy_root, args.timeout)
+        try:
+            prior_mtime = target.stat().st_mtime if target.exists() else 0.0
+            target.write_text(mutated, encoding="utf-8", newline="\n")
+            mut_mtime = max(time.time(), prior_mtime + 1.0)
+            os.utime(target, (mut_mtime, mut_mtime))
+            mut_rc, mut_tail = run_cmd(cmd, copy_root, args.timeout, env=child_env)
+        finally:
+            if use_work_dir:
+                before_restore = target.stat().st_mtime if target.exists() else 0.0
+                target.write_bytes(original_bytes)
+                now = max(time.time(), before_restore + 1.0)
+                os.utime(target, (now, now))
         if mut_rc is None:
             print(f"OUTCOME: KILLED (timeout)\n{mut_tail}")
             return 0

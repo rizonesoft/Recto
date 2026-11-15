@@ -143,6 +143,177 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return {};
 }
 
+[[nodiscard]] bool is_merged_trailer_key(std::string_view key) noexcept
+{
+	return key == "Root" || key == "Info" || key == "Encrypt" || key == "ID" || key == "Size";
+}
+
+// Fast non-allocating scanner for classic trailer dictionaries of older
+// `/Prev` revisions (`revision_count > 1`): skips allocating a temporary
+// `PdfDict` when every merged trailer key present is already populated in
+// `merged_trailer`, extracting `/Prev` and `/XRefStm` directly and returning
+// `false` to fall back to `Parser::parse_dictionary_into` on any missing merged
+// key, nested structure, or syntax edge case.
+[[nodiscard]] bool try_scan_older_classic_trailer(
+	Lexer& lexer,
+	const PdfDict& merged_trailer,
+	std::optional<int64_t>& out_prev,
+	std::optional<int64_t>& out_xref_stm)
+{
+	out_prev.reset();
+	out_xref_stm.reset();
+
+	auto next_tok = [&](Token& tok) -> bool {
+		auto res = lexer.next_token();
+		if (!res.has_value()) {
+			return false;
+		}
+		tok = std::move(res).value();
+		return true;
+	};
+
+	Token tok;
+	if (!next_tok(tok) || tok.kind != TokenKind::DictOpen) {
+		return false;
+	}
+
+	size_t pair_count = 0;
+	size_t byte_budget = 0;
+	constexpr size_t kMaxFastPairs = 32;
+	constexpr size_t kMaxFastBytes = 4096;
+	constexpr size_t kMaxFastArrayElements = 8;
+	auto charge = [&](size_t n) noexcept -> bool {
+		if (n > kMaxFastBytes - byte_budget) {
+			return false;
+		}
+		byte_budget += n;
+		return true;
+	};
+
+	while (true) {
+		const auto peek_res = lexer.peek_token_ptr(0);
+		if (!peek_res.has_value()) {
+			return false;
+		}
+		if ((*peek_res)->kind == TokenKind::DictClose) {
+			return next_tok(tok);
+		}
+		if ((*peek_res)->kind != TokenKind::Name || pair_count >= kMaxFastPairs) {
+			return false;
+		}
+		if (!next_tok(tok) || tok.kind != TokenKind::Name) {
+			return false;
+		}
+		const std::string_view key = tok.text.view();
+		if (!charge(key.size())) {
+			return false;
+		}
+		if (is_merged_trailer_key(key) && !merged_trailer.contains(key)) {
+			return false;
+		}
+		const bool is_prev = (key == "Prev");
+		const bool is_xref_stm = (key == "XRefStm");
+
+		Token val_tok;
+		if (!next_tok(val_tok)) {
+			return false;
+		}
+		switch (val_tok.kind) {
+		case TokenKind::Integer: {
+			const auto p0_res = lexer.peek_token_ptr(0);
+			if (p0_res.has_value() && (*p0_res)->kind == TokenKind::Integer) {
+				const int64_t gen_int = (*p0_res)->int_value;
+				const auto p1_res = lexer.peek_token_ptr(1);
+				if (p1_res.has_value() && (*p1_res)->is_keyword("R")) {
+					if (is_prev || is_xref_stm ||
+						val_tok.int_value <= 0 ||
+						val_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+						gen_int < 0 ||
+						gen_int > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
+						return false;
+					}
+					Token dummy;
+					if (!next_tok(dummy) || !next_tok(dummy)) {
+						return false;
+					}
+					break;
+				}
+			} else if (!p0_res.has_value() &&
+				(p0_res.error().code == ErrorCode::OutOfMemory ||
+				 p0_res.error().code == ErrorCode::InternalError)) {
+				return false;
+			}
+			if (is_prev) {
+				out_prev = val_tok.int_value;
+			} else if (is_xref_stm) {
+				out_xref_stm = val_tok.int_value;
+			}
+			break;
+		}
+		case TokenKind::Real:
+		case TokenKind::Boolean:
+		case TokenKind::Null:
+			if (is_prev || is_xref_stm) {
+				return false;
+			}
+			break;
+		case TokenKind::Name:
+			if (is_prev || is_xref_stm || !charge(val_tok.text.view().size())) {
+				return false;
+			}
+			break;
+		case TokenKind::LiteralString:
+		case TokenKind::HexString:
+			if (is_prev || is_xref_stm || !charge(val_tok.bytes.size())) {
+				return false;
+			}
+			break;
+		case TokenKind::ArrayOpen: {
+			if (is_prev || is_xref_stm) {
+				return false;
+			}
+			size_t elem_count = 0;
+			while (true) {
+				Token elem_tok;
+				if (!next_tok(elem_tok)) {
+					return false;
+				}
+				if (elem_tok.kind == TokenKind::ArrayClose) {
+					break;
+				}
+				if (elem_count >= kMaxFastArrayElements) {
+					return false;
+				}
+				++elem_count;
+				switch (elem_tok.kind) {
+				case TokenKind::Real:
+				case TokenKind::Boolean:
+				case TokenKind::Null:
+					break;
+				case TokenKind::Name:
+					if (!charge(elem_tok.text.view().size())) {
+						return false;
+					}
+					break;
+				case TokenKind::LiteralString:
+				case TokenKind::HexString:
+					if (!charge(elem_tok.bytes.size())) {
+						return false;
+					}
+					break;
+				default:
+					return false;
+				}
+			}
+			break;
+		}
+		default:
+			return false;
+		}
+		++pair_count;
+	}
+}
+
 [[nodiscard]] PdfResult<void> overwrite_trailer_from_revision(
 	PdfDict& merged,
 	const PdfDict& rev_trailer)
@@ -2218,10 +2389,29 @@ PdfResult<XrefTable> XrefTable::parse(
 		table.header_offset_ = header_off;
 		table.pdf_version_ = std::move(version_str);
 
-		std::unordered_set<uint64_t> visited_offsets;
+		std::array<uint64_t, kMaxXrefRevisions * 2u> visited_offsets{};
+		size_t visited_count = 0u;
+		const auto mark_visited_offset = [&](uint64_t off) noexcept -> bool {
+			const uint64_t* const begin = visited_offsets.data();
+			const uint64_t* const end = begin + visited_count;
+			if (std::find(begin, end, off) != end || visited_count >= visited_offsets.size()) {
+				return false;
+			}
+			visited_offsets[visited_count++] = off;
+			return true;
+		};
 		uint64_t current_xref_offset = raw_startxref + header_off;
 		uint64_t total_rows_parsed = 0;
 
+		struct OutOfBoundsRow {
+			uint32_t obj_num;
+			uint16_t gen_num;
+			uint64_t row_offset;
+		};
+		std::vector<std::pair<uint32_t, XrefEntry>> classic_rev_entries;
+		std::vector<OutOfBoundsRow> out_of_bounds_rows;
+		Lexer lexer(file_bytes);
+		PdfDict rev_trailer;
 		while (true) {
 			if (table.revision_count_ >= kMaxXrefRevisions) {
 				return make_xref_error(
@@ -2230,7 +2420,7 @@ PdfResult<XrefTable> XrefTable::parse(
 					"Cross-reference /Prev chain exceeds maximum 256 revisions",
 					current_xref_offset);
 			}
-			if (!visited_offsets.insert(current_xref_offset).second) {
+			if (!mark_visited_offset(current_xref_offset)) {
 				return make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedXRef,
@@ -2239,7 +2429,6 @@ PdfResult<XrefTable> XrefTable::parse(
 			}
 			++table.revision_count_;
 
-			Lexer lexer(file_bytes);
 			lexer.seek(static_cast<size_t>(current_xref_offset));
 
 			Token kw_tok;
@@ -2248,22 +2437,20 @@ PdfResult<XrefTable> XrefTable::parse(
 				return try_recover(std::move(err));
 			}
 
-			PdfDict rev_trailer;
+			rev_trailer.clear();
+			std::optional<int64_t> fast_prev;
+			std::optional<int64_t> fast_xref_stm;
+			bool used_fast_trailer = false;
 			if (kw_tok.is_keyword("xref")) {
 				// Classic ASCII `xref` table followed by `trailer << ... >>`.
 				// Buffer this revision's classic entries so any supplemental `/XRefStm`
 				// in the same revision overrides classic compatibility entries (such as
 				// free placeholders for compressed objects per ISO 32000-1 7.5.8.4)
-				// while preserving entries from newer revisions.
-				std::vector<std::pair<uint32_t, XrefEntry>> classic_rev_entries;
+				// while preserving entries from newer revisions, reusing vector capacity across /Prev revisions.
 				// In-use rows whose offset lies outside the file, checked once the trailer's /Size is known: a row
 				// numbered above /Size is missing (ISO 32000-1 Table 15), so its offset cannot fail the parse.
-				struct OutOfBoundsRow {
-					uint32_t obj_num;
-					uint16_t gen_num;
-					uint64_t row_offset;
-				};
-				std::vector<OutOfBoundsRow> out_of_bounds_rows;
+				classic_rev_entries.clear();
+				out_of_bounds_rows.clear();
 				while (true) {
 					Token first_tok;
 					if (!next_non_comment_token(lexer, first_tok, err)) {
@@ -2314,11 +2501,106 @@ PdfResult<XrefTable> XrefTable::parse(
 							count_tok.byte_offset);
 					}
 					total_rows_parsed += count;
+					classic_rev_entries.reserve(
+						classic_rev_entries.size() + static_cast<size_t>(std::min<uint64_t>(count, 65536u)));
 
+					const auto record_classic_row = [&](uint32_t obj_num, uint16_t gen_num, uint64_t raw_off,
+													bool in_use, uint64_t row_offset) {
+						if (in_use) {
+							if (obj_num == 0) {
+								classic_rev_entries.emplace_back(
+									0u,
+									XrefEntry{XrefEntryKind::Free, raw_off, 0, 0, gen_num});
+								return;
+							}
+							if (raw_off > file_bytes.size() - header_off ||
+								raw_off + header_off >= file_bytes.size()) {
+								out_of_bounds_rows.push_back({obj_num, gen_num, row_offset});
+								return;
+							}
+							classic_rev_entries.emplace_back(
+								obj_num,
+								XrefEntry{
+									XrefEntryKind::Uncompressed,
+									raw_off + header_off,
+									0,
+									0,
+									gen_num});
+						} else {
+							classic_rev_entries.emplace_back(
+								obj_num,
+								XrefEntry{
+									XrefEntryKind::Free,
+									raw_off,
+									0,
+									0,
+									gen_num});
+						}
+					};
+
+					size_t fast_pos = lexer.position();
+					const bool can_fast_rows = !lexer.emit_comments();
+					const uint8_t* const fb_data = file_bytes.data();
+					const size_t fb_size = file_bytes.size();
 					for (uint64_t i = 0; i < count; ++i) {
 						if ((i & 0xFFFu) == 0u && detail::poll_cancel(detail::CancelSite::XrefParse)) {
 							return detail::cancelled_error();
 						}
+						if (can_fast_rows) {
+							const size_t row_before_ws = fast_pos;
+							size_t p = row_before_ws;
+							while (p < fb_size) {
+								const uint8_t ws = fb_data[p];
+								if (ws == ' ' || ws == '\n' || ws == '\r' || ws == '\t' || ws == '\f' || ws == '\0') {
+									++p;
+								} else {
+									break;
+								}
+							}
+							if (p + 20u <= fb_size) {
+								const uint8_t* const r = fb_data + p;
+								if (r[10] == ' ' && r[16] == ' ' &&
+									(r[17] == 'n' || r[17] == 'f') &&
+									((r[18] == ' ' && (r[19] == '\n' || r[19] == '\r')) ||
+										(r[18] == '\r' && r[19] == '\n'))) {
+									bool digits_ok = true;
+									uint64_t raw_off = 0;
+									for (size_t d = 0; d < 10u; ++d) {
+										const uint8_t c = r[d];
+										if (c < '0' || c > '9') {
+											digits_ok = false;
+											break;
+										}
+										raw_off = raw_off * 10u + static_cast<uint64_t>(c - '0');
+									}
+									uint32_t gen_val = 0;
+									if (digits_ok) {
+										for (size_t d = 11u; d < 16u; ++d) {
+											const uint8_t c = r[d];
+											if (c < '0' || c > '9') {
+												digits_ok = false;
+												break;
+											}
+											gen_val = gen_val * 10u + static_cast<uint32_t>(c - '0');
+										}
+									}
+									if (digits_ok && gen_val <= 65535u) {
+										const uint32_t obj_num = static_cast<uint32_t>(first_id + i);
+										record_classic_row(
+											obj_num,
+											static_cast<uint16_t>(gen_val),
+											raw_off,
+											r[17] == 'n',
+											static_cast<uint64_t>(p));
+										fast_pos = p + 20u;
+										continue;
+									}
+								}
+							}
+							lexer.seek(row_before_ws);
+							lexer.record_scanned_offset(fast_pos);
+						}
+
 						Token off_tok;
 						Token gen_tok;
 						Token flag_tok;
@@ -2356,56 +2638,43 @@ PdfResult<XrefTable> XrefTable::parse(
 						const uint32_t obj_num = static_cast<uint32_t>(first_id + i);
 						const uint16_t gen_num = static_cast<uint16_t>(gen_tok.int_value);
 						const uint64_t raw_off = static_cast<uint64_t>(off_tok.int_value);
+						record_classic_row(
+							obj_num,
+							gen_num,
+							raw_off,
+							flag_tok.text == "n",
+							off_tok.byte_offset);
+						fast_pos = lexer.position();
+					}
+					lexer.seek(fast_pos);
+					lexer.record_scanned_offset(fast_pos);
+				}
 
-						if (flag_tok.text == "n") {
-							if (obj_num == 0) {
-								classic_rev_entries.emplace_back(
-									0u,
-									XrefEntry{XrefEntryKind::Free, raw_off, 0, 0, gen_num});
-								continue;
-							}
-							if (raw_off > file_bytes.size() - header_off ||
-								raw_off + header_off >= file_bytes.size()) {
-								out_of_bounds_rows.push_back({obj_num, gen_num, off_tok.byte_offset});
-								continue;
-							}
-							classic_rev_entries.emplace_back(
-								obj_num,
-								XrefEntry{
-									XrefEntryKind::Uncompressed,
-									raw_off + header_off,
-									0,
-									0,
-									gen_num});
-						} else {
-							classic_rev_entries.emplace_back(
-								obj_num,
-								XrefEntry{
-									XrefEntryKind::Free,
-									raw_off,
-									0,
-									0,
-									gen_num});
+				if (table.revision_count_ > 1u && !lexer.emit_comments() && !detail::lexer_alloc_fault_active()) {
+					const size_t saved_trailer_pos = lexer.position();
+					if (try_scan_older_classic_trailer(lexer, table.trailer_, fast_prev, fast_xref_stm)) {
+						used_fast_trailer = true;
+					} else {
+						lexer.seek(saved_trailer_pos);
+					}
+				}
+				if (!used_fast_trailer) {
+					Parser dict_parser(lexer);
+					auto trailer_res = dict_parser.parse_dictionary_into(rev_trailer);
+					if (!trailer_res.has_value()) {
+						PdfError tr_err = std::move(trailer_res).error();
+						if (tr_err.code == ErrorCode::DamagedFormat) {
+							record_diagnostic(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedTrailer,
+								tr_err.byte_offset);
 						}
+						return try_recover(std::move(tr_err));
 					}
-				}
-
-				Parser dict_parser(lexer);
-				auto trailer_res = dict_parser.parse_dictionary();
-				if (!trailer_res.has_value()) {
-					PdfError tr_err = std::move(trailer_res).error();
-					if (tr_err.code == ErrorCode::DamagedFormat) {
-						record_diagnostic(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedTrailer,
-							tr_err.byte_offset);
+					auto merge_res = merge_trailer_from_revision(table.trailer_, rev_trailer);
+					if (!merge_res.has_value()) {
+						return merge_res.error();
 					}
-					return try_recover(std::move(tr_err));
-				}
-				rev_trailer = std::move(*trailer_res);
-				auto merge_res = merge_trailer_from_revision(table.trailer_, rev_trailer);
-				if (!merge_res.has_value()) {
-					return merge_res.error();
 				}
 				if (!out_of_bounds_rows.empty()) {
 					const auto merged_size = table.trailer_.get_int("Size");
@@ -2429,8 +2698,16 @@ PdfResult<XrefTable> XrefTable::parse(
 				// unpack entries from the supplemental `/Type /XRef` stream before inserting the
 				// buffered classic entries of the same revision so `/XRefStm` overrides same-revision
 				// classic compatibility entries while newer revisions remain preserved.
-				if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
-					const auto stm_off_opt = xref_stm_val->as_int();
+				bool has_xref_stm = false;
+				std::optional<int64_t> stm_off_opt;
+				if (used_fast_trailer) {
+					has_xref_stm = fast_xref_stm.has_value();
+					stm_off_opt = fast_xref_stm;
+				} else if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
+					has_xref_stm = true;
+					stm_off_opt = xref_stm_val->as_int();
+				}
+				if (has_xref_stm) {
 					if (!stm_off_opt.has_value() || *stm_off_opt < 0) {
 						return try_recover(make_xref_error(
 							ErrorCode::DamagedFormat,
@@ -2448,7 +2725,7 @@ PdfResult<XrefTable> XrefTable::parse(
 							current_xref_offset));
 					}
 					const uint64_t adjusted_stm_off = raw_stm_off + header_off;
-					if (!visited_offsets.insert(adjusted_stm_off).second) {
+					if (!mark_visited_offset(adjusted_stm_off)) {
 						return make_xref_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedXRef,
@@ -2484,6 +2761,13 @@ PdfResult<XrefTable> XrefTable::parse(
 					}
 				}
 
+				if (table.revision_count_ == 1u) {
+					if (const auto sz = table.trailer_.get_int("Size"); sz.has_value() && *sz > 0) {
+						table.entries_.reserve(static_cast<size_t>(std::min<int64_t>(*sz, 65536)));
+					} else if (!classic_rev_entries.empty()) {
+						table.entries_.reserve(classic_rev_entries.size());
+					}
+				}
 				for (const auto& [c_obj_num, c_entry] : classic_rev_entries) {
 					table.entries_.try_emplace(c_obj_num, c_entry);
 				}
@@ -2537,11 +2821,18 @@ PdfResult<XrefTable> XrefTable::parse(
 			}
 
 			// Follow `/Prev` incremental update chain if present.
-			const PdfValue* prev_val = rev_trailer.get("Prev");
-			if (prev_val == nullptr) {
+			bool has_prev = false;
+			std::optional<int64_t> prev_int;
+			if (used_fast_trailer) {
+				has_prev = fast_prev.has_value();
+				prev_int = fast_prev;
+			} else if (const PdfValue* prev_val = rev_trailer.get("Prev")) {
+				has_prev = true;
+				prev_int = prev_val->as_int();
+			}
+			if (!has_prev) {
 				break;
 			}
-			const auto prev_int = prev_val->as_int();
 			if (!prev_int.has_value() || *prev_int < 0) {
 				return try_recover(make_xref_error(
 					ErrorCode::DamagedFormat,

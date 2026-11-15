@@ -19,8 +19,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
+#include <cwchar>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <utility>
 
@@ -111,25 +114,107 @@ struct BcryptKeyCloser {
 
 // Computes a cryptographic digest (`BCRYPT_MD5_ALGORITHM`, `BCRYPT_SHA256_ALGORITHM`,
 // `BCRYPT_SHA384_ALGORITHM`, or `BCRYPT_SHA512_ALGORITHM`) into `out_digest`.
+struct CachedCngSlot {
+	LPCWSTR alg_id{nullptr};
+	std::mutex mu;
+	std::atomic<bool> ready{false};
+	BCRYPT_ALG_HANDLE h{nullptr};
+	DWORD obj_len{0};
+
+	explicit CachedCngSlot(LPCWSTR id) noexcept : alg_id(id) {}
+
+	~CachedCngSlot()
+	{
+		if (h != nullptr) {
+			BCryptCloseAlgorithmProvider(h, 0);
+		}
+	}
+};
+
+[[nodiscard]] bool acquire_standard_cng_alg(
+	LPCWSTR alg_id,
+	bool& matched,
+	BCRYPT_ALG_HANDLE& out_h,
+	DWORD& out_obj_len)
+{
+	// CNG algorithm providers support concurrent BCryptCreateHash calls; caching avoids
+	// reopening providers on every PDF hash/ID write while preserving shutdown cleanup.
+	static std::array<CachedCngSlot, 5> slots = {
+		CachedCngSlot{BCRYPT_MD5_ALGORITHM},
+		CachedCngSlot{BCRYPT_SHA1_ALGORITHM},
+		CachedCngSlot{BCRYPT_SHA256_ALGORITHM},
+		CachedCngSlot{BCRYPT_SHA384_ALGORITHM},
+		CachedCngSlot{BCRYPT_SHA512_ALGORITHM},
+	};
+	for (auto& slot : slots) {
+		if (alg_id != slot.alg_id && std::wcscmp(alg_id, slot.alg_id) != 0) {
+			continue;
+		}
+		matched = true;
+		if (slot.ready.load(std::memory_order_acquire)) {
+			out_h = slot.h;
+			out_obj_len = slot.obj_len;
+			return true;
+		}
+		std::lock_guard lock(slot.mu);
+		if (slot.ready.load(std::memory_order_relaxed)) {
+			out_h = slot.h;
+			out_obj_len = slot.obj_len;
+			return true;
+		}
+		BcryptAlgCloser opened{};
+		if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&opened.h, slot.alg_id, nullptr, 0))) {
+			return false;
+		}
+		DWORD obj_len = 0;
+		DWORD cb_res = 0;
+		if (!BCRYPT_SUCCESS(BCryptGetProperty(
+				opened.h,
+				BCRYPT_OBJECT_LENGTH,
+				reinterpret_cast<PUCHAR>(&obj_len),
+				sizeof(obj_len),
+				&cb_res,
+				0))) {
+			return false;
+		}
+		slot.h = std::exchange(opened.h, nullptr);
+		slot.obj_len = obj_len;
+		slot.ready.store(true, std::memory_order_release);
+		out_h = slot.h;
+		out_obj_len = slot.obj_len;
+		return true;
+	}
+	matched = false;
+	return false;
+}
+
 [[nodiscard]] bool cng_hash(
 	LPCWSTR alg_id,
 	std::span<const std::span<const uint8_t>> chunks,
 	std::span<uint8_t> out_digest)
 {
-	BcryptAlgCloser alg{};
-	if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg.h, alg_id, nullptr, 0))) {
-		return false;
-	}
+	BcryptAlgCloser transient_alg{};
+	BCRYPT_ALG_HANDLE alg_h{nullptr};
 	DWORD obj_len = 0;
-	DWORD cb_res = 0;
-	if (!BCRYPT_SUCCESS(BCryptGetProperty(
-			alg.h,
-			BCRYPT_OBJECT_LENGTH,
-			reinterpret_cast<PUCHAR>(&obj_len),
-			sizeof(obj_len),
-			&cb_res,
-			0))) {
-		return false;
+	bool cached_matched = false;
+	if (!acquire_standard_cng_alg(alg_id, cached_matched, alg_h, obj_len)) {
+		if (cached_matched) {
+			return false;
+		}
+		if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&transient_alg.h, alg_id, nullptr, 0))) {
+			return false;
+		}
+		DWORD cb_res = 0;
+		if (!BCRYPT_SUCCESS(BCryptGetProperty(
+				transient_alg.h,
+				BCRYPT_OBJECT_LENGTH,
+				reinterpret_cast<PUCHAR>(&obj_len),
+				sizeof(obj_len),
+				&cb_res,
+				0))) {
+			return false;
+		}
+		alg_h = transient_alg.h;
 	}
 	std::array<uint8_t, 1024> stack_obj{};
 	std::vector<uint8_t> heap_obj;
@@ -140,7 +225,7 @@ struct BcryptKeyCloser {
 	}
 	BcryptHashCloser hash{};
 	if (!BCRYPT_SUCCESS(BCryptCreateHash(
-			alg.h,
+			alg_h,
 			&hash.h,
 			obj_ptr,
 			obj_len,

@@ -386,7 +386,8 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
             $tests = Join-Path $root "build\$binFolder\x64\$cfg\recto-tests\recto-tests.exe"
             $xmlDir = if (-not $TestOutputDir) { Join-Path $root 'build' } elseif ([System.IO.Path]::IsPathRooted($TestOutputDir)) { $TestOutputDir } else { Join-Path $root $TestOutputDir }
             New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
-            $xmlOut = Join-Path $xmlDir "test-results-x64-$cfg.xml"
+            $xmlTag = if ($EnableASAN) { "$cfg-asan" } else { "$cfg" }
+            $xmlOut = Join-Path $xmlDir "test-results-x64-$xmlTag.xml"
             if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
             $argsList = @("--gtest_output=xml:$xmlOut")
             if ($TestFilter) {
@@ -394,11 +395,41 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
             }
             Write-Host "=== recto-tests $cfg|x64"
             & $tests @argsList
-            if ($LASTEXITCODE -ne 0) { throw "recto-tests failed: $cfg|x64 (exit $LASTEXITCODE)" }
+            $testExit = $LASTEXITCODE
+            $testTimesScript = Join-Path $root 'scripts\test-times.py'
+            $budgetPath = Join-Path $root 'tests\recto-tests\time-budget.json'
+            if ($testExit -ne 0) {
+                $validXml = $false
+                if ((Test-Path $xmlOut) -and (Get-Item $xmlOut).Length -gt 0) {
+                    try {
+                        [xml]$failedReport = Get-Content $xmlOut
+                        if ($null -ne $failedReport.testsuites -and [int]$failedReport.testsuites.tests -gt 0) {
+                            $validXml = $true
+                        }
+                    } catch {
+                        $validXml = $false
+                    }
+                }
+                if ($validXml -and (Test-Path $testTimesScript)) {
+                    try {
+                        & $pinnedPython $testTimesScript report $xmlOut
+                    } catch {
+                        Write-Warning "test-times report failed while reporting failing run: $_"
+                    }
+                }
+                throw "recto-tests failed: $cfg|x64 (exit $testExit)"
+            }
             if (-not (Test-Path $xmlOut)) { throw "recto-tests did not produce XML report: $xmlOut" }
             [xml]$report = Get-Content $xmlOut
             if ([int]$report.testsuites.tests -le 0) {
                 throw "recto-tests executed 0 tests (filter='$TestFilter'): $cfg|x64"
+            }
+            & $pinnedPython $testTimesScript report $xmlOut
+            if ($LASTEXITCODE -ne 0) { throw "test-times report failed: $cfg|x64 (exit $LASTEXITCODE)" }
+            if (-not $TestFilter) {
+                $budgetMode = if ($EnableASAN) { 'asan' } elseif ($cfg -ieq 'Release') { 'release' } else { 'debug' }
+                & $pinnedPython $testTimesScript check $xmlOut --budget $budgetPath --mode $budgetMode
+                if ($LASTEXITCODE -ne 0) { throw "recto-tests exceeded per-test time budget ($budgetMode): $cfg|x64" }
             }
         }
     } finally {

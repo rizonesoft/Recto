@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace recto::pdf {
@@ -116,6 +117,16 @@ public:
 
 	// The base bytes followed by `revision().bytes`.
 	[[nodiscard]] PdfResult<std::vector<uint8_t>> write() const noexcept;
+
+	struct BorrowedObject {
+		IndirectRef ref{};
+		const PdfValue* value{nullptr};
+	};
+
+	// Appends a sequence of revisions onto `base` without reopening `base` between them, returning the full file bytes
+	// and recording each appended revision's end offset in `ends_out`.
+	[[nodiscard]] static PdfResult<std::vector<uint8_t>> write_revisions(const Document& base,
+		std::span<const std::vector<BorrowedObject>> revisions, std::vector<uint64_t>& ends_out) noexcept;
 
 private:
 	enum class StagedKind : uint8_t {

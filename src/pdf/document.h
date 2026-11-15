@@ -24,7 +24,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <list>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -211,13 +211,10 @@ public:
 	// collide cost bounded work. The hash is keyed by a per-cache seed, so collisions cannot be precomputed.
 	static constexpr size_t kMaxSightingProbes = 32u;
 
-	// Not noexcept: the lists allocate their sentinels as they are built, so memory running out here throws
-	// std::bad_alloc, which `Document::open` returns as `OutOfMemory`.
+	// Not noexcept: initializes the backing pools on construction, so memory running out throws std::bad_alloc, which
+	// `Document::open` returns as `OutOfMemory`.
 	ResolvedObjectCache();
-	explicit ResolvedObjectCache(uint64_t seed)
-		: seed_(seed)
-	{
-	}
+	explicit ResolvedObjectCache(uint64_t seed);
 
 	// The sighting hash of `key` under `seed` (splitmix64 of their mix), public so a test can craft collisions.
 	[[nodiscard]] static uint64_t sighting_hash(uint64_t key, uint64_t seed) noexcept;
@@ -236,19 +233,19 @@ public:
 	// cache as it was.
 	[[nodiscard]] PdfResult<void> insert(uint64_t key, std::shared_ptr<const PdfValue> value) noexcept;
 
-	// What one entry for `value` is charged: its heap, the value itself and its shared control block, and the list
-	// node and map slot that track it.
+	// What one entry for `value` is charged: its heap, the value itself and its shared control block; backing pools are
+	// charged directly in `container_bytes()`.
 	[[nodiscard]] static size_t entry_bytes(const PdfValue& value) noexcept;
 
 	[[nodiscard]] size_t size() const noexcept
 	{
-		return slots_.size();
+		return count_;
 	}
-	// Every byte the cache holds: its entries, its sighting tables and its containers' own storage (the map's buckets
-	// as allocated now, never shrunk by eviction, and the lists' and map's sentinels), all within `kMaxObjectCacheBytes`.
+	// Every byte the cache holds: its entries, its sighting tables and its containers' own storage (the pool and hash
+	// buckets as allocated now, never shrunk by eviction), all within `kMaxObjectCacheBytes`.
 	[[nodiscard]] size_t bytes() const noexcept
 	{
-		return main_bytes_ + window_bytes_ + sightings_bytes() + container_bytes();
+		return main_.bytes + window_.bytes + sightings_bytes() + container_bytes();
 	}
 	// The containers' share of `bytes()`.
 	[[nodiscard]] size_t container_bytes() const noexcept;
@@ -259,31 +256,53 @@ public:
 	}
 	[[nodiscard]] size_t main_size() const noexcept
 	{
-		return main_.size();
+		return main_.count;
 	}
 
 private:
-	struct Entry {
+	static constexpr uint32_t kNullIndex = std::numeric_limits<uint32_t>::max();
+	static constexpr uint32_t kBucketTombstone = std::numeric_limits<uint32_t>::max() - 1u;
+
+	struct Node {
 		uint64_t key{0};
 		std::shared_ptr<const PdfValue> value{};
 		size_t bytes{0};
-	};
-	using List = std::list<Entry>;
-	struct Slot {
-		List::iterator entry{};
+		uint32_t prev{kNullIndex};
+		uint32_t next{kNullIndex};
 		bool main{false};
 	};
+	struct Tier {
+		uint32_t head{kNullIndex};
+		uint32_t tail{kNullIndex};
+		size_t count{0};
+		size_t bytes{0};
+	};
+	struct Bucket {
+		uint64_t key{0};
+		uint32_t node{kNullIndex};
+	};
 
+	void init_containers();
+	[[nodiscard]] size_t bucket_find(uint64_t key) const noexcept;
+	[[nodiscard]] size_t bucket_insert_slot(uint64_t key) const noexcept;
+	[[nodiscard]] std::vector<Bucket> build_rehashed_buckets(size_t new_capacity) const;
+	void bucket_erase(uint64_t key) noexcept;
+	void link_front(Tier& tier, uint32_t idx) noexcept;
+	void unlink(Tier& tier, uint32_t idx) noexcept;
+	void evict_tail(Tier& tier) noexcept;
+	[[nodiscard]] bool has_sighting(uint64_t key) const noexcept;
 	// Records a sighting of `key` and says whether it was seen within the last two generations. Allocates the tables on
 	// first use (std::bad_alloc then, with nothing changed).
 	[[nodiscard]] bool seen_before(uint64_t key);
 	void evict() noexcept;
 
-	List main_{};   // most recently used first
-	List window_{}; // likewise
-	std::unordered_map<uint64_t, Slot> slots_{};
-	size_t main_bytes_{0};
-	size_t window_bytes_{0};
+	Tier main_{};   // most recently used first
+	Tier window_{}; // likewise
+	std::vector<Node> nodes_{};
+	std::vector<Bucket> buckets_{};
+	size_t count_{0};
+	size_t tombstones_{0};
+	uint32_t free_head_{kNullIndex};
 	uint64_t seed_{0};
 	uint64_t probe_steps_{0};
 	std::vector<uint64_t> sightings_[2]{}; // current and previous generation; 0 is an empty slot
@@ -336,12 +355,17 @@ public:
 	// `ErrorCode::NeedsPassword`.
 	[[nodiscard]] static PdfResult<std::unique_ptr<Document>> open_memory(
 		std::span<const uint8_t> bytes) noexcept;
+	[[nodiscard]] static PdfResult<std::unique_ptr<Document>> open_memory(
+		std::vector<uint8_t>&& bytes) noexcept;
 
 	// Opens an encrypted (or unencrypted) PDF document from an in-memory byte
 	// span using `password`. Returns `ErrorCode::WrongPassword` if `password`
 	// is rejected.
 	[[nodiscard]] static PdfResult<std::unique_ptr<Document>> open_memory(
 		std::span<const uint8_t> bytes,
+		std::string_view password) noexcept;
+	[[nodiscard]] static PdfResult<std::unique_ptr<Document>> open_memory(
+		std::vector<uint8_t>&& bytes,
 		std::string_view password) noexcept;
 
 	// Opens and authenticates a PDF document from `path` or `bytes` with

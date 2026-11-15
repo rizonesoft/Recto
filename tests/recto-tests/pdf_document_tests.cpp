@@ -1114,28 +1114,49 @@ TEST(PdfDocument, ObjectCacheAllocationFailure)
 		EXPECT_EQ(opened.error().code, ErrorCode::OutOfMemory) << "nth " << nth;
 	}
 	// Inserts that evict, into a full window and a full main cache: a failure leaves every entry and byte as it was,
-	// and the retry succeeds.
+	// and the retry succeeds. Steady-state pooled inserts reuse free slots without allocating, so the setup advances
+	// window churn until the next insert triggers bucket rehashing while window and main remain full.
 	const auto big = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>((size_t{1} << 20u) - 8'192u, 'm')));
 	const auto small = std::make_shared<const PdfValue>(PdfString(std::vector<uint8_t>(256u, 's')));
 	for (const bool into_main : {false, true}) {
+		const uint64_t key = 9'999u;
+		ResolvedObjectCache setup(0xC0FFEEULL);
+		for (uint64_t k = 1u; k <= 64u; ++k) { // the main cache full of 1 MiB values
+			ASSERT_TRUE(setup.insert(k, big).has_value());
+			ASSERT_NE(setup.find(k), nullptr); // asked for again: into the main cache
+		}
+		uint64_t last_window_key = 0u;
+		for (uint64_t k = 100u; k < 100u + ResolvedObjectCache::kMaxWindowEntries; ++k) { // the window full
+			ASSERT_TRUE(setup.insert(k, small).has_value());
+			last_window_key = k;
+		}
+		if (into_main) {
+			ASSERT_TRUE(setup.insert(key, small).has_value()); // seen once, then pushed out of the window
+			for (uint64_t k = 200u; k < 200u + ResolvedObjectCache::kMaxWindowEntries; ++k) {
+				ASSERT_TRUE(setup.insert(k, small).has_value());
+				last_window_key = k;
+			}
+			ASSERT_EQ(setup.find(key), nullptr);
+		}
+		uint64_t churn = 300u;
+		for (; churn < 5'000u; ++churn) {
+			ResolvedObjectCache probe = setup;
+			PdfResult<void> probe_res;
+			{
+				const recto::test::ScopedAllocationFailure fail(1u, 32u);
+				probe_res = probe.insert(key, into_main ? big : small);
+			}
+			if (!probe_res.has_value()) {
+				break;
+			}
+			ASSERT_TRUE(setup.insert(churn, small).has_value());
+			last_window_key = churn;
+		}
+		ASSERT_LT(churn, 5'000u) << "evicting inserts never reached a rehash boundary, "
+								 << (into_main ? "main" : "window");
 		bool failed_once = false;
 		for (uint32_t nth = 1; nth < 40u; ++nth) {
-			ResolvedObjectCache cache;
-			for (uint64_t key = 1; key <= 64u; ++key) { // the main cache full of 1 MiB values
-				ASSERT_TRUE(cache.insert(key, big).has_value());
-				ASSERT_NE(cache.find(key), nullptr); // asked for again: into the main cache
-			}
-			for (uint64_t key = 100; key < 100u + ResolvedObjectCache::kMaxWindowEntries; ++key) { // the window full
-				ASSERT_TRUE(cache.insert(key, small).has_value());
-			}
-			const uint64_t key = 9'999u;
-			if (into_main) {
-				ASSERT_TRUE(cache.insert(key, small).has_value()); // seen once, then pushed out of the window
-				for (uint64_t k = 200; k < 200u + ResolvedObjectCache::kMaxWindowEntries; ++k) {
-					ASSERT_TRUE(cache.insert(k, small).has_value());
-				}
-				ASSERT_EQ(cache.find(key), nullptr);
-			}
+			ResolvedObjectCache cache = setup;
 			const size_t entries = cache.size();
 			const size_t charged = cache.bytes();
 			PdfResult<void> r;
@@ -1154,8 +1175,13 @@ TEST(PdfDocument, ObjectCacheAllocationFailure)
 			EXPECT_EQ(r.error().code, ErrorCode::OutOfMemory);
 			EXPECT_EQ(cache.size(), entries) << (into_main ? "main" : "window") << " nth " << nth;
 			EXPECT_EQ(cache.bytes(), charged) << (into_main ? "main" : "window") << " nth " << nth;
-			EXPECT_NE(cache.find(into_main ? 64u : 115u), nullptr) << "an entry was lost";
+			EXPECT_NE(cache.find(into_main ? 64u : last_window_key), nullptr) << "an entry was lost";
+			const size_t main_after_find = cache.main_size();
 			ASSERT_TRUE(cache.insert(key, into_main ? big : small).has_value());
+			if (!into_main) {
+				// Window insert stayed in window (never falsely promoted to main by a failed OOM insert).
+				EXPECT_EQ(cache.main_size(), main_after_find);
+			}
 			EXPECT_NE(cache.find(key), nullptr);
 		}
 		EXPECT_TRUE(failed_once) << "no allocation of an evicting insert was made to fail, " << (into_main ? "main" : "window");

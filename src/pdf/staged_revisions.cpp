@@ -107,7 +107,7 @@ PdfResult<IndirectRef> ObjectChangeSet::allocate(PdfValue value) noexcept
 			return too_many_objects(entries_.size() + 1u);
 		}
 		const uint32_t number = next_free_;
-		entries_.emplace(number, Entry{0u, std::move(value), true});
+		entries_.emplace_hint(entries_.end(), number, Entry{0u, std::move(value), true});
 		++next_free_;
 		return IndirectRef(number, 0u);
 	} catch (const std::bad_alloc&) {
@@ -128,6 +128,10 @@ PdfResult<void> ObjectChangeSet::merge(const ObjectChangeSet& later) noexcept
 		}
 		std::map<uint32_t, Entry> merged = entries_;
 		for (const auto& [number, entry] : later.entries_) {
+			if (merged.empty() || number > merged.rbegin()->first) {
+				merged.emplace_hint(merged.end(), number, entry);
+				continue;
+			}
 			if (auto it = merged.find(number); it != merged.end()) {
 				const bool allocated = it->second.allocated || entry.allocated;
 				it->second = entry;
@@ -255,7 +259,8 @@ PdfResult<std::unique_ptr<Document>> StagedRevisionChain::reopen(std::vector<uin
 		return make_pdf_error(ErrorCode::OutOfMemory, "Injected failure reopening a working document");
 	}
 	RECTO_PDF_TRY(std::unique_ptr<Document> doc,
-		password_.empty() ? Document::open_memory(bytes) : Document::open_memory(bytes, password_));
+		password_.empty() ? Document::open_memory(std::move(bytes))
+						  : Document::open_memory(std::move(bytes), password_));
 	if (doc->is_recovered()) {
 		return make_pdf_error(ErrorCode::InternalError, "A staged revision did not read back without recovery");
 	}
@@ -265,6 +270,10 @@ PdfResult<std::unique_ptr<Document>> StagedRevisionChain::reopen(std::vector<uin
 void StagedRevisionChain::fold(ObjectChangeSet& into, const ObjectChangeSet& later)
 {
 	for (const auto& [number, entry] : later.entries_) {
+		if (into.entries_.empty() || number > into.entries_.rbegin()->first) {
+			into.entries_.emplace_hint(into.entries_.end(), number, entry);
+			continue;
+		}
 		auto [it, inserted] = into.entries_.try_emplace(number, entry);
 		if (!inserted) {
 			const bool allocated = it->second.allocated || entry.allocated;
@@ -452,13 +461,74 @@ PdfResult<void> StagedRevisionChain::undo() noexcept
 			const auto now = working_->file_bytes();
 			bytes.assign(now.begin(), now.begin() + static_cast<ptrdiff_t>(ends_[target]));
 			ends.assign(ends_.begin(), ends_.begin() + static_cast<ptrdiff_t>(target + 1u));
-		} else {
-			// Inside the compacted part: rebuild the base plus the target's changes.
-			RECTO_PDF_TRY(bytes, squash_bytes(target));
-			squashed = target;
+		} else if (target == 0u) {
+			// Reached the base document: restore its exact bytes.
+			RECTO_PDF_TRY(bytes, squash_bytes(0u));
+			squashed = 0u;
 			layout = layout_ + 1u;
-			ends.assign(target + 1u, 0u);
-			ends[target] = bytes.size();
+			ends.assign(1u, bytes.size());
+		} else {
+			// Inside the compacted part: rebuild a bounded recent tail on top of the compacted prefix so subsequent
+			// consecutive undos truncate cleanly in O(1) instead of rebuilding every step.
+			const size_t tail = room_ > 1u ? std::min<size_t>(target, std::min<size_t>(room_ - 1u, 64u)) : 0u;
+			bool built = false;
+			if (tail > 0u) {
+				const size_t new_squashed = target - tail;
+				ObjectChangeSet squashed_set(base_revision_, 0u);
+				if (new_squashed > 0u) {
+					RECTO_PDF_TRY(squashed_set, merged(new_squashed));
+				}
+				std::vector<std::vector<IncrementalWriter::BorrowedObject>> rev_specs;
+				rev_specs.reserve((new_squashed > 0u ? 1u : 0u) + tail);
+				if (new_squashed > 0u) {
+					std::vector<IncrementalWriter::BorrowedObject> head_objs;
+					head_objs.reserve(squashed_set.entries().size());
+					for (const auto& [number, entry] : squashed_set.entries()) {
+						head_objs.push_back(
+							IncrementalWriter::BorrowedObject{IndirectRef(number, entry.generation), &entry.value});
+					}
+					rev_specs.push_back(std::move(head_objs));
+				}
+				for (size_t i = new_squashed; i < target; ++i) {
+					std::vector<IncrementalWriter::BorrowedObject> step_objs;
+					step_objs.reserve(states_[i].changes.entries().size());
+					for (const auto& [number, entry] : states_[i].changes.entries()) {
+						step_objs.push_back(
+							IncrementalWriter::BorrowedObject{IndirectRef(number, entry.generation), &entry.value});
+					}
+					rev_specs.push_back(std::move(step_objs));
+				}
+				std::vector<uint64_t> rev_ends;
+				auto written = IncrementalWriter::write_revisions(*base_, rev_specs, rev_ends);
+				if (written.has_value()) {
+					const uint64_t new_projected =
+						projected_history(written->size(), target, new_squashed, layout_ + 1u, nullptr, 0u);
+					if (new_projected <= t_history_limit) {
+						bytes = std::move(*written);
+						squashed = new_squashed;
+						layout = layout_ + 1u;
+						ends.assign(target + 1u, 0u);
+						ends[0] = base_->file_bytes().size();
+						size_t end_pos = 0;
+						if (new_squashed > 0u) {
+							ends[new_squashed] = rev_ends[end_pos++];
+						}
+						for (size_t i = new_squashed; i < target; ++i) {
+							ends[i + 1u] = rev_ends[end_pos++];
+						}
+						built = true;
+					}
+				} else if (written.error().code != ErrorCode::ResourceLimit) {
+					return std::move(written).error();
+				}
+			}
+			if (!built) {
+				RECTO_PDF_TRY(bytes, squash_bytes(target));
+				squashed = target;
+				layout = layout_ + 1u;
+				ends.assign(target + 1u, 0u);
+				ends[target] = bytes.size();
+			}
 		}
 		RECTO_PDF_TRY(std::unique_ptr<Document> doc, reopen(std::move(bytes)));
 		RECTO_CHAIN_TRY_VOID(check_history(projected_history(doc->file_bytes().size(), target, squashed, layout, nullptr, 0u)));

@@ -646,7 +646,7 @@ TEST(PdfParser, OutOfMemoryAndResolverExceptions)
 		Parser parser(as_bytes(kStrInput));
 		parser.seek(3);
 		{
-			detail::ScopedLexerAllocFaultInjector fault(1);
+			detail::ScopedLexerAllocFaultInjector fault(0);
 			auto res = parser.parse_direct_object();
 			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
 		}
@@ -655,6 +655,22 @@ TEST(PdfParser, OutOfMemoryAndResolverExceptions)
 		RECTO_ASSERT_OK(ok_res);
 		ASSERT_NE(ok_res->as_string(), nullptr);
 		EXPECT_EQ(ok_res->as_string()->as_byte_view(), "literal string payload");
+	}
+
+	{
+		constexpr std::string_view kMultiChunkInput = "   (literal string \\npayload)";
+		Parser parser(as_bytes(kMultiChunkInput));
+		parser.seek(3);
+		{
+			detail::ScopedLexerAllocFaultInjector fault(1);
+			auto res = parser.parse_direct_object();
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+		}
+		EXPECT_EQ(parser.position(), 3u);
+		auto ok_res = parser.parse_direct_object();
+		RECTO_ASSERT_OK(ok_res);
+		ASSERT_NE(ok_res->as_string(), nullptr);
+		EXPECT_EQ(ok_res->as_string()->as_byte_view(), "literal string \npayload");
 	}
 
 	{

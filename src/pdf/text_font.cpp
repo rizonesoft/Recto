@@ -6,7 +6,9 @@
 #include "font_encoding.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <memory>
 #include <new>
 #include <string>
 #include <utility>
@@ -212,6 +214,53 @@ struct TextFontBuilder {
 	// advance-only; the face's absence is recorded once.
 	static PdfResult<void> standard_glyphs(TextFont& font, Standard14Font standard, const SimpleEncoding& encoding)
 	{
+		constexpr size_t kStdGlyphCacheSlots = 512u;
+		constexpr size_t kStdGlyphCacheMaxUsed = 384u;
+		struct CachedStdGlyph {
+			char32_t point = U'\0';
+			uint16_t glyph = 0u;
+			uint8_t state = 0u; // 0 = empty, 1 = absent, 2 = present
+			bool has_ink = false;
+			bool blank = true;
+			double advance = 0.0;
+			PdfRect ink{};
+		};
+		struct CachedStdFontTable {
+			std::weak_ptr<const LoadedFont> face{};
+			std::unique_ptr<std::array<CachedStdGlyph, kStdGlyphCacheSlots>> slots{};
+			size_t used = 0u;
+		};
+		thread_local std::array<CachedStdFontTable, kStandard14FontCount> t_std_cache{};
+
+		std::shared_ptr<const LoadedFont> primary_face;
+		CachedStdFontTable* table = nullptr;
+		const size_t std_index = static_cast<size_t>(standard);
+		if (std_index < kStandard14FontCount) {
+			auto primary = load_standard14_face(standard);
+			if (!primary.has_value()) {
+				if (primary.error().code == ErrorCode::OutOfMemory) {
+					return primary.error();
+				}
+			} else if (*primary != nullptr) {
+				primary_face = std::move(*primary);
+				CachedStdFontTable& entry = t_std_cache[std_index];
+				if (entry.slots == nullptr) {
+					try {
+						entry.slots = std::make_unique<std::array<CachedStdGlyph, kStdGlyphCacheSlots>>();
+					} catch (const std::bad_alloc&) {
+						entry.slots.reset();
+					}
+				} else if (entry.face.lock() != primary_face) {
+					entry.slots->fill(CachedStdGlyph{});
+					entry.used = 0u;
+				}
+				if (entry.slots != nullptr) {
+					entry.face = primary_face;
+					table = &entry;
+				}
+			}
+		}
+
 		bool absence_recorded = false;
 		for (size_t code = 0; code < 256u; ++code) {
 			TextGlyph& slot = font.glyphs_[code];
@@ -232,6 +281,45 @@ struct TextFontBuilder {
 			if (!point.has_value()) {
 				continue;
 			}
+
+			CachedStdGlyph* cache_slot = nullptr;
+			if (table != nullptr && !(standard == Standard14Font::Symbol && *point == 0xA0u)) {
+				size_t idx = (static_cast<size_t>(*point) * size_t{2654435761u}) & (kStdGlyphCacheSlots - 1u);
+				for (size_t step = 0; step < kStdGlyphCacheSlots; ++step) {
+					CachedStdGlyph& candidate = (*table->slots)[idx];
+					if (candidate.state == 0u || candidate.point == *point) {
+						cache_slot = &candidate;
+						break;
+					}
+					idx = (idx + 1u) & (kStdGlyphCacheSlots - 1u);
+				}
+				if (cache_slot != nullptr && cache_slot->state != 0u) {
+					if (cache_slot->state == 1u) {
+						continue;
+					}
+					double scale = 1.0;
+					if (cache_slot->advance > 0.0 && font.widths_[code] > 0.0) {
+						const double fitted = font.widths_[code] / cache_slot->advance;
+						if (std::abs(fitted - 1.0) > 1e-3) {
+							scale = fitted;
+						}
+					}
+					slot.face = face_index(font, primary_face);
+					slot.glyph = cache_slot->glyph;
+					slot.width_scale = scale;
+					if (slot.face == TextGlyph::kNoFace) {
+						slot.blank = true;
+					} else {
+						slot.blank = cache_slot->blank;
+						if (cache_slot->has_ink) {
+							const PdfRect& box = cache_slot->ink;
+							slot.ink = PdfRect{box.x_min * scale, box.y_min, box.x_max * scale, box.y_max};
+						}
+					}
+					continue;
+				}
+			}
+
 			auto drawn = standard14_face_glyph(standard, *point);
 			if (!drawn.has_value()) {
 				if (drawn.error().code == ErrorCode::OutOfMemory) {
@@ -244,6 +332,11 @@ struct TextFontBuilder {
 				continue;
 			}
 			if (!drawn->has_value()) {
+				if (cache_slot != nullptr && cache_slot->state == 0u && table->used < kStdGlyphCacheMaxUsed) {
+					cache_slot->point = *point;
+					cache_slot->state = 1u;
+					++table->used;
+				}
 				continue;
 			}
 			const Standard14FaceGlyph& face_glyph_found = **drawn;
@@ -258,6 +351,38 @@ struct TextFontBuilder {
 				if (std::abs(fitted - 1.0) > 1e-3) {
 					scale = fitted; // the substitute's glyph stretched or narrowed to the advance the PDF gives it
 				}
+			}
+			if (cache_slot != nullptr && cache_slot->state == 0u && table->used < kStdGlyphCacheMaxUsed &&
+				face_glyph_found.face == primary_face && advance.has_value()) {
+				slot.face = face_index(font, primary_face);
+				slot.glyph = face_glyph_found.glyph;
+				slot.width_scale = scale;
+				if (slot.face == TextGlyph::kNoFace) {
+					slot.blank = true;
+					continue;
+				}
+				auto ink = primary_face->ink_box(face_glyph_found.glyph);
+				if (!ink.has_value()) {
+					if (ink.error().code == ErrorCode::OutOfMemory) {
+						return ink.error();
+					}
+					slot.blank = TextGlyph{}.blank;
+					continue;
+				}
+				slot.blank = !ink->has_value();
+				cache_slot->point = *point;
+				cache_slot->glyph = face_glyph_found.glyph;
+				cache_slot->state = 2u;
+				cache_slot->advance = *advance;
+				cache_slot->blank = slot.blank;
+				cache_slot->has_ink = ink->has_value();
+				if (ink->has_value()) {
+					const PdfRect& box = **ink;
+					cache_slot->ink = box;
+					slot.ink = PdfRect{box.x_min * scale, box.y_min, box.x_max * scale, box.y_max};
+				}
+				++table->used;
+				continue;
 			}
 			RECTO_PDF_TRY(slot, face_glyph(font, face_glyph_found.face, face_glyph_found.glyph, scale));
 		}

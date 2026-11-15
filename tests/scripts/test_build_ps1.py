@@ -787,6 +787,142 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             self.assertIn("RECTO_USE_SCCACHE", out)
             self.assertEqual(calls, [], f"MSBuild should not start on invalid RECTO_USE_SCCACHE: {out}")
 
+    @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows PowerShell")
+    def test_build_ps1_test_timing_report_budget_and_asan_xml(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ws = base / "repo"
+            (ws / "build").mkdir(parents=True)
+            (ws / "scripts").mkdir(parents=True)
+            (ws / "tests" / "recto-tests").mkdir(parents=True)
+            for name in ("Recto.sln", "Directory.Build.props", "Directory.Build.targets",
+                         "vcpkg.json", "vcpkg-configuration.json"):
+                shutil.copy2(ROOT / name, ws / name)
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            shutil.copy2(ROOT / "scripts" / "test-times.py", ws / "scripts" / "test-times.py")
+            shutil.copy2(ROOT / "tests" / "recto-tests" / "time-budget.json",
+                         ws / "tests" / "recto-tests" / "time-budget.json")
+            (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+
+            stub_wrapper = base / "wrapper" / "sccache-cl.exe"
+            stub_wrapper.parent.mkdir(parents=True)
+            stub_wrapper.write_bytes(b"MZ")
+
+            pf86 = base / "pf86"
+            vs_installer = pf86 / "Microsoft Visual Studio" / "Installer"
+            vs_installer.mkdir(parents=True)
+            vs_root = base / "vs2026"
+            msbuild_dir = vs_root / "MSBuild" / "Current" / "Bin"
+            msbuild_dir.mkdir(parents=True)
+            asan_dir = vs_root / "VC" / "Tools" / "MSVC" / "14.51" / "bin" / "Hostx64" / "x64"
+            asan_dir.mkdir(parents=True)
+            (asan_dir / "clang_rt.asan_dynamic-x86_64.dll").write_bytes(b"MZ")
+            vswhere_ps1 = vs_installer / "vswhere.ps1"
+            vswhere_ps1.write_text(f"Write-Output '{vs_root}'\n$global:LASTEXITCODE = 0\n", encoding="utf-8")
+
+            msbuild_ps1 = msbuild_dir / "MSBuild.ps1"
+            msbuild_ps1.write_text(
+                "foreach ($a in $args) {\n"
+                "    if ($a -like '/flp:logfile=*') {\n"
+                "        $logPath = ($a -split '=', 2)[1].Split(';')[0]\n"
+                "        Set-Content -LiteralPath $logPath -Value \"Build succeeded.`n    0 Warning(s)`n    0 Error(s)`n\" -Encoding UTF8\n"
+                "    }\n"
+                "}\n"
+                "$global:LASTEXITCODE = 0\n",
+                encoding="utf-8",
+            )
+
+            fake_tests_ps1 = base / "fake_tests.ps1"
+            fake_tests_ps1.write_text(
+                "$xmlPath = $null\n"
+                "foreach ($a in $args) {\n"
+                "    if ($a -like '--gtest_output=xml:*') { $xmlPath = $a.Substring('--gtest_output=xml:'.Length) }\n"
+                "}\n"
+                "$mode = $env:FAKE_TEST_XML_MODE\n"
+                "if ($mode -eq 'empty' -and $xmlPath) {\n"
+                "    [System.IO.File]::WriteAllBytes($xmlPath, @())\n"
+                "} elseif ($mode -eq 'malformed' -and $xmlPath) {\n"
+                "    Set-Content -LiteralPath $xmlPath -Value '<broken' -Encoding UTF8\n"
+                "} elseif ($mode -ne 'missing' -and $xmlPath) {\n"
+                "    $parts = $mode -split ':', 2\n"
+                "    $caseName = $parts[0]\n"
+                "    $caseTime = $parts[1]\n"
+                "    $xml = \"<?xml version=`\"1.0`\" encoding=`\"UTF-8`\"?><testsuites tests=`\"1`\" failures=`\"0`\" disabled=`\"0`\" errors=`\"0`\" time=`\"$caseTime`\"><testsuite name=`\"Suite`\" tests=`\"1`\" failures=`\"0`\" disabled=`\"0`\" errors=`\"0`\" time=`\"$caseTime`\"><testcase name=`\"$caseName`\" status=`\"run`\" result=`\"completed`\" time=`\"$caseTime`\" classname=`\"Suite`\" /></testsuite></testsuites>\"\n"
+                "    Set-Content -LiteralPath $xmlPath -Value $xml -Encoding UTF8\n"
+                "}\n"
+                "$global:LASTEXITCODE = [int]$env:FAKE_TEST_EXIT\n",
+                encoding="utf-8",
+            )
+
+            normal_exe = ws / "build" / "bin" / "x64" / "Debug" / "recto-tests" / "recto-tests.exe"
+            asan_exe = ws / "build" / "bin-asan" / "x64" / "Debug" / "recto-tests" / "recto-tests.exe"
+
+            def run_case(ps_args: str, xml_mode: str, exit_code: int) -> tuple[int, str]:
+                for xml_file in (ws / "build").glob("test-results-*.xml"):
+                    xml_file.unlink()
+                env = os.environ.copy()
+                env["ProgramFiles(x86)"] = str(pf86)
+                env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
+                env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
+                env["RECTO_SCCACHE_NO_DAEMON"] = "1"
+                env["FAKE_TEST_XML_MODE"] = xml_mode
+                env["FAKE_TEST_EXIT"] = str(exit_code)
+                cmd = (
+                    f"Set-Alias -Name '{vs_installer / 'vswhere.exe'}' -Value '{vswhere_ps1}' -Scope Global\n"
+                    f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
+                    f"Set-Alias -Name '{normal_exe}' -Value '{fake_tests_ps1}' -Scope Global\n"
+                    f"Set-Alias -Name '{asan_exe}' -Value '{fake_tests_ps1}' -Scope Global\n"
+                    "function global:Get-Counter { [pscustomobject]@{ CounterSamples = @([pscustomobject]@{ CookedValue = 9500 }) } }\n"
+                    "function global:Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 9728000 } }\n"
+                    f"& '{ws / 'build' / 'build.ps1'}' {ps_args}\n"
+                )
+                res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                                     capture_output=True, text=True, env=env, timeout=120)
+                return res.returncode, res.stdout + res.stderr
+
+            # (a) Full Debug run writes test-results-x64-Debug.xml and passes debug budget.
+            rc, out = run_case("-Configuration Debug", "Fast:0.100", 0)
+            self.assertEqual(rc, 0, out)
+            self.assertTrue((ws / "build" / "test-results-x64-Debug.xml").is_file(), out)
+            self.assertIn("Suite.Fast", out)
+
+            # (b) Full Debug run fails budget at 25.0s.
+            rc, out = run_case("-Configuration Debug", "TooSlow:25.000", 0)
+            self.assertNotEqual(rc, 0, out)
+            self.assertIn("recto-tests exceeded per-test time budget (debug): Debug|x64", out)
+            self.assertIn("Suite.TooSlow", out)
+
+            # (c) Filtered Debug run reports timing without enforcing full-suite budget check.
+            rc, out = run_case("-Configuration Debug -TestFilter Foo.*", "TooSlow:25.000", 0)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("Suite.TooSlow", out)
+
+            # (d) Full -EnableASAN Debug run writes test-results-x64-Debug-asan.xml and checks asan budget.
+            rc, out = run_case("-Configuration Debug -EnableASAN", "AsanOk:35.000", 0)
+            self.assertEqual(rc, 0, out)
+            self.assertTrue((ws / "build" / "test-results-x64-Debug-asan.xml").is_file(), out)
+            self.assertFalse((ws / "build" / "test-results-x64-Debug.xml").exists(), out)
+            rc, out = run_case("-Configuration Debug -EnableASAN", "AsanTooSlow:65.000", 0)
+            self.assertNotEqual(rc, 0, out)
+            self.assertIn("recto-tests exceeded per-test time budget (asan): Debug|x64", out)
+
+            # (e) Failing test run with valid XML prints timing report before throwing recto-tests failure.
+            rc, out = run_case("-Configuration Debug", "FailingSlow:25.000", 1)
+            self.assertNotEqual(rc, 0, out)
+            report_pos = out.find("Suite.FailingSlow")
+            fail_pos = out.find("recto-tests failed: Debug|x64 (exit 1)")
+            self.assertGreaterEqual(report_pos, 0, out)
+            self.assertGreater(fail_pos, report_pos, out)
+
+            # (f) Failing test run with missing, empty, or malformed XML retains the original test failure.
+            for bad_mode in ("missing", "empty", "malformed"):
+                with self.subTest(bad_mode=bad_mode):
+                    rc, out = run_case("-Configuration Debug", bad_mode, 1)
+                    self.assertNotEqual(rc, 0, out)
+                    self.assertIn("recto-tests failed: Debug|x64 (exit 1)", out)
+
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows cmd.exe and PowerShell")
     def test_build_cmd_iteration_gate_forwards_debug_x64_and_strips_cmd_quotes_on_test_filter(self):
         csc_candidates = [
@@ -821,6 +957,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 f"import pathlib, sys\npathlib.Path(r'{boundary_marker}').write_text(sys.executable, encoding='utf-8')\nsys.exit(0)\n",
                 encoding="utf-8",
             )
+            shutil.copy2(ROOT / "scripts" / "test-times.py", ws / "scripts" / "test-times.py")
 
             pf86 = base / "pf86"
             vs_installer = pf86 / "Microsoft Visual Studio" / "Installer"
@@ -880,7 +1017,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 "        foreach (string a in args) {\n"
                 '            if (a.StartsWith("--gtest_output=xml:")) {\n'
                 "                string xp = a.Substring(\"--gtest_output=xml:\".Length);\n"
-                '                File.WriteAllText(xp, "<testsuites tests=\\"3\\" failures=\\"0\\"></testsuites>");\n'
+                '                File.WriteAllText(xp, "<testsuites tests=\\"3\\" failures=\\"0\\"><testsuite name=\\"PdfError\\" tests=\\"3\\"><testcase name=\\"A\\" status=\\"run\\" result=\\"completed\\" time=\\"0.001\\" classname=\\"PdfError\\" /></testsuite></testsuites>");\n'
                 "            }\n"
                 "        }\n"
                 "        return 0;\n"

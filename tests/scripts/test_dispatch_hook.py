@@ -255,6 +255,35 @@ class DispatchHook(unittest.TestCase):
             self.assertEqual(refused_cpp.returncode, 2)
             self.assertIn("requires a build-and-test command", refused_cpp.stderr)
 
+    def test_mutate_check_isolates_temp_outside_copy_root(self):
+        import tempfile
+        mutate_script = HOOK.parent / "mutate-check.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (repo / "check_env.py").write_text(
+                "import os, pathlib, sys\n"
+                "import calc\n"
+                "cwd = pathlib.Path.cwd().resolve()\n"
+                "for key in ('TEMP', 'TMP', 'TMPDIR'):\n"
+                "    val = pathlib.Path(os.environ[key]).resolve()\n"
+                "    if cwd.is_relative_to(val) or val.is_relative_to(cwd):\n"
+                "        raise AssertionError(f'{key}={val} overlaps cwd={cwd}')\n"
+                "assert calc.add(2, 3) == 5\n",
+                encoding="utf-8",
+            )
+            for git_args in (["init", "-q"], ["config", "core.autocrlf", "false"], ["add", "-A"]):
+                subprocess.run(["git", "-C", str(repo), *git_args], check=True, capture_output=True)
+            killed = subprocess.run(
+                [sys.executable, str(mutate_script), "--root", str(repo), "--file", "calc.py",
+                 "--old", "return a + b", "--new", "return a - b", "--",
+                 sys.executable, "check_env.py"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(killed.returncode, 0, killed.stdout + killed.stderr)
+            self.assertIn("OUTCOME: KILLED", killed.stdout)
+
     def test_mutate_check_timeout_kills_descendant_process_tree(self):
         import ctypes
         import importlib.util
@@ -306,6 +335,63 @@ class DispatchHook(unittest.TestCase):
                         alive = False
                         break
                 self.assertFalse(alive, f"grandchild PID {grandchild_pid} survived timeout")
+
+    def test_mutate_check_work_dir_reuses_builds_and_restores_mtime(self):
+        import tempfile
+        mutate_script = HOOK.parent / "mutate-check.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            root_tmp = Path(tmp)
+            repo = root_tmp / "repo"
+            repo.mkdir()
+            (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+            (repo / "test_calc.py").write_text(
+                "import pathlib, unittest, calc\n"
+                "class T(unittest.TestCase):\n"
+                "    def test_add(self):\n"
+                "        pathlib.Path('build/ran.marker').write_text('ok', encoding='utf-8')\n"
+                "        self.assertEqual(calc.add(2, 3), 5)\n",
+                encoding="utf-8",
+            )
+            for git_args in (["init", "-q"], ["config", "core.autocrlf", "false"], ["add", "-A"]):
+                subprocess.run(["git", "-C", str(repo), *git_args], check=True, capture_output=True)
+            work_dir = root_tmp / "work"
+            (work_dir / "tree" / "build").mkdir(parents=True)
+            (work_dir / "tree" / "packages").mkdir(parents=True)
+            (work_dir / "tree" / "build" / "kept.bin").write_text("obj", encoding="utf-8")
+            (work_dir / "tree" / "packages" / "kept.txt").write_text("pkg", encoding="utf-8")
+            stale_old = work_dir / "tree" / "obsolete.py"
+            stale_old.write_text("# stale\n", encoding="utf-8")
+            (work_dir / "staged-files.json").write_text('["obsolete.py"]', encoding="utf-8")
+
+            first = subprocess.run(
+                [sys.executable, str(mutate_script), "--root", str(repo),
+                 "--work-dir", str(work_dir), "--file", "calc.py",
+                 "--old", "return a + b", "--new", "return a - b", "--",
+                 sys.executable, "-m", "unittest", "test_calc"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertIn("OUTCOME: KILLED", first.stdout)
+            staged_calc = work_dir / "tree" / "calc.py"
+            self.assertEqual(staged_calc.read_bytes(), (repo / "calc.py").read_bytes())
+            self.assertTrue((work_dir / "tree" / "build" / "kept.bin").is_file())
+            self.assertTrue((work_dir / "tree" / "build" / "ran.marker").is_file())
+            self.assertTrue((work_dir / "tree" / "packages" / "kept.txt").is_file())
+            self.assertFalse(stale_old.exists())
+            mtime_after_first = staged_calc.stat().st_mtime
+
+            second = subprocess.run(
+                [sys.executable, str(mutate_script), "--root", str(repo),
+                 "--work-dir", str(work_dir), "--file", "calc.py",
+                 "--old", "return a + b", "--new", "return a * b", "--",
+                 sys.executable, "-m", "unittest", "test_calc"],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertIn("OUTCOME: KILLED", second.stdout)
+            self.assertEqual(staged_calc.read_bytes(), (repo / "calc.py").read_bytes())
+            self.assertGreater(staged_calc.stat().st_mtime, mtime_after_first)
+            self.assertTrue((work_dir / "tree" / "build" / "kept.bin").is_file())
 
 if __name__ == "__main__":
     unittest.main()

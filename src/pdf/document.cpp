@@ -1255,6 +1255,12 @@ PdfResult<std::unique_ptr<Document>> Document::open_memory(
 }
 
 PdfResult<std::unique_ptr<Document>> Document::open_memory(
+	std::vector<uint8_t>&& bytes) noexcept
+{
+	return open_from_owned_bytes(std::move(bytes), std::nullopt, /*allow_unauthenticated=*/false);
+}
+
+PdfResult<std::unique_ptr<Document>> Document::open_memory(
 	std::span<const uint8_t> bytes,
 	std::string_view password) noexcept
 {
@@ -1270,6 +1276,13 @@ PdfResult<std::unique_ptr<Document>> Document::open_memory(
 			ErrorCode::InternalError,
 			"Unexpected exception while copying PDF memory buffer");
 	}
+}
+
+PdfResult<std::unique_ptr<Document>> Document::open_memory(
+	std::vector<uint8_t>&& bytes,
+	std::string_view password) noexcept
+{
+	return open_from_owned_bytes(std::move(bytes), password, /*allow_unauthenticated=*/false);
 }
 
 PdfResult<std::unique_ptr<Document>> Document::authenticate(
@@ -1679,23 +1692,145 @@ namespace {
 
 } // namespace
 
+void ResolvedObjectCache::init_containers()
+{
+	buckets_.assign(64u, Bucket{});
+	nodes_.reserve(32u);
+}
+
+size_t ResolvedObjectCache::bucket_find(uint64_t key) const noexcept
+{
+	const size_t mask = buckets_.size() - 1u;
+	size_t slot = static_cast<size_t>(sighting_hash(key, seed_)) & mask;
+	for (;;) {
+		const Bucket& b = buckets_[slot];
+		if (b.node == kNullIndex) {
+			return buckets_.size();
+		}
+		if (b.node < kBucketTombstone && b.key == key) {
+			return slot;
+		}
+		slot = (slot + 1u) & mask;
+	}
+}
+
+size_t ResolvedObjectCache::bucket_insert_slot(uint64_t key) const noexcept
+{
+	const size_t mask = buckets_.size() - 1u;
+	size_t slot = static_cast<size_t>(sighting_hash(key, seed_)) & mask;
+	size_t first_tombstone = buckets_.size();
+	for (;;) {
+		const Bucket& b = buckets_[slot];
+		if (b.node == kNullIndex) {
+			return first_tombstone != buckets_.size() ? first_tombstone : slot;
+		}
+		if (b.node == kBucketTombstone && first_tombstone == buckets_.size()) {
+			first_tombstone = slot;
+		}
+		slot = (slot + 1u) & mask;
+	}
+}
+
+std::vector<ResolvedObjectCache::Bucket> ResolvedObjectCache::build_rehashed_buckets(size_t new_capacity) const
+{
+	std::vector<Bucket> next(new_capacity, Bucket{});
+	const size_t mask = new_capacity - 1u;
+	for (const Bucket& b : buckets_) {
+		if (b.node >= kBucketTombstone) {
+			continue;
+		}
+		size_t slot = static_cast<size_t>(sighting_hash(b.key, seed_)) & mask;
+		while (next[slot].node != kNullIndex) {
+			slot = (slot + 1u) & mask;
+		}
+		next[slot] = b;
+	}
+	return next;
+}
+
+void ResolvedObjectCache::bucket_erase(uint64_t key) noexcept
+{
+	const size_t slot = bucket_find(key);
+	if (slot == buckets_.size()) {
+		return;
+	}
+	buckets_[slot].node = kBucketTombstone;
+	--count_;
+	++tombstones_;
+}
+
+void ResolvedObjectCache::link_front(Tier& tier, uint32_t idx) noexcept
+{
+	Node& node = nodes_[idx];
+	node.prev = kNullIndex;
+	node.next = tier.head;
+	if (tier.head != kNullIndex) {
+		nodes_[tier.head].prev = idx;
+	} else {
+		tier.tail = idx;
+	}
+	tier.head = idx;
+	++tier.count;
+}
+
+void ResolvedObjectCache::unlink(Tier& tier, uint32_t idx) noexcept
+{
+	Node& node = nodes_[idx];
+	if (node.prev != kNullIndex) {
+		nodes_[node.prev].next = node.next;
+	} else {
+		tier.head = node.next;
+	}
+	if (node.next != kNullIndex) {
+		nodes_[node.next].prev = node.prev;
+	} else {
+		tier.tail = node.prev;
+	}
+	node.prev = kNullIndex;
+	node.next = kNullIndex;
+	--tier.count;
+}
+
+void ResolvedObjectCache::evict_tail(Tier& tier) noexcept
+{
+	if (tier.tail == kNullIndex) {
+		return;
+	}
+	const uint32_t idx = tier.tail;
+	Node& node = nodes_[idx];
+	unlink(tier, idx);
+	tier.bytes -= node.bytes;
+	bucket_erase(node.key);
+	node.value.reset();
+	node.key = 0u;
+	node.bytes = 0u;
+	node.main = false;
+	node.next = free_head_;
+	free_head_ = idx;
+}
+
 std::shared_ptr<const PdfValue> ResolvedObjectCache::find(uint64_t key) noexcept
 {
-	const auto it = slots_.find(key);
-	if (it == slots_.end()) {
+	const size_t slot = bucket_find(key);
+	if (slot == buckets_.size()) {
 		return nullptr;
 	}
-	Slot& slot = it->second;
-	if (slot.main) {
-		main_.splice(main_.begin(), main_, slot.entry); // relinks the node: no allocation, iterators stay valid
+	const uint32_t idx = buckets_[slot].node;
+	Node& node = nodes_[idx];
+	if (node.main) {
+		if (idx != main_.head) {
+			unlink(main_, idx);
+			link_front(main_, idx);
+		}
 	} else {
 		// Asked for again while in the window: it moves to the main cache.
-		window_bytes_ -= slot.entry->bytes;
-		main_bytes_ += slot.entry->bytes;
-		main_.splice(main_.begin(), window_, slot.entry);
-		slot.main = true;
+		unlink(window_, idx);
+		window_.bytes -= node.bytes;
+		main_.bytes += node.bytes;
+		node.main = true;
+		link_front(main_, idx);
 	}
-	std::shared_ptr<const PdfValue> value = slot.entry->value;
+	std::shared_ptr<const PdfValue> value = node.value;
 	evict();
 	return value;
 }
@@ -1708,6 +1843,13 @@ ResolvedObjectCache::ResolvedObjectCache()
 	seed_ = sighting_hash(reinterpret_cast<uintptr_t>(this) ^
 			static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
 		made.fetch_add(1u, std::memory_order_relaxed));
+	init_containers();
+}
+
+ResolvedObjectCache::ResolvedObjectCache(uint64_t seed)
+	: seed_(seed)
+{
+	init_containers();
 }
 
 uint64_t ResolvedObjectCache::sighting_hash(uint64_t key, uint64_t seed) noexcept
@@ -1721,23 +1863,42 @@ uint64_t ResolvedObjectCache::sighting_hash(uint64_t key, uint64_t seed) noexcep
 size_t ResolvedObjectCache::entry_bytes(const PdfValue& value) noexcept
 {
 	// The shared value and its control block (one make_shared allocation, counted at twice the value for the block's
-	// counts and alignment), the list node (two links and the entry), and the map node (two links and the slot); the
-	// map's buckets are charged as allocated, in container_bytes().
-	return value.heap_bytes() + 2u * sizeof(PdfValue) + sizeof(Entry) + 2u * sizeof(void*) +
-		sizeof(std::pair<const uint64_t, Slot>) + 2u * sizeof(void*);
+	// counts and alignment); node and bucket pools are charged directly in container_bytes().
+	return value.heap_bytes() + 2u * sizeof(PdfValue);
 }
 
 size_t ResolvedObjectCache::container_bytes() const noexcept
 {
-	// MSVC's unordered_map keeps a vector of two iterators per bucket and a list with a sentinel node; each list has a
-	// sentinel too; a Debug build adds a proxy per container (two for the map).
+	// Node pool and flat open-addressed bucket vector (capacity never shrunk by eviction); a Debug build adds one
+	// container proxy per vector (main/window pools, buckets, and the two sighting vectors).
 #if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL != 0
 	constexpr size_t proxy = sizeof(std::_Container_proxy);
 #else
 	constexpr size_t proxy = 0u;
 #endif
-	return slots_.bucket_count() * 2u * sizeof(void*) + (sizeof(std::pair<const uint64_t, Slot>) + 2u * sizeof(void*)) +
-		2u * (sizeof(Entry) + 2u * sizeof(void*)) + 6u * proxy;
+	return nodes_.capacity() * sizeof(Node) + buckets_.capacity() * sizeof(Bucket) + 4u * proxy;
+}
+
+bool ResolvedObjectCache::has_sighting(uint64_t key) const noexcept
+{
+	if (key == 0u || sightings_[0].empty()) {
+		return false;
+	}
+	const uint64_t h = sighting_hash(key, seed_);
+	const auto probe_readonly = [&](const std::vector<uint64_t>& table) noexcept -> bool {
+		size_t at = static_cast<size_t>(h) & (kSightingSlots - 1u);
+		for (size_t step = 0; step < kMaxSightingProbes; ++step) {
+			if (table[at] == 0u) {
+				return false;
+			}
+			if (table[at] == key) {
+				return true;
+			}
+			at = (at + 1u) & (kSightingSlots - 1u);
+		}
+		return false;
+	};
+	return probe_readonly(sightings_[current_]) || probe_readonly(sightings_[current_ ^ 1u]);
 }
 
 bool ResolvedObjectCache::seen_before(uint64_t key)
@@ -1789,27 +1950,19 @@ bool ResolvedObjectCache::seen_before(uint64_t key)
 
 void ResolvedObjectCache::evict() noexcept
 {
-	while (window_.size() > kMaxWindowEntries || window_bytes_ > kMaxWindowBytes) {
-		const Entry& oldest = window_.back();
-		window_bytes_ -= oldest.bytes;
-		slots_.erase(oldest.key);
-		window_.pop_back();
+	while (window_.count > kMaxWindowEntries || window_.bytes > kMaxWindowBytes) {
+		evict_tail(window_);
 	}
 	// Both tiers together (and the sighting tables) within the totals: the main cache's least recently used entries go
 	// first, then the window's.
-	while (slots_.size() > kMaxObjectCacheEntries || bytes() > kMaxObjectCacheBytes) {
-		List& from = main_.empty() ? window_ : main_;
-		size_t& bytes = main_.empty() ? window_bytes_ : main_bytes_;
-		const Entry& oldest = from.back();
-		bytes -= oldest.bytes;
-		slots_.erase(oldest.key);
-		from.pop_back();
+	while ((main_.count > 0u || window_.count > 0u) && (count_ > kMaxObjectCacheEntries || bytes() > kMaxObjectCacheBytes)) {
+		evict_tail(main_.count > 0u ? main_ : window_);
 	}
 }
 
 PdfResult<void> ResolvedObjectCache::insert(uint64_t key, std::shared_ptr<const PdfValue> value) noexcept
 {
-	if (value == nullptr || slots_.contains(key)) {
+	if (value == nullptr || bucket_find(key) != buckets_.size()) {
 		return {};
 	}
 	const PdfStream* stream = value->as_stream();
@@ -1817,28 +1970,84 @@ PdfResult<void> ResolvedObjectCache::insert(uint64_t key, std::shared_ptr<const 
 	if (bytes > kMaxObjectCacheBytes / 4u || (stream != nullptr && stream->raw_bytes.size() > kMaxCachedStreamBytes)) {
 		return {}; // too large to keep: the caller uses it once
 	}
-	bool main = false;
+	// Prepare every backing allocation before mutating sightings, nodes or buckets so OutOfMemory leaves the cache
+	// completely unchanged (strong exception guarantee). Keep sighting tables unallocated until the window fills,
+	// fills to its byte cap, or an entry bypasses the window: tiny PDFs then keep zero 256 KiB sighting tables.
+	constexpr size_t kSightingsBytes = 2u * kSightingSlots * sizeof(uint64_t);
+	const bool need_sightings = key != 0u && sightings_[0].empty() &&
+		(bytes > kMaxWindowBytes || window_.count >= kMaxWindowEntries || window_.bytes + bytes > kMaxWindowBytes ||
+			count_ >= kMaxObjectCacheEntries ||
+			main_.bytes + window_.bytes + container_bytes() + kSightingsBytes + bytes > kMaxObjectCacheBytes);
+	std::vector<uint64_t> init_s0;
+	std::vector<uint64_t> init_s1;
 	try {
-		main = seen_before(key);
-	} catch (const std::bad_alloc&) {
-		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory recording a resolved object");
-	}
-	if (!main && bytes > kMaxWindowBytes) {
-		return {}; // too large for the window: kept once it is asked for again
-	}
-	List& list = main ? main_ : window_;
-	try {
-		list.push_front(Entry{key, std::move(value), bytes});
-		try {
-			slots_.emplace(key, Slot{list.begin(), main});
-		} catch (...) {
-			list.pop_front();
-			throw;
+		if (need_sightings) {
+			init_s0.assign(kSightingSlots, 0u);
+			init_s1.assign(kSightingSlots, 0u);
+		}
+		const auto move_and_seed_sightings = [&]() {
+			sightings_[0] = std::move(init_s0);
+			sightings_[1] = std::move(init_s1);
+			for (uint32_t cur = window_.head; cur != kNullIndex; cur = nodes_[cur].next) {
+				(void)seen_before(nodes_[cur].key);
+			}
+			for (uint32_t cur = main_.head; cur != kNullIndex; cur = nodes_[cur].next) {
+				(void)seen_before(nodes_[cur].key);
+			}
+		};
+		if (!has_sighting(key) && bytes > kMaxWindowBytes) {
+			if (!init_s0.empty()) {
+				move_and_seed_sightings();
+			}
+			(void)seen_before(key);
+			return {}; // too large for the window: kept once it is asked for again
+		}
+		const bool need_nodes = free_head_ == kNullIndex && nodes_.size() == nodes_.capacity();
+		const bool need_rehash = (count_ + tombstones_ + 1u) * 4u > buckets_.size() * 3u;
+		std::vector<Node> next_nodes;
+		if (need_nodes) {
+			next_nodes.reserve(std::max<size_t>(32u, nodes_.capacity() * 2u));
+		}
+		std::vector<Bucket> next_buckets;
+		if (need_rehash) {
+			const size_t next_cap = count_ * 2u >= buckets_.size() ? buckets_.size() * 2u : buckets_.size();
+			next_buckets = build_rehashed_buckets(next_cap);
+		}
+		if (!init_s0.empty()) {
+			move_and_seed_sightings();
+		}
+		if (need_nodes) {
+			for (Node& n : nodes_) {
+				next_nodes.push_back(std::move(n));
+			}
+			nodes_ = std::move(next_nodes);
+		}
+		if (need_rehash) {
+			buckets_ = std::move(next_buckets);
+			tombstones_ = 0u;
 		}
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory caching a resolved object");
 	}
-	(main ? main_bytes_ : window_bytes_) += bytes;
+	const bool main = !sightings_[0].empty() ? seen_before(key) : false;
+	uint32_t idx = kNullIndex;
+	if (free_head_ != kNullIndex) {
+		idx = free_head_;
+		free_head_ = nodes_[idx].next;
+		nodes_[idx] = Node{key, std::move(value), bytes, kNullIndex, kNullIndex, main};
+	} else {
+		idx = static_cast<uint32_t>(nodes_.size());
+		nodes_.push_back(Node{key, std::move(value), bytes, kNullIndex, kNullIndex, main});
+	}
+	const size_t slot = bucket_insert_slot(key);
+	if (buckets_[slot].node == kBucketTombstone) {
+		--tombstones_;
+	}
+	buckets_[slot] = Bucket{key, idx};
+	++count_;
+	Tier& tier = main ? main_ : window_;
+	link_front(tier, idx);
+	tier.bytes += bytes;
 	evict();
 	return {};
 }
@@ -2633,7 +2842,8 @@ PdfResult<void> Document::load_document_structure()
 	// Every open level of the page tree keeps its /Kids array until its last kid is read, so the arrays on the stack
 	// share one budget of live traversal bytes, released as each level closes.
 	struct ActivePagesFrame {
-		PdfValue kids_val{};
+		std::shared_ptr<const PdfValue> kids_owner{};
+		const PdfArray* kids_arr{nullptr};
 		size_t next_index{0};
 		InheritedPageAttrs attrs{};
 		size_t depth{0};
@@ -2659,7 +2869,8 @@ PdfResult<void> Document::load_document_structure()
 
 		IndirectRef current_ref{};
 		std::vector<IndirectRef> node_hop_refs;
-		PdfValue resolved_node;
+		std::shared_ptr<const PdfValue> shared_node;
+		const PdfValue* resolved_node_ptr = nullptr;
 		if (const auto ref = node_val.as_ref()) {
 			current_ref = *ref;
 			if (!visited_page_nodes.insert(static_cast<int>(ref->obj_num)).second) {
@@ -2672,7 +2883,7 @@ PdfResult<void> Document::load_document_structure()
 					ref->gen_num);
 			}
 			node_hop_refs.reserve(kMaxIndirectRefDepth);
-			RECTO_PDF_TRY(PdfValue val, resolve_object_with_visited(*ref, node_hop_refs));
+			RECTO_PDF_TRY(shared_node, resolve_shared_with_visited(*ref, node_hop_refs));
 			for (size_t h = 1u; h < node_hop_refs.size(); ++h) {
 				if (!visited_page_nodes.insert(static_cast<int>(node_hop_refs[h].obj_num)).second) {
 					return make_doc_error(
@@ -2687,13 +2898,12 @@ PdfResult<void> Document::load_document_structure()
 			if (!node_hop_refs.empty()) {
 				current_ref = node_hop_refs.back();
 			}
-			resolved_node = std::move(val);
+			resolved_node_ptr = shared_node.get();
 		} else {
-			RECTO_PDF_TRY(PdfValue cloned_inline, node_val.deep_clone());
-			resolved_node = std::move(cloned_inline);
+			resolved_node_ptr = &node_val;
 		}
 
-		const PdfDict* node_dict = resolved_node.as_dict();
+		const PdfDict* node_dict = resolved_node_ptr->as_dict();
 		if (node_dict == nullptr) {
 			return make_doc_error(
 				ErrorCode::DamagedFormat,
@@ -2732,8 +2942,30 @@ PdfResult<void> Document::load_document_structure()
 					current_ref.obj_num,
 					current_ref.gen_num);
 			}
-			RECTO_PDF_TRY(PdfValue resolved_kids, resolve_value(*kids_val));
-			const PdfArray* kids_arr = resolved_kids.as_array();
+			std::shared_ptr<const PdfValue> resolved_kids_owner;
+			const PdfValue* resolved_kids_ptr = nullptr;
+			if (const auto kids_ref = kids_val->as_ref()) {
+				RECTO_PDF_TRY(resolved_kids_owner, resolve_object_shared(*kids_ref));
+				resolved_kids_ptr = resolved_kids_owner.get();
+			} else if (shared_node != nullptr) {
+				resolved_kids_owner = std::move(shared_node);
+				resolved_kids_ptr = kids_val;
+			} else {
+				RECTO_PDF_TRY(PdfValue cloned_kids, kids_val->deep_clone());
+				try {
+					auto holder = std::make_shared<const PdfValue>(std::move(cloned_kids));
+					resolved_kids_ptr = holder.get();
+					resolved_kids_owner = std::move(holder);
+				} catch (const std::bad_alloc&) {
+					return PdfError{
+						ErrorCode::OutOfMemory,
+						"Out of memory cloning inline /Pages /Kids array",
+						std::nullopt,
+						current_ref.obj_num,
+						current_ref.gen_num};
+				}
+			}
+			const PdfArray* kids_arr = resolved_kids_ptr->as_array();
 			if (kids_arr == nullptr) {
 				return make_doc_error(
 					ErrorCode::DamagedFormat,
@@ -2752,7 +2984,7 @@ PdfResult<void> Document::load_document_structure()
 					current_ref.obj_num,
 					current_ref.gen_num);
 			}
-			const size_t kids_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, resolved_kids, 0u);
+			const size_t kids_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, *resolved_kids_ptr, 0u);
 			if (kids_bytes > kMaxDecodedStreamBytes - live_page_kids_bytes) {
 				return make_doc_error(
 					ErrorCode::ResourceLimit,
@@ -2764,7 +2996,8 @@ PdfResult<void> Document::load_document_structure()
 			}
 			live_page_kids_bytes += kids_bytes;
 			return std::optional<ActivePagesFrame>(ActivePagesFrame{
-				std::move(resolved_kids),
+				std::move(resolved_kids_owner),
+				kids_arr,
 				0u,
 				std::move(current_attrs),
 				depth,
@@ -2791,7 +3024,7 @@ PdfResult<void> Document::load_document_structure()
 				}
 				if (const auto entry_ref = entry_v.as_ref();
 					entry_ref.has_value() && validated_page_entry_objs.insert(make_ref_cache_key(*entry_ref)).second) {
-					RECTO_PDF_TRY(PdfValue resolved_entry, resolve_object(*entry_ref));
+					RECTO_PDF_TRY(std::shared_ptr<const PdfValue> resolved_entry, resolve_object_shared(*entry_ref));
 					(void)resolved_entry;
 				}
 			}
@@ -2818,7 +3051,7 @@ PdfResult<void> Document::load_document_structure()
 
 			// Each page keeps its own dictionary, so the copies are charged to one budget before they are made: a page
 			// count under the cap can otherwise retain gigabytes of direct page values inflated from object streams.
-			const size_t page_dict_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, resolved_node, 0u);
+			const size_t page_dict_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, *resolved_node_ptr, 0u);
 			if (page_dict_bytes > kMaxTotalPageDictBytes - total_retained_page_dict_bytes) {
 				return make_doc_error(
 					ErrorCode::ResourceLimit,
@@ -2892,7 +3125,7 @@ PdfResult<void> Document::load_document_structure()
 	}
 
 	while (!page_stack.empty()) {
-		const PdfArray* top_kids = page_stack.back().kids_val.as_array();
+		const PdfArray* top_kids = page_stack.back().kids_arr;
 		if (top_kids == nullptr || page_stack.back().next_index >= top_kids->size()) {
 			live_page_kids_bytes -= page_stack.back().kids_bytes;
 			page_stack.pop_back();

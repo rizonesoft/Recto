@@ -378,16 +378,17 @@ private:
 			Parser& parser = *frames_[top].parser; // owned by the frame, so it stays put while frames are pushed
 			Lexer& lexer = parser.lexer();
 			const size_t before = lexer.position();
-			auto peeked = lexer.peek_token();
-			if (!peeked.has_value()) {
-				if (fatal(peeked.error())) {
-					return peeked.error();
+			auto peeked_ptr = lexer.peek_token_ptr();
+			if (!peeked_ptr.has_value()) {
+				if (fatal(peeked_ptr.error())) {
+					return peeked_ptr.error();
 				}
 				// A token the lexer cannot read: the operator it belongs to is skipped, and reading resumes past it.
 				drop_operands(frames_[top].operands);
 				resync(lexer, before);
 				continue;
 			}
+			const Token* peeked = peeked_ptr.value();
 			if (peeked->kind == TokenKind::Eof) {
 				RECTO_PDF_RETURN_IF_ERROR(end_frame());
 				continue;
@@ -617,13 +618,14 @@ private:
 		InlineEntries entries;
 		std::optional<size_t> data_start;
 		for (size_t pair = 0; pair <= kMaxInlineEntries; ++pair) {
-			auto peeked = lexer.peek_token();
-			if (!peeked.has_value()) {
-				if (fatal(peeked.error())) {
-					return peeked.error();
+			auto peeked_ptr = lexer.peek_token_ptr();
+			if (!peeked_ptr.has_value()) {
+				if (fatal(peeked_ptr.error())) {
+					return peeked_ptr.error();
 				}
 				break;
 			}
+			const Token* peeked = peeked_ptr.value();
 			if (peeked->kind == TokenKind::Eof) {
 				return {};
 			}

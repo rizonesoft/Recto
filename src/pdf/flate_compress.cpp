@@ -456,6 +456,12 @@ public:
 		, prev_(kWindow, uint16_t{0})
 	{
 		symbols_.resize(kBlockSymbols);
+		in_data_ = input_.data();
+		in_size_ = input_.size();
+		head3_ptr_ = head3_.data();
+		head_ptr_ = head_.data();
+		prev_ptr_ = prev_.data();
+		sym_ptr_ = symbols_.data();
 	}
 
 	void run()
@@ -494,10 +500,10 @@ private:
 	// The 3-byte and 4-byte hashes at `p`, which has at least three bytes after it.
 	[[nodiscard]] Hashes hashes_at(size_t p) const noexcept
 	{
-		const uint8_t* d = input_.data() + p;
+		const uint8_t* d = in_data_ + p;
 		uint32_t v4 = 0;
 		uint32_t v3 = 0;
-		if (p + 4u <= input_.size()) {
+		if (p + 4u <= in_size_) {
 			std::memcpy(&v4, d, 4u); // one load gives both: the 3-byte hash is the low three bytes
 			v3 = v4 & 0x00FF'FFFFu;
 		} else {
@@ -508,7 +514,7 @@ private:
 
 	void insert(size_t p) noexcept
 	{
-		if (p + kMinMatch <= input_.size()) {
+		if (p + kMinMatch <= in_size_) {
 			insert(p, hashes_at(p));
 		}
 	}
@@ -516,18 +522,18 @@ private:
 	void insert(size_t p, Hashes h) noexcept
 	{
 		if (params_.three_byte) {
-			head3_[h.h3] = static_cast<uint32_t>(p);
+			head3_ptr_[h.h3] = static_cast<uint32_t>(p);
 		}
-		if (p + 4u > input_.size()) {
-			prev_[p & kWindowMask] = 0u;
+		if (p + 4u > in_size_) {
+			prev_ptr_[p & kWindowMask] = 0u;
 			return;
 		}
 		// The link back to the previous position with this hash, or 0: an empty head (`kNoPosition`) makes the
 		// distance wrap past the window, so one comparison covers both.
-		const uint32_t old = head_[h.h4];
+		const uint32_t old = head_ptr_[h.h4];
 		const size_t distance = p - static_cast<size_t>(old);
-		prev_[p & kWindowMask] = static_cast<uint16_t>(distance <= kWindow ? distance : 0u);
-		head_[h.h4] = static_cast<uint32_t>(p);
+		prev_ptr_[p & kWindowMask] = static_cast<uint16_t>(distance <= kWindow ? distance : 0u);
+		head_ptr_[h.h4] = static_cast<uint32_t>(p);
 	}
 
 	// Common length of `a` and `b` from `from`, up to `max_len`: eight bytes at a time while eight remain.
@@ -555,21 +561,21 @@ private:
 	// candidate counts as a step.
 	[[nodiscard]] std::pair<size_t, size_t> longest_match(size_t p, size_t beat, Hashes h) noexcept
 	{
-		const size_t max_len = std::min(kMaxMatch, input_.size() - p);
+		const size_t max_len = std::min(kMaxMatch, in_size_ - p);
 		size_t best = std::max(beat, kMinMatch - 1u);
 		size_t best_dist = 0;
 		if (best >= max_len) {
 			return {0u, 0u};
 		}
-		const uint8_t* const base = input_.data();
+		const uint8_t* const base = in_data_;
 		const uint8_t* const b = base + p;
-		const uint16_t* const prev = prev_.data();
+		const uint16_t* const prev = prev_ptr_;
 		const size_t limit = p > kWindow ? p - kWindow : 0u; // the oldest position a distance can reach
 		// A match already good enough is worth a shorter search for a better one (as zlib's good_length).
 		const uint32_t chain = params_.good != 0u && beat >= params_.good ? params_.chain / 4u : params_.chain;
 		uint32_t steps = 0;
 		if (params_.three_byte && best < kMinMatch) {
-			const uint32_t cand3 = head3_[h.h3];
+			const uint32_t cand3 = head3_ptr_[h.h3];
 			++steps;
 			if (cand3 != kNoPosition && cand3 >= limit) {
 				const uint8_t* a = base + cand3;
@@ -579,12 +585,12 @@ private:
 				}
 			}
 		}
-		if (p + 4u <= input_.size() && best < max_len && !(best >= params_.nice)) {
+		if (p + 4u <= in_size_ && best < max_len && !(best >= params_.nice)) {
 			uint8_t end0 = b[best - 1u];
 			uint8_t end1 = b[best];
 			uint32_t first4 = 0;
 			std::memcpy(&first4, b, 4u);
-			uint32_t cand = head_[h.h4];
+			uint32_t cand = head_ptr_[h.h4];
 			while (cand != kNoPosition && cand >= limit && steps < chain) {
 				++steps;
 				const uint8_t* a = base + cand;
@@ -623,25 +629,25 @@ private:
 	// The block's symbols: a buffer of `kBlockSymbols` filled from the front; the parsers stop before it is full.
 	void literal(size_t p) noexcept
 	{
-		symbols_[symbol_count_++] = {input_[p], 0u};
+		sym_ptr_[symbol_count_++] = {in_data_[p], 0u};
 	}
 
 	void match(size_t len, size_t dist) noexcept
 	{
-		symbols_[symbol_count_++] = {static_cast<uint16_t>(len), static_cast<uint16_t>(dist)};
+		sym_ptr_[symbol_count_++] = {static_cast<uint16_t>(len), static_cast<uint16_t>(dist)};
 	}
 
 	[[nodiscard]] std::span<const Symbol> block_symbols() const noexcept
 	{
-		return {symbols_.data(), symbol_count_};
+		return {sym_ptr_, symbol_count_};
 	}
 
 	// Greedy parsing (`Fast`): take the longest match at each position, inserting the positions it covers.
 	[[nodiscard]] size_t parse_greedy(size_t p)
 	{
-		while (p < input_.size() && symbol_count_ < kBlockSymbols) {
+		while (p < in_size_ && symbol_count_ < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
-			if (p + kMinMatch <= input_.size()) {
+			if (p + kMinMatch <= in_size_) {
 				const Hashes h = hashes_at(p);
 				found = longest_match(p, 0u, h);
 				insert(p, h);
@@ -668,9 +674,9 @@ private:
 		bool held = false;    // a literal or match is pending at p - 1
 		size_t held_len = 0;  // its match length (0: none)
 		size_t held_dist = 0;
-		while (p < input_.size() && symbol_count_ + 1u < kBlockSymbols) {
+		while (p < in_size_ && symbol_count_ + 1u < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
-			if (p + kMinMatch <= input_.size()) {
+			if (p + kMinMatch <= in_size_) {
 				const Hashes h = hashes_at(p);
 				if (!(held && held_len >= params_.lazy)) {
 					found = longest_match(p, held ? held_len : 0u, h);
@@ -895,6 +901,8 @@ private:
 	}
 
 	std::span<const uint8_t> input_;
+	const uint8_t* in_data_{nullptr};
+	size_t in_size_{0};
 	LevelParams params_;
 	std::vector<uint8_t>& out_;
 	BitWriter bits_;
@@ -903,6 +911,10 @@ private:
 	std::vector<uint32_t> head_;  // chain heads per 4-byte hash
 	std::vector<uint16_t> prev_;
 	std::vector<Symbol> symbols_{};
+	uint32_t* head3_ptr_{nullptr};
+	uint32_t* head_ptr_{nullptr};
+	uint16_t* prev_ptr_{nullptr};
+	Symbol* sym_ptr_{nullptr};
 	size_t symbol_count_{0};
 	DynamicTrees trees_{};
 	std::optional<size_t> stored_start_{};

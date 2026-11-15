@@ -456,51 +456,67 @@ PdfResult<std::shared_ptr<const IccProfile>> ColorProfileCache::default_cmyk(con
 			return impl_->default_cmyk;
 		}
 		// The first output intent with a four-component profile; the lookup is marked complete only when it completes.
+		struct SharedValue {
+			std::shared_ptr<const PdfValue> owner{};
+			const PdfValue* ptr{nullptr};
+
+			[[nodiscard]] bool has_value() const noexcept { return ptr != nullptr; }
+			const PdfValue* operator->() const noexcept { return ptr; }
+		};
+		const auto resolve_shared = [&](const PdfValue& v) -> PdfResult<SharedValue> {
+			const std::optional<IndirectRef> ref = v.as_ref();
+			if (!ref.has_value()) {
+				return SharedValue{nullptr, &v};
+			}
+			RECTO_PDF_TRY(std::shared_ptr<const PdfValue> resolved, document.resolve_object_shared(*ref));
+			const PdfValue* ptr = resolved.get();
+			return SharedValue{std::move(resolved), ptr};
+		};
 		if (const PdfValue* intents = document.catalog().get("OutputIntents")) {
-			auto list = document.resolve_value(*intents);
+			auto list = resolve_shared(*intents);
 			if (!list.has_value() && list.error().code == ErrorCode::OutOfMemory) {
 				return list.error();
 			}
-			if (list.has_value() && list->is_array()) {
+			if (list.has_value() && list->has_value() && (*list)->is_array()) {
 				// Bounded work: each profile stream is tried once however often the intents name it, at most
 				// `kMaxOutputIntentProfiles` distinct ones, their decoded bytes within the profile budget.
 				std::set<uint32_t> tried;
 				size_t examined = 0;
 				size_t decoded_bytes = 0;
-				for (const PdfValue& item : *list->as_array()) {
+				for (const PdfValue& item : *(*list)->as_array()) {
 					if (examined >= kMaxOutputIntentProfiles || decoded_bytes >= kMaxCachedProfileBytes) {
 						break;
 					}
-					auto intent = document.resolve_value(item);
+					auto intent = resolve_shared(item);
 					if (!intent.has_value() && intent.error().code == ErrorCode::OutOfMemory) {
 						return intent.error();
 					}
-					if (!intent.has_value() || !intent->is_dict()) {
+					if (!intent.has_value() || !intent->has_value() || !(*intent)->is_dict()) {
 						continue;
 					}
-					const PdfValue* dest = intent->as_dict()->get("DestOutputProfile");
+					const PdfValue* dest = (*intent)->as_dict()->get("DestOutputProfile");
 					const std::optional<IndirectRef> ref = dest != nullptr ? dest->as_ref() : std::nullopt;
 					if (ref.has_value() && !tried.insert(ref->obj_num).second) {
 						continue; // this profile was tried already
 					}
-					auto stream = dest != nullptr ? document.resolve_value(*dest) : PdfResult<PdfValue>(PdfValue{});
+					auto stream = dest != nullptr ? resolve_shared(*dest) : PdfResult<SharedValue>(SharedValue{});
 					if (!stream.has_value() && stream.error().code == ErrorCode::OutOfMemory) {
 						return stream.error();
 					}
-					if (!stream.has_value() || !stream->is_stream()) {
+					if (!stream.has_value() || !stream->has_value() || !(*stream)->is_stream()) {
 						continue;
 					}
-					const PdfValue* n_entry = stream->as_stream()->dict.get("N");
-					auto n_value = n_entry != nullptr ? document.resolve_value(*n_entry) : PdfResult<PdfValue>(PdfValue{});
+					const PdfValue* n_entry = (*stream)->as_stream()->dict.get("N");
+					auto n_value = n_entry != nullptr ? resolve_shared(*n_entry) : PdfResult<SharedValue>(SharedValue{});
 					if (!n_value.has_value() && n_value.error().code == ErrorCode::OutOfMemory) {
 						return n_value.error();
 					}
-					if (!n_value.has_value() || n_value->as_int() != 4) {
+					if (!n_value.has_value() || !n_value->has_value() || (*n_value)->as_int() != 4) {
 						continue;
 					}
 					++examined;
 					g_profile_decodes.fetch_add(1u);
-					auto bytes = document.decode_stream(*stream->as_stream(), kMaxIccProfileBytes);
+					auto bytes = document.decode_stream(*(*stream)->as_stream(), kMaxIccProfileBytes);
 					if (!bytes.has_value()) {
 						if (bytes.error().code == ErrorCode::OutOfMemory) {
 							return bytes.error();
@@ -946,13 +962,13 @@ template <typename Resolve>
 	if (v == nullptr) {
 		return std::nullopt;
 	}
-	const std::optional<PdfValue> r = resolve(*v);
+	const auto r = resolve(*v);
 	if (!r.has_value() || !r->is_array() || r->as_array()->size() != 3u) {
 		return std::nullopt;
 	}
 	std::array<double, 3> out{};
 	for (size_t i = 0; i < 3u; ++i) {
-		const std::optional<PdfValue> e = resolve((*r->as_array())[i]);
+		const auto e = resolve((*r->as_array())[i]);
 		const std::optional<double> n = e.has_value() ? e->as_number() : std::nullopt;
 		if (!n.has_value() || !std::isfinite(*n)) {
 			return std::nullopt;
@@ -969,13 +985,13 @@ template <size_t N, typename Resolve>
 	if (v == nullptr) {
 		return std::nullopt;
 	}
-	const std::optional<PdfValue> r = resolve(*v);
+	const auto r = resolve(*v);
 	if (!r.has_value() || !r->is_array() || r->as_array()->size() != N) {
 		return std::nullopt;
 	}
 	std::array<double, N> out{};
 	for (size_t i = 0; i < N; ++i) {
-		const std::optional<PdfValue> e = resolve((*r->as_array())[i]);
+		const auto e = resolve((*r->as_array())[i]);
 		const std::optional<double> n = e.has_value() ? e->as_number() : std::nullopt;
 		if (!n.has_value() || !std::isfinite(*n)) {
 			return std::nullopt;
@@ -987,16 +1003,21 @@ template <size_t N, typename Resolve>
 
 } // namespace
 
-std::optional<PdfValue> ColorSpaces::value_of(const PdfValue& value)
+ColorSpaces::ResolvedValue ColorSpaces::value_of(const PdfValue& value)
 {
-	auto r = document_.resolve_value(value);
+	const std::optional<IndirectRef> ref = value.as_ref();
+	if (!ref.has_value()) {
+		return {nullptr, &value};
+	}
+	auto r = document_.resolve_object_shared(*ref);
 	if (!r.has_value()) {
 		if (r.error().code == ErrorCode::OutOfMemory && !fatal_.has_value()) {
 			fatal_ = r.error();
 		}
-		return std::nullopt;
+		return {};
 	}
-	return std::move(*r);
+	const PdfValue* ptr = r->get();
+	return {std::move(*r), ptr};
 }
 
 ColorSpaces::ColorSpaces(const Document& document, const PdfDict* color_space_resources) noexcept
@@ -1102,7 +1123,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			if (std::find(visiting_.begin(), visiting_.end(), uint64_t{ref->obj_num}) != visiting_.end()) {
 				return ColorSpace::device(ColorSpaceKind::DeviceGray); // a cycle
 			}
-			auto resolved = document_.resolve_value(value);
+			auto resolved = document_.resolve_object_shared(*ref);
 			if (!resolved.has_value()) {
 				if (resolved.error().code == ErrorCode::OutOfMemory) {
 					return resolved.error();
@@ -1110,7 +1131,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				return std::shared_ptr<const ColorSpace>{};
 			}
 			visiting_.push_back(ref->obj_num);
-			auto out = resolve_at(*resolved, depth + 1u, defaults);
+			auto out = resolve_at(**resolved, depth + 1u, defaults);
 			visiting_.pop_back();
 			return out;
 		}
@@ -1138,7 +1159,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 		if (array == nullptr || array->empty()) {
 			return std::shared_ptr<const ColorSpace>{};
 		}
-		const std::optional<PdfValue> family_value = value_of((*array)[0]);
+		const ResolvedValue family_value = value_of((*array)[0]);
 		const std::optional<std::string_view> family = family_value.has_value() ? family_value->as_name() : std::nullopt;
 		if (!family.has_value()) {
 			return std::shared_ptr<const ColorSpace>{};
@@ -1146,9 +1167,9 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 		if (const std::optional<ColorSpaceKind> kind = device_named(*family)) {
 			return device_at(*kind, depth, defaults);
 		}
-		const auto second = [&]() -> std::optional<PdfValue> {
+		const auto second = [&]() -> ResolvedValue {
 			if (array->size() < 2u) {
-				return std::nullopt;
+				return {};
 			}
 			return value_of((*array)[1]);
 		};
@@ -1158,7 +1179,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 				: *family == "CalRGB"                        ? ColorSpaceKind::CalRGB
 															 : ColorSpaceKind::Lab;
 			const ColorSpaceKind fallback = kind == ColorSpaceKind::CalGray ? ColorSpaceKind::DeviceGray : ColorSpaceKind::DeviceRGB;
-			const std::optional<PdfValue> params_value = second();
+			const ResolvedValue params_value = second();
 			const PdfDict* dict = params_value.has_value() ? params_value->as_dict() : nullptr;
 			if (dict == nullptr) {
 				return ColorSpace::device(fallback);
@@ -1175,7 +1196,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			}
 			if (kind == ColorSpaceKind::CalGray) {
 				if (const PdfValue* g = dict->get("Gamma")) {
-					const std::optional<PdfValue> r = value_of(*g);
+					const ResolvedValue r = value_of(*g);
 					if (const std::optional<double> gamma = r.has_value() ? r->as_number() : std::nullopt; gamma.has_value() && *gamma > 0.0) {
 						p.gamma = {*gamma, *gamma, *gamma};
 					}
@@ -1202,14 +1223,14 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			if (ref.has_value() && std::find(visiting_.begin(), visiting_.end(), uint64_t{ref->obj_num}) != visiting_.end()) {
 				return ColorSpace::device(ColorSpaceKind::DeviceGray); // an /Alternate chain back to itself
 			}
-			const std::optional<PdfValue> stream_value = second();
+			const ResolvedValue stream_value = second();
 			const PdfStream* stream = stream_value.has_value() ? stream_value->as_stream() : nullptr;
 			if (stream == nullptr) {
 				return std::shared_ptr<const ColorSpace>{};
 			}
 			std::optional<int64_t> n_value;
 			if (const PdfValue* n_entry = stream->dict.get("N")) {
-				if (const std::optional<PdfValue> n_resolved = value_of(*n_entry)) {
+				if (const ResolvedValue n_resolved = value_of(*n_entry)) {
 					n_value = n_resolved->as_int();
 				}
 			}
@@ -1240,10 +1261,10 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::resolve_at(const PdfVa
 			}
 			std::vector<double> range;
 			if (const PdfValue* r = stream->dict.get("Range")) {
-				const std::optional<PdfValue> rv = value_of(*r);
+				const ResolvedValue rv = value_of(*r);
 				if (rv.has_value() && rv->is_array() && rv->as_array()->size() == 2u * n) {
 					for (const PdfValue& e : *rv->as_array()) {
-						const std::optional<PdfValue> element = value_of(e); // each element may be indirect too
+						const ResolvedValue element = value_of(e); // each element may be indirect too
 						const std::optional<double> x = element.has_value() ? element->as_number() : std::nullopt;
 						if (!x.has_value() || !std::isfinite(*x)) {
 							range.clear();
@@ -1351,7 +1372,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 	if (base == nullptr || base->kind() == ColorSpaceKind::Indexed) {
 		return unusable("Indexed colour space has no usable base");
 	}
-	const std::optional<PdfValue> hival_value = value_of(array[2]);
+	const ResolvedValue hival_value = value_of(array[2]);
 	std::optional<double> hival_number = hival_value.has_value() ? hival_value->as_number() : std::nullopt;
 	if (!hival_number.has_value() || !std::isfinite(*hival_number) || *hival_number < 0.0 ||
 		*hival_number != std::floor(*hival_number)) {
@@ -1365,11 +1386,11 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::indexed_at(const PdfAr
 	}
 	// A direct lookup is read where it is; an indirect one is resolved. Only the bytes a palette can use are copied.
 	const size_t needed = base->components() * (size_t{hival} + 1u);
-	std::optional<PdfValue> resolved_lookup;
+	ResolvedValue resolved_lookup;
 	if (array[3].is_ref()) {
 		resolved_lookup = value_of(array[3]);
 	}
-	const PdfValue* lookup_value = array[3].is_ref() ? (resolved_lookup.has_value() ? &*resolved_lookup : nullptr) : &array[3];
+	const PdfValue* lookup_value = array[3].is_ref() ? resolved_lookup.ptr : &array[3];
 	std::vector<uint8_t> lookup;
 	if (lookup_value != nullptr && lookup_value->as_string() != nullptr) {
 		const std::span<const uint8_t> bytes = lookup_value->as_string()->span();
@@ -1409,7 +1430,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 		return unusable("Separation or DeviceN colour space does not have its names, alternate and tint transform");
 	}
 	std::vector<std::string> names;
-	const std::optional<PdfValue> names_value = value_of(array[1]);
+	const ResolvedValue names_value = value_of(array[1]);
 	if (!device_n) {
 		const std::optional<std::string_view> name = names_value.has_value() ? names_value->as_name() : std::nullopt;
 		if (!name.has_value() || name->size() > kMaxColorantNameBytes) {
@@ -1422,7 +1443,7 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 			return unusable("DeviceN colour space does not name 1 to 32 colorants");
 		}
 		for (const PdfValue& element : *list) {
-			const std::optional<PdfValue> name_value = value_of(element);
+			const ResolvedValue name_value = value_of(element);
 			const std::optional<std::string_view> name = name_value.has_value() ? name_value->as_name() : std::nullopt;
 			if (!name.has_value() || name->size() > kMaxColorantNameBytes) {
 				return unusable("DeviceN colour space names a colorant with something other than a name of at most 127 bytes");
@@ -1445,14 +1466,14 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 		return ColorSpace::separation(std::move(names.front()), std::move(alternate), std::move(tint));
 	}
 	ColorSpace::DeviceNAttributes attributes;
-	const std::optional<PdfValue> attributes_value = array.size() >= 5u ? value_of(array[4]) : std::nullopt;
+	const ResolvedValue attributes_value = array.size() >= 5u ? value_of(array[4]) : ResolvedValue{};
 	if (const PdfDict* dict = attributes_value.has_value() ? attributes_value->as_dict() : nullptr) {
 		if (const PdfValue* subtype = dict->get("Subtype")) {
-			const std::optional<PdfValue> v = value_of(*subtype);
+			const ResolvedValue v = value_of(*subtype);
 			attributes.nchannel = v.has_value() && v->as_name() == std::optional<std::string_view>("NChannel");
 		}
 		if (const PdfValue* colorants = dict->get("Colorants")) {
-			const std::optional<PdfValue> v = value_of(*colorants);
+			const ResolvedValue v = value_of(*colorants);
 			if (const PdfDict* map = v.has_value() ? v->as_dict() : nullptr) {
 				size_t examined = 0;
 				for (const auto& [name, entry] : *map) {
@@ -1461,10 +1482,10 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 					if (++examined > kMaxDeviceNColorants) {
 						break;
 					}
-					const std::optional<PdfValue> colorant = value_of(entry);
+					const ResolvedValue colorant = value_of(entry);
 					const PdfArray* colorant_array = colorant.has_value() ? colorant->as_array() : nullptr;
-					const std::optional<PdfValue> head =
-						colorant_array != nullptr && !colorant_array->empty() ? value_of((*colorant_array)[0]) : std::nullopt;
+					const ResolvedValue head =
+						colorant_array != nullptr && !colorant_array->empty() ? value_of((*colorant_array)[0]) : ResolvedValue{};
 					if (!head.has_value() || head->as_name() != std::optional<std::string_view>("Separation")) {
 						continue;
 					}
@@ -1477,19 +1498,19 @@ PdfResult<std::shared_ptr<const ColorSpace>> ColorSpaces::spot_at(
 			}
 		}
 		if (const PdfValue* process = dict->get("Process")) {
-			const std::optional<PdfValue> v = value_of(*process);
+			const ResolvedValue v = value_of(*process);
 			if (const PdfDict* process_dict = v.has_value() ? v->as_dict() : nullptr) {
 				if (const PdfValue* space = process_dict->get("ColorSpace")) {
 					RECTO_PDF_TRY(attributes.process, resolve_at(*space, depth + 1u, defaults));
 				}
 				if (const PdfValue* components = process_dict->get("Components")) {
-					const std::optional<PdfValue> list = value_of(*components);
+					const ResolvedValue list = value_of(*components);
 					if (const PdfArray* names_list = list.has_value() ? list->as_array() : nullptr) {
 						// At most as many entries examined as a colour has components, each resolved once.
 						const size_t examined = std::min(names_list->size(), kMaxColorComponents);
 						for (size_t e = 0; e < examined; ++e) {
 							const PdfValue& element = (*names_list)[e];
-							const std::optional<PdfValue> name_value = value_of(element);
+							const ResolvedValue name_value = value_of(element);
 							const std::optional<std::string_view> name =
 								name_value.has_value() ? name_value->as_name() : std::nullopt;
 							if (name.has_value() && name->size() <= kMaxColorantNameBytes) {
