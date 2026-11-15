@@ -65,7 +65,23 @@ function Get-RectoCanonicalPath {
     param(
         [Parameter(Mandatory = $true)][string]$PathText
     )
-    return [System.IO.Path]::GetFullPath($PathText).TrimEnd('\', '/').ToLowerInvariant()
+    $probe = [System.IO.Path]::GetFullPath($PathText)
+    $tail = [System.Collections.Generic.List[string]]::new()
+    while (-not (Test-Path -LiteralPath $probe) -and $probe.Length -gt 0) {
+        $parent = Split-Path -Parent $probe
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $probe) {
+            break
+        }
+        $tail.Insert(0, (Split-Path -Leaf $probe))
+        $probe = $parent
+    }
+    if (Test-Path -LiteralPath $probe) {
+        $probe = (Get-Item -LiteralPath $probe -Force).FullName
+    }
+    foreach ($seg in $tail) {
+        $probe = Join-Path $probe $seg
+    }
+    return $probe.TrimEnd('\', '/').ToLowerInvariant()
 }
 
 function Get-RectoSccacheLocationPath {
@@ -147,6 +163,133 @@ function Test-RectoLocalTcpPortListening {
     }
 }
 
+function Get-RectoSccacheProbeTimeoutMs {
+    param(
+        [int]$DefaultMs = 3000
+    )
+    $raw = $env:RECTO_SCCACHE_PROBE_TIMEOUT_MS
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return $DefaultMs
+    }
+    [int]$parsed = 0
+    if (-not [int]::TryParse($raw.Trim(), [ref]$parsed) -or $parsed -lt 100 -or $parsed -gt 120000) {
+        throw "Invalid RECTO_SCCACHE_PROBE_TIMEOUT_MS='$raw'; expected integer milliseconds in 100..120000."
+    }
+    return $parsed
+}
+
+function Stop-RectoProcessTree {
+    param(
+        [System.Diagnostics.Process]$Process
+    )
+    if ($null -eq $Process) {
+        return
+    }
+    try {
+        if ($Process.HasExited) {
+            return
+        }
+        $taskkill = Join-Path $env:SystemRoot 'System32\taskkill.exe'
+        if (Test-Path -LiteralPath $taskkill -PathType Leaf) {
+            $kPsi = [System.Diagnostics.ProcessStartInfo]::new()
+            $kPsi.FileName = $taskkill
+            $kPsi.Arguments = "/PID $($Process.Id) /T /F"
+            $kPsi.WorkingDirectory = $env:SystemRoot
+            $kPsi.UseShellExecute = $false
+            $kPsi.CreateNoWindow = $true
+            $kPsi.RedirectStandardOutput = $true
+            $kPsi.RedirectStandardError = $true
+            $kProc = [System.Diagnostics.Process]::Start($kPsi)
+            if ($null -ne $kProc) {
+                try {
+                    [void]$kProc.WaitForExit(5000)
+                } finally {
+                    $kProc.Dispose()
+                }
+            }
+        }
+        if (-not $Process.HasExited) {
+            $Process.Kill()
+            [void]$Process.WaitForExit(2000)
+        }
+    } catch [System.InvalidOperationException] {
+        # Process exited concurrently while tearing down its tree.
+    } catch [System.ComponentModel.Win32Exception] {
+        # Access denied only when the target exited before OpenProcess/TerminateProcess completed.
+        if (-not $Process.HasExited) {
+            throw
+        }
+    }
+}
+
+function Invoke-RectoProcessBounded {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string]$Arguments,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][int]$TimeoutMs,
+        [hashtable]$Environment = @{}
+    )
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $FilePath
+    $psi.Arguments = $Arguments
+    $psi.WorkingDirectory = $WorkingDirectory
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = $script:SccacheUtf8NoBom
+    $psi.StandardErrorEncoding = $script:SccacheUtf8NoBom
+    foreach ($entry in $Environment.GetEnumerator()) {
+        $psi.EnvironmentVariables[[string]$entry.Key] = [string]$entry.Value
+    }
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if ($null -eq $proc) {
+        throw "Failed to launch process '$FilePath'."
+    }
+    try {
+        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+        $stderrTask = $proc.StandardError.ReadToEndAsync()
+        if (-not $proc.WaitForExit($TimeoutMs)) {
+            Stop-RectoProcessTree -Process $proc
+            $outText = if ($stdoutTask.Wait(1000)) { $stdoutTask.GetAwaiter().GetResult() } else { '' }
+            $errText = if ($stderrTask.Wait(1000)) { $stderrTask.GetAwaiter().GetResult() } else { '' }
+            return [pscustomobject]@{
+                TimedOut = $true
+                ExitCode = -1
+                StdOut = $outText
+                StdErr = $errText
+            }
+        }
+        $proc.WaitForExit()
+        return [pscustomobject]@{
+            TimedOut = $false
+            ExitCode = [int]$proc.ExitCode
+            StdOut = $stdoutTask.GetAwaiter().GetResult()
+            StdErr = $stderrTask.GetAwaiter().GetResult()
+        }
+    } finally {
+        $proc.Dispose()
+    }
+}
+
+function Invoke-RectoSccacheCommandBounded {
+    param(
+        [Parameter(Mandatory = $true)][string]$SccacheExe,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][int]$Port,
+        [int]$TimeoutMs = 0
+    )
+    $effectiveTimeout = if ($TimeoutMs -gt 0) { $TimeoutMs } else { Get-RectoSccacheProbeTimeoutMs }
+    return (Invoke-RectoProcessBounded `
+        -FilePath $SccacheExe `
+        -Arguments ($Arguments -join ' ') `
+        -WorkingDirectory $env:SystemRoot `
+        -TimeoutMs $effectiveTimeout `
+        -Environment @{ SCCACHE_SERVER_PORT = [string]$Port })
+}
+
 function Get-RectoSccacheServerInfo {
     param(
         [Parameter(Mandatory = $true)][string]$SccacheExe,
@@ -155,69 +298,57 @@ function Get-RectoSccacheServerInfo {
     if (-not (Test-RectoLocalTcpPortListening -Port $Port)) {
         return $null
     }
-    $prevPort = $env:SCCACHE_SERVER_PORT
-    $hadPort = Test-Path Env:SCCACHE_SERVER_PORT
-    $pushed = $false
-    try {
-        $env:SCCACHE_SERVER_PORT = [string]$Port
-        Push-Location $env:SystemRoot
-        $pushed = $true
-        $prevPref = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            $rawOut = & $SccacheExe --show-stats --stats-format json 2>$null
-            $exitCode = $LASTEXITCODE
-        } finally {
-            $ErrorActionPreference = $prevPref
-        }
-        if ($exitCode -ne 0) {
-            return [pscustomobject]@{
-                Port = $Port
-                IsSccache = $false
-                CachePath = ''
-                RawCacheLocation = "<non-sccache-listener exit=$exitCode>"
-                MaxCacheSize = -1L
-                Stats = $null
-            }
-        }
-        $joined = ($rawOut -join "`n").Trim()
-        if ([string]::IsNullOrWhiteSpace($joined)) {
-            return [pscustomobject]@{
-                Port = $Port
-                IsSccache = $false
-                CachePath = ''
-                RawCacheLocation = '<empty-listener-response>'
-                MaxCacheSize = -1L
-                Stats = $null
-            }
-        }
-        try {
-            $parsed = $joined | ConvertFrom-Json -ErrorAction Stop
-        } catch {
-            return [pscustomobject]@{
-                Port = $Port
-                IsSccache = $false
-                CachePath = ''
-                RawCacheLocation = '<invalid-json-listener>'
-                MaxCacheSize = -1L
-                Stats = $null
-            }
-        }
+    $probe = Invoke-RectoSccacheCommandBounded -SccacheExe $SccacheExe -Arguments @('--show-stats', '--stats-format', 'json') -Port $Port
+    if ($probe.TimedOut) {
         return [pscustomobject]@{
             Port = $Port
-            IsSccache = $true
-            CachePath = Get-RectoSccacheLocationPath -RawLocation ([string]$parsed.cache_location)
-            RawCacheLocation = [string]$parsed.cache_location
-            MaxCacheSize = if ($null -ne $parsed.max_cache_size) { [int64]$parsed.max_cache_size } else { -1L }
-            Stats = $parsed
+            IsSccache = $false
+            CachePath = ''
+            RawCacheLocation = '<non-sccache-listener timeout>'
+            MaxCacheSize = -1L
+            Stats = $null
         }
-    } finally {
-        if ($pushed) { Pop-Location }
-        if ($hadPort) {
-            $env:SCCACHE_SERVER_PORT = $prevPort
-        } elseif (Test-Path Env:SCCACHE_SERVER_PORT) {
-            Remove-Item Env:SCCACHE_SERVER_PORT
+    }
+    if ($probe.ExitCode -ne 0) {
+        return [pscustomobject]@{
+            Port = $Port
+            IsSccache = $false
+            CachePath = ''
+            RawCacheLocation = "<non-sccache-listener exit=$($probe.ExitCode)>"
+            MaxCacheSize = -1L
+            Stats = $null
         }
+    }
+    $joined = ([string]$probe.StdOut).Trim()
+    if ([string]::IsNullOrWhiteSpace($joined)) {
+        return [pscustomobject]@{
+            Port = $Port
+            IsSccache = $false
+            CachePath = ''
+            RawCacheLocation = '<empty-listener-response>'
+            MaxCacheSize = -1L
+            Stats = $null
+        }
+    }
+    try {
+        $parsed = $joined | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return [pscustomobject]@{
+            Port = $Port
+            IsSccache = $false
+            CachePath = ''
+            RawCacheLocation = '<invalid-json-listener>'
+            MaxCacheSize = -1L
+            Stats = $null
+        }
+    }
+    return [pscustomobject]@{
+        Port = $Port
+        IsSccache = $true
+        CachePath = Get-RectoSccacheLocationPath -RawLocation ([string]$parsed.cache_location)
+        RawCacheLocation = [string]$parsed.cache_location
+        MaxCacheSize = if ($null -ne $parsed.max_cache_size) { [int64]$parsed.max_cache_size } else { -1L }
+        Stats = $parsed
     }
 }
 
@@ -226,28 +357,7 @@ function Stop-RectoSccacheServerAtPort {
         [Parameter(Mandatory = $true)][string]$SccacheExe,
         [Parameter(Mandatory = $true)][int]$Port
     )
-    $prevPort = $env:SCCACHE_SERVER_PORT
-    $hadPort = Test-Path Env:SCCACHE_SERVER_PORT
-    $pushed = $false
-    try {
-        $env:SCCACHE_SERVER_PORT = [string]$Port
-        Push-Location $env:SystemRoot
-        $pushed = $true
-        $prevPref = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            & $SccacheExe --stop-server 2>$null | Out-Null
-        } finally {
-            $ErrorActionPreference = $prevPref
-        }
-    } finally {
-        if ($pushed) { Pop-Location }
-        if ($hadPort) {
-            $env:SCCACHE_SERVER_PORT = $prevPort
-        } elseif (Test-Path Env:SCCACHE_SERVER_PORT) {
-            Remove-Item Env:SCCACHE_SERVER_PORT
-        }
-    }
+    [void](Invoke-RectoSccacheCommandBounded -SccacheExe $SccacheExe -Arguments @('--stop-server') -Port $Port)
 }
 
 function Save-RectoFileAtomically {
@@ -282,7 +392,7 @@ function Build-RectoSccacheWrapper {
         if (-not (Test-Path -LiteralPath $overrideExe -PathType Leaf)) {
             throw "RECTO_SCCACHE_WRAPPER_EXE points to a missing file: $overrideExe"
         }
-        return $overrideExe
+        return (Get-Item -LiteralPath $overrideExe -Force).FullName
     }
 
     $cppPath = Join-Path $RepoRoot 'build\sccache-cl.cpp'
@@ -328,7 +438,7 @@ function Build-RectoSccacheWrapper {
         if ((Test-Path -LiteralPath $wrapperExe -PathType Leaf) -and (Test-Path -LiteralPath $stampPath -PathType Leaf)) {
             $recorded = [System.IO.File]::ReadAllText($stampPath, [System.Text.Encoding]::UTF8)
             if ($recorded.Trim() -eq $expectedStamp) {
-                return $wrapperExe
+                return (Get-Item -LiteralPath $wrapperExe -Force).FullName
             }
         }
 
@@ -338,27 +448,23 @@ function Build-RectoSccacheWrapper {
         try {
             $stageExe = Join-Path $stageDir 'sccache-cl.exe'
             $stageObj = Join-Path $stageDir 'sccache-cl.obj'
-            $stageCmd = Join-Path $stageDir 'build-wrapper.cmd'
-            $cmdBody = @(
-                '@echo off',
-                "call `"$vcvars`"",
-                'if errorlevel 1 exit /b %errorlevel%',
-                "cl.exe /nologo /std:c++23preview /EHsc /O2 /MT /W4 /WX /utf-8 /Fo`"$stageObj`" /Fe`"$stageExe`" `"$cppPath`"",
-                'exit /b %errorlevel%'
-            ) -join "`r`n"
-            [System.IO.File]::WriteAllText($stageCmd, $cmdBody, [System.Text.Encoding]::ASCII)
-
-            $prevPref = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try {
-                $buildOut = & cmd.exe /d /c $stageCmd 2>&1
-                $exitCode = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $prevPref
-            }
-            if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $stageExe -PathType Leaf)) {
-                $joinedOut = ($buildOut | Out-String).Trim()
-                throw "Uncached bootstrap compile of build\sccache-cl.cpp failed (exit $exitCode):`n$joinedOut"
+            $cmdExe = Join-Path $env:SystemRoot 'System32\cmd.exe'
+            $bootArgs = '/d /s /c "call "%RECTO_BOOT_VCVARS%" && cl.exe /nologo /std:c++23preview /EHsc /O2 /MT /W4 /WX /utf-8 /Fo"%RECTO_BOOT_OBJ%" /Fe"%RECTO_BOOT_EXE%" "%RECTO_BOOT_CPP%""'
+            $bootRes = Invoke-RectoProcessBounded `
+                -FilePath $cmdExe `
+                -Arguments $bootArgs `
+                -WorkingDirectory $stageDir `
+                -TimeoutMs 120000 `
+                -Environment @{
+                    RECTO_BOOT_VCVARS = $vcvars
+                    RECTO_BOOT_OBJ = $stageObj
+                    RECTO_BOOT_EXE = $stageExe
+                    RECTO_BOOT_CPP = $cppPath
+                }
+            if ($bootRes.TimedOut -or $bootRes.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $stageExe -PathType Leaf)) {
+                $joinedOut = ("$($bootRes.StdOut)`n$($bootRes.StdErr)").Trim()
+                $reason = if ($bootRes.TimedOut) { 'timed out after 120000 ms' } else { "exit $($bootRes.ExitCode)" }
+                throw "Uncached bootstrap compile of build\sccache-cl.cpp failed ($reason):`n$joinedOut"
             }
 
             if (Test-Path -LiteralPath $wrapperExe -PathType Leaf) {
@@ -379,7 +485,7 @@ function Build-RectoSccacheWrapper {
                 Remove-Item -LiteralPath $stageDir -Recurse -Force
             }
         }
-        return $wrapperExe
+        return (Get-Item -LiteralPath $wrapperExe -Force).FullName
     } finally {
         if ($acquired) {
             $mutex.ReleaseMutex()
@@ -483,27 +589,15 @@ function Initialize-RectoSccache {
 
     $env:SCCACHE_SERVER_PORT = [string]$selectedPort
     if ($needsStart) {
-        $pushed = $false
-        try {
-            Push-Location $env:SystemRoot
-            $pushed = $true
-            $prevPref = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try {
-                $startOut = & $sccacheExe --start-server 2>&1
-                $startExit = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $prevPref
+        $startRes = Invoke-RectoSccacheCommandBounded -SccacheExe $sccacheExe -Arguments @('--start-server') -Port $selectedPort -TimeoutMs 15000
+        if ($startRes.TimedOut -or $startRes.ExitCode -ne 0) {
+            # Another caller racing on the same port may already have started it; re-check before failing.
+            $raceCheck = Get-RectoSccacheServerInfo -SccacheExe $sccacheExe -Port $selectedPort
+            if ($null -eq $raceCheck -or -not $raceCheck.IsSccache) {
+                $joinedStart = ("$($startRes.StdOut)`n$($startRes.StdErr)").Trim()
+                $startStatus = if ($startRes.TimedOut) { 'timed out after 15000 ms' } else { "exit $($startRes.ExitCode)" }
+                throw "Failed to start sccache server on port $selectedPort ($startStatus):`n$joinedStart"
             }
-            if ($startExit -ne 0) {
-                # Another caller racing on the same port may already have started it; re-check before failing.
-                $raceCheck = Get-RectoSccacheServerInfo -SccacheExe $sccacheExe -Port $selectedPort
-                if ($null -eq $raceCheck -or -not $raceCheck.IsSccache) {
-                    throw "Failed to start sccache server on port $selectedPort (exit $startExit):`n$(($startOut | Out-String).Trim())"
-                }
-            }
-        } finally {
-            if ($pushed) { Pop-Location }
         }
     }
 

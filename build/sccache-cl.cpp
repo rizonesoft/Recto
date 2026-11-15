@@ -116,6 +116,21 @@ std::wstring to_full_path(const std::wstring& path) {
     return out;
 }
 
+std::wstring canonicalize_long_path(const std::wstring& path) {
+    const std::wstring full = to_full_path(path);
+    const DWORD needed = GetLongPathNameW(full.c_str(), nullptr, 0);
+    if (needed == 0) {
+        return full;
+    }
+    std::wstring out(needed, L'\0');
+    const DWORD written = GetLongPathNameW(full.c_str(), out.data(), needed);
+    if (written == 0 || written >= needed) {
+        return full;
+    }
+    out.resize(written);
+    return out;
+}
+
 std::wstring to_lower_ascii(std::wstring_view s) {
     std::wstring out(s);
     for (wchar_t& c : out) {
@@ -320,12 +335,13 @@ std::vector<std::wstring> tokenize_crt(std::wstring_view text) {
 }
 
 bool read_all_bytes(const std::wstring& path, std::vector<unsigned char>& out_bytes, std::wstring& out_err) {
-    HandleGuard h(CreateFileW(path.c_str(), GENERIC_READ,
+    const std::wstring canonical = canonicalize_long_path(path);
+    HandleGuard h(CreateFileW(canonical.c_str(), GENERIC_READ,
                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (!h.valid()) {
         const DWORD code = GetLastError();
-        out_err = L"failed to open '" + path + L"' for reading: " + format_win32_error(code);
+        out_err = L"failed to open '" + canonical + L"' for reading: " + format_win32_error(code);
         return false;
     }
 
@@ -437,11 +453,12 @@ bool expand_tokens_recursive(const std::vector<std::wstring>& raw_tokens,
 }
 
 bool touch_read(const std::wstring& path, std::wstring& out_err) {
-    HandleGuard h(CreateFileW(path.c_str(), GENERIC_READ,
+    const std::wstring canonical = canonicalize_long_path(path);
+    HandleGuard h(CreateFileW(canonical.c_str(), GENERIC_READ,
                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (!h.valid()) {
-        out_err = L"failed to record read access on '" + path + L"': " + format_win32_error(GetLastError());
+        out_err = L"failed to record read access on '" + canonical + L"': " + format_win32_error(GetLastError());
         return false;
     }
     unsigned char byte = 0;
@@ -451,18 +468,19 @@ bool touch_read(const std::wstring& path, std::wstring& out_err) {
 }
 
 bool touch_write(const std::wstring& path, std::wstring& out_err) {
-    HandleGuard h(CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+    const std::wstring canonical = canonicalize_long_path(path);
+    HandleGuard h(CreateFileW(canonical.c_str(), GENERIC_READ | GENERIC_WRITE,
                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (!h.valid()) {
-        out_err = L"failed to record write access on expected output '" + path + L"': " + format_win32_error(GetLastError());
+        out_err = L"failed to record write access on expected output '" + canonical + L"': " + format_win32_error(GetLastError());
         return false;
     }
     if (SetFilePointerEx(h.h, LARGE_INTEGER{}, nullptr, FILE_END) != FALSE) {
         DWORD written = 0;
         const char dummy = 0;
         if (WriteFile(h.h, &dummy, 0, &written, nullptr) == FALSE) {
-            out_err = L"failed to mark write access on '" + path + L"': " + format_win32_error(GetLastError());
+            out_err = L"failed to mark write access on '" + canonical + L"': " + format_win32_error(GetLastError());
             return false;
         }
     }
@@ -1181,7 +1199,7 @@ int replay_file_tracking(std::wstring_view raw_tail) {
         if (p.empty()) {
             return true;
         }
-        const std::wstring key = to_lower_ascii(to_full_path(p));
+        const std::wstring key = to_lower_ascii(canonicalize_long_path(p));
         if (!seen_reads.insert(key).second) {
             return true;
         }

@@ -1,4 +1,6 @@
 """Checks on build/build.ps1, the one-command build and test driver, and the ASan runtime staging it loads."""
+import contextlib
+import ctypes
 import hashlib
 import json
 import os
@@ -10,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -713,7 +716,9 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 self.assertIn(f"/p:CL_MPCount={exp_cl}", build_call)
                 self.assertIn("/p:UseSccache=true", build_call)
                 self.assertIn("/p:CLToolExe=sccache-cl.exe", build_call)
-                self.assertIn(f"/p:CLToolPath={stub_wrapper.parent}", build_call)
+                cl_tool_paths = [a.split("=", 1)[1] for a in build_call if a.startswith("/p:CLToolPath=")]
+                self.assertEqual(len(cl_tool_paths), 1, build_call)
+                self.assertEqual(Path(cl_tool_paths[0]).resolve(), stub_wrapper.parent.resolve())
                 self.assertIn(f"/p:MultiProcMaxCount={exp_total}", build_call)
                 self.assertIn("/nr:false", build_call)
 
@@ -1058,7 +1063,7 @@ class SccacheConfigurationTests(unittest.TestCase):
 
     @staticmethod
     def _deterministic_port(cache_dir: Path) -> int:
-        canonical = os.path.normpath(os.path.abspath(str(cache_dir))).rstrip("\\/").lower()
+        canonical = str(cache_dir.resolve()).rstrip("\\/").lower()
         digest = hashlib.sha256(canonical.encode("utf-8")).digest()
         return 42000 + (int.from_bytes(digest[:4], "little") % 20000)
 
@@ -1072,6 +1077,42 @@ class SccacheConfigurationTests(unittest.TestCase):
             env=env, capture_output=True, text=True, timeout=30,
             creationflags=windowless(),
         )
+
+    @classmethod
+    def _stop_owned_server(cls, sccache_exe: Path, port: int, allowed_root: Path) -> bool:
+        if not cls._port_listening(port):
+            return False
+        env = os.environ.copy()
+        env["SCCACHE_SERVER_PORT"] = str(port)
+        try:
+            res = subprocess.run(
+                [str(sccache_exe), "--show-stats", "--stats-format", "json"],
+                cwd=os.environ.get("SystemRoot", r"C:\Windows"),
+                env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=3, creationflags=windowless(),
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return False
+        if res.returncode != 0:
+            return False
+        try:
+            data = json.loads(res.stdout)
+        except ValueError:
+            return False
+        raw_loc = str(data.get("cache_location", "")).strip()
+        m = re.match(r'^Local disk:\s*"(.*)"$', raw_loc)
+        if not m:
+            return False
+        inner = m.group(1).replace("\\\\", "\\")
+        try:
+            cache_path = Path(inner).resolve()
+            owned = cache_path.is_relative_to(allowed_root.resolve())
+        except OSError:
+            return False
+        if not owned:
+            return False
+        cls._stop_server(sccache_exe, port)
+        return True
 
     @classmethod
     def _server_stats(cls, sccache_exe: Path, port: int) -> dict:
@@ -1111,8 +1152,6 @@ class SccacheConfigurationTests(unittest.TestCase):
     @staticmethod
     def _write_probe_project(ws: Path, props_path: Path, targets_path: Path, extra_cl: str = "", extra_props: str = "") -> Path:
         proj = ws / "recto-e2e-probe.vcxproj"
-        out_dir = ws / "out"
-        int_dir = ws / "obj"
         proj.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
@@ -1135,12 +1174,12 @@ class SccacheConfigurationTests(unittest.TestCase):
   {extra_props}
   <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
   <PropertyGroup>
-    <OutDir>{out_dir}\\</OutDir>
-    <IntDir>{int_dir}\\</IntDir>
+    <OutDir>$(ProjectDir)out\\</OutDir>
+    <IntDir>$(ProjectDir)obj\\</IntDir>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>{ws};%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ForcedIncludeFiles>forced_inc.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
       {extra_cl}
     </ClCompile>
@@ -1278,7 +1317,7 @@ class SccacheConfigurationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            ws = base / "repo"
+            ws = base / "José-日本語-repo"
             (ws / "build").mkdir(parents=True)
             for name in ("sccache.ps1", "sccache-cl.cpp", "tools.lock.json"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
@@ -1444,9 +1483,7 @@ Write-Output "WRAPPER=$w"
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             other_cache = base / "other-cache"
-            recto_cache = base / "recto-cache"
             other_cache.mkdir()
-            recto_cache.mkdir()
             stub_wrapper = base / "sccache-cl.exe"
             stub_wrapper.write_bytes(b"MZ")
 
@@ -1457,10 +1494,27 @@ Write-Output "WRAPPER=$w"
             recto_explicit_port = _free_localhost_port()
             while recto_explicit_port in (other_port, unused_probe_port):
                 recto_explicit_port = _free_localhost_port()
-            det_base = self._deterministic_port(recto_cache)
-            started_ports = {unused_probe_port, other_port, recto_explicit_port}
-            for offset in range(4):
-                started_ports.add(42000 + ((det_base - 42000 + offset) % 20000))
+
+            recto_cache: Path | None = None
+            p0 = p1 = p2 = 0
+            reserved = {unused_probe_port, other_port, recto_explicit_port}
+            for idx in range(256):
+                cand_cache = base / f"recto-cache-{idx}"
+                det_base = self._deterministic_port(cand_cache)
+                c0, c1, c2 = (42000 + ((det_base - 42000 + k) % 20000) for k in range(3))
+                if len({c0, c1, c2} | reserved) == 6 and not any(self._port_listening(p) for p in (c0, c1, c2)):
+                    recto_cache = cand_cache
+                    p0, p1, p2 = c0, c1, c2
+                    break
+            self.assertIsNotNone(recto_cache, "could not allocate 3 free consecutive deterministic sccache ports")
+            assert recto_cache is not None
+            recto_cache.mkdir()
+
+            cleanup_ports: set[int] = set()
+            hung_sock: socket.socket | None = None
+            accepted_conns: list[socket.socket] = []
+            stop_accept = threading.Event()
+            accept_thread: threading.Thread | None = None
 
             try:
                 # 0. Regression: probing an unused port must return $null without auto-starting a daemon.
@@ -1489,75 +1543,140 @@ Write-Output ("IS_NULL=" + ($null -eq $res))
                     timeout=30, creationflags=windowless(),
                 )
                 self.assertEqual(start_other.returncode, 0, start_other.stdout + start_other.stderr)
+                cleanup_ports.add(other_port)
 
-                # 1. With SCCACHE_SERVER_PORT unset, Initialize-RectoSccache picks an isolated port,
-                # enforces recto_cache + 10G, and leaves other_port (2G) completely untouched.
-                ps_init = f"""
+                # Bind a silent/hung non-sccache TCP listener on p0 and a live foreign 1G sccache daemon on p1.
+                hung_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                hung_sock.bind(("127.0.0.1", p0))
+                hung_sock.listen(4)
+                hung_sock.settimeout(0.2)
+
+                def accept_hung() -> None:
+                    assert hung_sock is not None
+                    while not stop_accept.is_set():
+                        try:
+                            conn, _ = hung_sock.accept()
+                            accepted_conns.append(conn)
+                        except TimeoutError:
+                            continue
+                        except OSError:
+                            break
+
+                accept_thread = threading.Thread(target=accept_hung, daemon=True)
+                accept_thread.start()
+
+                with tempfile.TemporaryDirectory() as foreign_tmp:
+                    foreign_cache = Path(foreign_tmp) / "foreign-cache"
+                    foreign_cache.mkdir()
+                    foreign_started = False
+                    try:
+                        foreign_env = os.environ.copy()
+                        foreign_env["SCCACHE_DIR"] = str(foreign_cache)
+                        foreign_env["SCCACHE_CACHE_SIZE"] = "1G"
+                        foreign_env["SCCACHE_SERVER_PORT"] = str(p1)
+                        start_foreign = subprocess.run(
+                            [str(sccache_exe), "--start-server"],
+                            cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
+                            env=foreign_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=30, creationflags=windowless(),
+                        )
+                        self.assertEqual(start_foreign.returncode, 0, start_foreign.stdout + start_foreign.stderr)
+                        foreign_started = True
+
+                        # 1. With SCCACHE_SERVER_PORT unset, Initialize-RectoSccache times out p0 quickly,
+                        # skips the foreign p1 server without disrupting it, binds p2 (10G), and leaves other_port (2G) untouched.
+                        ps_init = f"""
 . '{SCCACHE_PS1}'
 $info = Initialize-RectoSccache -RepoRoot '{ROOT}' -VsPath '{_vs_install_path()}'
 Write-Output ("PORT=" + $info.ServerPort)
 """
-                r_env = os.environ.copy()
-                r_env["SCCACHE_DIR"] = str(recto_cache)
-                r_env["SCCACHE_CACHE_SIZE"] = "10G"
-                r_env.pop("SCCACHE_SERVER_PORT", None)
-                r_env.pop("RECTO_SCCACHE_NO_DAEMON", None)
-                r_env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
-                run1 = subprocess.run(
-                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
-                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=60, creationflags=windowless(),
-                )
-                self.assertEqual(run1.returncode, 0, run1.stdout + run1.stderr)
-                m = re.search(r"PORT=(\d+)", run1.stdout)
-                self.assertIsNotNone(m, run1.stdout)
-                assert m is not None
-                derived_port = int(m.group(1))
-                started_ports.add(derived_port)
-                self.assertNotEqual(derived_port, other_port)
+                        r_env = os.environ.copy()
+                        r_env["SCCACHE_DIR"] = str(recto_cache)
+                        r_env["SCCACHE_CACHE_SIZE"] = "10G"
+                        r_env.pop("SCCACHE_SERVER_PORT", None)
+                        r_env.pop("RECTO_SCCACHE_NO_DAEMON", None)
+                        r_env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
+                        r_env["RECTO_SCCACHE_PROBE_TIMEOUT_MS"] = "600"
+                        run1 = subprocess.run(
+                            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                            cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=20, creationflags=windowless(),
+                        )
+                        self.assertEqual(run1.returncode, 0, run1.stdout + run1.stderr)
+                        m = re.search(r"PORT=(\d+)", run1.stdout)
+                        self.assertIsNotNone(m, run1.stdout)
+                        assert m is not None
+                        derived_port = int(m.group(1))
+                        cleanup_ports.update({unused_probe_port, other_port, recto_explicit_port, p0, p1, p2, derived_port})
+                        self.assertEqual(derived_port, p2)
+                        self.assertNotEqual(derived_port, other_port)
 
-                recto_stats = self._server_stats(sccache_exe, derived_port)
-                self.assertEqual(recto_stats["max_cache_size"], 10 * 1024 ** 3)
-                self.assertIn("recto-cache", recto_stats["cache_location"].lower())
+                        recto_stats = self._server_stats(sccache_exe, derived_port)
+                        self.assertEqual(recto_stats["max_cache_size"], 10 * 1024 ** 3)
+                        self.assertIn("recto-cache-", recto_stats["cache_location"].lower())
 
-                other_stats = self._server_stats(sccache_exe, other_port)
-                self.assertEqual(other_stats["max_cache_size"], 2 * 1024 ** 3)
-                self.assertIn("other-cache", other_stats["cache_location"].lower())
+                        foreign_stats = self._server_stats(sccache_exe, p1)
+                        self.assertEqual(foreign_stats["max_cache_size"], 1024 ** 3)
+                        self.assertIn("foreign-cache", foreign_stats["cache_location"].lower())
 
-                # 2. A same-cache server running with wrong size (512M) on Recto's explicit port is restarted to 10G.
-                wrong_env = os.environ.copy()
-                wrong_env["SCCACHE_DIR"] = str(recto_cache)
-                wrong_env["SCCACHE_CACHE_SIZE"] = "512M"
-                wrong_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
-                start_wrong = subprocess.run(
-                    [str(sccache_exe), "--start-server"],
-                    cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
-                    env=wrong_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=30, creationflags=windowless(),
-                )
-                self.assertEqual(start_wrong.returncode, 0, start_wrong.stdout + start_wrong.stderr)
-                r_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
-                run2 = subprocess.run(
-                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
-                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=60, creationflags=windowless(),
-                )
-                self.assertEqual(run2.returncode, 0, run2.stdout + run2.stderr)
-                self.assertEqual(self._server_stats(sccache_exe, recto_explicit_port)["max_cache_size"], 10 * 1024 ** 3)
+                        other_stats = self._server_stats(sccache_exe, other_port)
+                        self.assertEqual(other_stats["max_cache_size"], 2 * 1024 ** 3)
+                        self.assertIn("other-cache", other_stats["cache_location"].lower())
 
-                # 3. Explicitly pointing SCCACHE_SERVER_PORT at another repo's server fails cleanly without disrupting it.
-                r_env["SCCACHE_SERVER_PORT"] = str(other_port)
-                run3 = subprocess.run(
-                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
-                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                    timeout=60, creationflags=windowless(),
-                )
-                self.assertNotEqual(run3.returncode, 0, run3.stdout + run3.stderr)
-                self.assertIn("disrupted", (run3.stdout + run3.stderr).lower())
-                self.assertEqual(self._server_stats(sccache_exe, other_port)["max_cache_size"], 2 * 1024 ** 3)
+                        # 2. A same-cache server running with wrong size (512M) on Recto's explicit port is restarted to 10G.
+                        wrong_env = os.environ.copy()
+                        wrong_env["SCCACHE_DIR"] = str(recto_cache)
+                        wrong_env["SCCACHE_CACHE_SIZE"] = "512M"
+                        wrong_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
+                        start_wrong = subprocess.run(
+                            [str(sccache_exe), "--start-server"],
+                            cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
+                            env=wrong_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=30, creationflags=windowless(),
+                        )
+                        self.assertEqual(start_wrong.returncode, 0, start_wrong.stdout + start_wrong.stderr)
+                        cleanup_ports.add(recto_explicit_port)
+                        r_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
+                        run2 = subprocess.run(
+                            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                            cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=60, creationflags=windowless(),
+                        )
+                        self.assertEqual(run2.returncode, 0, run2.stdout + run2.stderr)
+                        self.assertEqual(self._server_stats(sccache_exe, recto_explicit_port)["max_cache_size"], 10 * 1024 ** 3)
+
+                        # 3. Explicitly pointing SCCACHE_SERVER_PORT at another repo's server fails cleanly without disrupting it.
+                        r_env["SCCACHE_SERVER_PORT"] = str(other_port)
+                        run3 = subprocess.run(
+                            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                            cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=60, creationflags=windowless(),
+                        )
+                        self.assertNotEqual(run3.returncode, 0, run3.stdout + run3.stderr)
+                        self.assertIn("disrupted", (run3.stdout + run3.stderr).lower())
+                        self.assertEqual(self._server_stats(sccache_exe, other_port)["max_cache_size"], 2 * 1024 ** 3)
+
+                        # 4. Ownership-verified teardown stops owned test servers only and leaves the foreign p1 server alive.
+                        for p in sorted(cleanup_ports):
+                            self._stop_owned_server(sccache_exe, p, base)
+                        cleanup_ports.clear()
+                        self.assertTrue(self._port_listening(p1), "teardown unexpectedly stopped foreign sccache server on p1")
+                        self.assertEqual(self._server_stats(sccache_exe, p1)["max_cache_size"], 1024 ** 3)
+                    finally:
+                        if foreign_started:
+                            self._stop_server(sccache_exe, p1)
             finally:
-                for p in started_ports:
-                    self._stop_server(sccache_exe, p)
+                stop_accept.set()
+                if hung_sock is not None:
+                    with contextlib.suppress(OSError):
+                        hung_sock.close()
+                for conn in accepted_conns:
+                    with contextlib.suppress(OSError):
+                        conn.close()
+                if accept_thread is not None:
+                    accept_thread.join(timeout=2)
+                for p in cleanup_ports:
+                    self._stop_owned_server(sccache_exe, p, base)
 
     def test_msbuild_end_to_end_cache_hits_tlog_invalidation_z7_asan_and_error_refusal(self):
         assert MSBUILD is not None and POWERSHELL is not None
@@ -1602,19 +1721,18 @@ Write-Output ("PORT=" + $info.ServerPort)
                 encoding="utf-8",
             )
 
-            # Reuse repo wrapper if built, otherwise bootstrap cleanly into wrapper_dir.
-            repo_wrapper = ROOT / "build" / "sccache-wrapper" / "sccache-cl.exe"
-            if repo_wrapper.is_file():
-                wrapper_exe = wrapper_dir / "sccache-cl.exe"
-                shutil.copy2(repo_wrapper, wrapper_exe)
-            else:
-                boot = _run_managed(
-                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-                     f". '{SCCACHE_PS1}'; $w = Build-RectoSccacheWrapper -RepoRoot '{ROOT}' -VsPath '{vs}'; Write-Output $w"],
-                    cwd=ROOT, env=os.environ.copy(), timeout=120,
-                )
-                self.assertEqual(boot.returncode, 0, boot.stdout + boot.stderr)
-                wrapper_exe = Path(boot.stdout.strip().splitlines()[-1])
+            # Always build/verify the current wrapper source before copying into wrapper_dir.
+            boot_env = os.environ.copy()
+            boot_env.pop("RECTO_SCCACHE_WRAPPER_EXE", None)
+            boot = _run_managed(
+                [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                 f". '{SCCACHE_PS1}'; $w = Build-RectoSccacheWrapper -RepoRoot '{ROOT}' -VsPath '{vs}'; Write-Output $w"],
+                cwd=ROOT, env=boot_env, timeout=120,
+            )
+            self.assertEqual(boot.returncode, 0, boot.stdout + boot.stderr)
+            built_wrapper = Path(boot.stdout.strip().splitlines()[-1])
+            wrapper_exe = wrapper_dir / "sccache-cl.exe"
+            shutil.copy2(built_wrapper, wrapper_exe)
 
             try:
                 env = os.environ.copy()
@@ -1735,6 +1853,34 @@ Write-Output ("PORT=" + $info.ServerPort)
                 st_arm = self._server_stats(sccache_exe, port)["stats"]
                 self.assertEqual(st_arm["compile_requests"], 3)
                 self.assertEqual(st_arm["non_cacheable_compilations"], 0)
+
+                # 8b. Explicit 8.3 short -p:IntDir still records canonical long .tlog write paths.
+                local_temp = Path(os.environ.get("LOCALAPPDATA", "")) / "Temp"
+                if local_temp.is_dir():
+                    short_buf = ctypes.create_unicode_buffer(1024)
+                    short_len = ctypes.windll.kernel32.GetShortPathNameW(str(local_temp), short_buf, len(short_buf))
+                    if short_len > 0 and "~" in short_buf.value:
+                        with tempfile.TemporaryDirectory(dir=short_buf.value) as short_tmp:
+                            short_ws = Path(short_tmp) / "p"
+                            short_ws.mkdir()
+                            short_proj = self._write_probe_project(short_ws, props, targets)
+                            for fn in ("pch.h", "pch.cpp", "forced_inc.h", "direct_inc.h", "unit_a.cpp", "unit_b.cpp"):
+                                shutil.copy2(ws / fn, short_ws / fn)
+                            short_int = f"{short_ws}\\obj_short\\"
+                            r_short = _run_managed(
+                                [MSBUILD, str(short_proj), "-nologo", "-t:ClCompile",
+                                 "-p:Configuration=Debug", "-p:Platform=x64", "-p:UseSccache=true",
+                                 f"-p:CLToolExe={wrapper_exe.name}", f"-p:CLToolPath={wrapper_exe.parent}",
+                                 f"-p:IntDir={short_int}", "-p:MultiProcMaxCount=2", "/nr:false"],
+                                cwd=short_ws, env=env, timeout=180,
+                            )
+                            self.assertEqual(r_short.returncode, 0, r_short.stdout + r_short.stderr)
+                            short_writes = "\n".join(
+                                p.read_text(encoding="utf-16-le", errors="replace")
+                                for p in sorted(short_ws.rglob("*CL.write.*.tlog"))
+                            )
+                            self.assertIn("UNIT_A.OBJ", short_writes.upper(), short_writes)
+                            self.assertIn("UNIT_A.CPP.JSON", short_writes.upper(), short_writes)
 
                 # 9. /Z7 + EnableASAN=true + linker PDB symbolizes ASan stack trace with exact file:line.
                 asan_ws = base / "asan_proj"
