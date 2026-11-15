@@ -620,7 +620,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
     def test_build_ps1_behavioral_msbuild_arguments_precedence_and_refusals(self):
         host_cores = max(1, os.cpu_count() or 1)
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            # Resolve 8.3 short temp paths (e.g. RUNNER~1) so Set-Alias names match build.ps1's Resolve-Path $root.
+            base = Path(tmp).resolve()
             ws = base / "repo"
             (ws / "build").mkdir(parents=True)
             (ws / "scripts").mkdir(parents=True)
@@ -790,8 +791,10 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows PowerShell")
     def test_build_ps1_test_timing_report_budget_and_asan_xml(self):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            # Resolve 8.3 short temp paths (e.g. RUNNER~1) so Set-Alias names match build.ps1's Resolve-Path $root.
+            base = Path(tmp).resolve()
             ws = base / "repo"
+            (base / "alias-caller").mkdir()
             (ws / "build").mkdir(parents=True)
             (ws / "scripts").mkdir(parents=True)
             (ws / "tests" / "recto-tests").mkdir(parents=True)
@@ -876,7 +879,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     f"Set-Alias -Name '{asan_exe}' -Value '{fake_tests_ps1}' -Scope Global\n"
                     "function global:Get-Counter { [pscustomobject]@{ CounterSamples = @([pscustomobject]@{ CookedValue = 9500 }) } }\n"
                     "function global:Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 9728000 } }\n"
-                    f"& '{ws / 'build' / 'build.ps1'}' {ps_args}\n"
+                    f"& '{base / 'alias-caller' / '..' / 'repo' / 'build' / 'build.ps1'}' {ps_args}\n"
                 )
                 res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
                                      capture_output=True, text=True, env=env, timeout=120)
@@ -933,7 +936,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
         self.assertIsNotNone(csc, "csc.exe required to compile fake vswhere/MSBuild/recto-tests")
 
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            base = Path(tmp).resolve()
             ws = base / "repo"
             (ws / "build").mkdir(parents=True)
             (ws / "scripts").mkdir(parents=True)

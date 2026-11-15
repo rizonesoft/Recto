@@ -2984,7 +2984,12 @@ PdfResult<void> Document::load_document_structure()
 					current_ref.obj_num,
 					current_ref.gen_num);
 			}
-			const size_t kids_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, *resolved_kids_ptr, 0u);
+			// Charge the retained owner rather than only `*resolved_kids_ptr`: when `/Kids` is inline on `shared_node`,
+			// `resolved_kids_owner` keeps the entire `/Pages` dictionary (and any large sibling values) pinned across open
+			// traversal frames even after object-cache eviction.
+			const PdfValue& retained_kids_owner =
+				resolved_kids_owner != nullptr ? *resolved_kids_owner : *resolved_kids_ptr;
+			const size_t kids_bytes = estimate_pdf_value_bytes(estimate_pdf_value_bytes, retained_kids_owner, 0u);
 			if (kids_bytes > kMaxDecodedStreamBytes - live_page_kids_bytes) {
 				return make_doc_error(
 					ErrorCode::ResourceLimit,

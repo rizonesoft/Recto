@@ -1444,6 +1444,189 @@ TEST(PdfDocument, OpenPageTreeLevelsShareOneBudget)
 	EXPECT_EQ(doc.error().code, ErrorCode::ResourceLimit);
 }
 
+// Each open /Pages traversal frame may retain a shared /Pages dictionary owner (`shared_node`) when `/Kids` is inline,
+// so the traversal budget must charge the complete retained dictionary rather than only its `/Kids` array; otherwise
+// Flate-compressed `/ObjStm` levels carrying large unused sibling strings bypass object-cache eviction and retain memory
+// unbounded across the active traversal stack (D00 T04 section 10, Round 1 P1 regression).
+TEST(PdfDocument, OpenPageTreeRetainedDictSiblingValuesShareOneBudget)
+{
+	// 1 + 258 * 25'000 = 6,450,001 bytes (~6.15 MiB) per `/Pages` level; 48 levels = ~295 MiB > kMaxDecodedStreamBytes
+	// (256 MiB), small enough per object to enter and be evicted from `ObjectCache`.
+	constexpr size_t kRepeatChunks = 25'000u;
+	constexpr size_t kUnusedBytes = 1u + 258u * kRepeatChunks;
+	const auto build_repeated_zlib_stream = [&](std::string_view prefix, std::string_view suffix) {
+		std::vector<uint8_t> z;
+		z.reserve(120'000u);
+		z.push_back(0x78u); // CMF: Deflate, 32 KiB window
+		z.push_back(0x01u); // FCHECK passes (0x7801 % 31 == 0), lowest compression flag
+
+		// Block 1: non-final stored block holding `prefix`.
+		const uint16_t plen = static_cast<uint16_t>(prefix.size());
+		const uint16_t pnlen = static_cast<uint16_t>(~plen);
+		z.push_back(0x00u);
+		z.push_back(static_cast<uint8_t>(plen & 0xFFu));
+		z.push_back(static_cast<uint8_t>(plen >> 8u));
+		z.push_back(static_cast<uint8_t>(pnlen & 0xFFu));
+		z.push_back(static_cast<uint8_t>(pnlen >> 8u));
+		z.insert(z.end(), prefix.begin(), prefix.end());
+
+		// Block 2: non-final Fixed-Huffman block emitting 'A' + kRepeatChunks * (len=258, dist=1) + EOB.
+		uint32_t bit_buf = 0u;
+		uint32_t bit_cnt = 0u;
+		const auto push_bits = [&](uint32_t val, uint32_t nbits) {
+			bit_buf |= (val << bit_cnt);
+			bit_cnt += nbits;
+			while (bit_cnt >= 8u) {
+				z.push_back(static_cast<uint8_t>(bit_buf & 0xFFu));
+				bit_buf >>= 8u;
+				bit_cnt -= 8u;
+			}
+		};
+		const auto push_huff = [&](uint32_t code_msb, uint32_t nbits) {
+			uint32_t rev = 0u;
+			for (uint32_t b = 0u; b < nbits; ++b) {
+				rev = (rev << 1u) | ((code_msb >> b) & 1u);
+			}
+			push_bits(rev, nbits);
+		};
+		push_bits(0u, 1u); // BFINAL=0
+		push_bits(1u, 2u); // BTYPE=01 (Fixed Huffman)
+		push_huff(0x30u + static_cast<uint32_t>('A'), 8u);
+		for (size_t i = 0u; i < kRepeatChunks; ++i) {
+			push_huff(0xC5u, 8u); // length symbol 285 -> length 258, 0 extra bits
+			push_huff(0u, 5u);    // distance symbol 0 -> distance 1, 0 extra bits
+		}
+		push_huff(0u, 7u); // EOB (symbol 256)
+
+		// Block 3 header (BFINAL=1, BTYPE=00 Stored) aligns to the next byte boundary before LEN/NLEN.
+		push_bits(1u, 1u);
+		push_bits(0u, 2u);
+		if (bit_cnt > 0u) {
+			z.push_back(static_cast<uint8_t>(bit_buf & 0xFFu));
+		}
+		const uint16_t slen = static_cast<uint16_t>(suffix.size());
+		const uint16_t snlen = static_cast<uint16_t>(~slen);
+		z.push_back(static_cast<uint8_t>(slen & 0xFFu));
+		z.push_back(static_cast<uint8_t>(slen >> 8u));
+		z.push_back(static_cast<uint8_t>(snlen & 0xFFu));
+		z.push_back(static_cast<uint8_t>(snlen >> 8u));
+		z.insert(z.end(), suffix.begin(), suffix.end());
+
+		// RFC 1950 Adler-32 over prefix + kUnusedBytes * 'A' + suffix.
+		uint64_t a = 1u;
+		uint64_t b = 0u;
+		for (unsigned char ch : prefix) {
+			a = (a + ch) % 65521u;
+			b = (b + a) % 65521u;
+		}
+		size_t rem = kUnusedBytes;
+		while (rem > 0u) {
+			const uint64_t m = std::min<size_t>(rem, 5552u);
+			const uint64_t c = static_cast<uint64_t>('A');
+			b = (b + m * a + c * (m * (m + 1u) / 2u)) % 65521u;
+			a = (a + c * m) % 65521u;
+			rem -= static_cast<size_t>(m);
+		}
+		for (unsigned char ch : suffix) {
+			a = (a + ch) % 65521u;
+			b = (b + a) % 65521u;
+		}
+		const uint32_t adler = static_cast<uint32_t>((b << 16u) | a);
+		z.push_back(static_cast<uint8_t>((adler >> 24u) & 0xFFu));
+		z.push_back(static_cast<uint8_t>((adler >> 16u) & 0xFFu));
+		z.push_back(static_cast<uint8_t>((adler >> 8u) & 0xFFu));
+		z.push_back(static_cast<uint8_t>(adler & 0xFFu));
+		return z;
+	};
+
+	const auto build_pdf = [&](uint32_t levels) {
+		std::vector<uint8_t> out;
+		const auto append_ascii = [&](std::string_view sv) {
+			out.insert(
+				out.end(),
+				reinterpret_cast<const uint8_t*>(sv.data()),
+				reinterpret_cast<const uint8_t*>(sv.data()) + sv.size());
+		};
+		const uint32_t root_pages = 3u;
+		const uint32_t last_pages = 3u + 2u * (levels - 1u);
+		const uint32_t xref_obj = 3u + 2u * levels;
+
+		append_ascii("%PDF-1.5\n");
+		const uint64_t off_catalog = out.size();
+		append_ascii("1 0 obj\n<< /Type /Catalog /Pages " + std::to_string(root_pages) + " 0 R >>\nendobj\n");
+		const uint64_t off_page = out.size();
+		append_ascii(
+			"2 0 obj\n<< /Type /Page /Parent " + std::to_string(last_pages) +
+			" 0 R /MediaBox [0 0 100 100] >>\nendobj\n");
+
+		std::vector<uint64_t> objstm_offsets;
+		objstm_offsets.reserve(levels);
+		for (uint32_t level = 0u; level < levels; ++level) {
+			const uint32_t pages_obj = 3u + 2u * level;
+			const uint32_t objstm_obj = pages_obj + 1u;
+			const uint32_t next_kid = level + 1u < levels ? pages_obj + 2u : 2u;
+			const std::string parent_entry =
+				level == 0u ? std::string{} : " /Parent " + std::to_string(pages_obj - 2u) + " 0 R";
+			const std::string header = std::to_string(pages_obj) + " 0 ";
+			const std::string dict_prefix = header +
+				"<< /Type /Pages" + parent_entry + " /Count 1 /MediaBox [0 0 100 100] /Kids [" +
+				std::to_string(next_kid) + " 0 R] /Unused (";
+			const auto packed = build_repeated_zlib_stream(dict_prefix, ") >>");
+
+			objstm_offsets.push_back(out.size());
+			append_ascii(
+				std::to_string(objstm_obj) + " 0 obj\n<< /Type /ObjStm /N 1 /First " +
+				std::to_string(header.size()) + " /Filter /FlateDecode /Length " +
+				std::to_string(packed.size()) + " >>\nstream\n");
+			out.insert(out.end(), packed.begin(), packed.end());
+			append_ascii("\nendstream\nendobj\n");
+		}
+
+		const uint64_t off_xref = out.size();
+		std::string rows;
+		rows.reserve(size_t{xref_obj + 1u} * 7u);
+		const auto append_row = [&](uint8_t type, uint32_t f2, uint16_t f3) {
+			rows.push_back(static_cast<char>(type));
+			for (int shift = 24; shift >= 0; shift -= 8) {
+				rows.push_back(static_cast<char>((f2 >> shift) & 0xFFu));
+			}
+			rows.push_back(static_cast<char>((f3 >> 8) & 0xFFu));
+			rows.push_back(static_cast<char>(f3 & 0xFFu));
+		};
+		append_row(0u, 0u, 0xFFFFu);
+		append_row(1u, static_cast<uint32_t>(off_catalog), 0u);
+		append_row(1u, static_cast<uint32_t>(off_page), 0u);
+		for (uint32_t level = 0u; level < levels; ++level) {
+			const uint32_t objstm_obj = 4u + 2u * level;
+			append_row(2u, objstm_obj, 0u);
+			append_row(1u, static_cast<uint32_t>(objstm_offsets[level]), 0u);
+		}
+		append_row(1u, static_cast<uint32_t>(off_xref), 0u);
+
+		append_ascii(
+			std::to_string(xref_obj) + " 0 obj\n<< /Type /XRef /Size " + std::to_string(xref_obj + 1u) +
+			" /Root 1 0 R /Index [0 " + std::to_string(xref_obj + 1u) + "] /W [1 4 2] /Length " +
+			std::to_string(rows.size()) + " >>\nstream\n");
+		append_ascii(rows);
+		append_ascii("\nendstream\nendobj\nstartxref\n");
+		append_ascii(std::to_string(off_xref));
+		append_ascii("\n%%EOF\n");
+		return out;
+	};
+
+	// 48 * ~6.15 MiB = ~295 MiB > kMaxDecodedStreamBytes (256 MiB): must stop with ResourceLimit.
+	const auto over_bytes = build_pdf(48u);
+	auto over = Document::open_memory(over_bytes);
+	ASSERT_FALSE(over.has_value());
+	EXPECT_EQ(over.error().code, ErrorCode::ResourceLimit);
+
+	// 2 * ~6.15 MiB = ~12.3 MiB <= kMaxDecodedStreamBytes: small trees with inline siblings still open cleanly.
+	const auto ok_bytes = build_pdf(2u);
+	auto ok = Document::open_memory(ok_bytes);
+	RECTO_ASSERT_OK(ok);
+	EXPECT_EQ((*ok)->page_count(), 1u);
+}
+
 // An action chain's pending /Next values are copies held until inspected, so they share one small budget: a link
 // whose 32 chained GoTo actions each leave a padded direct sibling pending fails closed (inert), while the same chain
 // with small siblings stays a working internal link (D06 T05 section 24, audit round 4).
