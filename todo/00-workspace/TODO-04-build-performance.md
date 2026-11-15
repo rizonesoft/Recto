@@ -250,17 +250,19 @@ A rebuild after switching branches, configurations or back from an ASan build co
 **Needs:** windows-host
 **Surface:** no
 
+**Corrected 2026-11-15:** Moved `/Z7` (`OldStyle`) into `Directory.Build.targets` where VC toolset defaults do not overwrite it (removing `ProgramDatabase` under ASan while keeping linker PDBs); `Directory.Build.props` sets default `PreferredToolArchitecture` (`x64`) and enables `UseMultiToolTask` + `EnforceProcessCountAcrossBuilds` when `UseSccache=true`; `Directory.Build.targets` disables `/MP` and `/Yc`/`/Yu`/`/Fp` (preserving `ForcedIncludeFiles` for `pch.h` and enabling `/sourceDependencies` across all 8 projects) only when `UseSccache=true` so IDE builds retain `/MP` + PCH; added native Win32 wrapper `build/sccache-cl.cpp` + `build/sccache.ps1` with `-NoSccache`/`RECTO_USE_SCCACHE=0` opt-out so MSBuild `FileTracker` `.tlog` dependencies stay exact on cache hits; deferred Ninja `CMAKE_*_COMPILER_LAUNCHER` wiring to `§8` which builds `CMakePresets.json`.
+
 **Build order:**
 
-1. Route compiles through sccache. Done when: a second clean build of x64 Debug reports a cache hit for every translation unit.
-2. Bound and measure it. Done when: the cache has a size limit and the rebuild time is recorded.
+1. Route compiles through sccache. Done when: a second clean build of x64 Debug reports a cache hit for every translation unit and incremental rebuilds stay accurate.
+2. Bound and measure it. Done when: the cache has a size limit and cold vs warm rebuild times are recorded.
 
-- [ ] Use `/Z7` (debug information in the object, which sccache can cache) instead of `/Zi` for Debug and ASan builds in `Directory.Build.props`, keeping the PDBs the linker writes. Done when: tests still report file and line in failures and ASan reports still symbolize.
-- [ ] Run `cl.exe` through the `.tools/` sccache, with `SCCACHE_DIR` under `build/sccache/` and `SCCACHE_CACHE_SIZE` at 10 GB, in `build/build.ps1` (MSBuild: `CLToolExe`/`CLToolPath` pointing at a wrapper) and in the Ninja build of `§8` (the compiler launcher). Done when: `sccache --show-stats` after a clean build shows misses, and after deleting `build/obj` and building again shows a hit for every unit.
-- [ ] Measure a full rebuild from a warm cache against a cold one. Done when: both times are recorded in the findings file and the warm one is a fraction of the cold.
+- [ ] Use `/Z7` (`OldStyle` debug information in the object, which sccache caches) in `Directory.Build.targets` (and drop the ASan `ProgramDatabase` override) while keeping linker PDBs in `build/bin*/`; add `PreferredToolArchitecture` default (`x64`) and `UseSccache=true` `UseMultiToolTask` + `EnforceProcessCountAcrossBuilds` in `Directory.Build.props`, plus `UseSccache=true` overrides in `Directory.Build.targets` (disable `/MP` and `/Yc`/`/Yu`/`/Fp` while keeping `ForcedIncludeFiles=pch.h` and enabling `GenerateSourceDependencies` across all 8 projects). Done when: MSBuild evaluates `/Z7` for Debug, Release and ASan, tests still report file and line in failures, and ASan reports still symbolize.
+- [ ] Add native Win32 wrapper `build/sccache-cl.cpp` (invoking `.tools/` `sccache` ahead of target `cl.exe` and replaying `FileTracker` reads/writes from `/sourceDependencies` `.json` and `/Fo` on exit 0) and helper `build/sccache.ps1` (setting `SCCACHE_DIR` under `build/sccache/` and `SCCACHE_CACHE_SIZE` at `10G`), wired into `build/build.ps1` via `CLToolExe`/`CLToolPath` and `UseSccache=true` on builds (never on `-t:Restore`, with `-NoSccache` / `RECTO_USE_SCCACHE=0` opt-out; `§8` later wires the same cache into Ninja via compiler launcher). Done when: `sccache --show-stats` after a clean build shows misses, after deleting `build/obj` and building again shows 100% cache hits (`0` non-cacheable), a no-op build compiles `0` units, and unit tests cover wrapper, opt-out and incremental `.tlog` behavior.
+- [ ] Measure a full `Debug|x64` rebuild from a warm cache against a cold one, plus a no-op build and an ASan test checkpoint. Done when: all timings and stats are recorded in `docs/reviews/00-workspace/D00-T04-s7.md` and the warm rebuild is a fraction of the cold one.
 - [ ] Commit: `build: cache MSVC compiles with sccache`
 
-**Test checkpoint:** after a clean x64 Debug build, deleting `build/obj` and building again reports 100% cache hits in `sccache --show-stats` and passes the suite.
+**Test checkpoint:** after a clean x64 Debug build, deleting `build/obj` and building again reports 100% cache hits in `sccache --show-stats` and passes the suite (`tests/scripts/test_build_ps1.py`, `run-tests.py --quick`, `.\build.cmd -Platform x64 -Configuration Debug -EnableASAN -TestFilter "PdfError.*"`, and `.\build.cmd` at stamp).
 
 ## 8. CMake and Ninja build with compile and link job pools
 
