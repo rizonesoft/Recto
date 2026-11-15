@@ -119,6 +119,8 @@ def _write_minimal_vcxproj(
     name: str,
     sources: list[str],
     deps: list[tuple[Path, str]] | None = None,
+    config_type: str = "StaticLibrary",
+    extra_targets: str = "",
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     compile_items = "\n".join(f'    <ClCompile Include="{src}" />' for src in sources)
@@ -150,7 +152,7 @@ def _write_minimal_vcxproj(
         '  </PropertyGroup>\n'
         '  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />\n'
         '  <PropertyGroup Label="Configuration">\n'
-        '    <ConfigurationType>StaticLibrary</ConfigurationType>\n'
+        f'    <ConfigurationType>{config_type}</ConfigurationType>\n'
         '    <CharacterSet>Unicode</CharacterSet>\n'
         '  </PropertyGroup>\n'
         '  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />\n'
@@ -163,6 +165,7 @@ def _write_minimal_vcxproj(
         f'{compile_items}\n'
         '  </ItemGroup>\n'
         f'{dep_items}'
+        f'{extra_targets}'
         '  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />\n'
         '</Project>\n'
     )
@@ -711,6 +714,98 @@ class BuildCompileCommandsTests(unittest.TestCase):
             self.assertNotEqual(fail_res.returncode, 0)
             self.assertIn("build-compile-commands.py failed (exit 2)", fail_res.stdout + "\n" + fail_res.stderr)
             self.assertFalse(sentinel_manifest.exists())
+
+    @unittest.skipUnless(MSBUILD is not None and POWERSHELL is not None, "needs Visual Studio 2026 MSBuild and PowerShell")
+    def test_real_build_ps1_preserves_msbuild_db_across_project_release_and_asan(self):
+        ps_exe = POWERSHELL
+        assert ps_exe is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve() / "real-ps1-ws"
+            (ws / "build").mkdir(parents=True)
+            (ws / "scripts").mkdir(parents=True)
+            for name in ("Directory.Build.props", "Directory.Build.targets", "vcpkg.json", "vcpkg-configuration.json"):
+                shutil.copy2(ROOT / name, ws / name)
+            for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            shutil.copy2(SCRIPTS / "gen-compile-commands.py", ws / "scripts" / "gen-compile-commands.py")
+            shutil.copy2(SCRIPTS / "build-compile-commands.py", ws / "scripts" / "build-compile-commands.py")
+            (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+
+            sentinel_target = (
+                '  <Target Name="InjectLiveSentinel" BeforeTargets="ClCompile">\n'
+                '    <ItemGroup>\n'
+                '      <ClCompile>\n'
+                '        <PreprocessorDefinitions>RECTO_LIVE_MSBUILD_SENTINEL=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>\n'
+                '      </ClCompile>\n'
+                '    </ItemGroup>\n'
+                '  </Target>\n'
+            )
+            project_specs = [
+                ("recto-pdf", r"src\pdf\recto-pdf.vcxproj", "{A720FA8C-20AE-5233-98DC-FC49F525A2F8}", "StaticLibrary", sentinel_target),
+                ("recto-core", r"src\core\recto-core.vcxproj", "{87C3D4CC-C445-580B-BF9D-D0957453AC2A}", "StaticLibrary", ""),
+                ("recto-services", r"src\services\recto-services.vcxproj", "{42D98EE2-0544-5DF8-A78A-021D32D97FE2}", "StaticLibrary", ""),
+                ("recto-ui", r"src\ui\recto-ui.vcxproj", "{D8279F0D-BF97-5DF7-8A4B-8BB563A9DBCC}", "StaticLibrary", ""),
+                ("Recto", r"src\app\Recto.vcxproj", "{DBB1443A-A96E-5A3B-B2C5-AE54C6FC110B}", "Application", ""),
+                ("recto-cli", r"src\cli\recto-cli.vcxproj", "{CC37EC84-53C5-5F71-B0D4-F8DF09D19B81}", "Application", ""),
+                ("recto-tests", r"tests\recto-tests\recto-tests.vcxproj", "{1CE2125F-D61E-5C0B-81D1-4A4C65926D01}", "Application", ""),
+                ("recto-fuzz", r"fuzz\recto-fuzz.vcxproj", "{2CD9910F-60B9-5227-9FA5-F9E9EE0D2A24}", "Application", ""),
+            ]
+            sln_entries: list[tuple[str, str, str]] = []
+            for idx, (name, rel, guid, cfg_type, extra) in enumerate(project_specs):
+                pdir = (ws / rel.replace("\\", "/")).parent
+                pdir.mkdir(parents=True, exist_ok=True)
+                (pdir / "pch.h").write_text("#pragma once\n", encoding="utf-8")
+                (pdir / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+                src_name = f"unit_{idx}.cpp"
+                body = "int main() { return 0; }\n" if cfg_type == "Application" else f"int fn_{idx}() {{ return {idx}; }}\n"
+                (pdir / src_name).write_text(body, encoding="utf-8")
+                _write_minimal_vcxproj(
+                    ws / rel.replace("\\", "/"),
+                    guid=guid,
+                    name=name,
+                    sources=[src_name],
+                    config_type=cfg_type,
+                    extra_targets=extra,
+                )
+                sln_entries.append((name, rel, guid))
+            _write_sln(ws / "Recto.sln", sln_entries)
+
+            sub_tmp = Path(tmp).resolve() / "ps1-temp"
+            sub_tmp.mkdir(parents=True)
+            env = os.environ.copy()
+            env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
+            env["TEMP"] = str(sub_tmp)
+            env["TMP"] = str(sub_tmp)
+
+            def run_real_ps1(ps_args: str) -> subprocess.CompletedProcess[str]:
+                return _run_managed(
+                    [ps_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", f"& '{ws / 'build' / 'build.ps1'}' {ps_args}"],
+                    cwd=ws,
+                    env=env,
+                    timeout=180,
+                )
+
+            r_debug = run_real_ps1("-Platform x64 -Configuration Debug -NoSccache -SkipTests")
+            self.assertEqual(r_debug.returncode, 0, r_debug.stdout + "\n" + r_debug.stderr)
+            db_path = ws / "build" / "compile_commands.json"
+            self.assertIn("-DRECTO_LIVE_MSBUILD_SENTINEL=1", db_path.read_text(encoding="utf-8"))
+            live_sha = _sha256(db_path)
+
+            for ps_args in (
+                "-Platform x64 -Configuration Debug -Project recto-pdf -NoSccache -SkipTests",
+                "-Platform x64 -Configuration Release -NoSccache -SkipTests",
+                "-Platform x64 -Configuration Debug -EnableASAN -NoSccache -SkipTests",
+            ):
+                r_mode = run_real_ps1(ps_args)
+                self.assertEqual(r_mode.returncode, 0, f"{ps_args} failed:\n{r_mode.stdout}\n{r_mode.stderr}")
+                self.assertEqual(_sha256(db_path), live_sha, f"database mutated after {ps_args}")
+
+            CLANGD_LSP.ensure_compile_commands(ws)
+            self.assertEqual(_sha256(db_path), live_sha)
+            ok, msg = GEN_CC.check_database(db_path, ws)
+            self.assertTrue(ok, msg)
+            self.assertIn("ok (MSBuild):", msg)
 
     @unittest.skipUnless(os.name == "nt", "Windows build/clangd.cmd wrapper")
     def test_clangd_cmd_missing_component_version_and_diagnostics(self):
