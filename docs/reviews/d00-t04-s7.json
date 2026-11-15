@@ -1,0 +1,91 @@
+{
+  "ref": "D00 T04 \u00a77",
+  "title": "sccache as the compiler cache for MSVC",
+  "implementation_sha": "ad3ca3a2cebf4fbdb24ba61004ed10339a3db4e3",
+  "date": "2026-11-15",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s7.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "build.cmd exited 0: Debug|x64 0 warnings, check-ui-boundary clean, 504/508 passed (4 skipped, 3 disabled); Release|x64 0 warnings, check-ui-boundary clean, 505/508 passed (3 skipped, 3 disabled)",
+    "warm Debug|x64 sccache rebuild requests=74, hits=74, misses=0, non-cacheable=0; ASan PdfError.* 17/17 passed (489 ms); test_build_ps1 31/31 and run-tests.py --quick 31/31 passed; CI build.yml 43669304418 and plan.yml 43669304320 green"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s7.md",
+    "verdict": "complete",
+    "candidate": "ad3ca3a2cebf4fbdb24ba61004ed10339a3db4e3",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s7.md",
+    "candidate": "42d710efa44be732009bc1dbe3e5e26e601621c6",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "42d710efa44be732009bc1dbe3e5e26e601621c6",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 3,
+  "pass_cap": 33
+}
