@@ -15,9 +15,10 @@
 # -Configuration Debug|Release (default both, or Debug under -Quick),
 # -Project <vcxproj-or-target> (single project/target for fast local iteration),
 # -TestFilter <pattern>, -TestOutputDir <folder> (default build\),
-# -SkipTests, -EnableASAN, -ForceRestore, -MaxCpuCount <N> (0 = auto memory-bounded
-# sizing with 2,048 MB reserve, refusing below 3,584 MB free; RECTO_BUILD_JOBS=<1..cores>
-# overrides both automatic sizing and -MaxCpuCount).
+# -SkipTests, -EnableASAN, -ForceRestore, -NoSccache (or RECTO_USE_SCCACHE=0 to
+# bypass sccache), -MaxCpuCount <N> (0 = auto memory-bounded sizing with 2,048 MB
+# reserve, refusing below 3,584 MB free; RECTO_BUILD_JOBS=<1..cores> overrides
+# both automatic sizing and -MaxCpuCount).
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
@@ -37,6 +38,7 @@ param(
     [switch]$SkipTests,
     [switch]$EnableASAN,
     [switch]$ForceRestore,
+    [switch]$NoSccache,
     [int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
@@ -63,9 +65,11 @@ if ($LASTEXITCODE -ne 0) { throw "bootstrap-tools.ps1 failed (exit $LASTEXITCODE
 $pinnedPython = Join-Path $PSScriptRoot 'python.cmd'
 
 . (Join-Path $PSScriptRoot 'parallelism.ps1')
+. (Join-Path $PSScriptRoot 'sccache.ps1')
 $parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
 $jobs = $parallelism.Projects
 $clMpCount = $parallelism.ClMpCount
+$useSccache = Resolve-RectoUseSccache -NoSccache:$NoSccache
 Write-Host $parallelism.Header
 
 function Get-RestoreFingerprint([string]$RepoRoot) {
@@ -260,6 +264,13 @@ if (Test-Path $genCompileDb) {
     if ($LASTEXITCODE -ne 0) { throw "gen-compile-commands.py failed (exit $LASTEXITCODE)" }
 }
 
+$sccacheInfo = $null
+if ($useSccache) {
+    $sccacheInfo = Initialize-RectoSccache -RepoRoot $root -VsPath $vs
+    $portNote = if ($null -ne $sccacheInfo.ServerPort) { ", port $($sccacheInfo.ServerPort)" } else { '' }
+    Write-Host "sccache:    $($sccacheInfo.SccacheExe) ($($sccacheInfo.CacheDir), $($sccacheInfo.CacheSize)$portNote)"
+}
+
 $asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
 $resolvedProject = if ($Project) { Resolve-SolutionTarget -RepoRoot $root -Requested $Project } else { '' }
 if ($EnableASAN -and $resolvedProject -and ($asanProjects -notcontains $resolvedProject)) {
@@ -291,6 +302,14 @@ foreach ($plat in $Platform) {
             '/nr:false',
             '/nologo'
         )
+        if ($useSccache -and $null -ne $sccacheInfo) {
+            $msbuildArgs += @(
+                '/p:UseSccache=true',
+                "/p:CLToolExe=$([System.IO.Path]::GetFileName($sccacheInfo.WrapperExe))",
+                "/p:CLToolPath=$($sccacheInfo.WrapperDir)",
+                "/p:MultiProcMaxCount=$($parallelism.TotalCompilers)"
+            )
+        }
         if ($resolvedProject) {
             $targets = @($resolvedProject)
             if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests')) {
@@ -329,6 +348,26 @@ foreach ($plat in $Platform) {
                 }
             }
         }
+    }
+}
+
+if ($useSccache -and $null -ne $sccacheInfo -and $null -ne $sccacheInfo.ServerPort -and $null -ne $sccacheInfo.Stats) {
+    $afterInfo = Get-RectoSccacheServerInfo -SccacheExe $sccacheInfo.SccacheExe -Port $sccacheInfo.ServerPort
+    if ($null -ne $afterInfo -and $afterInfo.IsSccache -and $null -ne $afterInfo.Stats) {
+        $b = $sccacheInfo.Stats.stats
+        $a = $afterInfo.Stats.stats
+        if ([int64]$a.compile_requests -ge [int64]$b.compile_requests) {
+            $reqDelta = [int64]$a.compile_requests - [int64]$b.compile_requests
+            $hitDelta = (Get-RectoSccacheCounterSum $a.cache_hits) - (Get-RectoSccacheCounterSum $b.cache_hits)
+            $missDelta = (Get-RectoSccacheCounterSum $a.cache_misses) - (Get-RectoSccacheCounterSum $b.cache_misses)
+            $nonCacheDelta = [int64]$a.non_cacheable_compilations - [int64]$b.non_cacheable_compilations
+        } else {
+            $reqDelta = [int64]$a.compile_requests
+            $hitDelta = Get-RectoSccacheCounterSum $a.cache_hits
+            $missDelta = Get-RectoSccacheCounterSum $a.cache_misses
+            $nonCacheDelta = [int64]$a.non_cacheable_compilations
+        }
+        Write-Host "sccache:    requests=$reqDelta, hits=$hitDelta, misses=$missDelta, non-cacheable=$nonCacheDelta (port $($sccacheInfo.ServerPort))"
     }
 }
 

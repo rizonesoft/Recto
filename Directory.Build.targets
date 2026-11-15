@@ -10,6 +10,7 @@
   <ItemDefinitionGroup Condition="$(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto'">
     <ClCompile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <DebugInformationFormat>OldStyle</DebugInformationFormat>
       <AdditionalIncludeDirectories>$(MSBuildProjectDirectory);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -40,6 +41,26 @@
       <SourceDependenciesFile>$(IntDir)</SourceDependenciesFile>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- sccache caches single-TU /Z7 compiles without /MP or /Yc//Yu//Fp (while preserving ForcedIncludeFiles for pch.h
+       and enabling /sourceDependencies on every Recto project so sccache-cl.exe tracks exact header dependencies
+       on cache hits too). Visual Studio IDE and -NoSccache builds leave UseSccache unset and keep /MP + PCH. -->
+  <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(UseSccache)' == 'true'">
+    <ClCompile>
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile />
+      <PrecompiledHeaderOutputFile />
+      <GenerateSourceDependencies>true</GenerateSourceDependencies>
+      <SourceDependenciesFile>$(IntDir)</SourceDependenciesFile>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(UseSccache)' == 'true'">
+    <ClCompile Update="@(ClCompile)">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <PrecompiledHeaderFile />
+      <PrecompiledHeaderOutputFile />
+    </ClCompile>
+  </ItemGroup>
   <!-- After ClCompile, each module project records what it compiled and with which settings: every ClCompile item with
        the metadata cl was given (whatever a target changed before compiling), its IntDir and its library. The boundary
        check reads this record instead of re-evaluating the project, so it checks the build that ran (D10 T01 §1).
@@ -56,7 +77,6 @@
   </Target>
   <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableASAN)' == 'true' And '$(Platform)' == 'x64'">
     <ClCompile>
-      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalOptions>%(AdditionalOptions) /fsanitize=address</AdditionalOptions>
     </ClCompile>

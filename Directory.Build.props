@@ -8,6 +8,7 @@
     <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
     <WindowsTargetPlatformMinVersion>10.0.22621.0</WindowsTargetPlatformMinVersion>
     <CharacterSet>Unicode</CharacterSet>
+    <PreferredToolArchitecture Condition="'$(PreferredToolArchitecture)' == ''">x64</PreferredToolArchitecture>
     <EnableASAN Condition="'$(EnableASAN)' == ''">false</EnableASAN>
     <LinkIncremental Condition="'$(EnableASAN)' == 'true'">false</LinkIncremental>
     <!-- Compile flags (warning level, language standards, runtime) are
@@ -20,5 +21,9 @@
     <RectoObjFolder Condition="'$(EnableASAN)' != 'true'">obj</RectoObjFolder>
     <OutDir>$(MSBuildThisFileDirectory)build\$(RectoBinFolder)\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</OutDir>
     <IntDir>$(MSBuildThisFileDirectory)build\$(RectoObjFolder)\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(UseSccache)' == 'true'">
+    <UseMultiToolTask>true</UseMultiToolTask>
+    <EnforceProcessCountAcrossBuilds>true</EnforceProcessCountAcrossBuilds>
   </PropertyGroup>
 </Project>

@@ -1,10 +1,12 @@
 """Checks on build/build.ps1, the one-command build and test driver, and the ASan runtime staging it loads."""
+import hashlib
 import json
 import os
 import pathlib
 import re
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,7 +15,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-from scripts.lib.proc_group import spawn_managed_process  # noqa: E402
+from scripts.lib.proc_group import spawn_managed_process, windowless  # noqa: E402
 
 BUILD_PS1 = ROOT / "build" / "build.ps1"
 
@@ -31,7 +33,49 @@ def _run_managed(cmd: list[str], *, cwd: Path, env: dict[str, str], timeout: flo
 PARALLELISM_PS1 = ROOT / "build" / "parallelism.ps1"
 ASAN_RUNTIME_PS1 = ROOT / "build" / "asan-runtime.ps1"
 MSBUILD_LOG_PS1 = ROOT / "build" / "msbuild-log.ps1"
+SCCACHE_PS1 = ROOT / "build" / "sccache.ps1"
+SCCACHE_CPP = ROOT / "build" / "sccache-cl.cpp"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+RECTO_PROJECTS = (
+    ("recto-pdf", ROOT / "src" / "pdf" / "recto-pdf.vcxproj"),
+    ("recto-core", ROOT / "src" / "core" / "recto-core.vcxproj"),
+    ("recto-services", ROOT / "src" / "services" / "recto-services.vcxproj"),
+    ("recto-ui", ROOT / "src" / "ui" / "recto-ui.vcxproj"),
+    ("Recto", ROOT / "src" / "app" / "Recto.vcxproj"),
+    ("recto-cli", ROOT / "src" / "cli" / "recto-cli.vcxproj"),
+    ("recto-tests", ROOT / "tests" / "recto-tests" / "recto-tests.vcxproj"),
+    ("recto-fuzz", ROOT / "fuzz" / "recto-fuzz.vcxproj"),
+)
+
+
+def _vs_install_path() -> str | None:
+    if sys.platform != "win32":
+        return None
+    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    out = subprocess.run(
+        [str(vswhere), "-version", "[18.0,19.0)", "-latest", "-property", "installationPath"],
+        capture_output=True, text=True, timeout=30,
+    ).stdout.strip()
+    return out or None
+
+
+def _csc_path() -> Path | None:
+    if sys.platform != "win32":
+        return None
+    for bits in ("Framework64", "Framework"):
+        cand = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Microsoft.NET" / bits / "v4.0.30319" / "csc.exe"
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _free_localhost_port() -> int:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
 @unittest.skipUnless(POWERSHELL, "needs PowerShell")
@@ -167,7 +211,7 @@ class LibraryPathDefaults(unittest.TestCase):
 class BuildScript(unittest.TestCase):
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_the_scripts_parse(self):
-        for script in (BUILD_PS1, PARALLELISM_PS1, ASAN_RUNTIME_PS1, MSBUILD_LOG_PS1):
+        for script in (BUILD_PS1, PARALLELISM_PS1, ASAN_RUNTIME_PS1, MSBUILD_LOG_PS1, SCCACHE_PS1):
             check = (f"$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('{script}', "
                      f"[ref]$null, [ref]$errors); $errors | ForEach-Object {{ $_.Message }}; exit $errors.Count")
             run = subprocess.run([POWERSHELL, "-NoProfile", "-Command", check], capture_output=True, text=True,
@@ -579,8 +623,11 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            stub_wrapper = base / "wrapper" / "sccache-cl.exe"
+            stub_wrapper.parent.mkdir(parents=True)
+            stub_wrapper.write_bytes(b"MZ")
             (ws / "scripts" / "check-ui-boundary.py").write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
 
             pf86 = base / "pf86"
@@ -612,7 +659,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             )
 
             def invoke_build(extra_ps_args: str, counter_body: str = "9500", cim_kb: str = "9728000",
-                             jobs_env: str | None = None) -> tuple[int, str, list[list[str]]]:
+                             jobs_env: str | None = None,
+                             extra_env: dict[str, str | None] | None = None) -> tuple[int, str, list[list[str]]]:
                 if calls_file.exists():
                     calls_file.unlink()
                 stamp = ws / "build" / "restore.stamp"
@@ -621,10 +669,19 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env = os.environ.copy()
                 env["ProgramFiles(x86)"] = str(pf86)
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
+                env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
+                env["RECTO_SCCACHE_NO_DAEMON"] = "1"
+                env.pop("RECTO_USE_SCCACHE", None)
                 if jobs_env is None:
                     env.pop("RECTO_BUILD_JOBS", None)
                 else:
                     env["RECTO_BUILD_JOBS"] = jobs_env
+                if extra_env:
+                    for k, v in extra_env.items():
+                        if v is None:
+                            env.pop(k, None)
+                        else:
+                            env[k] = v
                 cmd = (
                     f"Set-Alias -Name '{vs_installer / 'vswhere.exe'}' -Value '{vswhere_ps1}' -Scope Global\n"
                     f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
@@ -649,10 +706,29 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             self.assertIn("-t:Restore", calls[0])
             self.assertIn(f"/m:{exp_proj}", calls[0])
             self.assertIn("/nr:false", calls[0])
+            self.assertNotIn("/p:UseSccache=true", calls[0])
+            self.assertFalse(any(a.startswith("/p:CLToolExe=") for a in calls[0]))
             for build_call in calls[1:]:
                 self.assertIn(f"/m:{exp_proj}", build_call)
                 self.assertIn(f"/p:CL_MPCount={exp_cl}", build_call)
+                self.assertIn("/p:UseSccache=true", build_call)
+                self.assertIn("/p:CLToolExe=sccache-cl.exe", build_call)
+                self.assertIn(f"/p:CLToolPath={stub_wrapper.parent}", build_call)
+                self.assertIn(f"/p:MultiProcMaxCount={exp_total}", build_call)
                 self.assertIn("/nr:false", build_call)
+
+            # 1b. -NoSccache and RECTO_USE_SCCACHE=0 bypass sccache; -NoSccache beats RECTO_USE_SCCACHE=1.
+            for label, ps_args, ov_env in (
+                ("flag", "-Configuration Debug -SkipTests -NoSccache", None),
+                ("env0", "-Configuration Debug -SkipTests", {"RECTO_USE_SCCACHE": "0"}),
+                ("flag_beats_env", "-Configuration Debug -SkipTests -NoSccache", {"RECTO_USE_SCCACHE": "1"}),
+            ):
+                with self.subTest(bypass=label):
+                    rc, out, calls = invoke_build(ps_args, extra_env=ov_env)
+                    self.assertEqual(rc, 0, out)
+                    self.assertNotIn("/p:UseSccache=true", calls[-1])
+                    self.assertFalse(any(a.startswith("/p:CLToolExe=") for a in calls[-1]))
+                    self.assertFalse(any(a.startswith("/p:MultiProcMaxCount=") for a in calls[-1]))
 
             # 2. -Project and -EnableASAN paths, plus -MaxCpuCount 0 automatic convention.
             target_jobs = min(host_cores, 2)
@@ -699,6 +775,11 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     self.assertNotEqual(rc, 0, out)
                     self.assertEqual(calls, [], f"MSBuild should not start on {label}: {out}")
 
+            rc, out, calls = invoke_build("-SkipTests", extra_env={"RECTO_USE_SCCACHE": "bogus"})
+            self.assertNotEqual(rc, 0, out)
+            self.assertIn("RECTO_USE_SCCACHE", out)
+            self.assertEqual(calls, [], f"MSBuild should not start on invalid RECTO_USE_SCCACHE: {out}")
+
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows cmd.exe and PowerShell")
     def test_build_cmd_iteration_gate_forwards_debug_x64_and_strips_cmd_quotes_on_test_filter(self):
         csc_candidates = [
@@ -718,8 +799,11 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            stub_wrapper = base / "wrapper" / "sccache-cl.exe"
+            stub_wrapper.parent.mkdir(parents=True)
+            stub_wrapper.write_bytes(b"MZ")
             gen_marker = base / "gen_compile_ran.txt"
             boundary_marker = base / "boundary_ran.txt"
             (ws / "scripts" / "gen-compile-commands.py").write_text(
@@ -761,6 +845,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 '                File.WriteAllText(lp, "Build succeeded.\\n    0 Warning(s)\\n    0 Error(s)\\n");\n'
                 "            }\n"
                 "        }\n"
+                '        if (Environment.GetEnvironmentVariable("RECTO_MOCK_MSBUILD_FAIL") == "1" && Array.IndexOf(args, "-t:Restore") < 0) return 1;\n'
                 "        return 0;\n"
                 "    }\n"
                 "}\n",
@@ -808,6 +893,9 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             env["ProgramFiles(x86)"] = str(pf86)
             env["RECTO_BUILD_JOBS"] = "1"
             env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
+            env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
+            env["RECTO_SCCACHE_NO_DAEMON"] = "1"
+            env.pop("RECTO_USE_SCCACHE", None)
             # Strip all system Python directories from PATH to prove build.cmd uses build\python.cmd.
             py_names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe")
             env["PATH"] = os.pathsep.join(
@@ -837,6 +925,20 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     self.assertEqual(len(g_lines), 1, g_lines)
                     self.assertIn("--gtest_filter=PdfError.*", g_lines[0])
                     self.assertNotIn("'PdfError.*'", g_lines[0])
+
+            # When MSBuild fails after a cached build (stale recto-tests.exe already on disk), build.cmd must fail
+            # and must never run the stale test executable as evidence of success.
+            for marker in (msbuild_calls, gtest_calls):
+                if marker.exists():
+                    marker.unlink()
+            fail_env = dict(env)
+            fail_env["RECTO_MOCK_MSBUILD_FAIL"] = "1"
+            fail_run = _run_managed(
+                ["cmd.exe", "/d", "/c", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"],
+                cwd=ws, env=fail_env, timeout=90,
+            )
+            self.assertNotEqual(fail_run.returncode, 0, fail_run.stdout + fail_run.stderr)
+            self.assertFalse(gtest_calls.exists(), "stale recto-tests.exe ran after MSBuild failure")
 
     def test_run_managed_timeout_reaps_descendant_holding_temp_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -871,16 +973,7 @@ class PrecompiledHeadersConfiguration(unittest.TestCase):
     """Every Recto.sln project builds through its own system-only pch.h/pch.cpp with /Yc on pch.cpp and /Yu + /FIpch.h
     on consumer units, shared WIN32_LEAN_AND_MEAN/NOMINMAX definitions, and zero project or TU-configured headers."""
 
-    PROJECTS = (
-        ("recto-pdf", ROOT / "src" / "pdf" / "recto-pdf.vcxproj"),
-        ("recto-core", ROOT / "src" / "core" / "recto-core.vcxproj"),
-        ("recto-services", ROOT / "src" / "services" / "recto-services.vcxproj"),
-        ("recto-ui", ROOT / "src" / "ui" / "recto-ui.vcxproj"),
-        ("Recto", ROOT / "src" / "app" / "Recto.vcxproj"),
-        ("recto-cli", ROOT / "src" / "cli" / "recto-cli.vcxproj"),
-        ("recto-tests", ROOT / "tests" / "recto-tests" / "recto-tests.vcxproj"),
-        ("recto-fuzz", ROOT / "fuzz" / "recto-fuzz.vcxproj"),
-    )
+    PROJECTS = RECTO_PROJECTS
 
     def test_every_project_pch_header_contains_only_system_and_third_party_headers(self):
         forbidden_angles = ("recto/", "traceloggingprovider.h", "xmmintrin.h", "sanitizer/")
@@ -940,6 +1033,751 @@ class PrecompiledHeadersConfiguration(unittest.TestCase):
                         self.assertIn("NOMINMAX", defs, f"{proj_name}:{ident}")
                         if proj_name == "recto-tests":
                             self.assertIn("GTEST_LINKED_AS_SHARED_LIBRARY=1", defs, f"{proj_name}:{ident}")
+
+
+@unittest.skipUnless(MSBUILD and POWERSHELL, "needs MSBuild (Windows with Visual Studio) and PowerShell")
+class SccacheConfigurationTests(unittest.TestCase):
+    """D00 T04 s7: /Z7 debug info with linker PDBs, UseSccache isolation in props/targets,
+    uncached native wrapper bootstrap, isolated sccache server verification, and MSBuild
+    cache-hit + incremental .tlog + failure-propagation behavior."""
+
+    @staticmethod
+    def _sccache_exe() -> Path | None:
+        lock = json.loads((ROOT / "build" / "tools.lock.json").read_text(encoding="utf-8"))
+        tools_root = Path(os.environ.get("RECTO_TOOLS_DIR") or (ROOT / ".tools"))
+        cand = tools_root / "sccache" / lock["sccache"]["version"] / lock["sccache"]["executable"].replace("/", "\\")
+        return cand if cand.is_file() else None
+
+    @staticmethod
+    def _port_listening(port: int, timeout: float = 0.2) -> bool:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _deterministic_port(cache_dir: Path) -> int:
+        canonical = os.path.normpath(os.path.abspath(str(cache_dir))).rstrip("\\/").lower()
+        digest = hashlib.sha256(canonical.encode("utf-8")).digest()
+        return 42000 + (int.from_bytes(digest[:4], "little") % 20000)
+
+    @staticmethod
+    def _stop_server(sccache_exe: Path, port: int) -> None:
+        env = os.environ.copy()
+        env["SCCACHE_SERVER_PORT"] = str(port)
+        subprocess.run(
+            [str(sccache_exe), "--stop-server"],
+            cwd=os.environ.get("SystemRoot", r"C:\Windows"),
+            env=env, capture_output=True, text=True, timeout=30,
+            creationflags=windowless(),
+        )
+
+    @classmethod
+    def _server_stats(cls, sccache_exe: Path, port: int) -> dict:
+        if not cls._port_listening(port):
+            raise AssertionError(f"Expected sccache server already listening on 127.0.0.1:{port} before --show-stats")
+        env = os.environ.copy()
+        env["SCCACHE_SERVER_PORT"] = str(port)
+        res = subprocess.run(
+            [str(sccache_exe), "--show-stats", "--stats-format", "json"],
+            cwd=os.environ.get("SystemRoot", r"C:\Windows"),
+            env=env, capture_output=True, text=True, timeout=30,
+            creationflags=windowless(),
+        )
+        if res.returncode != 0:
+            raise AssertionError(f"sccache --show-stats failed on port {port}: {res.stdout}{res.stderr}")
+        return json.loads(res.stdout)
+
+    @classmethod
+    def _zero_stats(cls, sccache_exe: Path, port: int) -> None:
+        if not cls._port_listening(port):
+            raise AssertionError(f"Expected sccache server already listening on 127.0.0.1:{port} before --zero-stats")
+        env = os.environ.copy()
+        env["SCCACHE_SERVER_PORT"] = str(port)
+        res = subprocess.run(
+            [str(sccache_exe), "--zero-stats"],
+            cwd=os.environ.get("SystemRoot", r"C:\Windows"),
+            env=env, capture_output=True, text=True, timeout=30,
+            creationflags=windowless(),
+        )
+        if res.returncode != 0:
+            raise AssertionError(f"sccache --zero-stats failed on port {port}: {res.stdout}{res.stderr}")
+
+    @staticmethod
+    def _counter_sum(group: dict) -> int:
+        return sum(int(v) for v in (group or {}).get("counts", {}).values())
+
+    @staticmethod
+    def _write_probe_project(ws: Path, props_path: Path, targets_path: Path, extra_cl: str = "", extra_props: str = "") -> Path:
+        proj = ws / "recto-e2e-probe.vcxproj"
+        out_dir = ws / "out"
+        int_dir = ws / "obj"
+        proj.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|ARM64"><Configuration>Debug</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <ProjectGuid>{{11111111-2222-3333-4444-555555555555}}</ProjectGuid>
+    <RootNamespace>RectoE2eProbe</RootNamespace>
+    <Keyword>Win32Proj</Keyword>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
+  <Import Project="{props_path}" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  {extra_props}
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>{out_dir}\\</OutDir>
+    <IntDir>{int_dir}\\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>{ws};%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ForcedIncludeFiles>forced_inc.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
+      {extra_cl}
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp">
+      <PrecompiledHeader>Create</PrecompiledHeader>
+      <ForcedIncludeFiles />
+    </ClCompile>
+    <ClCompile Include="unit_a.cpp" />
+    <ClCompile Include="unit_b.cpp" />
+  </ItemGroup>
+  <Import Project="{targets_path}" />
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
+</Project>
+""", encoding="utf-8")
+        return proj
+
+    def test_msbuild_evaluates_z7_and_use_sccache_metadata(self):
+        assert MSBUILD is not None
+        # DebugInformationFormat=OldStyle (/Z7) applies to all configs (including ASan) while
+        # UseSccache=true enables UseMultiToolTask and disables /MP + /Yc//Yu//Fp while keeping ForcedIncludeFiles.
+        for proj_name, vcxproj in RECTO_PROJECTS:
+            with self.subTest(project=proj_name, mode="default_ide"):
+                run = subprocess.run(
+                    [MSBUILD, str(vcxproj), "-p:Configuration=Debug", "-p:Platform=x64",
+                     "-getProperty:PreferredToolArchitecture,UseMultiToolTask,EnforceProcessCountAcrossBuilds",
+                     "-getItem:ClCompile", "-nologo"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                    creationflags=windowless(),
+                )
+                self.assertEqual(run.returncode, 0, run.stdout[-500:] + run.stderr[-500:])
+                data = json.loads(run.stdout)
+                self.assertEqual(data["Properties"]["PreferredToolArchitecture"], "x64")
+                items = data["Items"].get("ClCompile", [])
+                self.assertTrue(items)
+                for unit in items:
+                    self.assertEqual(unit.get("DebugInformationFormat"), "OldStyle", f"{proj_name}:{unit.get('Identity')}")
+                    self.assertEqual(unit.get("MultiProcessorCompilation"), "true", f"{proj_name}:{unit.get('Identity')}")
+
+            matrix = (
+                ("Debug", "x64", "false"),
+                ("Debug", "x64", "true"),
+                ("Release", "x64", "false"),
+                ("Debug", "ARM64", "false"),
+            ) if proj_name in ("recto-pdf", "recto-ui", "Recto", "recto-tests") else (("Debug", "x64", "false"),)
+
+            for cfg, plat, asan in matrix:
+                if plat == "ARM64" and asan == "true":
+                    continue
+                with self.subTest(project=proj_name, cfg=cfg, plat=plat, asan=asan, mode="UseSccache"):
+                    run = subprocess.run(
+                        [MSBUILD, str(vcxproj), f"-p:Configuration={cfg}", f"-p:Platform={plat}",
+                         f"-p:EnableASAN={asan}", "-p:UseSccache=true",
+                         "-getProperty:PreferredToolArchitecture,UseMultiToolTask,EnforceProcessCountAcrossBuilds",
+                         "-getItem:ClCompile", "-nologo"],
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                        creationflags=windowless(),
+                    )
+                    self.assertEqual(run.returncode, 0, run.stdout[-500:] + run.stderr[-500:])
+                    data = json.loads(run.stdout)
+                    props = data["Properties"]
+                    self.assertEqual(props["PreferredToolArchitecture"], "x64")
+                    self.assertEqual(props["UseMultiToolTask"], "true")
+                    self.assertEqual(props["EnforceProcessCountAcrossBuilds"], "true")
+                    items = data["Items"].get("ClCompile", [])
+                    self.assertTrue(items)
+                    for unit in items:
+                        ident = Path(unit.get("Identity", "")).name.lower()
+                        self.assertEqual(unit.get("DebugInformationFormat"), "OldStyle", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("MultiProcessorCompilation"), "false", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("PrecompiledHeader"), "NotUsing", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("PrecompiledHeaderFile", ""), "", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("PrecompiledHeaderOutputFile", ""), "", f"{proj_name}:{ident}")
+                        self.assertEqual(unit.get("GenerateSourceDependencies"), "true", f"{proj_name}:{ident}")
+                        forced = [s.strip().lower() for s in unit.get("ForcedIncludeFiles", "").split(";") if s.strip()]
+                        if ident == "pch.cpp":
+                            self.assertEqual(forced, [], f"{proj_name}:{ident}")
+                        else:
+                            self.assertTrue(forced and forced[0] == "pch.h", f"{proj_name}:{ident} forced={forced}")
+
+        # Verify Link retains debug PDB generation alongside /Z7 across Debug, Release, and ASan.
+        with tempfile.TemporaryDirectory() as tmp:
+            t = Path(tmp)
+            probe = t / "recto-link-probe.vcxproj"
+            probe.write_text(f"""<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
+  <Import Project="{ROOT / 'Directory.Build.props'}" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'!='Debug'">false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
+  <ItemGroup>
+    <Link Include="dummy.obj" />
+  </ItemGroup>
+  <Import Project="{ROOT / 'Directory.Build.targets'}" />
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
+</Project>
+""", encoding="utf-8")
+            for cfg, asan in (("Debug", "false"), ("Release", "false"), ("Debug", "true")):
+                run = subprocess.run(
+                    [MSBUILD, str(probe), "-nologo", "-getItem:Link",
+                     f"-p:Configuration={cfg}", f"-p:Platform=x64", f"-p:EnableASAN={asan}"],
+                    capture_output=True, text=True, timeout=60, creationflags=windowless(),
+                )
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                link_items = json.loads(run.stdout)["Items"].get("Link", [])
+                self.assertTrue(link_items, run.stdout)
+                self.assertIn(link_items[0].get("GenerateDebugInformation"), ("DebugFull", "true"),
+                              f"{cfg} ASan={asan}: {link_items[0]}")
+
+    def test_wrapper_bootstrap_failure_propagation_and_arm64_resolution(self):
+        assert MSBUILD is not None and POWERSHELL is not None
+        vs = _vs_install_path()
+        csc = _csc_path()
+        self.assertIsNotNone(vs, "VS 2026 installation required")
+        self.assertIsNotNone(csc, "csc.exe required for stub sccache executable")
+        assert vs is not None and csc is not None
+
+        arm64_cl_dir = Path(vs) / "VC" / "Tools" / "MSVC"
+        arm64_cl = sorted(arm64_cl_dir.glob("*/bin/Hostx64/arm64/cl.exe"))
+        self.assertTrue(arm64_cl, f"expected Hostx64\\arm64\\cl.exe under {arm64_cl_dir}")
+        arm64_bin_dir = arm64_cl[-1].parent
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ws = base / "repo"
+            (ws / "build").mkdir(parents=True)
+            for name in ("sccache.ps1", "sccache-cl.cpp", "tools.lock.json"):
+                shutil.copy2(ROOT / "build" / name, ws / "build" / name)
+            self.assertFalse((ws / "build" / "sccache-wrapper").exists())
+
+            def run_bootstrap() -> subprocess.CompletedProcess[str]:
+                assert POWERSHELL is not None
+                script = f"""
+. '{ws / 'build' / 'sccache.ps1'}'
+$w = Build-RectoSccacheWrapper -RepoRoot '{ws}' -VsPath '{vs}'
+Write-Output "WRAPPER=$w"
+"""
+                env = os.environ.copy()
+                env.pop("RECTO_SCCACHE_WRAPPER_EXE", None)
+                return _run_managed(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                    cwd=ws, env=env, timeout=120,
+                )
+
+            # 1. Clean-clone uncached build without pre-existing wrapper binary.
+            r1 = run_bootstrap()
+            self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+            wrapper_exe = ws / "build" / "sccache-wrapper" / "sccache-cl.exe"
+            stamp_file = ws / "build" / "sccache-wrapper" / "sccache-cl.sha256"
+            self.assertTrue(wrapper_exe.is_file())
+            self.assertTrue(stamp_file.is_file())
+            mtime1 = wrapper_exe.stat().st_mtime_ns
+            stamp1 = stamp_file.read_text(encoding="utf-8")
+
+            # 2. Unchanged second call skips rebuild cleanly.
+            r2 = run_bootstrap()
+            self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
+            self.assertEqual(wrapper_exe.stat().st_mtime_ns, mtime1)
+
+            # 3. Editing sccache-cl.cpp triggers rebuild and updates sha256 stamp.
+            cpp = ws / "build" / "sccache-cl.cpp"
+            orig_cpp = cpp.read_text(encoding="utf-8")
+            cpp.write_text(orig_cpp + "\n// bootstrap rebuild trigger\n", encoding="utf-8")
+            r3 = run_bootstrap()
+            self.assertEqual(r3.returncode, 0, r3.stdout + r3.stderr)
+            stamp2 = stamp_file.read_text(encoding="utf-8")
+            self.assertNotEqual(stamp2, stamp1)
+
+            # 4. Syntax error during bootstrap propagates failure and never updates stamp.
+            cpp.write_text(orig_cpp + "\nintentionally_broken_syntax;;;\n", encoding="utf-8")
+            r4 = run_bootstrap()
+            self.assertNotEqual(r4.returncode, 0, r4.stdout + r4.stderr)
+            self.assertIn("Uncached bootstrap compile of build\\sccache-cl.cpp failed", r4.stdout + r4.stderr)
+            self.assertEqual(stamp_file.read_text(encoding="utf-8"), stamp2)
+
+            # 5. Wrapper direct failure propagation, ARM64 target resolution, and malformed JSON refusal.
+            stub_cs = base / "stub_sccache.cs"
+            stub_exe = base / "stub_sccache.exe"
+            stub_cs.write_text(
+                "using System; using System.IO;\n"
+                "class S {\n"
+                "    static int Main(string[] args) {\n"
+                '        string log = Environment.GetEnvironmentVariable("STUB_LOG");\n'
+                '        if (!string.IsNullOrEmpty(log)) File.WriteAllLines(log, args);\n'
+                '        string obj = Environment.GetEnvironmentVariable("STUB_OBJ");\n'
+                '        if (!string.IsNullOrEmpty(obj)) File.WriteAllText(obj, "OBJ");\n'
+                '        string js = Environment.GetEnvironmentVariable("STUB_JSON");\n'
+                '        string jtxt = Environment.GetEnvironmentVariable("STUB_JSON_TEXT");\n'
+                '        if (!string.IsNullOrEmpty(js) && jtxt != null) File.WriteAllText(js, jtxt);\n'
+                '        string err = Environment.GetEnvironmentVariable("STUB_ERR");\n'
+                '        if (!string.IsNullOrEmpty(err)) Console.Error.WriteLine(err);\n'
+                '        int code = 0;\n'
+                '        int.TryParse(Environment.GetEnvironmentVariable("STUB_EXIT") ?? "0", out code);\n'
+                "        return code;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            rc_csc = subprocess.run(
+                [str(csc), "/nologo", "/target:exe", f"/out:{stub_exe}", str(stub_cs)],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(rc_csc.returncode, 0, rc_csc.stdout + rc_csc.stderr)
+
+            base_env = os.environ.copy()
+            base_env.pop("RECTO_REAL_CL_EXE", None)
+
+            # 5a. Missing RECTO_SCCACHE_EXE fails exit 2.
+            env_missing = dict(base_env)
+            env_missing.pop("RECTO_SCCACHE_EXE", None)
+            r_miss = _run_managed([str(wrapper_exe), "/c", "foo.cpp"], cwd=base, env=env_missing, timeout=30)
+            self.assertEqual(r_miss.returncode, 2)
+            self.assertIn("RECTO_SCCACHE_EXE", r_miss.stderr)
+
+            # 5b. Missing target cl.exe on PATH fails exit 2.
+            env_nocl = dict(base_env)
+            env_nocl["RECTO_SCCACHE_EXE"] = str(stub_exe)
+            env_nocl["PATH"] = str(wrapper_exe.parent)
+            r_nocl = _run_managed([str(wrapper_exe), "/c", "foo.cpp"], cwd=base, env=env_nocl, timeout=30)
+            self.assertEqual(r_nocl.returncode, 2)
+            self.assertIn("cl.exe", r_nocl.stderr)
+
+            # 5c. ARM64 Hostx64\arm64\cl.exe resolution + valid UTF-16LE @rsp + valid JSON tracking succeeds.
+            src_cpp = base / "unit.cpp"
+            hdr_h = base / "hdr.h"
+            obj_file = base / "unit.obj"
+            json_file = base / "unit.cpp.json"
+            rsp_file = base / "cmd.rsp"
+            src_cpp.write_text("int k = 1;\n", encoding="utf-8")
+            hdr_h.write_text("#define X 1\n", encoding="utf-8")
+            rsp_file.write_bytes(
+                b"\xff\xfe" + f'/c /Fo"{obj_file}" /sourceDependencies "{json_file}" "{src_cpp}"'.encode("utf-16-le")
+            )
+            stub_log = base / "stub_args.txt"
+            valid_json = json.dumps({"Version": "1.2", "Data": {"Source": str(src_cpp), "Includes": [str(hdr_h)]}})
+
+            env_ok = dict(base_env)
+            env_ok["RECTO_SCCACHE_EXE"] = str(stub_exe)
+            env_ok["PATH"] = f"{wrapper_exe.parent}{os.pathsep}{arm64_bin_dir}"
+            env_ok["STUB_LOG"] = str(stub_log)
+            env_ok["STUB_OBJ"] = str(obj_file)
+            env_ok["STUB_JSON"] = str(json_file)
+            env_ok["STUB_JSON_TEXT"] = valid_json
+            env_ok["STUB_EXIT"] = "0"
+            r_arm = _run_managed([str(wrapper_exe), f'@{rsp_file}'], cwd=base, env=env_ok, timeout=30)
+            self.assertEqual(r_arm.returncode, 0, r_arm.stdout + r_arm.stderr)
+            captured_args = stub_log.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(os.path.normcase(captured_args[0]), os.path.normcase(str(arm64_cl[-1])))
+
+            # 5d. Child failure exit 7 + stderr diagnostics propagate without tracking failure masking it.
+            if json_file.exists():
+                json_file.unlink()
+            env_fail = dict(env_ok)
+            env_fail.pop("STUB_JSON_TEXT", None)
+            env_fail.pop("STUB_OBJ", None)
+            env_fail["STUB_ERR"] = "unit.cpp(3): error C2065: synthetic diagnostic"
+            env_fail["STUB_EXIT"] = "7"
+            r_fail = _run_managed([str(wrapper_exe), f'@{rsp_file}'], cwd=base, env=env_fail, timeout=30)
+            self.assertEqual(r_fail.returncode, 7)
+            self.assertIn("error C2065: synthetic diagnostic", r_fail.stderr)
+
+            # 5e. Child exits 0, but /sourceDependencies JSON is missing, truncated, or lacks Includes -> exit 3!
+            for bad_label, bad_text in (
+                ("missing", None),
+                ("empty", ""),
+                ("truncated", '{"Version":"1.2","Data":{"Source":"x"'),
+                ("missing_includes", '{"Version":"1.2","Data":{"Source":"x"}}'),
+            ):
+                with self.subTest(json_case=bad_label):
+                    if json_file.exists():
+                        json_file.unlink()
+                    env_bad = dict(env_ok)
+                    env_bad["STUB_EXIT"] = "0"
+                    if bad_text is None:
+                        env_bad.pop("STUB_JSON_TEXT", None)
+                    else:
+                        env_bad["STUB_JSON_TEXT"] = bad_text
+                    r_bad = _run_managed([str(wrapper_exe), f'@{rsp_file}'], cwd=base, env=env_bad, timeout=30)
+                    self.assertEqual(r_bad.returncode, 3, r_bad.stdout + r_bad.stderr)
+                    self.assertIn("/sourceDependencies JSON", r_bad.stderr)
+
+    def test_server_isolation_verifies_cache_dir_and_10g_without_disrupting_other_repo(self):
+        assert POWERSHELL is not None
+        sccache_exe = self._sccache_exe()
+        self.assertIsNotNone(sccache_exe, "bootstrapped .tools sccache.exe required")
+        assert sccache_exe is not None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            other_cache = base / "other-cache"
+            recto_cache = base / "recto-cache"
+            other_cache.mkdir()
+            recto_cache.mkdir()
+            stub_wrapper = base / "sccache-cl.exe"
+            stub_wrapper.write_bytes(b"MZ")
+
+            unused_probe_port = _free_localhost_port()
+            other_port = _free_localhost_port()
+            while other_port == unused_probe_port:
+                other_port = _free_localhost_port()
+            recto_explicit_port = _free_localhost_port()
+            while recto_explicit_port in (other_port, unused_probe_port):
+                recto_explicit_port = _free_localhost_port()
+            det_base = self._deterministic_port(recto_cache)
+            started_ports = {unused_probe_port, other_port, recto_explicit_port}
+            for offset in range(4):
+                started_ports.add(42000 + ((det_base - 42000 + offset) % 20000))
+
+            try:
+                # 0. Regression: probing an unused port must return $null without auto-starting a daemon.
+                probe_script = f"""
+. '{SCCACHE_PS1}'
+$res = Get-RectoSccacheServerInfo -SccacheExe '{sccache_exe}' -Port {unused_probe_port}
+Write-Output ("IS_NULL=" + ($null -eq $res))
+"""
+                probe_run = _run_managed(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", probe_script],
+                    cwd=ROOT, env=os.environ.copy(), timeout=30,
+                )
+                self.assertEqual(probe_run.returncode, 0, probe_run.stdout + probe_run.stderr)
+                self.assertIn("IS_NULL=True", probe_run.stdout)
+                self.assertFalse(self._port_listening(unused_probe_port),
+                                 f"Get-RectoSccacheServerInfo unexpectedly started a daemon on port {unused_probe_port}")
+
+                other_env = os.environ.copy()
+                other_env["SCCACHE_DIR"] = str(other_cache)
+                other_env["SCCACHE_CACHE_SIZE"] = "2G"
+                other_env["SCCACHE_SERVER_PORT"] = str(other_port)
+                start_other = subprocess.run(
+                    [str(sccache_exe), "--start-server"],
+                    cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
+                    env=other_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=30, creationflags=windowless(),
+                )
+                self.assertEqual(start_other.returncode, 0, start_other.stdout + start_other.stderr)
+
+                # 1. With SCCACHE_SERVER_PORT unset, Initialize-RectoSccache picks an isolated port,
+                # enforces recto_cache + 10G, and leaves other_port (2G) completely untouched.
+                ps_init = f"""
+. '{SCCACHE_PS1}'
+$info = Initialize-RectoSccache -RepoRoot '{ROOT}' -VsPath '{_vs_install_path()}'
+Write-Output ("PORT=" + $info.ServerPort)
+"""
+                r_env = os.environ.copy()
+                r_env["SCCACHE_DIR"] = str(recto_cache)
+                r_env["SCCACHE_CACHE_SIZE"] = "10G"
+                r_env.pop("SCCACHE_SERVER_PORT", None)
+                r_env.pop("RECTO_SCCACHE_NO_DAEMON", None)
+                r_env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
+                run1 = subprocess.run(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=60, creationflags=windowless(),
+                )
+                self.assertEqual(run1.returncode, 0, run1.stdout + run1.stderr)
+                m = re.search(r"PORT=(\d+)", run1.stdout)
+                self.assertIsNotNone(m, run1.stdout)
+                assert m is not None
+                derived_port = int(m.group(1))
+                started_ports.add(derived_port)
+                self.assertNotEqual(derived_port, other_port)
+
+                recto_stats = self._server_stats(sccache_exe, derived_port)
+                self.assertEqual(recto_stats["max_cache_size"], 10 * 1024 ** 3)
+                self.assertIn("recto-cache", recto_stats["cache_location"].lower())
+
+                other_stats = self._server_stats(sccache_exe, other_port)
+                self.assertEqual(other_stats["max_cache_size"], 2 * 1024 ** 3)
+                self.assertIn("other-cache", other_stats["cache_location"].lower())
+
+                # 2. A same-cache server running with wrong size (512M) on Recto's explicit port is restarted to 10G.
+                wrong_env = os.environ.copy()
+                wrong_env["SCCACHE_DIR"] = str(recto_cache)
+                wrong_env["SCCACHE_CACHE_SIZE"] = "512M"
+                wrong_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
+                start_wrong = subprocess.run(
+                    [str(sccache_exe), "--start-server"],
+                    cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
+                    env=wrong_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=30, creationflags=windowless(),
+                )
+                self.assertEqual(start_wrong.returncode, 0, start_wrong.stdout + start_wrong.stderr)
+                r_env["SCCACHE_SERVER_PORT"] = str(recto_explicit_port)
+                run2 = subprocess.run(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=60, creationflags=windowless(),
+                )
+                self.assertEqual(run2.returncode, 0, run2.stdout + run2.stderr)
+                self.assertEqual(self._server_stats(sccache_exe, recto_explicit_port)["max_cache_size"], 10 * 1024 ** 3)
+
+                # 3. Explicitly pointing SCCACHE_SERVER_PORT at another repo's server fails cleanly without disrupting it.
+                r_env["SCCACHE_SERVER_PORT"] = str(other_port)
+                run3 = subprocess.run(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_init],
+                    cwd=ROOT, env=r_env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=60, creationflags=windowless(),
+                )
+                self.assertNotEqual(run3.returncode, 0, run3.stdout + run3.stderr)
+                self.assertIn("disrupted", (run3.stdout + run3.stderr).lower())
+                self.assertEqual(self._server_stats(sccache_exe, other_port)["max_cache_size"], 2 * 1024 ** 3)
+            finally:
+                for p in started_ports:
+                    self._stop_server(sccache_exe, p)
+
+    def test_msbuild_end_to_end_cache_hits_tlog_invalidation_z7_asan_and_error_refusal(self):
+        assert MSBUILD is not None and POWERSHELL is not None
+        vs = _vs_install_path()
+        sccache_exe = self._sccache_exe()
+        self.assertIsNotNone(vs, "VS 2026 required")
+        self.assertIsNotNone(sccache_exe, ".tools sccache.exe required")
+        assert vs is not None and sccache_exe is not None
+
+        port = _free_localhost_port()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            ws = base / "proj"
+            cache_dir = base / "cache"
+            wrapper_dir = base / "wrapper"
+            ws.mkdir()
+            cache_dir.mkdir()
+            wrapper_dir.mkdir()
+
+            props = ROOT / "Directory.Build.props"
+            targets = ROOT / "Directory.Build.targets"
+            proj = self._write_probe_project(ws, props, targets)
+
+            (ws / "pch.h").write_text("#pragma once\n#include <cstdio>\n", encoding="utf-8")
+            (ws / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+            (ws / "forced_inc.h").write_text("#pragma once\n#define FORCED_VAL 10\n", encoding="utf-8")
+            (ws / "direct_inc.h").write_text("#pragma once\ninline int direct_val() { return 101; }\n", encoding="utf-8")
+            (ws / "unit_a.cpp").write_text(
+                '#include "direct_inc.h"\n'
+                'int get_a() { return direct_val(); }\n'
+                'int get_f() { return FORCED_VAL; }\n',
+                encoding="utf-8",
+            )
+            (ws / "unit_b.cpp").write_text(
+                '#include <cstdio>\n'
+                'int get_a();\n'
+                'int get_f();\n'
+                'int main() {\n'
+                '    std::printf("A=%d;B=200;F=%d\\n", get_a(), get_f());\n'
+                '    return 0;\n'
+                '}\n',
+                encoding="utf-8",
+            )
+
+            # Reuse repo wrapper if built, otherwise bootstrap cleanly into wrapper_dir.
+            repo_wrapper = ROOT / "build" / "sccache-wrapper" / "sccache-cl.exe"
+            if repo_wrapper.is_file():
+                wrapper_exe = wrapper_dir / "sccache-cl.exe"
+                shutil.copy2(repo_wrapper, wrapper_exe)
+            else:
+                boot = _run_managed(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                     f". '{SCCACHE_PS1}'; $w = Build-RectoSccacheWrapper -RepoRoot '{ROOT}' -VsPath '{vs}'; Write-Output $w"],
+                    cwd=ROOT, env=os.environ.copy(), timeout=120,
+                )
+                self.assertEqual(boot.returncode, 0, boot.stdout + boot.stderr)
+                wrapper_exe = Path(boot.stdout.strip().splitlines()[-1])
+
+            try:
+                env = os.environ.copy()
+                env["SCCACHE_DIR"] = str(cache_dir)
+                env["SCCACHE_CACHE_SIZE"] = "10G"
+                env["SCCACHE_SERVER_PORT"] = str(port)
+                env["RECTO_SCCACHE_EXE"] = str(sccache_exe)
+                env.pop("RECTO_REAL_CL_EXE", None)
+
+                start_srv = subprocess.run(
+                    [str(sccache_exe), "--start-server"],
+                    cwd=Path(os.environ.get("SystemRoot", r"C:\Windows")),
+                    env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    timeout=30, creationflags=windowless(),
+                )
+                self.assertEqual(start_srv.returncode, 0, start_srv.stdout + start_srv.stderr)
+
+                def run_msbuild(platform: str = "x64", asan: str = "false", target: str = "Build",
+                                proj_override: Path | None = None) -> subprocess.CompletedProcess[str]:
+                    assert MSBUILD is not None
+                    cmd = [
+                        MSBUILD, str(proj_override or proj), "-nologo", f"-t:{target}",
+                        "-p:Configuration=Debug", f"-p:Platform={platform}", f"-p:EnableASAN={asan}",
+                        "-p:TreatWarningsAsErrors=true", "-p:UseSccache=true",
+                        f"-p:CLToolExe={wrapper_exe.name}", f"-p:CLToolPath={wrapper_exe.parent}",
+                        "-p:MultiProcMaxCount=2", "/nr:false",
+                    ]
+                    return _run_managed(cmd, cwd=ws, env=env, timeout=180)
+
+                out_exe = ws / "out" / "recto-e2e-probe.exe"
+                out_pdb = ws / "out" / "recto-e2e-probe.pdb"
+
+                # 1. Cold build: 3 misses, PDB generated, .tlog files record direct + forced headers & JSON/.obj outputs.
+                self._zero_stats(sccache_exe, port)
+                r1 = run_msbuild()
+                self.assertEqual(r1.returncode, 0, r1.stdout + r1.stderr)
+                st1 = self._server_stats(sccache_exe, port)["stats"]
+                self.assertEqual(st1["compile_requests"], 3)
+                self.assertEqual(self._counter_sum(st1["cache_misses"]), 3)
+                self.assertEqual(self._counter_sum(st1["cache_hits"]), 0)
+                self.assertEqual(st1["non_cacheable_compilations"], 0)
+                self.assertTrue(out_exe.is_file())
+                self.assertTrue(out_pdb.is_file(), "linker must emit PDB with /Z7")
+
+                read_tlog_paths = sorted((ws / "obj").rglob("*CL.read.*.tlog"))
+                write_tlog_paths = sorted((ws / "obj").rglob("*CL.write.*.tlog"))
+                self.assertTrue(read_tlog_paths, f"expected CL.read.*.tlog files under {ws / 'obj'}")
+                self.assertTrue(write_tlog_paths, f"expected CL.write.*.tlog files under {ws / 'obj'}")
+                read_tlogs = "\n".join(p.read_text(encoding="utf-16-le", errors="replace") for p in read_tlog_paths)
+                write_tlogs = "\n".join(p.read_text(encoding="utf-16-le", errors="replace") for p in write_tlog_paths)
+                self.assertIn("DIRECT_INC.H", read_tlogs.upper())
+                self.assertIn("FORCED_INC.H", read_tlogs.upper())
+                self.assertIn("UNIT_A.OBJ", write_tlogs.upper())
+                self.assertIn("UNIT_A.CPP.JSON", write_tlogs.upper())
+                self.assertEqual(_run_managed([str(out_exe)], cwd=ws, env=env, timeout=30).stdout.strip(), "A=101;B=200;F=10")
+
+                # 2. Immediate no-op build issues 0 compile requests.
+                self._zero_stats(sccache_exe, port)
+                r2 = run_msbuild()
+                self.assertEqual(r2.returncode, 0, r2.stdout + r2.stderr)
+                self.assertEqual(self._server_stats(sccache_exe, port)["stats"]["compile_requests"], 0)
+
+                # 3. Delete IntDir (`obj`) -> warm rebuild gets 100% cache hits (3/3) and restores .tlog tracking!
+                shutil.rmtree(ws / "obj")
+                self._zero_stats(sccache_exe, port)
+                r3 = run_msbuild()
+                self.assertEqual(r3.returncode, 0, r3.stdout + r3.stderr)
+                st3 = self._server_stats(sccache_exe, port)["stats"]
+                self.assertEqual(st3["compile_requests"], 3)
+                self.assertEqual(self._counter_sum(st3["cache_hits"]), 3)
+                self.assertEqual(self._counter_sum(st3["cache_misses"]), 0)
+                self.assertEqual(st3["non_cacheable_compilations"], 0)
+
+                # 4. Immediate no-op after cache-hit restore issues 0 compile requests (proves FileTracker replay).
+                self._zero_stats(sccache_exe, port)
+                r4 = run_msbuild()
+                self.assertEqual(r4.returncode, 0, r4.stdout + r4.stderr)
+                self.assertEqual(self._server_stats(sccache_exe, port)["stats"]["compile_requests"], 0)
+
+                # 5. Editing directly included header after cache restore rebuilds only unit_a.cpp (1 request) and updates exe.
+                self._zero_stats(sccache_exe, port)
+                (ws / "direct_inc.h").write_text("#pragma once\ninline int direct_val() { return 102; }\n", encoding="utf-8")
+                r5 = run_msbuild()
+                self.assertEqual(r5.returncode, 0, r5.stdout + r5.stderr)
+                st5 = self._server_stats(sccache_exe, port)["stats"]
+                self.assertEqual(st5["compile_requests"], 1)
+                self.assertEqual(self._counter_sum(st5["cache_misses"]), 1)
+                self.assertEqual(_run_managed([str(out_exe)], cwd=ws, env=env, timeout=30).stdout.strip(), "A=102;B=200;F=10")
+
+                # 6. Editing forced-included header rebuilds dependents and next no-op stays at 0 requests.
+                self._zero_stats(sccache_exe, port)
+                (ws / "forced_inc.h").write_text("#pragma once\n#define FORCED_VAL 25\n", encoding="utf-8")
+                r6 = run_msbuild()
+                self.assertEqual(r6.returncode, 0, r6.stdout + r6.stderr)
+                self.assertGreaterEqual(self._server_stats(sccache_exe, port)["stats"]["compile_requests"], 2)
+                self.assertEqual(_run_managed([str(out_exe)], cwd=ws, env=env, timeout=30).stdout.strip(), "A=102;B=200;F=25")
+
+                self._zero_stats(sccache_exe, port)
+                r6b = run_msbuild()
+                self.assertEqual(r6b.returncode, 0, r6b.stdout + r6b.stderr)
+                self.assertEqual(self._server_stats(sccache_exe, port)["stats"]["compile_requests"], 0)
+
+                # 7. Deliberate compiler error after successful cached build fails without rewriting exe.
+                exe_mtime = out_exe.stat().st_mtime_ns
+                good_a = (ws / "unit_a.cpp").read_text(encoding="utf-8")
+                (ws / "unit_a.cpp").write_text(good_a + "\nint broken_fn() { return intentional_compile_break_token; }\n", encoding="utf-8")
+                r7 = run_msbuild()
+                self.assertNotEqual(r7.returncode, 0, r7.stdout + r7.stderr)
+                self.assertIn("error C2065", r7.stdout + r7.stderr)
+                self.assertIn("intentional_compile_break_token", r7.stdout + r7.stderr)
+                self.assertEqual(out_exe.stat().st_mtime_ns, exe_mtime)
+                (ws / "unit_a.cpp").write_text(good_a, encoding="utf-8")
+
+                # 8. ARM64 target compile via MSBuild UseSccache=true hits Hostx64\arm64\cl.exe cleanly.
+                self._zero_stats(sccache_exe, port)
+                r_arm = run_msbuild(platform="ARM64", target="ClCompile")
+                self.assertEqual(r_arm.returncode, 0, r_arm.stdout + r_arm.stderr)
+                st_arm = self._server_stats(sccache_exe, port)["stats"]
+                self.assertEqual(st_arm["compile_requests"], 3)
+                self.assertEqual(st_arm["non_cacheable_compilations"], 0)
+
+                # 9. /Z7 + EnableASAN=true + linker PDB symbolizes ASan stack trace with exact file:line.
+                asan_ws = base / "asan_proj"
+                asan_ws.mkdir()
+                asan_proj = self._write_probe_project(asan_ws, props, targets)
+                (asan_ws / "pch.h").write_text("#pragma once\n#include <cstdio>\n", encoding="utf-8")
+                (asan_ws / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+                (asan_ws / "forced_inc.h").write_text("#pragma once\n", encoding="utf-8")
+                (asan_ws / "unit_a.cpp").write_text("int helper(int* p) { return p[0]; }\n", encoding="utf-8")
+                (asan_ws / "unit_b.cpp").write_text(
+                    "int helper(int* p);\n"
+                    "int main() {\n"
+                    "    int* buf = new int[2]{1, 2};\n"
+                    "    delete[] buf;\n"
+                    "    return helper(buf);\n"
+                    "}\n",
+                    encoding="utf-8",
+                )
+                r_asan = _run_managed(
+                    [MSBUILD, str(asan_proj), "-nologo", "-t:Build",
+                     "-p:Configuration=Debug", "-p:Platform=x64", "-p:EnableASAN=true",
+                     "-p:TreatWarningsAsErrors=true", "-p:UseSccache=true",
+                     f"-p:CLToolExe={wrapper_exe.name}", f"-p:CLToolPath={wrapper_exe.parent}",
+                     "-p:MultiProcMaxCount=2", "/nr:false"],
+                    cwd=asan_ws, env=env, timeout=180,
+                )
+                self.assertEqual(r_asan.returncode, 0, r_asan.stdout + r_asan.stderr)
+                asan_exe = asan_ws / "out" / "recto-e2e-probe.exe"
+                asan_pdb = asan_ws / "out" / "recto-e2e-probe.pdb"
+                self.assertTrue(asan_pdb.is_file())
+                asan_bins = sorted((Path(vs) / "VC" / "Tools" / "MSVC").glob("*/bin/Hostx64/x64/clang_rt.asan_dynamic-x86_64.dll"))
+                self.assertTrue(asan_bins, "MSVC x64 ASan runtime DLL required")
+                shutil.copy2(asan_bins[-1], asan_exe.parent / asan_bins[-1].name)
+                run_env = dict(env)
+                run_env["PATH"] = f"{asan_bins[-1].parent}{os.pathsep}{run_env.get('PATH', '')}"
+                run_env["ASAN_OPTIONS"] = "symbolize=1"
+                crash = _run_managed([str(asan_exe)], cwd=asan_ws, env=run_env, timeout=30)
+                self.assertNotEqual(crash.returncode, 0, crash.stdout + crash.stderr)
+                combined_asan = crash.stdout + crash.stderr
+                self.assertIn("heap-use-after-free", combined_asan)
+                self.assertRegex(combined_asan, r"unit_[ab]\.cpp:\d+", combined_asan)
+            finally:
+                self._stop_server(sccache_exe, port)
 
 
 if __name__ == "__main__":
