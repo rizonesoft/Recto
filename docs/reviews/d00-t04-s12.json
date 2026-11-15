@@ -1,0 +1,91 @@
+{
+  "ref": "D00 T04 \u00a712",
+  "title": "clangd language server for Claude Code over a compile database from the MSBuild build",
+  "implementation_sha": "eb40d5ade600b74e287a61cca18e2f14851e8960",
+  "date": "2026-11-15",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s12.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_compile_commands -> Ran 13 tests in 48.348s OK; full, no-change, and one-source build.ps1 Debug|x64 plus live -Project recto-pdf, Release, Debug -EnableASAN, clangd-lsp.py --check, and gen-compile-commands.py --check preserve MSBuild-evaluated build/compile_commands.json (SHA-256 D8DED1EEEA342821C6A89B5C905B9E335C0AB068ED305734C6460F09D0C70A8B); build-compile-commands.py check -> checked 74/74 translation units: 0 errors; missing recto-fuzz.txt -> exit 2 naming recto-fuzz; run-tests.py --quick -> OK: all 32 suite(s) passed in 161.72s; CI build.yml 43690733414 and plan.yml 43690733377 green",
+    "bosun run -- cmd /c .\\build.cmd exited 0: Debug|x64 0 warnings, 0 errors, check-ui-boundary clean, 74 compile commands (SHA-256 D8DED1EEEA342821C6A89B5C905B9E335C0AB068ED305734C6460F09D0C70A8B), 504/508 passed (4 skipped, 3 disabled); Release|x64 0 warnings, 0 errors, check-ui-boundary clean, 505/508 passed (3 skipped, 3 disabled)"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s12.md",
+    "verdict": "reconciled",
+    "candidate": "eb40d5ade600b74e287a61cca18e2f14851e8960",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s12.md",
+    "candidate": "a8396972554bbe9502e2ccea0e4b3e5e129927b0",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "a8396972554bbe9502e2ccea0e4b3e5e129927b0",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 4,
+  "pass_cap": 33
+}

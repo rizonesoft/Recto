@@ -58,7 +58,7 @@ track: M0
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
-| 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [ ] |
+| 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [ ] |
 
@@ -441,9 +441,12 @@ Two defaults, each with its cost of changing: clangd comes from Visual Studio an
 - [x] Connect clangd to Claude Code for this repository through its language server support, with `build\clangd.cmd` as the server command for C and C++ files, in the tracked configuration under `.claude/` if Claude Code reads one there and otherwise by the documented install step written into `CONTRIBUTING.md`; the mechanism is read from Claude Code's own documentation and named in the findings file. Done when: in a fresh LSP session in the final configuration, a definition query on a function declared in `src/pdf/document.h` returns its file and line, a references query returns the complete caller set matching an independent source inventory including unopened translation units, and a deliberate type error in a scratch copy of a source is reported without a build.
 - [x] Tell the writers to use it: one line in `AGENTS.md`'s Working rules and in `.claude/agents/code-explorer.md` (definition, references, type and diagnostics through the language server before searching and reading sources; search stays for text that is not a symbol). Done when: both files carry the line and `python -m unittest discover -s scripts/tests` passes.
 - [x] Measure the saving on one real lookup: every caller of one function in `src/pdf/filters.cpp`, found once by search and reading (yielding the independently established ground-truth caller set including unopened translation units) and once through a fresh LSP session in the final `build\clangd.cmd` configuration. Done when: the bytes of tool output each way and exact caller-set equality across all translation units are recorded in the findings file (failing if any ground-truth caller is missing).
-- [ ] Commit: `build: clangd over a compile database written from the MSBuild build`
+- [x] Commit: `build: clangd over a compile database written from the MSBuild build`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_compile_commands` passes; after full, no-change, and one-source `build.ps1 -Platform x64 -Configuration Debug -SkipTests` runs and across LSP startup/`-Project`/ASan runs, `python scripts/build-compile-commands.py check` reports exact source-set equality (`74/74` eligible units) with 0 errors and preserves MSBuild-evaluated `build/compile_commands.json`; and removing a project's file from `build\compile-commands\x64\Debug` makes the generator exit 2 naming it.
+
+> **Verified:** 2026-11-15 | §12 | eb40d5ade600b74e287a61cca18e2f14851e8960
+> **Review:** `docs/reviews/d00-t04-s12.json`
 
 ## 13. A red main reported from GitHub itself, with the workstation off
 
