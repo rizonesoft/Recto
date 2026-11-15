@@ -38,34 +38,88 @@ def ensure_compile_commands(root: Path = ROOT) -> Path:
     return load_gen().ensure_database(db, root)
 
 
+def find_vs_clangd() -> str | None:
+    if os.name != "nt":
+        return None
+    arch_order = ("ARM64", "x64") if platform.machine().lower() in ("arm64", "aarch64") else ("x64", "ARM64")
+    vs_env = os.environ.get("RECTO_VS_INSTALL", "").strip()
+    if vs_env:
+        vs_candidates = [Path(vs_env)]
+    else:
+        gen = load_gen()
+        vs_candidates = [*gen.iter_vs_installs(require_cpp=True), *gen.iter_vs_installs(require_cpp=False)]
+    seen_vs: list[Path] = []
+    for vs in vs_candidates:
+        if vs in seen_vs:
+            continue
+        seen_vs.append(vs)
+        for arch in arch_order:
+            cand = vs / "VC" / "Tools" / "Llvm" / arch / "bin" / "clangd.exe"
+            if cand.is_file():
+                return str(cand)
+        cand_plain = vs / "VC" / "Tools" / "Llvm" / "bin" / "clangd.exe"
+        if cand_plain.is_file():
+            return str(cand_plain)
+    return None
+
+
 def find_clangd() -> str | None:
-    override = os.environ.get("RECTO_CLANGD")
-    if override and Path(override).is_file():
-        return str(Path(override))
+    override = os.environ.get("RECTO_CLANGD", "").strip()
+    if override:
+        p = Path(override)
+        return str(p) if p.is_file() else None
+    if os.name == "nt":
+        vs_clangd = find_vs_clangd()
+        if vs_clangd:
+            return vs_clangd
     on_path = shutil.which("clangd")
     if on_path:
         return on_path
     if os.name == "nt":
-        gen = load_gen()
-        arch_order = ("ARM64", "x64") if platform.machine().lower() in ("arm64", "aarch64") else ("x64", "ARM64")
-        seen_vs: list[Path] = []
-        for vs in (*gen.iter_vs_installs(require_cpp=True), *gen.iter_vs_installs(require_cpp=False)):
-            if vs in seen_vs:
-                continue
-            seen_vs.append(vs)
-            for arch in arch_order:
-                cand = vs / "VC" / "Tools" / "Llvm" / arch / "bin" / "clangd.exe"
-                if cand.is_file():
-                    return str(cand)
-            cand_plain = vs / "VC" / "Tools" / "Llvm" / "bin" / "clangd.exe"
-            if cand_plain.is_file():
-                return str(cand_plain)
         for base in (os.environ.get("ProgramFiles") or r"C:\Program Files",
                      os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"):
             cand = Path(base) / "LLVM" / "bin" / "clangd.exe"
             if cand.is_file():
                 return str(cand)
     return None
+
+
+def build_clangd_command(db: Path, args: list[str], *, root: Path = ROOT) -> tuple[str | None, list[str]]:
+    override = os.environ.get("RECTO_CLANGD", "").strip()
+    vs_clangd = find_vs_clangd() if (os.name == "nt" and not override) else None
+    clangd = vs_clangd or find_clangd()
+    if not clangd:
+        return None, []
+    clangd_cmd = root / "build" / "clangd.cmd"
+    if not override and os.name == "nt" and vs_clangd is not None and clangd_cmd.is_file():
+        # Delegate through build/clangd.cmd, which owns -j=2, --pch-storage=disk, --background-index, and --compile-commands-dir.
+        return clangd, [
+            "cmd",
+            "/c",
+            str(clangd_cmd),
+            f"--compile-commands-dir={db.parent}",
+            "--limit-results=0",
+            "--limit-references=0",
+            "--header-insertion=never",
+            "--log=error",
+            *args,
+        ]
+    has_check = any(a.startswith("--check") and not a.startswith("--check-lines") for a in args)
+    bg = [] if has_check else ["--background-index"]
+    chk_flags = ["--check-lines=1-1", "--tweaks=-"] if has_check else []
+    return clangd, [
+        clangd,
+        f"--compile-commands-dir={db.parent}",
+        "--pch-storage=disk",
+        *bg,
+        "--limit-results=0",
+        "--limit-references=0",
+        "-j=2",
+        "--header-insertion=never",
+        "--log=error",
+        *chk_flags,
+        *args,
+    ]
 
 
 def bind_kill_on_close_job(proc: subprocess.Popen):
@@ -125,8 +179,8 @@ def bind_kill_on_close_job(proc: subprocess.Popen):
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    clangd = find_clangd()
     if args == ["--check"]:
+        clangd = find_clangd()
         db = ROOT / "build" / "compile_commands.json"
         ok_db, db_msg = load_gen().check_database(db, ROOT)
         if not ok_db:
@@ -137,38 +191,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"clangd: {clangd}\ncompile_commands: {db} ({db_msg})")
         return 0
-    if not clangd:
+    if not find_clangd():
         print("clangd-lsp: clangd not found; install Visual Studio C++ Clang tools or LLVM", file=sys.stderr)
         return 127
     db = ensure_compile_commands(ROOT)
-    override = os.environ.get("RECTO_CLANGD")
-    clangd_cmd = ROOT / "build" / "clangd.cmd"
-    if not override and os.name == "nt" and clangd_cmd.is_file():
-        # Delegate through build/clangd.cmd, which owns -j=2, --pch-storage=disk, --background-index, and --compile-commands-dir.
-        cmd = [
-            "cmd",
-            "/c",
-            str(clangd_cmd),
-            f"--compile-commands-dir={db.parent}",
-            "--limit-results=0",
-            "--limit-references=0",
-            "--header-insertion=never",
-            "--log=error",
-            *args,
-        ]
-    else:
-        cmd = [
-            clangd,
-            f"--compile-commands-dir={db.parent}",
-            "--pch-storage=disk",
-            "--background-index",
-            "--limit-results=0",
-            "--limit-references=0",
-            "-j=2",
-            "--header-insertion=never",
-            "--log=error",
-            *args,
-        ]
+    clangd, cmd = build_clangd_command(db, args, root=ROOT)
+    if not clangd or not cmd:
+        print("clangd-lsp: clangd not found; install Visual Studio C++ Clang tools or LLVM", file=sys.stderr)
+        return 127
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
     import lib.proc_group as proc_group

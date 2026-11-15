@@ -55,8 +55,16 @@ def unescape_msbuild_field(raw: str) -> str:
     return _UNESCAPE_RE.sub(lambda m: _UNESCAPE_MAP[m.group(1)], raw)
 
 
+def _canonical_path(path_text: str | Path) -> Path:
+    p = Path(path_text)
+    try:
+        return p.resolve()
+    except OSError:
+        return Path(os.path.abspath(str(p)))
+
+
 def norm_path_key(path_text: str | Path) -> str:
-    return os.path.normcase(os.path.normpath(str(path_text)))
+    return os.path.normcase(os.path.normpath(str(_canonical_path(path_text))))
 
 
 def split_msbuild_values(raw: str) -> list[str]:
@@ -220,9 +228,8 @@ def _resolve_project_path(proj_dir: Path, raw_entry: str) -> str:
     if not cleaned:
         return ""
     p = Path(cleaned)
-    if p.is_absolute():
-        return os.path.normpath(str(p))
-    return os.path.normpath(str(proj_dir / cleaned.replace("/", os.sep)))
+    cand = p if p.is_absolute() else (proj_dir / cleaned.replace("/", os.sep))
+    return os.path.normpath(str(_canonical_path(cand)))
 
 
 def _std_flag(lang_std: str) -> str:
@@ -298,7 +305,7 @@ def parse_manifest(manifest_path: Path, *, expected_proj_name: str) -> tuple[dic
                 raise CompileCommandsError(f"{manifest_path}:{line_no}: malformed project record")
             project_info = {
                 "proj_path": parts[1].strip(),
-                "proj_dir": Path(parts[2].strip()),
+                "proj_dir": _canonical_path(parts[2].strip()),
                 "platform": parts[3].strip() or "x64",
                 "configuration": parts[4].strip() or "Debug",
                 "include_path": unescape_msbuild_field(parts[5]),
@@ -339,7 +346,7 @@ def parse_manifest(manifest_path: Path, *, expected_proj_name: str) -> tuple[dic
 
 def _build_entry(project_info: dict, unit: dict) -> dict:
     proj_dir: Path = project_info["proj_dir"]
-    src_path = os.path.normpath(unit["full_path"])
+    src_path = os.path.normpath(str(_canonical_path(unit["full_path"])))
     plat = project_info["platform"]
     cfg = project_info["configuration"]
 
@@ -487,7 +494,7 @@ def build_entries_from_manifests(
                 raise CompileCommandsError(
                     f"duplicate translation unit {u['full_path']} across manifests (project {proj_name})"
                 )
-            manifest_sources[src_key] = Path(u["full_path"])
+            manifest_sources[src_key] = _canonical_path(u["full_path"])
             entries.append(_build_entry(project_info, u))
 
     expected_keys = set(expected_by_key.keys())
@@ -615,46 +622,24 @@ def check_clangd_all(
     failures: list[str] = []
 
     def check_one(src: Path) -> tuple[str, int, str]:
+        if str(HERE) not in sys.path:
+            sys.path.insert(0, str(HERE))
+        import lib.proc_group as proc_group
+
         if clangd_exe.lower().endswith((".cmd", ".bat")) and os.name == "nt":
             cmd = ["cmd", "/c", clangd_exe, f"--compile-commands-dir={db_dir}", f"--check={src}"]
         else:
             cmd = [clangd_exe, f"--compile-commands-dir={db_dir}", f"--check={src}"]
-        proc = subprocess.Popen(
-            cmd,
-            cwd=sln_path.parent,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            creationflags=windowless(),
-        )
+        managed = proc_group.spawn_managed_process(cmd, cwd=sln_path.parent, capture_output=True)
         try:
-            stdout, stderr = proc.communicate(timeout=180)
-            return str(src), proc.returncode, (stdout + "\n" + stderr).strip()
+            stdout, stderr = managed.proc.communicate(timeout=180)
+            return str(src), int(managed.proc.returncode or 0), ((stdout or "") + "\n" + (stderr or "")).strip()
         except subprocess.TimeoutExpired:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                    capture_output=True,
-                    creationflags=windowless(),
-                )
-            else:
-                proc.kill()
-            stdout, stderr = proc.communicate()
-            partial = (stdout + "\n" + stderr).strip()
+            out, err = managed.drain_after_terminate()
+            partial = (out + "\n" + err).strip()
             return str(src), 124, f"timed out after 180s\n{partial}".strip()
         finally:
-            if proc.poll() is None:
-                if os.name == "nt":
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                        capture_output=True,
-                        creationflags=windowless(),
-                    )
-                else:
-                    proc.kill()
-                proc.wait()
+            managed.terminate_and_close()
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futs = [pool.submit(check_one, db_keys[k]) for k in sorted(db_keys)]

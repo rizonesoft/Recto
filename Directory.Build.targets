@@ -78,15 +78,24 @@
   <!-- After ClCompile or Build on non-ASan builds, record every evaluated non-excluded ClCompile item and the
        project's evaluated $(IncludePath) so scripts/build-compile-commands.py writes build/compile_commands.json
        from the build that actually ran without re-evaluating XML. Literal '%' and ';' are escaped before item
-       expansion and separated by ASCII unit separator (0x1F) so semicolon-bearing properties stay one record per line. -->
+       expansion and separated by ASCII unit separator (0x1F) so semicolon-bearing properties stay one record per line.
+       Out-of-tree temp/probe projects importing these targets skip writing into the repository's build/compile-commands
+       folder unless RectoCompileCommandsDir is explicitly specified. -->
   <Target Name="RectoCompileCommands" AfterTargets="ClCompile;Build" Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableASAN)' != 'true'">
-    <MakeDir Directories="$(MSBuildThisFileDirectory)build\compile-commands\$(Platform)\$(Configuration)" />
-    <ItemGroup>
+    <PropertyGroup>
+      <_RectoProjDirFull>$([System.IO.Path]::GetFullPath(`$(MSBuildProjectDirectory)\`))</_RectoProjDirFull>
+      <_RectoRootDirFull>$([System.IO.Path]::GetFullPath(`$(MSBuildThisFileDirectory)`))</_RectoRootDirFull>
+      <_RectoInTreeProject>$(_RectoProjDirFull.StartsWith(`$(_RectoRootDirFull)`, System.StringComparison.OrdinalIgnoreCase))</_RectoInTreeProject>
+      <_RectoCcOutDir>$(RectoCompileCommandsDir)</_RectoCcOutDir>
+      <_RectoCcOutDir Condition="'$(_RectoCcOutDir)' == '' And '$(_RectoInTreeProject)' == 'true'">$(MSBuildThisFileDirectory)build\compile-commands\$(Platform)\$(Configuration)</_RectoCcOutDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_RectoCcOutDir)" Condition="'$(_RectoCcOutDir)' != ''" />
+    <ItemGroup Condition="'$(_RectoCcOutDir)' != ''">
       <_RectoCcUnit Include="@(ClCompile)" Condition="'%(ClCompile.ExcludedFromBuild)' != 'true'" />
       <_RectoCcLine Include="project%1F$(MSBuildProjectFullPath)%1F$(ProjectDir)%1F$(Platform)%1F$(Configuration)%1F$([System.String]::Copy('$(IncludePath)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('$(ExternalIncludePath)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))" />
       <_RectoCcLine Include="unit%1F%(_RectoCcUnit.FullPath)%1F%(_RectoCcUnit.LanguageStandard)%1F%(_RectoCcUnit.ExceptionHandling)%1F%(_RectoCcUnit.WarningLevel)%1F%(_RectoCcUnit.ConformanceMode)%1F%(_RectoCcUnit.RuntimeTypeInfo)%1F%(_RectoCcUnit.PrecompiledHeader)%1F%(_RectoCcUnit.PrecompiledHeaderFile)%1F%(_RectoCcUnit.TreatWarningAsError)%1F%(_RectoCcUnit.DebugInformationFormat)%1F%(_RectoCcUnit.RuntimeLibrary)%1F%(_RectoCcUnit.UseStandardPreprocessor)%1F$([System.String]::Copy('%(_RectoCcUnit.AdditionalIncludeDirectories)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('%(_RectoCcUnit.PreprocessorDefinitions)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('%(_RectoCcUnit.UndefinePreprocessorDefinitions)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('%(_RectoCcUnit.ForcedIncludeFiles)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('%(_RectoCcUnit.AdditionalOptions)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))%1F$([System.String]::Copy('%(_RectoCcUnit.DisableSpecificWarnings)').Replace('%', '%25').Replace(';', '%3B').Replace('%0D', ' ').Replace('%0A', ' '))" Condition="'@(_RectoCcUnit)' != ''" />
     </ItemGroup>
-    <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\compile-commands\$(Platform)\$(Configuration)\$(MSBuildProjectName).txt" Lines="@(_RectoCcLine)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(_RectoCcOutDir)\$(MSBuildProjectName).txt" Lines="@(_RectoCcLine)" Overwrite="true" Encoding="UTF-8" Condition="'$(_RectoCcOutDir)' != ''" />
     <ItemGroup>
       <_RectoCcLine Remove="@(_RectoCcLine)" />
       <_RectoCcUnit Remove="@(_RectoCcUnit)" />

@@ -2,6 +2,7 @@
 """Tests for MSBuild `RectoCompileCommands` compile database generation and `build/clangd.cmd`."""
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -18,10 +19,6 @@ SCRIPTS = ROOT / "scripts"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 
-def _windowless() -> int:
-    return subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-
-
 def _load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -30,6 +27,49 @@ def _load_module(name: str, path: Path):
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+PROC_GROUP = _load_module("proc_group", SCRIPTS / "lib" / "proc_group.py")
+
+
+def _run_managed(
+    cmd: list[str],
+    *,
+    cwd: Path = ROOT,
+    env: dict[str, str] | None = None,
+    timeout: float = 60.0,
+) -> subprocess.CompletedProcess[str]:
+    managed = PROC_GROUP.spawn_managed_process(cmd, cwd=cwd, env=env, capture_output=True)
+    try:
+        stdout, stderr = managed.proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, int(managed.proc.returncode or 0), stdout or "", stderr or "")
+    except subprocess.TimeoutExpired as exc:
+        out, err = managed.drain_after_terminate()
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from exc
+    finally:
+        managed.terminate_and_close()
+
+
+def _pid_alive(pid: int) -> bool:
+    if os.name == "nt":
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_uint32()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def _vs_install_path() -> str | None:
@@ -43,7 +83,7 @@ def _vs_install_path() -> str | None:
     )
     if not vswhere.is_file():
         return None
-    done = subprocess.run(
+    done = _run_managed(
         [
             str(vswhere),
             "-version",
@@ -54,10 +94,7 @@ def _vs_install_path() -> str | None:
             "-property",
             "installationPath",
         ],
-        capture_output=True,
-        text=True,
         timeout=30,
-        creationflags=_windowless(),
     )
     out = done.stdout.strip()
     return out or None
@@ -207,7 +244,7 @@ CLANGD_LSP = _load_module("clangd_lsp", SCRIPTS / "clangd-lsp.py")
 class BuildCompileCommandsTests(unittest.TestCase):
     def test_two_project_conversion_spaces_quoted_defines_pch_and_sentinels(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp) / "Repo With Spaces"
+            ws = Path(tmp).resolve() / "Repo With Spaces"
             ws.mkdir(parents=True)
             p1_dir = ws / "src" / "proj one"
             p2_dir = ws / "src" / "proj two"
@@ -297,7 +334,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
 
     def test_refuses_missing_empty_zero_unit_orphan_and_source_mismatch(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
+            ws = Path(tmp).resolve()
             p1 = ws / "proj1"
             p2 = ws / "proj2"
             p1.mkdir()
@@ -323,18 +360,16 @@ class BuildCompileCommandsTests(unittest.TestCase):
 
             # 1. Missing project manifest exits 2 naming p2.
             (mdir / "p1.txt").write_text(m1, encoding="utf-8")
-            done = subprocess.run(
+            done = _run_managed(
                 [sys.executable, str(SCRIPTS / "build-compile-commands.py"), "--sln", str(sln), "--manifests-dir", str(mdir), "--out", str(ws / "cc.json")],
-                capture_output=True, text=True, creationflags=_windowless(),
             )
             self.assertEqual(done.returncode, 2)
             self.assertIn("p2", done.stderr)
 
             # 2. Empty manifest exits 2.
             (mdir / "p2.txt").write_text("", encoding="utf-8")
-            done_empty = subprocess.run(
+            done_empty = _run_managed(
                 [sys.executable, str(SCRIPTS / "build-compile-commands.py"), "--sln", str(sln), "--manifests-dir", str(mdir), "--out", str(ws / "cc.json")],
-                capture_output=True, text=True, creationflags=_windowless(),
             )
             self.assertEqual(done_empty.returncode, 2)
             self.assertIn("p2", done_empty.stderr)
@@ -366,7 +401,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
             target = copy_dir / "recto-services.txt"
             self.assertTrue(target.is_file())
             target.unlink()
-            done = subprocess.run(
+            done = _run_managed(
                 [
                     sys.executable,
                     str(SCRIPTS / "build-compile-commands.py"),
@@ -377,16 +412,13 @@ class BuildCompileCommandsTests(unittest.TestCase):
                     "--out",
                     str(Path(tmp) / "compile_commands.json"),
                 ],
-                capture_output=True,
-                text=True,
-                creationflags=_windowless(),
             )
             self.assertEqual(done.returncode, 2, done.stderr)
             self.assertIn("recto-services", done.stderr)
 
     def test_add_and_remove_unit_in_synthetic_fixture(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
+            ws = Path(tmp).resolve()
             p1 = ws / "proj1"
             p1.mkdir()
             (p1 / "pch.h").write_text("#pragma once\n", encoding="utf-8")
@@ -427,7 +459,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
     def test_real_msbuild_full_no_change_one_source_and_add_remove_unit(self):
         assert MSBUILD is not None
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp) / "msbuild-ws"
+            ws = Path(tmp).resolve() / "msbuild-ws"
             ws.mkdir(parents=True)
             _copy_real_build_configs(ws)
             pa = ws / "src" / "recto-alpha"
@@ -459,7 +491,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
             def run_msbuild() -> None:
                 if mdir.exists():
                     shutil.rmtree(mdir)
-                done = subprocess.run(
+                done = _run_managed(
                     [
                         str(MSBUILD),
                         str(sln),
@@ -468,10 +500,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
                         "/p:Configuration=Debug;Platform=x64;EnableASAN=false",
                     ],
                     cwd=ws,
-                    capture_output=True,
-                    text=True,
                     timeout=120,
-                    creationflags=_windowless(),
                 )
                 self.assertEqual(done.returncode, 0, done.stdout + "\n" + done.stderr)
 
@@ -510,7 +539,7 @@ class BuildCompileCommandsTests(unittest.TestCase):
 
     def test_gen_compile_commands_and_lsp_preserve_fresh_msbuild_database_byte_for_byte(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
+            ws = Path(tmp).resolve()
             p1 = ws / "src" / "recto-alpha"
             p1.mkdir(parents=True)
             (ws / "Directory.Build.props").write_text("<Project />\n", encoding="utf-8")
@@ -560,9 +589,10 @@ class BuildCompileCommandsTests(unittest.TestCase):
 
     @unittest.skipUnless(POWERSHELL is not None, "needs PowerShell")
     def test_build_ps1_preserves_db_on_project_release_asan_and_fails_when_generator_fails(self):
-        assert POWERSHELL is not None
+        ps_exe = POWERSHELL
+        assert ps_exe is not None
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            base = Path(tmp).resolve()
             ws = base / "repo"
             (ws / "build").mkdir(parents=True)
             (ws / "scripts").mkdir(parents=True)
@@ -649,9 +679,11 @@ class BuildCompileCommandsTests(unittest.TestCase):
                     "function global:Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 9728000 } }\n"
                     f"& '{ws / 'build' / 'build.ps1'}' {ps_args}\n"
                 )
-                return subprocess.run(
-                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
-                    capture_output=True, text=True, env=env, timeout=120, creationflags=_windowless(),
+                return _run_managed(
+                    [ps_exe, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
+                    cwd=ws,
+                    env=env,
+                    timeout=120,
                 )
 
             # Skip build-compile-commands overwriting sentinel on -Project, -Configuration Release, and -EnableASAN.
@@ -688,9 +720,9 @@ class BuildCompileCommandsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as empty_vs:
             env = os.environ.copy()
             env["RECTO_VS_INSTALL"] = empty_vs
-            missing = subprocess.run(
+            missing = _run_managed(
                 ["cmd", "/c", str(clangd_cmd), "--version"],
-                cwd=ROOT, env=env, capture_output=True, text=True, timeout=30, creationflags=_windowless(),
+                cwd=ROOT, env=env, timeout=30,
             )
             self.assertEqual(missing.returncode, 2)
             self.assertIn("Microsoft.VisualStudio.Component.VC.Llvm.Clang", missing.stderr + missing.stdout)
@@ -699,18 +731,18 @@ class BuildCompileCommandsTests(unittest.TestCase):
         if not clangd_exe:
             self.skipTest("clangd not installed on this host")
 
-        ver = subprocess.run(
+        ver = _run_managed(
             ["cmd", "/c", str(clangd_cmd), "--version"],
-            cwd=ROOT, capture_output=True, text=True, timeout=30, creationflags=_windowless(),
+            cwd=ROOT, timeout=30,
         )
         self.assertEqual(ver.returncode, 0, ver.stdout + ver.stderr)
         self.assertIn("clangd version", ver.stdout + ver.stderr)
 
         # Unknown arguments and compile errors on any line must be caught cleanly.
         if (ROOT / "build" / "compile_commands.json").is_file():
-            ok_chk = subprocess.run(
+            ok_chk = _run_managed(
                 ["cmd", "/c", str(clangd_cmd), "--check=src/pdf/error.cpp"],
-                cwd=ROOT, capture_output=True, text=True, timeout=60, creationflags=_windowless(),
+                cwd=ROOT, timeout=60,
             )
             combined = ok_chk.stdout + "\n" + ok_chk.stderr
             self.assertEqual(ok_chk.returncode, 0, combined)
@@ -720,16 +752,175 @@ class BuildCompileCommandsTests(unittest.TestCase):
 
         # Planted error beyond line 1 (line 20) still fails --check cleanly even with --check-lines=1-1.
         with tempfile.TemporaryDirectory() as tmp_cpp_dir:
-            bad_cpp = Path(tmp_cpp_dir) / "bad_line20.cpp"
+            bad_cpp = Path(tmp_cpp_dir).resolve() / "bad_line20.cpp"
             lines = ["// line"] * 19 + ['int broken = "not_an_int";']
             bad_cpp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            bad_chk = subprocess.run(
+            bad_chk = _run_managed(
                 ["cmd", "/c", str(clangd_cmd), f"--check={bad_cpp}"],
-                cwd=ROOT, capture_output=True, text=True, timeout=60, creationflags=_windowless(),
+                cwd=ROOT, timeout=60,
             )
             bad_out = bad_chk.stdout + "\n" + bad_chk.stderr
             self.assertNotEqual(bad_chk.returncode, 0)
             self.assertIn("Line 20", bad_out)
+
+    def test_short_8dot3_or_alias_paths_in_manifest_match_resolved_solution_units(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            real_ws = base / "Repo Long Directory"
+            alias_ws = base / "REPO~1"
+            p1 = real_ws / "src" / "proj1"
+            p1.mkdir(parents=True)
+            (p1 / "pch.h").write_text("#pragma once\n", encoding="utf-8")
+            (p1 / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+            (p1 / "unit.cpp").write_text("int u() { return 1; }\n", encoding="utf-8")
+
+            v1 = p1 / "p1.vcxproj"
+            _write_minimal_vcxproj(v1, guid="{1}", name="p1", sources=["unit.cpp"])
+            sln = real_ws / "S.sln"
+            _write_sln(sln, [("p1", "src\\proj1\\p1.vcxproj", "{1}")])
+
+            if os.name == "nt":
+                mk = _run_managed(["cmd", "/c", "mklink", "/J", str(alias_ws), str(real_ws)], cwd=base, timeout=30)
+                self.assertEqual(mk.returncode, 0, mk.stdout + mk.stderr)
+            else:
+                os.symlink(real_ws, alias_ws, target_is_directory=True)
+
+            try:
+                alias_p1 = alias_ws / "src" / "proj1"
+                alias_v1 = alias_p1 / "p1.vcxproj"
+                mdir = real_ws / "manifests"
+                mdir.mkdir()
+                (mdir / "p1.txt").write_text(
+                    _manifest_record(
+                        alias_p1,
+                        alias_v1,
+                        "",
+                        [{"file": alias_p1 / "pch.cpp", "pch_mode": "Create"}, {"file": alias_p1 / "unit.cpp"}],
+                    ),
+                    encoding="utf-8",
+                )
+                out_db = real_ws / "build" / "compile_commands.json"
+                entries = BCC.write_database_from_manifests(sln, mdir, out_db)
+                self.assertEqual(len(entries), 2)
+                for e in entries:
+                    self.assertTrue(Path(e["file"]).is_relative_to(real_ws), e)
+                    self.assertTrue(Path(e["directory"]).is_relative_to(real_ws), e)
+            finally:
+                if os.name == "nt" and alias_ws.exists():
+                    alias_ws.rmdir()
+                elif alias_ws.is_symlink():
+                    alias_ws.unlink()
+
+    def test_run_managed_timeout_reaps_descendant_processes_and_releases_temp_locks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            pid_file = ws / "grandchild.pid"
+            lock_file = ws / "locked.txt"
+            grandchild = ws / "grandchild.py"
+            parent = ws / "parent.py"
+
+            grandchild.write_text(
+                "import os, pathlib, sys, time\n"
+                "lock_p = pathlib.Path(sys.argv[1])\n"
+                "pid_p = pathlib.Path(sys.argv[2])\n"
+                "with lock_p.open('w', encoding='utf-8') as fh:\n"
+                "    pid_p.write_text(str(os.getpid()), encoding='utf-8')\n"
+                "    fh.write('holding lock\\n')\n"
+                "    fh.flush()\n"
+                "    time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            parent.write_text(
+                "import subprocess, sys, time\n"
+                "p = subprocess.Popen([sys.executable, '-B', sys.argv[1], sys.argv[2], sys.argv[3]])\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
+
+            if os.name == "nt":
+                cmd = ["cmd", "/c", sys.executable, "-B", str(parent), str(grandchild), str(lock_file), str(pid_file)]
+            else:
+                cmd = ["sh", "-c", f'"{sys.executable}" -B "{parent}" "{grandchild}" "{lock_file}" "{pid_file}"']
+
+            with self.assertRaises(subprocess.TimeoutExpired):
+                _run_managed(cmd, cwd=ws, timeout=2.0)
+
+            self.assertTrue(pid_file.is_file(), "grandchild did not start before timeout")
+            gpid = int(pid_file.read_text(encoding="utf-8").strip())
+            self.assertFalse(_pid_alive(gpid), f"descendant pid {gpid} survived _run_managed timeout")
+            lock_file.unlink()
+
+    @unittest.skipUnless(MSBUILD is not None, "needs Visual Studio 2026 MSBuild")
+    def test_out_of_tree_vcxproj_importing_repo_targets_does_not_pollute_repo_manifests(self):
+        assert MSBUILD is not None
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            repo_ws = base / "repo"
+            repo_ws.mkdir()
+            _copy_real_build_configs(repo_ws)
+
+            probe_ws = base / "outside-probe"
+            probe_ws.mkdir()
+            (probe_ws / "pch.h").write_text("#pragma once\n", encoding="utf-8")
+            (probe_ws / "pch.cpp").write_text('#include "pch.h"\n', encoding="utf-8")
+            (probe_ws / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+            probe_proj = probe_ws / "recto-out-of-tree-probe.vcxproj"
+            probe_proj.write_text(
+                f"""<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{{12345678-1234-1234-1234-1234567890AB}}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>RectoOutOfTreeProbe</RootNamespace>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.Default.props" />
+  <Import Project="{repo_ws / 'Directory.Build.props'}" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)out\\</OutDir>
+    <IntDir>$(ProjectDir)obj\\</IntDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader><ForcedIncludeFiles /></ClCompile>
+    <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <Import Project="{repo_ws / 'Directory.Build.targets'}" />
+  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />
+</Project>
+""",
+                encoding="utf-8",
+            )
+
+            r_default = _run_managed(
+                [str(MSBUILD), str(probe_proj), "-nologo", "-t:ClCompile",
+                 "-p:Configuration=Debug", "-p:Platform=x64", "/nr:false"],
+                cwd=probe_ws,
+                timeout=120,
+            )
+            self.assertEqual(r_default.returncode, 0, r_default.stdout + r_default.stderr)
+            self.assertFalse(
+                (repo_ws / "build" / "compile-commands").exists(),
+                "out-of-tree probe project leaked manifest into repo build/compile-commands",
+            )
+
+            explicit_out = probe_ws / "cc_out"
+            r_override = _run_managed(
+                [str(MSBUILD), str(probe_proj), "-nologo", "-t:RectoCompileCommands",
+                 "-p:Configuration=Debug", "-p:Platform=x64",
+                 f"-p:RectoCompileCommandsDir={explicit_out}", "/nr:false"],
+                cwd=probe_ws,
+                timeout=120,
+            )
+            self.assertEqual(r_override.returncode, 0, r_override.stdout + r_override.stderr)
+            self.assertTrue((explicit_out / "recto-out-of-tree-probe.txt").is_file())
 
     def test_live_solution_has_8_projects_and_at_least_74_units(self):
         projects, units = BCC.eligible_solution_sources(ROOT / "Recto.sln")

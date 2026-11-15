@@ -29,6 +29,7 @@ GEN = _load("gen_compile_commands", "gen-compile-commands.py")
 CLANGD_LSP = _load("clangd_lsp", "clangd-lsp.py")
 PYTHON_LSP = _load("python_lsp", "python-lsp.py")
 LSP_MCP = _load("lsp_mcp", "lsp_mcp.py")
+PROC_GROUP = _load("proc_group", "lib/proc_group.py")
 
 
 class PortableConfigs(unittest.TestCase):
@@ -71,6 +72,46 @@ class CompileCommandsGenerator(unittest.TestCase):
         self.assertGreaterEqual(len(ui_tests), 2)
         for entry in entries:
             self.assertIn("/std:c++23preview", entry["arguments"])
+
+    def test_database_includes_nested_vcpkg_triplet_headers_for_recto_tests(self):
+        expected_vcpkg = os.path.normcase(
+            os.path.normpath(str((ROOT / "vcpkg_installed" / "x64-windows" / "x64-windows" / "include").resolve()))
+        )
+        entries = GEN.build_database(ROOT)
+        pch_entry = next(
+            e for e in entries if Path(e["file"]).name.lower() == "pch.cpp" and "recto-tests" in str(e["file"]).lower()
+        )
+        inc_norms = {
+            os.path.normcase(os.path.normpath(a[2:]))
+            for a in pch_entry["arguments"]
+            if isinstance(a, str) and a.startswith("-I")
+        }
+        self.assertIn(expected_vcpkg, inc_norms)
+
+        gtest_hdr = ROOT / "vcpkg_installed" / "x64-windows" / "x64-windows" / "include" / "gtest" / "gtest.h"
+        if os.name == "nt" and CLANGD_LSP.find_vs_clangd() is not None and gtest_hdr.is_file():
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp).resolve()
+                GEN.write_database(base / "compile_commands.json", ROOT)
+                managed = PROC_GROUP.spawn_managed_process(
+                    [
+                        "cmd", "/c", str(ROOT / "build" / "clangd.cmd"),
+                        f"--compile-commands-dir={base}",
+                        f"--check={ROOT / 'tests' / 'recto-tests' / 'pch.cpp'}",
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                )
+                try:
+                    stdout, stderr = managed.proc.communicate(timeout=120)
+                except subprocess.TimeoutExpired as exc:
+                    out, err = managed.drain_after_terminate()
+                    raise AssertionError(f"clangd --check timed out:\n{out}\n{err}") from exc
+                finally:
+                    managed.terminate_and_close()
+                combined = (stdout or "") + "\n" + (stderr or "")
+                self.assertEqual(managed.proc.returncode, 0, combined)
+                self.assertIn("All checks completed, 0 errors", combined)
 
     def test_write_and_check_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1339,6 +1380,212 @@ class LspMcpBridge(unittest.TestCase):
             srv.shutdown_all()
             if cpp_proc is not None:
                 self.assertIsNotNone(cpp_proc.poll())
+
+    def test_cpp_wait_for_index_fails_closed_on_timeout_and_waits_past_slow_start(self):
+        mock_cpp_server = (
+            "import json, pathlib, sys, threading, time\n"
+            "mode = sys.argv[1]\n"
+            "uri_a = sys.argv[2]\n"
+            "uri_b = sys.argv[3]\n"
+            "seen_log = pathlib.Path(sys.argv[4])\n"
+            "state = {'indexed': False, 'seen': []}\n"
+            "io_lock = threading.Lock()\n"
+            "def read_msg():\n"
+            "    hdr = {}\n"
+            "    while True:\n"
+            "        line = sys.stdin.buffer.readline()\n"
+            "        if not line: return None\n"
+            "        if line in (b'\\r\\n', b'\\n'): break\n"
+            "        if b':' in line:\n"
+            "            k, v = line.decode('ascii').split(':', 1)\n"
+            "            hdr[k.strip().lower()] = v.strip()\n"
+            "    body = sys.stdin.buffer.read(int(hdr.get('content-length', '0')))\n"
+            "    return json.loads(body.decode('utf-8')) if body else None\n"
+            "def send(obj):\n"
+            "    raw = json.dumps(obj).encode('utf-8')\n"
+            "    with io_lock:\n"
+            "        sys.stdout.buffer.write(f'Content-Length: {len(raw)}\\r\\n\\r\\n'.encode('ascii') + raw)\n"
+            "        sys.stdout.buffer.flush()\n"
+            "def emit_slow_index():\n"
+            "    time.sleep(1.8)\n"
+            "    send({'jsonrpc': '2.0', 'id': 901, 'method': 'window/workDoneProgress/create', 'params': {'token': 'backgroundIndexProgress'}})\n"
+            "    time.sleep(0.05)\n"
+            "    send({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': 'backgroundIndexProgress', 'value': {'kind': 'begin', 'title': 'indexing'}}})\n"
+            "    time.sleep(0.15)\n"
+            "    state['indexed'] = True\n"
+            "    send({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': 'backgroundIndexProgress', 'value': {'kind': 'end'}}})\n"
+            "while True:\n"
+            "    msg = read_msg()\n"
+            "    if msg is None: break\n"
+            "    m = msg.get('method')\n"
+            "    if m:\n"
+            "        state['seen'].append(m)\n"
+            "        seen_log.write_text(json.dumps(state['seen']), encoding='utf-8')\n"
+            "    if m == 'initialize':\n"
+            "        send({'jsonrpc': '2.0', 'id': msg['id'], 'result': {'capabilities': {'textDocumentSync': 1, 'referencesProvider': True}}})\n"
+            "    elif m == 'textDocument/didOpen':\n"
+            "        if mode == 'hanging':\n"
+            "            send({'jsonrpc': '2.0', 'id': 900, 'method': 'window/workDoneProgress/create', 'params': {'token': 'backgroundIndexProgress'}})\n"
+            "            send({'jsonrpc': '2.0', 'method': '$/progress', 'params': {'token': 'backgroundIndexProgress', 'value': {'kind': 'begin', 'title': 'indexing'}}})\n"
+            "        elif mode == 'slow_start':\n"
+            "            threading.Thread(target=emit_slow_index, daemon=True).start()\n"
+            "    elif m == 'textDocument/references':\n"
+            "        locs = [{'uri': uri_a, 'range': {'start': {'line': 0, 'character': 4}, 'end': {'line': 0, 'character': 10}}}]\n"
+            "        if state['indexed']:\n"
+            "            locs.append({'uri': uri_b, 'range': {'start': {'line': 1, 'character': 4}, 'end': {'line': 1, 'character': 10}}})\n"
+            "        send({'jsonrpc': '2.0', 'id': msg['id'], 'result': locs})\n"
+            "    elif m == 'shutdown':\n"
+            "        send({'jsonrpc': '2.0', 'id': msg['id'], 'result': None})\n"
+            "    elif m == 'exit':\n"
+            "        break\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            (ws / "src").mkdir()
+            (ws / "build").mkdir()
+            src_a = ws / "src" / "a.cpp"
+            src_b = ws / "src" / "b.cpp"
+            src_a.write_text("int fn() { return 1; }\n", encoding="utf-8")
+            src_b.write_text("// caller\nint g = fn();\n", encoding="utf-8")
+            (ws / "build" / "compile_commands.json").write_text(
+                json.dumps([
+                    {"directory": str(ws), "file": str(src_a), "arguments": ["clang-cl.exe", "/Zs", "-c", str(src_a)]},
+                    {"directory": str(ws), "file": str(src_b), "arguments": ["clang-cl.exe", "/Zs", "-c", str(src_b)]},
+                ]),
+                encoding="utf-8",
+            )
+            uri_a = src_a.as_uri()
+            uri_b = src_b.as_uri()
+
+            # 1. Active background index timing out MUST fail closed with isError=True and never query partial references.
+            hang_log = ws / "hang_seen.json"
+            hang_srv = LSP_MCP.LspMcpServer(ws)
+            hang_client = LSP_MCP.LspClient("cpp", [sys.executable, "-c", mock_cpp_server, "hanging", uri_a, uri_b, str(hang_log)], ws)
+            hang_client.index_timeout = 0.3
+            hang_srv.clients["cpp"] = hang_client
+            try:
+                reply = hang_srv.handle_rpc({
+                    "jsonrpc": "2.0",
+                    "id": 21,
+                    "method": "tools/call",
+                    "params": {"name": "lsp_references", "arguments": {"file": "src/a.cpp", "line": 1, "character": 5}},
+                })
+                self.assertTrue(reply["result"]["isError"], reply)
+                self.assertIn("background index incomplete", reply["result"]["content"][0]["text"])
+                seen = json.loads(hang_log.read_text(encoding="utf-8"))
+                self.assertNotIn("textDocument/references", seen)
+            finally:
+                hang_srv.shutdown_all()
+
+            # 2. Delayed progress start (>1.5s) still waits until indexing begins and ends before querying references.
+            slow_log = ws / "slow_seen.json"
+            slow_srv = LSP_MCP.LspMcpServer(ws)
+            slow_client = LSP_MCP.LspClient("cpp", [sys.executable, "-c", mock_cpp_server, "slow_start", uri_a, uri_b, str(slow_log)], ws)
+            slow_client.index_timeout = 6.0
+            slow_srv.clients["cpp"] = slow_client
+            try:
+                refs_out = slow_srv.tool_references({"file": "src/a.cpp", "line": 1, "character": 5})
+                self.assertIn("src/a.cpp:1:5", refs_out)
+                self.assertIn("src/b.cpp:2:5", refs_out)
+            finally:
+                slow_srv.shutdown_all()
+
+    def test_clangd_lsp_standalone_path_fallback_when_vs_llvm_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            (ws / "build").mkdir()
+            (ws / "src").mkdir()
+            (ws / "src" / "main.cpp").write_text("int main() { return 0; }\n", encoding="utf-8")
+            (ws / "Directory.Build.props").write_text("<Project />\n", encoding="utf-8")
+            (ws / "Directory.Build.targets").write_text("<Project />\n", encoding="utf-8")
+            (ws / "src" / "mini.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup><ClCompile Include="main.cpp" /></ItemGroup>\n'
+                '</Project>\n',
+                encoding="utf-8",
+            )
+            (ws / "Recto.sln").write_text(
+                'Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mini", "src\\mini.vcxproj", '
+                '"{11111111-1111-1111-1111-111111111111}"\nEndProject\n',
+                encoding="utf-8",
+            )
+
+            empty_vs = ws / "empty-vs"
+            empty_vs.mkdir()
+            # Copy build/clangd.cmd into ws so missing VS component would exit 2 if mistakenly selected.
+            shutil.copy2(ROOT / "build" / "clangd.cmd", ws / "build" / "clangd.cmd")
+
+            fake_bin = ws / "standalone-bin"
+            fake_bin.mkdir()
+            echo_py = fake_bin / "fake_clangd.py"
+            echo_py.write_text(
+                "import sys\n"
+                "print('clangd version 22.0.0-standalone')\n"
+                "sys.exit(0)\n",
+                encoding="utf-8",
+            )
+            if os.name == "nt":
+                standalone_clangd = fake_bin / "clangd.cmd"
+                standalone_clangd.write_text(f'@"{sys.executable}" -B "{echo_py}" %*\r\n', encoding="utf-8")
+            else:
+                standalone_clangd = fake_bin / "clangd"
+                standalone_clangd.write_text(f'#!/bin/sh\nexec "{sys.executable}" -B "{echo_py}" "$@"\n', encoding="utf-8")
+                standalone_clangd.chmod(0o755)
+
+            env_patch = {
+                "RECTO_CLANGD": "",
+                "RECTO_VS_INSTALL": str(empty_vs),
+                "ProgramFiles": str(empty_vs),
+                "ProgramFiles(x86)": str(empty_vs),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            }
+            with unittest.mock.patch.dict(os.environ, env_patch, clear=False):
+                GEN.write_database(ws / "build" / "compile_commands.json", ws)
+                with unittest.mock.patch.object(CLANGD_LSP, "ROOT", ws):
+                    discovered = CLANGD_LSP.find_clangd()
+                    self.assertIsNotNone(discovered)
+                    self.assertEqual(Path(discovered or "").resolve(), standalone_clangd.resolve())
+                    self.assertEqual(CLANGD_LSP.main(["--check"]), 0)
+                    exe, launch_cmd = CLANGD_LSP.build_clangd_command(ws / "build" / "compile_commands.json", ["--version"], root=ws)
+                    self.assertEqual(Path(exe or "").resolve(), standalone_clangd.resolve())
+                    self.assertNotIn(str(ws / "build" / "clangd.cmd"), launch_cmd)
+
+            # End-to-end execution of clangd-lsp --version without VS LLVM uses standalone PATH clangd cleanly.
+            sub_env = os.environ.copy()
+            sub_env.update(env_patch)
+            run_code = (
+                "import importlib.util, pathlib, sys; "
+                f"spec = importlib.util.spec_from_file_location('clangd_lsp', r'{SCRIPTS / 'clangd-lsp.py'}'); "
+                "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); "
+                f"m.ROOT = pathlib.Path(r'{ws}'); "
+                "sys.exit(m.main(['--version']))"
+            )
+            sub = subprocess.run(
+                [sys.executable, "-B", "-c", run_code],
+                cwd=ws,
+                env=sub_env,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            self.assertEqual(sub.returncode, 0, sub.stdout + sub.stderr)
+            self.assertIn("22.0.0-standalone", sub.stdout + sub.stderr)
+
+            # Conversely on Windows when VS clangd.exe exists and RECTO_CLANGD is unset, VS + build/clangd.cmd win over PATH.
+            if os.name == "nt":
+                vs_with_llvm = ws / "vs-llvm"
+                vs_clangd = vs_with_llvm / "VC" / "Tools" / "Llvm" / "x64" / "bin" / "clangd.exe"
+                vs_clangd.parent.mkdir(parents=True)
+                vs_clangd.write_text("", encoding="utf-8")
+                vs_env = dict(env_patch)
+                vs_env["RECTO_VS_INSTALL"] = str(vs_with_llvm)
+                with unittest.mock.patch.dict(os.environ, vs_env, clear=False):
+                    exe_vs, cmd_vs = CLANGD_LSP.build_clangd_command(ws / "build" / "compile_commands.json", [], root=ws)
+                    self.assertEqual(Path(CLANGD_LSP.find_clangd() or "").resolve(), vs_clangd.resolve())
+                    self.assertEqual(Path(exe_vs or "").resolve(), vs_clangd.resolve())
+                    self.assertIn(str(ws / "build" / "clangd.cmd"), cmd_vs)
 
 
 if __name__ == "__main__":

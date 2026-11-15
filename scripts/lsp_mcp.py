@@ -75,6 +75,17 @@ def _read_source_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _has_compile_database(root: Path) -> bool:
+    for rel in (Path("build") / "compile_commands.json", Path("compile_commands.json")):
+        cand = root / rel
+        try:
+            if cand.is_file() and cand.stat().st_size > 4:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 class LspClient:
     """Thread-safe JSON-RPC LSP client managing one child language server process."""
 
@@ -93,9 +104,12 @@ class LspClient:
         self._closed_reason: str | None = None
         self._opened: dict[str, int] = {}
         self._opened_files: dict[str, tuple[Path, str, str]] = {}
+        self._pending_progress: set[str] = set()
         self._active_progress: set[str] = set()
         self._ever_saw_progress = False
         self._index_checked = False
+        self.expect_background_index: bool | None = None
+        self.index_timeout: float = 240.0
         self.last_used = time.monotonic()
 
     def ensure_started(self) -> None:
@@ -112,6 +126,7 @@ class LspClient:
                 self._opened.clear()
                 self._opened_files.clear()
                 self._diagnostics.clear()
+                self._pending_progress.clear()
                 self._active_progress.clear()
                 self._ever_saw_progress = False
                 self._index_checked = False
@@ -202,6 +217,13 @@ class LspClient:
                 if q is not None:
                     q.put(msg)
             elif "id" in msg and "method" in msg:
+                if msg.get("method") == "window/workDoneProgress/create":
+                    token = str((msg.get("params") or {}).get("token", ""))
+                    if token:
+                        with self._diag_cond:
+                            self._pending_progress.add(token)
+                            self._ever_saw_progress = True
+                            self._diag_cond.notify_all()
                 # Acknowledge server-initiated requests (such as window/workDoneProgress/create) so indexing is unblocked.
                 try:
                     with self._lock:
@@ -217,9 +239,11 @@ class LspClient:
                 kind = val.get("kind")
                 with self._diag_cond:
                     if kind == "begin":
+                        self._pending_progress.discard(token)
                         self._active_progress.add(token)
                         self._ever_saw_progress = True
                     elif kind == "end":
+                        self._pending_progress.discard(token)
                         self._active_progress.discard(token)
                     self._diag_cond.notify_all()
             elif msg.get("method") == "textDocument/publishDiagnostics":
@@ -332,26 +356,42 @@ class LspClient:
             })
         return uri, expected_seq, ver
 
-    def wait_for_index(self, timeout: float = 240.0) -> None:
-        """Wait for any active background-index workDoneProgress to finish before cross-TU queries."""
+    def wait_for_index(self, timeout: float | None = None) -> None:
+        """Wait for background-index workDoneProgress to start and finish before cross-TU queries."""
         if self.lang != "cpp":
             return
-        deadline = time.monotonic() + timeout
+        limit = self.index_timeout if timeout is None else timeout
+        expect_start = (
+            self.expect_background_index
+            if self.expect_background_index is not None
+            else _has_compile_database(self.root)
+        )
+        deadline = time.monotonic() + limit
         with self._diag_cond:
-            if not self._index_checked and not self._ever_saw_progress:
-                wait_until = min(deadline, time.monotonic() + 1.5)
-                while not self._ever_saw_progress and self._closed_reason is None:
-                    self.last_used = time.monotonic()
-                    rem = wait_until - self.last_used
-                    if rem <= 0:
-                        break
-                    self._diag_cond.wait(timeout=rem)
-            self._index_checked = True
-            while self._active_progress and self._closed_reason is None and self.proc is not None and self.proc.poll() is None:
+            while True:
+                if self._closed_reason is not None or self.proc is None or self.proc.poll() is not None:
+                    detail = self._closed_reason or "process terminated"
+                    raise RuntimeError(
+                        f"{self.lang} language server exited before background index completed ({detail})"
+                    )
+                need_start = expect_start and not self._ever_saw_progress
+                in_flight = bool(self._pending_progress or self._active_progress)
+                if not need_start and not in_flight:
+                    self._index_checked = True
+                    return
                 self.last_used = time.monotonic()
                 rem = deadline - self.last_used
                 if rem <= 0:
-                    break
+                    active = sorted(self._pending_progress | self._active_progress)
+                    state = (
+                        f"active progress: {', '.join(active)}"
+                        if active
+                        else "backgroundIndexProgress not started yet"
+                    )
+                    raise TimeoutError(
+                        f"{self.lang} background index incomplete after {limit:g}s ({state}); "
+                        "retry once indexing finishes"
+                    )
                 self._diag_cond.wait(timeout=min(0.25, rem))
 
     def diagnostics_for(self, path: Path, wait_seconds: float = 60.0) -> list[dict]:

@@ -235,7 +235,9 @@ def parse_vcxproj(proj_name: str, vcxproj: Path, sys_includes: list[str], root: 
 
     if uses_vcpkg:
         for vcpkg_inc in (
+            root / "vcpkg_installed" / "x64-windows" / "x64-windows" / "include",
             root / "vcpkg_installed" / "x64-windows" / "include",
+            root / "build" / "vcpkg_installed" / "x64-windows" / "x64-windows" / "include",
             root / "build" / "vcpkg_installed" / "x64-windows" / "include",
         ):
             if vcpkg_inc not in inc_dirs:
