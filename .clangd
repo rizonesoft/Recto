@@ -1,5 +1,39 @@
 CompileFlags:
   CompilationDatabase: build
+  Remove:
+    # /MP*: cl.exe multi-process compilation fan-out; clangd manages concurrency via -j=2.
+    - /MP*
+    # /FS: cl.exe mspdbbsrv.exe PDB lock serialization; clangd emits no PDBs.
+    - /FS
+    # /Zf: cl.exe fast PDB generation; unsupported by clang-cl frontend.
+    - /Zf
+    # /Fd*: cl.exe compiler PDB output path; unused in syntax/AST analysis.
+    - /Fd*
+    # /Yu*, /Yc*, /Fp*: cl.exe binary precompiled headers; clangd uses /FIpch.h preambles on disk.
+    - /Yu*
+    - /Yc*
+    - /Fp*
+    # /sourceDependencies*: cl.exe header-dependency JSON emission for RectoBoundaryManifest.
+    - /sourceDependencies*
+    # /RTC*: cl.exe runtime stack/uninitialized checks; unsupported codegen option in clangd.
+    - /RTC*
+    # /JMC, /JMC-: cl.exe Just My Code stepping instrumentation; unsupported by clangd.
+    - /JMC
+    - /JMC-
+    # /sdl, /sdl-: cl.exe Security Development Lifecycle checks; unsupported by clang-cl driver.
+    - /sdl
+    - /sdl-
+    # /analyze*: cl.exe PREfast static analysis; unsupported by clangd.
+    - /analyze*
+    # /errorReport:*: cl.exe Watson crash reporting switch; unsupported by clangd.
+    - /errorReport:*
+    # /Gm, /Gm-: deprecated cl.exe minimal rebuild; unsupported by clangd.
+    - /Gm
+    - /Gm-
+    # /Qpar*: cl.exe auto-parallelizer; unsupported codegen flag in clangd.
+    - /Qpar*
+    # /diagnostics:*: cl.exe caret/column formatting dialect; clangd formats LSP diagnostics directly.
+    - /diagnostics:*
 Index:
   Background: Build
 Diagnostics:

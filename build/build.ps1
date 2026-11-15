@@ -285,8 +285,10 @@ foreach ($plat in $Platform) {
 
         # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
         $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
+        $compileCmdManifests = Join-Path $root "build\compile-commands\$plat\$cfg"
         if (-not $Project) {
             if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
+            if ((-not $EnableASAN) -and (Test-Path $compileCmdManifests)) { Remove-Item $compileCmdManifests -Recurse -Force }
         }
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
         $msbuildArgs = @(
@@ -336,6 +338,11 @@ foreach ($plat in $Platform) {
         if (-not $Project) {
             & $pinnedPython (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
             if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
+            $buildCompileDb = Join-Path $root 'scripts\build-compile-commands.py'
+            if ((-not $EnableASAN) -and ($plat -eq 'x64') -and ($cfg -eq 'Debug') -and (Test-Path $buildCompileDb)) {
+                & $pinnedPython $buildCompileDb --sln (Join-Path $root 'Recto.sln') --manifests-dir $compileCmdManifests --out (Join-Path $root 'build\compile_commands.json')
+                if ($LASTEXITCODE -ne 0) { throw "build-compile-commands.py failed (exit $LASTEXITCODE)" }
+            }
         }
 
         if ($EnableASAN -and $plat -eq 'x64') {

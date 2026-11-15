@@ -5,7 +5,7 @@
 
 Ensures `build/compile_commands.json` exists and is fresher than `Recto.sln` and every `.vcxproj`, locates `clangd`
 portably (`RECTO_CLANGD`, `PATH`, Visual Studio LLVM via `vswhere.exe`, or `ProgramFiles/LLVM`), and runs `clangd`
-with low-memory flags (`--pch-storage=disk`, `-j=2`, `--limit-results=100`, `--header-insertion=never`).
+with low-memory flags (`--pch-storage=disk`, `-j=2`, `--limit-results=0`, `--limit-references=0`, `--header-insertion=never`).
 """
 from __future__ import annotations
 
@@ -141,17 +141,34 @@ def main(argv: list[str] | None = None) -> int:
         print("clangd-lsp: clangd not found; install Visual Studio C++ Clang tools or LLVM", file=sys.stderr)
         return 127
     db = ensure_compile_commands(ROOT)
-    cmd = [
-        clangd,
-        f"--compile-commands-dir={db.parent}",
-        "--pch-storage=disk",
-        "--background-index=0",
-        "--limit-results=100",
-        "-j=2",
-        "--header-insertion=never",
-        "--log=error",
-        *args,
-    ]
+    override = os.environ.get("RECTO_CLANGD")
+    clangd_cmd = ROOT / "build" / "clangd.cmd"
+    if not override and os.name == "nt" and clangd_cmd.is_file():
+        # Delegate through build/clangd.cmd, which owns -j=2, --pch-storage=disk, --background-index, and --compile-commands-dir.
+        cmd = [
+            "cmd",
+            "/c",
+            str(clangd_cmd),
+            f"--compile-commands-dir={db.parent}",
+            "--limit-results=0",
+            "--limit-references=0",
+            "--header-insertion=never",
+            "--log=error",
+            *args,
+        ]
+    else:
+        cmd = [
+            clangd,
+            f"--compile-commands-dir={db.parent}",
+            "--pch-storage=disk",
+            "--background-index",
+            "--limit-results=0",
+            "--limit-references=0",
+            "-j=2",
+            "--header-insertion=never",
+            "--log=error",
+            *args,
+        ]
     if str(HERE) not in sys.path:
         sys.path.insert(0, str(HERE))
     import lib.proc_group as proc_group

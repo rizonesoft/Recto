@@ -93,6 +93,9 @@ class LspClient:
         self._closed_reason: str | None = None
         self._opened: dict[str, int] = {}
         self._opened_files: dict[str, tuple[Path, str, str]] = {}
+        self._active_progress: set[str] = set()
+        self._ever_saw_progress = False
+        self._index_checked = False
         self.last_used = time.monotonic()
 
     def ensure_started(self) -> None:
@@ -109,6 +112,9 @@ class LspClient:
                 self._opened.clear()
                 self._opened_files.clear()
                 self._diagnostics.clear()
+                self._active_progress.clear()
+                self._ever_saw_progress = False
+                self._index_checked = False
                 self._closed_reason = None
             proc = subprocess.Popen(
                 self.cmd,
@@ -126,11 +132,12 @@ class LspClient:
                     "processId": os.getpid(),
                     "rootUri": self.root.resolve().as_uri(),
                     "capabilities": {
+                        "window": {"workDoneProgress": True},
                         "textDocument": {
                             "publishDiagnostics": {"relatedInformation": True, "versionSupport": True},
                             "documentSymbol": {"hierarchicalDocumentSymbolSupport": True},
                             "hover": {"contentFormat": ["markdown", "plaintext"]},
-                        }
+                        },
                     },
                 }, timeout=45.0)
                 self.notify("initialized", {})
@@ -194,6 +201,27 @@ class LspClient:
                 q = self._pending.pop(msg["id"], None)
                 if q is not None:
                     q.put(msg)
+            elif "id" in msg and "method" in msg:
+                # Acknowledge server-initiated requests (such as window/workDoneProgress/create) so indexing is unblocked.
+                try:
+                    with self._lock:
+                        if self.proc is not None and self.proc.stdin is not None:
+                            self._write({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+                except OSError as exc:
+                    self._fail_all(f"failed replying to {msg.get('method')}: {exc}")
+                    return
+            elif msg.get("method") == "$/progress":
+                params = msg.get("params") or {}
+                token = str(params.get("token", ""))
+                val = params.get("value") or {}
+                kind = val.get("kind")
+                with self._diag_cond:
+                    if kind == "begin":
+                        self._active_progress.add(token)
+                        self._ever_saw_progress = True
+                    elif kind == "end":
+                        self._active_progress.discard(token)
+                    self._diag_cond.notify_all()
             elif msg.get("method") == "textDocument/publishDiagnostics":
                 params = msg.get("params") or {}
                 uri = params.get("uri", "")
@@ -304,7 +332,29 @@ class LspClient:
             })
         return uri, expected_seq, ver
 
-    def diagnostics_for(self, path: Path, wait_seconds: float = 30.0) -> list[dict]:
+    def wait_for_index(self, timeout: float = 240.0) -> None:
+        """Wait for any active background-index workDoneProgress to finish before cross-TU queries."""
+        if self.lang != "cpp":
+            return
+        deadline = time.monotonic() + timeout
+        with self._diag_cond:
+            if not self._index_checked and not self._ever_saw_progress:
+                wait_until = min(deadline, time.monotonic() + 1.5)
+                while not self._ever_saw_progress and self._closed_reason is None:
+                    self.last_used = time.monotonic()
+                    rem = wait_until - self.last_used
+                    if rem <= 0:
+                        break
+                    self._diag_cond.wait(timeout=rem)
+            self._index_checked = True
+            while self._active_progress and self._closed_reason is None and self.proc is not None and self.proc.poll() is None:
+                self.last_used = time.monotonic()
+                rem = deadline - self.last_used
+                if rem <= 0:
+                    break
+                self._diag_cond.wait(timeout=min(0.25, rem))
+
+    def diagnostics_for(self, path: Path, wait_seconds: float = 60.0) -> list[dict]:
         uri, expected_seq, expected_ver = self.sync_file(path)
         key = _uri_key(uri)
         deadline = time.monotonic() + wait_seconds
@@ -455,6 +505,7 @@ class LspMcpServer:
             seed = next((self.root / "src/pdf").glob("*.cpp"), None)
             if seed is not None:
                 client.sync_file(seed)
+                client.wait_for_index()
         else:
             client.refresh_opened_files()
         res = client.request("workspace/symbol", {"query": raw}) or []
@@ -471,19 +522,21 @@ class LspMcpServer:
     def _pos_request(self, method: str, args: dict, extra_params: dict | None = None):
         target, client = self._resolve_file(str(args["file"]))
         uri, *_ = client.sync_file(target)
+        if client.lang == "cpp" and method in ("textDocument/definition", "textDocument/references"):
+            client.wait_for_index()
         line = max(0, int(args.get("line", 1)) - 1)
         col = max(0, int(args.get("character", 1)) - 1)
         params = {"textDocument": {"uri": uri}, "position": {"line": line, "character": col}}
         if extra_params:
             params.update(extra_params)
-        return client.request(method, params)
+        return client.request(method, params, timeout=60.0)
 
     def _format_locations(self, res) -> str:
         if not res:
             return "no locations found"
         items = res if isinstance(res, list) else [res]
         lines = []
-        for item in items[:100]:
+        for item in items:
             uri = item.get("targetUri") or item.get("uri") or ""
             rng = item.get("targetSelectionRange") or item.get("range") or {}
             start = rng.get("start") or {}

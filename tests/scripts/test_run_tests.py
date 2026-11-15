@@ -64,6 +64,25 @@ class RunTestsCadence(unittest.TestCase):
         plan_yml = (ROOT / ".github" / "workflows" / "plan.yml").read_text(encoding="utf-8")
         self.assertNotIn("run: |", plan_yml, "plan.yml must not stack multiple native commands in a single pwsh block")
 
+    def test_default_suite_timeout_accommodates_parallel_heavy_suites(self):
+        self.assertGreaterEqual(RUN_TESTS.DEFAULT_TIMEOUT, 600.0)
+        seen_timeouts: list[float] = []
+
+        def fake_run_one(mod, root, **kwargs):
+            seen_timeouts.append(kwargs["timeout_s"])
+            return mod, 0, 0.01, "ok"
+
+        with (
+            mock.patch.object(RUN_TESTS, "discover_modules", return_value=["tests.scripts.test_verify_agent_tiers"]),
+            mock.patch.object(RUN_TESTS, "dirty_paths", return_value=[]),
+            mock.patch.object(RUN_TESTS, "run_quick_graph_gates", return_value=(True, 0.01, "ok")),
+            mock.patch.object(RUN_TESTS, "run_one", side_effect=fake_run_one),
+        ):
+            code = RUN_TESTS.main(["--quick", "--jobs", "1"])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(seen_timeouts, [RUN_TESTS.DEFAULT_TIMEOUT])
+
     @staticmethod
     def _pid_alive(pid: int) -> bool:
         if os.name == "nt":

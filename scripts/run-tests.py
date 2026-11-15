@@ -36,12 +36,23 @@ HEAVY_MODULES: dict[str, tuple[str, ...]] = {
     "tests.scripts.test_render_mockups": ("design/", "resources/", "scripts/render"),
     "tests.scripts.test_release_notes": ("scripts/release", "CHANGELOG", "docs/release"),
     "tests.scripts.test_build_ps1": ("build/", "Directory.Build."),
+    "tests.scripts.test_compile_commands": (
+        "scripts/build-compile-commands.py",
+        "scripts/gen-compile-commands.py",
+        "build/clangd.cmd",
+        "build/build.ps1",
+        "Directory.Build.",
+        ".clangd",
+        "tests/scripts/test_compile_commands.py",
+    ),
     "tests.scripts.test_lsp": ("scripts/lsp_mcp.py", "scripts/clangd-lsp.py", "scripts/python-lsp.py",
                                "scripts/gen-compile-commands.py", ".lsp.json", ".mcp.json", ".agents/plugins/"),
     "scripts.tests.test_review_dispatch": ("scripts/review-dispatch.py", ".conclave/reviewers.toml"),
     "scripts.tests.test_three_pass": ("scripts/review-dispatch.py", "scripts/review-prompt.py",
                                       "scripts/lib/todo_graph.py", ".conclave/reviewers.toml"),
 }
+
+DEFAULT_TIMEOUT = 600.0
 
 
 def windowless() -> int:
@@ -150,7 +161,7 @@ def _run_bounded_process(
     cwd: Path,
     *,
     env: dict[str, str] | None = None,
-    timeout_s: float = 300.0,
+    timeout_s: float = DEFAULT_TIMEOUT,
     cancel_event: threading.Event | None = None,
     active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
@@ -192,7 +203,7 @@ def run_one(
     module: str,
     root: Path = ROOT,
     *,
-    timeout_s: float = 300.0,
+    timeout_s: float = DEFAULT_TIMEOUT,
     cancel_event: threading.Event | None = None,
     active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
@@ -214,7 +225,7 @@ def run_one(
 def run_quick_graph_gates(
     root: Path = ROOT,
     *,
-    timeout_s: float = 300.0,
+    timeout_s: float = DEFAULT_TIMEOUT,
     cancel_event: threading.Event | None = None,
     active_procs: set[proc_group.ManagedProcess] | None = None,
     procs_lock: threading.Lock | None = None,
@@ -241,7 +252,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--full", action="store_true", help="run 100%% of tests/scripts and scripts/tests")
     parser.add_argument("-k", "--filter", default="", help="only run modules whose dotted name contains this substring")
     parser.add_argument("-j", "--jobs", type=int, default=0, help="parallel worker count (0 = RAM/CPU auto)")
-    parser.add_argument("--timeout", type=float, default=300.0, help="per-suite timeout in seconds (default: 300)")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="per-suite timeout in seconds (default: 600)")
     parser.add_argument("--list", action="store_true", help="list selected modules and exit")
     args = parser.parse_args(argv)
     if args.timeout <= 0:

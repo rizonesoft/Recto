@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,8 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-ROOT = Path(__file__).resolve().parents[1]
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 PYTHON_CMD = r"build\python.cmd" if os.name == "nt" else "./scripts/run-python.sh"
 SLN = ROOT / "Recto.sln"
 PROPS = ROOT / "Directory.Build.props"
@@ -363,9 +365,26 @@ def _check_against_expected(out_path: Path, expected: list[dict]) -> tuple[bool,
     return True, f"ok: {len(actual_files)} translation units"
 
 
+def _msbuild_database_is_current(out_path: Path, root: Path = ROOT) -> tuple[bool, int]:
+    """Return (True, count) if `out_path` matches fresh MSBuild `RectoCompileCommands` manifests byte-for-byte."""
+    builder_path = HERE / "build-compile-commands.py"
+    if not builder_path.is_file():
+        return False, 0
+    spec = importlib.util.spec_from_file_location("build_compile_commands", builder_path)
+    if spec is None or spec.loader is None:
+        return False, 0
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    manifests_dir = root / "build" / "compile-commands" / "x64" / "Debug"
+    return mod.database_matches_current_manifests(out_path, root / "Recto.sln", manifests_dir)
+
+
 def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
     if not out_path.is_file():
         return False, f"{out_path} is missing (run: {PYTHON_CMD} scripts/gen-compile-commands.py)"
+    ok_ms, count_ms = _msbuild_database_is_current(out_path, root)
+    if ok_ms:
+        return True, f"ok (MSBuild): {count_ms} translation units"
     return _check_against_expected(out_path, build_database(root))
 
 
@@ -374,6 +393,9 @@ def ensure_database(out_path: Path = OUT, root: Path = ROOT) -> Path:
     root = root.resolve()
     sln = root / "Recto.sln"
     if not sln.is_file():
+        return out_path
+    ok_ms, _ = _msbuild_database_is_current(out_path, root)
+    if ok_ms:
         return out_path
     expected = build_database(root)
     ok, _ = _check_against_expected(out_path, expected)
@@ -397,6 +419,11 @@ def main(argv: list[str] | None = None) -> int:
         ok, msg = check_database(out_path, ROOT)
         print(msg, file=sys.stdout if ok else sys.stderr)
         return 0 if ok else 1
+    if out_path == OUT.resolve():
+        ok_ms, count_ms = _msbuild_database_is_current(out_path, ROOT)
+        if ok_ms:
+            print(f"preserved {count_ms} MSBuild compile commands at {out_path}")
+            return 0
     entries = write_database(out_path, ROOT)
     print(f"wrote {len(entries)} compile commands to {out_path}")
     return 0

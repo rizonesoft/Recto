@@ -1301,7 +1301,7 @@ class LspMcpBridge(unittest.TestCase):
 
     @unittest.skipUnless(CLANGD_LSP.find_clangd(), "clangd not installed on this machine")
     def test_cpp23_clangd_diagnostics_symbols_and_hover(self):
-        GEN.write_database(ROOT / "build" / "compile_commands.json", ROOT)
+        CLANGD_LSP.ensure_compile_commands(ROOT)
         srv = LSP_MCP.LspMcpServer(ROOT)
         try:
             cpp_diag = srv.handle_rpc({
