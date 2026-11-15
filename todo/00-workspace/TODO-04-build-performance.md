@@ -54,7 +54,7 @@ track: M0
 | 5 | §5 | Tiered gates: touched tests while building, the full suite at stamp | §2 | [x] |
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [x] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [x] |
-| 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4 | [ ] |
+| 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4, §12 | [ ] |
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
@@ -416,6 +416,8 @@ A session that needs a symbol's definition, its callers or its type today search
 Two defaults, each with its cost of changing: clangd comes from Visual Studio and is not pinned in `.tools/` (moving it into `§6`'s lock costs one lock entry and one line in `build/clangd.cmd`), and the database is x64 Debug only (another configuration costs one argument to the generator).
 
 **Corrected 2026-11-13:** `D00 T05 §2` already shipped `.clangd`, portable `.vcxproj`-parsed `scripts/gen-compile-commands.py` (`build/compile_commands.json` with 0 errors across all 68 units), `scripts/clangd-lsp.py`, `scripts/python-lsp.py` and `scripts/lsp_mcp.py` wired into `.lsp.json`, `.mcp.json` and `.agents/plugins/recto-lsp/`; this section therefore builds on those servers to add the MSBuild item-evaluated `RectoCompileCommands` target (`Directory.Build.targets`) and the indexing working-set benchmark before `§8` switches the database to CMake.
+
+**Corrected 2026-11-15:** Validated against the repository before build and sequenced before `§8` (added `§12` to `§8`'s `Depends On` because `§8` checkbox 6 retires `build-compile-commands.py` and runs `build\clangd.cmd --check=src/pdf/filters.cpp`). Today `Recto.sln` holds 8 projects (`recto-pdf`, `recto-core`, `recto-services`, `recto-ui`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) and 74 `.cpp` translation units (`pch.cpp` per project from `§4` plus `ui_*_tests.cpp` globs), not 68. `RectoCompileCommands` (`Directory.Build.targets`) runs `AfterTargets="ClCompile"` on non-ASan builds (`EnableASAN != true`) across all 8 projects writing ASCII-unit-separator manifests from evaluated `@(ClCompile)` items and `$(IncludePath)`; `build/build.ps1` empties `build\compile-commands\<plat>\<cfg>` before non-`-Project` non-ASan builds and invokes `scripts/build-compile-commands.py` after `Debug|x64` full builds, while `scripts/gen-compile-commands.py` stays as the pre-build `.vcxproj` fallback for fresh checkouts and `plan.yml` (recognizing MSBuild-generated `build/compile_commands.json` when current). `build/clangd.cmd` is tracked via `!build/clangd.cmd` in `.gitignore`; on Windows `scripts/clangd-lsp.py` delegates to `build\clangd.cmd` when `RECTO_CLANGD` is unset so `.lsp.json` and `.mcp.json` (`recto-lsp`) run through `build\clangd.cmd`, documented in `CONTRIBUTING.md`, while `AGENTS.md` stays within the 24,000-byte `tests/scripts/test_todo_graph.py` ceiling.
 
 **Phase:** 0
 **Needs:** windows-host
