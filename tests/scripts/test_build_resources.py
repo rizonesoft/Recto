@@ -511,6 +511,23 @@ class StdlibPngAndIcoTests(unittest.TestCase):
             self.assertEqual([p.name for p in Path(tmp).iterdir()], ["sample.bin"])
 
 
+def _strip_system_python_from_path(raw_path: str) -> str:
+    """Return PATH with every directory containing a Python launcher removed."""
+    kept: list[str] = []
+    names = ("python.exe", "python3.exe", "python.cmd", "python.bat", "py.exe", "python", "python3")
+    for entry in raw_path.split(os.pathsep):
+        if not entry:
+            continue
+        folder = Path(entry)
+        try:
+            has_py = any((folder / name).exists() for name in names)
+        except OSError:
+            has_py = False
+        if not has_py:
+            kept.append(entry)
+    return os.pathsep.join(kept)
+
+
 class BuildResourcesEndToEndTests(unittest.TestCase):
     def test_find_browser_respects_env_override_and_missing_override_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -522,88 +539,115 @@ class BuildResourcesEndToEndTests(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     build_resources.find_browser()
 
-    def test_cli_runs_on_pinned_python_without_system_python_or_third_party_packages(self):
-        python_cmd = ROOT / "build" / "python.cmd"
-        self.assertTrue(python_cmd.exists())
+    def _run_cli_build(self, work_dir: Path, out_arg: str, brand_arg: str) -> None:
         ttf_bytes = _build_synthetic_variable_ttf()
+        font_path = work_dir / "SynthVar.ttf"
+        font_path.write_bytes(ttf_bytes)
 
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_dir = Path(tmp)
-            font_path = tmp_dir / "SynthVar.ttf"
-            font_path.write_bytes(ttf_bytes)
-            out_dir = tmp_dir / "resources"
-            brand_dir = tmp_dir / "brand"
+        helper_py = work_dir / "fake_browser.py"
+        helper_py.write_text(
+            "\n".join([
+                "import struct, sys, zlib",
+                "from pathlib import Path",
+                "shot = None",
+                "size = (64, 64)",
+                "for arg in sys.argv[1:]:",
+                "    if arg.startswith('--screenshot='):",
+                "        shot = Path(arg.split('=', 1)[1])",
+                "    elif arg.startswith('--window-size='):",
+                "        w, h = arg.split('=', 1)[1].split(',', 1)",
+                "        size = (int(w), int(h))",
+                "def chunk(tag, data):",
+                "    return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)",
+                "w, h = size",
+                "ihdr = struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)",
+                "row = b'\\x00' + (b'\\x10\\x20\\x30\\xff' * w)",
+                "idat = zlib.compress(row * h, level=1)",
+                "png = b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')",
+                "shot.parent.mkdir(parents=True, exist_ok=True)",
+                "shot.write_bytes(png)",
+            ]) + "\n",
+            encoding="utf-8",
+        )
 
-            # Fake headless browser shim powered only by pinned build\python.cmd
-            helper_py = tmp_dir / "fake_browser.py"
-            helper_py.write_text(
-                "\n".join([
-                    "import struct, sys, zlib",
-                    "from pathlib import Path",
-                    "shot = None",
-                    "size = (64, 64)",
-                    "for arg in sys.argv[1:]:",
-                    "    if arg.startswith('--screenshot='):",
-                    "        shot = Path(arg.split('=', 1)[1])",
-                    "    elif arg.startswith('--window-size='):",
-                    "        w, h = arg.split('=', 1)[1].split(',', 1)",
-                    "        size = (int(w), int(h))",
-                    "def chunk(tag, data):",
-                    "    return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data) & 0xFFFFFFFF)",
-                    "w, h = size",
-                    "ihdr = struct.pack('>IIBBBBB', w, h, 8, 6, 0, 0, 0)",
-                    "row = b'\\x00' + (b'\\x10\\x20\\x30\\xff' * w)",
-                    "idat = zlib.compress(row * h, level=1)",
-                    "png = b'\\x89PNG\\r\\n\\x1a\\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', idat) + chunk(b'IEND', b'')",
-                    "shot.parent.mkdir(parents=True, exist_ok=True)",
-                    "shot.write_bytes(png)",
-                ]) + "\n",
+        if os.name == "nt":
+            launcher = ROOT / "build" / "python.cmd"
+            self.assertTrue(launcher.exists())
+            browser_shim = work_dir / "fake-browser.cmd"
+            browser_shim.write_text(
+                f'@echo off\r\n"{launcher}" "{helper_py}" %*\r\n',
                 encoding="utf-8",
             )
-            browser_cmd = tmp_dir / "fake-browser.cmd"
-            browser_cmd.write_text(
-                f'@echo off\r\n"{python_cmd}" "{helper_py}" %*\r\n',
-                encoding="utf-8",
-            )
-
+            cleaned_path = _strip_system_python_from_path(os.environ.get("PATH", ""))
             env = {
                 "SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"),
                 "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe"),
-                "TEMP": str(tmp_dir),
-                "TMP": str(tmp_dir),
-                "PATH": str(tmp_dir),
-                "RECTO_RENDER_BROWSER": str(browser_cmd),
+                "TEMP": str(work_dir),
+                "TMP": str(work_dir),
+                "PATH": f"{work_dir}{os.pathsep}{cleaned_path}" if cleaned_path else str(work_dir),
+                "RECTO_RENDER_BROWSER": str(browser_shim),
             }
             if "RECTO_TOOLS_DIR" in os.environ:
                 env["RECTO_TOOLS_DIR"] = os.environ["RECTO_TOOLS_DIR"]
-
-            proc = subprocess.run(
-                [
-                    str(python_cmd),
-                    str(ROOT / "design" / "tools" / "build_resources.py"),
-                    "--newsreader", str(font_path),
-                    "--label-font", str(font_path),
-                    "--ui-font", str(font_path),
-                    "--out-dir", str(out_dir),
-                    "--brand-out-dir", str(brand_dir),
-                ],
-                cwd=str(ROOT),
-                env=env,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                creationflags=CREATE_NO_WINDOW,
+            cmd_prefix = [str(launcher)]
+        else:
+            launcher = ROOT / "scripts" / "run-python.sh"
+            self.assertTrue(launcher.exists())
+            browser_shim = work_dir / "fake-browser.sh"
+            browser_shim.write_text(
+                f'#!/bin/sh\nexec "{sys.executable}" "{helper_py}" "$@"\n',
+                encoding="utf-8",
             )
-            self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout}\nstderr={proc.stderr}")
-            self.assertIn("SVG masters", proc.stdout)
-            self.assertTrue((out_dir / "svg" / "wordmark-light.svg").exists())
-            self.assertTrue((out_dir / "svg" / "filetype-pdf.svg").exists())
-            self.assertTrue((out_dir / "ico" / "recto.ico").exists())
-            self.assertTrue((out_dir / "ico" / "pdf-file.ico").exists())
-            self.assertTrue((out_dir / "preview.png").exists())
-            self.assertTrue((brand_dir / "github-banner.png").exists())
-            self.assertTrue((out_dir / "installer" / "wizard-image-100.png").exists())
-            self.assertTrue((out_dir / "msix" / "Assets" / "Square44x44Logo.targetsize-256.png").exists())
+            browser_shim.chmod(0o755)
+            env = {
+                "PATH": os.pathsep.join([str(work_dir), str(Path(sys.executable).parent), "/usr/local/bin", "/usr/bin", "/bin"]),
+                "HOME": os.environ.get("HOME", str(work_dir)),
+                "TMPDIR": str(work_dir),
+                "TEMP": str(work_dir),
+                "TMP": str(work_dir),
+                "RECTO_RENDER_BROWSER": str(browser_shim),
+            }
+            cmd_prefix = ["/bin/sh", str(launcher)]
+
+        proc = subprocess.run(
+            cmd_prefix + [
+                str(ROOT / "design" / "tools" / "build_resources.py"),
+                "--newsreader", str(font_path),
+                "--label-font", str(font_path),
+                "--ui-font", str(font_path),
+                "--out-dir", out_arg,
+                "--brand-out-dir", brand_arg,
+            ],
+            cwd=str(work_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        self.assertEqual(proc.returncode, 0, f"stdout={proc.stdout}\nstderr={proc.stderr}")
+        self.assertIn("SVG masters", proc.stdout)
+
+        out_dir = (work_dir / out_arg).resolve()
+        brand_dir = (work_dir / brand_arg).resolve()
+        self.assertTrue((out_dir / "svg" / "wordmark-light.svg").exists())
+        self.assertTrue((out_dir / "svg" / "filetype-pdf.svg").exists())
+        self.assertTrue((out_dir / "ico" / "recto.ico").exists())
+        self.assertTrue((out_dir / "ico" / "pdf-file.ico").exists())
+        self.assertTrue((out_dir / "preview.png").exists())
+        self.assertTrue((brand_dir / "github-banner.png").exists())
+        self.assertTrue((out_dir / "installer" / "wizard-image-100.png").exists())
+        self.assertTrue((out_dir / "msix" / "Assets" / "Square44x44Logo.targetsize-256.png").exists())
+
+    def test_cli_runs_with_platform_launcher_and_without_third_party_packages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            self._run_cli_build(work_dir, str(work_dir / "resources"), str(work_dir / "brand"))
+
+    def test_cli_accepts_relative_output_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work_dir = Path(tmp)
+            self._run_cli_build(work_dir, "rel_out/resources", "rel_out/brand")
 
 
 if __name__ == "__main__":

@@ -1356,6 +1356,7 @@ def _run_browser_screenshot(url: str, png_path: Path, width: int, height: int,
 
 def rasterise(items, tmp):
     """items: list of (key, w, h, svg_markup). Packs them on one transparent sheet, screenshots it once, crops."""
+    tmp = Path(tmp).resolve()
     sheet_w, gap = 4096, 8
     x = y = row_h = 0
     pos = {}
@@ -1388,8 +1389,8 @@ def main():
     ap.add_argument("--brand-out-dir", type=Path, default=BRAND_OUT, help="output directory for brand graphics")
     args = ap.parse_args()
 
-    out_dir = args.out_dir
-    brand_out_dir = args.brand_out_dir
+    out_dir = args.out_dir.resolve()
+    brand_out_dir = args.brand_out_dir.resolve()
     if out_dir.exists():
         for sub in ("svg", "msix", "ico", "installer"):
             shutil.rmtree(out_dir / sub, ignore_errors=True)
@@ -1509,6 +1510,8 @@ def main():
 
 def write_preview(masters, out_dir=OUT, brand_out_dir=BRAND_OUT):
     """resources/preview.png: every master on light and dark, plus the small PNG sizes at 1:1."""
+    out_dir = Path(out_dir).resolve()
+    brand_out_dir = Path(brand_out_dir).resolve()
     A = out_dir / "msix" / "Assets"
     def cell(name, bg, fg, scale=1.0):
         s = masters[name]
@@ -1542,7 +1545,7 @@ def write_preview(masters, out_dir=OUT, brand_out_dir=BRAND_OUT):
             + f'<img src="{(brand_out_dir / "github-social-preview.png").as_uri()}" style="display:block;width:640px;border-radius:8px">'
             + '</body></html>')
     with tempfile.TemporaryDirectory(prefix="recto-prev-", ignore_cleanup_errors=True) as tmp:
-        tmp_dir = Path(tmp)
+        tmp_dir = Path(tmp).resolve()
         page = tmp_dir / "preview.html"
         page.write_text(html, encoding="utf-8")
         png_bytes = _run_browser_screenshot(page.as_uri(), tmp_dir / "preview.png", 1600, 3200,
