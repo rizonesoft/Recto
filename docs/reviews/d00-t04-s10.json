@@ -1,0 +1,91 @@
+{
+  "ref": "D00 T04 \u00a710",
+  "title": "Slow tests fixed at their cause and held by a per-test time budget",
+  "implementation_sha": "66ef4f2b5fb3798a17785a9fbf127b0f1b0b486e",
+  "date": "2026-11-15",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s10.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "build\\python.cmd -m unittest tests.scripts.test_test_times -> Ran 6 tests in 0.868s OK",
+    ".\\build.cmd -> OK: 512 tests within debug time budget (total=261.291s, max=15.154s, default=20.000s, exceptions=0); OK: 512 tests within release time budget (total=35.338s, max=2.831s, default=5.000s, exceptions=0)"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s10.md",
+    "verdict": "reconciled",
+    "candidate": "66ef4f2b5fb3798a17785a9fbf127b0f1b0b486e",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s10.md",
+    "candidate": "8f9e8e2f2c0aa4bf06fa8dcd6750721c3031b3c9",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "8f9e8e2f2c0aa4bf06fa8dcd6750721c3031b3c9",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 5,
+  "pass_cap": 33
+}

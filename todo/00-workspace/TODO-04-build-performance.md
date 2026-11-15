@@ -56,7 +56,7 @@ track: M0
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [x] |
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4, §12 | [ ] |
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
-| 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [ ] |
+| 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [x] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
@@ -384,9 +384,12 @@ The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Re
 - [x] Fix or except every other test the new measurement finds over budget, the same way; for every test across `§10` whose fixture or loop count is shortened, record an inventory of all affected assertions and boundary cases in the findings file and prove each changed claim with a targeted negative check (`scripts/mutate-check.py`). Done when: `python scripts/test-times.py check` exits 0 for the Debug, Release and ASan runs, every exception's reason says why the time is needed, and every reduced test has its affected-claim negative checks recorded.
 - [x] Run `test-times.py report` and `check` from `build/build.ps1` after each configuration's tests (the mode from the configuration and `-EnableASAN`; no check under `-TestFilter`, which runs a part of the suite), reporting from available valid non-empty XML even when `recto-tests` exits non-zero before propagating the original test failure (retaining the original failure when XML is missing, empty, or malformed), and failing a passing build on a test over budget. Done when: a full run prints the total and the slowest tests, a sleep added to one test that takes it past the budget fails `build.ps1` naming that test, and `tests/scripts/test_build_ps1.py` fails if the check is removed or fails on a failed-plus-over-budget or missing-XML run.
 - [x] Record the result. Done when: the findings file holds the Debug, Release and ASan suite totals before and after, the Debug total is at most 300 s and the Release total at most 60 s on this host (or the findings file says which measured cost stands in the way and where it is filed), and the next green `build.yml` run's two build-and-test steps are recorded beside the 23 and 18 minutes before.
-- [ ] Commit: `tests: fix the slow tests at their cause and hold a per-test time budget`
+- [x] Commit: `tests: fix the slow tests at their cause and hold a per-test time budget`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_test_times` passes; `build.ps1 -Platform x64` passes with `python scripts/test-times.py check` at exit 0 for Debug and Release; and a 25 s sleep added to one Debug test fails the build naming it.
+
+> **Verified:** 2026-11-15 | §10 | 66ef4f2b5fb3798a17785a9fbf127b0f1b0b486e
+> **Review:** `docs/reviews/d00-t04-s10.json`
 
 ## 11. The x64 test suite run in parallel shards within the memory bound
 
