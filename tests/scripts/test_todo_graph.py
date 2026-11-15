@@ -682,6 +682,134 @@ class Stamp(Tree):
         tg.graph(self.root)
         self.assertIsNone(tg.review_rounds(self.root)["sections"][0]["completion"])
 
+    def test_reopened_complete_passes_require_and_validate_reconciliation(self):
+        three_pass_pin = (
+            'schema_version = 1\n\n[reviewers.astra]\ncli = "codex"\nmodel = "m"\neffort = "medium"\n\n'
+            '[routes]\nclaude = ["astra"]\n\n'
+            '[schedule]\npolicy = "three-pass"\npass_cap = 10\nblocking = ["P1", "P2"]\n\n'
+            '[schedule.plan]\nlenses = ["plan"]\n\n'
+            '[[schedule.rounds]]\nlenses = ["adversarial"]\n\n'
+            '[schedule.completion]\nlenses = ["plan-delivery", "record"]\n\n'
+            '[schedule.reconciliation]\nlenses = ["adversarial", "plan-delivery", "record"]\n\n'
+            '[schedule.efforts.astra]\nplan = "medium"\nrounds = ["medium", "low"]\ncompletion = "medium"\nreconciliation = "low"\n'
+        )
+        (self.root / tg.PIN).write_text(three_pass_pin, encoding="utf-8")
+        trel = "todo/00-workspace/TODO-02-b.md"
+        tpath = self.root / trel
+        tpath.write_text(
+            todo_file([(1, "Reopen", 0, "none", "--")], ident="bravo")
+            .replace("- [ ] Work.", "- [x] Work.")
+            .replace("**Test checkpoint:**", STARTED + "**Test checkpoint:**"),
+            encoding="utf-8")
+        self.index("TODO-02-b.md")
+        c0 = self.commit("three-pass pin and bravo")
+        s1_rel = "docs/reviews/00-workspace/D00-T02-s1.md"
+        report = self.root / s1_rel
+        dispatch = tg.review_dispatch()
+        one_round = [{"round": 1, "report": s1_rel, "verdict": "clean"}]
+
+        def reset_to_completion(comp_review, reopened=False):
+            report.unlink(missing_ok=True)
+            dispatch.record_completion(
+                report,
+                {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+                 "lenses": ["plan"], "skipped": [], "review": "1. ok.\n\nHIGHEST: none\n\nPLAN: complete\n\nOVERALL: approve"},
+                "2026-10-23T00:00:00Z", c0, kind="plan")
+            dispatch.record(
+                report,
+                {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+                 "lenses": ["adversarial"], "skipped": [], "review": "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve"},
+                "2026-10-23T00:00:00Z", c0)
+            dispatch.record_completion(
+                report,
+                {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+                 "lenses": ["plan-delivery", "record"], "skipped": [], "review": comp_review},
+                "2026-10-23T00:01:00Z", c0, kind="completion")
+            if reopened:
+                with open(report, "a", encoding="utf-8", newline="") as handle:
+                    handle.write("\n- Reopened: CI build.yml red\n")
+
+        comp_ok = "LENS plan-delivery: clean\nLENS record: clean\nHIGHEST: none\nCOMPLETION: complete"
+        rec_ok = "LENS adversarial: clean\nLENS plan-delivery: clean\nLENS record: clean\nHIGHEST: none\nRECONCILIATION: complete"
+        rec_lenses = ["adversarial", "plan-delivery", "record"]
+
+        reset_to_completion(comp_ok, reopened=True)
+        for bad_verdict in ("complete", "reconciled"):
+            with self.subTest(bad_verdict=bad_verdict), self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T02 §1", c0, one_round, ["true -> ok"], "2026-10-23",
+                         completion={"report": s1_rel, "verdict": bad_verdict}, plan=s1_rel)
+            self.assertIn("was reopened and needs a reconciliation", str(ctx.exception))
+
+        # Reconciling on the exact same commit after a reopen refuses.
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "low",
+             "lenses": rec_lenses, "skipped": [], "review": rec_ok},
+            "2026-10-23T00:02:00Z", c0, kind="reconciliation")
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T02 §1", c0, one_round, ["true -> ok"], "2026-10-23",
+                     completion={"report": s1_rel, "verdict": "reconciled"}, plan=s1_rel)
+        self.assertIn("must review a newer commit", str(ctx.exception))
+
+        # Case A: reopened COMPLETION: complete -> RECONCILIATION: complete on newer commit stamps.
+        reset_to_completion(comp_ok, reopened=True)
+        c1 = self.commit("fix ci after complete completion")
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "low",
+             "lenses": rec_lenses, "skipped": [], "review": rec_ok},
+            "2026-10-23T00:02:00Z", c1, kind="reconciliation")
+        receipt_a = tg.stamp(self.root, "D00 T02 §1", c1, one_round, ["true -> ok"], "2026-10-23",
+                             completion={"report": s1_rel, "verdict": "reconciled"}, plan=s1_rel)
+        data_a = json.loads((self.root / receipt_a).read_text(encoding="utf-8"))
+        self.assertEqual(data_a["passes_spent"], 4)
+        tg.graph(self.root)
+
+        # Case B: COMPLETION: gaps -> RECONCILIATION: complete + Reopened -> RECONCILIATION: complete stamps.
+        (self.root / receipt_a).unlink()
+        ttext = tpath.read_text(encoding="utf-8")
+        ttext = ttext.replace("status: done", "status: active")
+        ttext = ttext.replace("| 1 | §1 | Reopen | -- | [x] |", "| 1 | §1 | Reopen | -- | [ ] |")
+        ttext = ttext.replace("- [x] Commit:", "- [ ] Commit:")
+        ttext = re.sub(r"> \*\*(?:Verified|Review):\*\*[^\n]*\n\n?", "", ttext)
+        tpath.write_text(ttext, encoding="utf-8")
+        c0_b = self.commit("reset before gaps completion")
+        report.unlink(missing_ok=True)
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+             "lenses": ["plan"], "skipped": [], "review": "1. ok.\n\nHIGHEST: none\n\nPLAN: complete\n\nOVERALL: approve"},
+            "2026-10-23T00:00:00Z", c0, kind="plan")
+        dispatch.record(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+             "lenses": ["adversarial"], "skipped": [], "review": "1. ok.\n\nHIGHEST: none\n\nOVERALL: approve"},
+            "2026-10-23T00:00:00Z", c0)
+        comp_gaps = "LENS plan-delivery: findings\nLENS record: clean\nHIGHEST: P2\nCOMPLETION: gaps"
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "medium",
+             "lenses": ["plan-delivery", "record"], "skipped": [], "review": comp_gaps},
+            "2026-10-23T00:01:00Z", c0_b, kind="completion")
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "low",
+             "lenses": rec_lenses, "skipped": [], "review": rec_ok},
+            "2026-10-23T00:02:00Z", c0_b, kind="reconciliation")
+        with open(report, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n- Reopened: CI build.yml red\n")
+        c2 = self.commit("fix ci after complete reconciliation")
+        dispatch.record_completion(
+            report,
+            {"writer": "claude", "reviewer": "astra", "model": "m", "cli": "codex", "effort": "low",
+             "lenses": rec_lenses, "skipped": [], "review": rec_ok},
+            "2026-10-23T00:03:00Z", c2, kind="reconciliation")
+        receipt_b = tg.stamp(self.root, "D00 T02 §1", c2, one_round, ["true -> ok"], "2026-10-23",
+                             completion={"report": s1_rel, "verdict": "reconciled"}, plan=s1_rel)
+        data_b = json.loads((self.root / receipt_b).read_text(encoding="utf-8"))
+        self.assertEqual(data_b["passes_spent"], 5)
+        tg.graph(self.root)
+
     def tick_work(self):
         path = self.root / "todo/00-workspace/TODO-01-a.md"
         path.write_text(path.read_text(encoding="utf-8").replace("- [ ] Work.", "- [x] Work.", 1),

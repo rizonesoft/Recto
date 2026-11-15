@@ -221,10 +221,20 @@ class in_flight:
         return False
 
 
+REOPENED = re.compile(r"^- Reopened:[ \t]+\S")
+
+
 def ended_gaps(entry):
     """True for a completion or reconciliation whose final line is its `gaps` verdict."""
     lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
     return bool(lines) and lines[-1] in ("COMPLETION: gaps", "RECONCILIATION: gaps")
+
+
+def reopened_complete(entry):
+    """True when a complete completion or reconciliation pass was reopened after a red gate or CI run."""
+    lines = [x.strip() for x in (entry.get("review") or "").splitlines() if x.strip()]
+    return bool(lines) and lines[-1] in ("COMPLETION: complete", "RECONCILIATION: complete") \
+        and any(REOPENED.match(line) for line in entry.get("notes") or ())
 
 
 def decode_reply(data):
@@ -1318,24 +1328,26 @@ def check_three_pass_order(kind, record_path, candidate, schedule):
         if rounds[0]["candidate"] is None or not descends(rounds[0]["candidate"], candidate):
             raise Refused(f"the completion's candidate does not descend from the round's {rounds[0]['candidate']}")
     elif kind == "reconciliation":
-        if len(rounds) != 1 or len(completions) != 1 or not ended_gaps(completions[0]):
+        if len(rounds) != 1 or len(completions) != 1 \
+                or not (ended_gaps(completions[0]) or reopened_complete(completions[0])):
             raise Refused("a reconciliation follows one round and a completion review that returned gaps")
         chain = [completions[0], *reconciled]
-        if not ended_gaps(chain[-1]):
+        reopened = reopened_complete(chain[-1])
+        if not ended_gaps(chain[-1]) and not reopened:
             raise Refused("the section's reconciliation already returned complete; it needs no further pass")
         worst = [declared_highest(e["review"]) for e in chain]
         # Only a pin that names its blocking levels ends the loop this way; without the key every gap is repaired.
-        if "blocking" in schedule and not review_pin.blocks(schedule, worst[-1]):
+        if not reopened and "blocking" in schedule and not review_pin.blocks(schedule, worst[-1]):
             raise Refused(f"the last pass's worst finding is {worst[-1]}, below the pin's blocking levels "
                           f"({', '.join(schedule['blocking'])}): file its findings and stamp; it takes no further pass")
         cap = pass_cap(schedule)
         if len(plans) + len(rounds) + len(chain) >= cap:
             raise Refused(f"the section has spent its {cap} review passes (pass_cap); it stays blocked")
         stall = review_pin.no_progress_cap(schedule)
-        if stall is not None:
+        if stall is not None and not reopened:
             run = 0
-            for before, after in reversed(list(zip(worst, worst[1:]))):
-                if SEVERITY_RANK[after] < SEVERITY_RANK[before]:
+            for (before_entry, before), (_, after) in reversed(list(zip(zip(chain, worst), zip(chain[1:], worst[1:])))):
+                if reopened_complete(before_entry) or SEVERITY_RANK[after] < SEVERITY_RANK[before]:
                     break
                 run += 1
             if run >= stall:
@@ -1343,6 +1355,9 @@ def check_three_pass_order(kind, record_path, candidate, schedule):
                               f"it stays blocked")
         if not descends(chain[-1]["candidate"], candidate):
             raise Refused(f"the reconciliation's candidate does not descend from the last pass's "
+                          f"{chain[-1]['candidate']}")
+        if reopened and candidate == chain[-1]["candidate"]:
+            raise Refused(f"a reconciliation after a reopened pass must review a newer commit than "
                           f"{chain[-1]['candidate']}")
 
 

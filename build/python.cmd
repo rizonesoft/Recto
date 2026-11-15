@@ -13,7 +13,7 @@ if not exist "%_RECTO_VERIFIED%" goto bootstrap
 if not exist "%_RECTO_PY_PTR%" goto bootstrap
 fc /b "%_RECTO_LOCK%" "%_RECTO_VERIFIED%" >nul 2>&1
 if errorlevel 1 goto bootstrap
-set /p _RECTO_PY_EXE=<"%_RECTO_PY_PTR%"
+2>nul set /p _RECTO_PY_EXE=<"%_RECTO_PY_PTR%"
 if not defined _RECTO_PY_EXE goto bootstrap
 if not exist "%_RECTO_PY_EXE%" goto bootstrap
 goto exec
@@ -25,7 +25,7 @@ if errorlevel 1 if exist "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershel
 "%_RECTO_PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0bootstrap-tools.ps1" 1>&2
 if errorlevel 1 exit /b %ERRORLEVEL%
 set "_RECTO_PY_EXE="
-if exist "%_RECTO_PY_PTR%" set /p _RECTO_PY_EXE=<"%_RECTO_PY_PTR%"
+if exist "%_RECTO_PY_PTR%" 2>nul set /p _RECTO_PY_EXE=<"%_RECTO_PY_PTR%"
 if not defined _RECTO_PY_EXE (
     echo build\python.cmd: cpython executable pointer missing in "%_RECTO_PY_PTR%" 1>&2
     exit /b 1

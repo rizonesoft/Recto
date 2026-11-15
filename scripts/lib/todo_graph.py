@@ -400,21 +400,36 @@ def completion_record(root, completion, ref, stamp_sha, commits=None):
     passed = [e for e in dispatch.read_findings(path.read_bytes().decode("utf-8"))["reconciliations"]
               if dispatch.returned_one_pass(e, "reconciliation")]
     final = passed[-1] if passed else entry
+    require(not dispatch.reopened_complete(final),
+            f"the last review in {report} was reopened and needs a reconciliation before stamping: {ref}")
     for earlier in passed[:-1]:
-        require(ending(earlier) == "RECONCILIATION: gaps",
-                f"only the last reconciliation in {report} may end RECONCILIATION: complete: {ref}")
+        require(ending(earlier) == "RECONCILIATION: gaps" or dispatch.reopened_complete(earlier),
+                f"only the last reconciliation in {report} may end RECONCILIATION: complete unless reopened: {ref}")
     if verdict == "reconciled":
         require(bool(passed), f"completion verdict reconciled needs a returned ## Reconciliation review in {report}: {ref}")
-        require(last == "COMPLETION: gaps" and ending(final) == "RECONCILIATION: complete",
-                f"completion verdict reconciled needs a completion ending COMPLETION: gaps and a last reconciliation "
-                f"ending RECONCILIATION: complete, and {report} ends {ending(final)}: {ref}")
+        require((last == "COMPLETION: gaps" or dispatch.reopened_complete(entry))
+                and ending(final) == "RECONCILIATION: complete",
+                f"completion verdict reconciled needs a completion ending COMPLETION: gaps (or a reopened complete "
+                f"pass) and a last reconciliation ending RECONCILIATION: complete, and {report} ends "
+                f"{ending(final)}: {ref}")
     else:
-        expected = "COMPLETION: complete" if verdict == "complete" else "COMPLETION: gaps"
-        require(last == expected, f"completion verdict {verdict} needs a review ending {expected}, and {report} ends "
-                                  f"{last}: {ref}")
-        require(not passed or ending(final) == "RECONCILIATION: gaps",
-                f"{report} holds a reconciliation ending RECONCILIATION: complete, so the verdict is reconciled, not "
-                f"{verdict}: {ref}")
+        if verdict == "complete":
+            require(last == "COMPLETION: complete",
+                    f"completion verdict {verdict} needs a review ending COMPLETION: complete, and {report} ends "
+                    f"{last}: {ref}")
+            require(not passed or ending(final) == "RECONCILIATION: gaps",
+                    f"{report} holds a reconciliation ending RECONCILIATION: complete, so the verdict is reconciled, "
+                    f"not {verdict}: {ref}")
+            require(not passed,
+                    f"{report} holds a reconciliation after a reopened complete review, so the verdict is not "
+                    f"complete: {ref}")
+        else:
+            require(last == "COMPLETION: gaps" or (bool(passed) and dispatch.reopened_complete(entry)),
+                    f"completion verdict {verdict} needs a review ending COMPLETION: gaps, and {report} ends "
+                    f"{last}: {ref}")
+            require(not passed or ending(final) == "RECONCILIATION: gaps",
+                    f"{report} holds a reconciliation ending RECONCILIATION: complete, so the verdict is reconciled, "
+                    f"not {verdict}: {ref}")
     filed = list(dict.fromkeys(m[1] for m in (FILED.match(line) for line in final["notes"]) if m))
     require(bool(filed) == (verdict == "filed"),
             f"completion verdict filed needs each filed section listed as '- Filed: DNN TNN §N' under the last "
@@ -780,14 +795,18 @@ def three_pass_ok(root, data, ref, found):
     worst = [dispatch.review_pin.declared_highest(e["review"]) for e in tail]
     stall = dispatch.review_pin.no_progress_cap(schedule)
     for i in range(len(passed)):
-        require(ended_gaps(tail[i]), f"a reconciliation follows a pass that returned gaps, not one that was complete: {ref}")
-        require("blocking" not in schedule or dispatch.review_pin.blocks(schedule, worst[i]),
-                f"a reconciliation followed a pass whose worst finding ({worst[i]}) is below the pin's blocking "
-                f"levels; its findings are filed, not reviewed again: {ref}")
-        if stall is not None:
+        reopened = dispatch.reopened_complete(tail[i])
+        require(ended_gaps(tail[i]) or reopened,
+                f"a reconciliation follows a pass that returned gaps, not one that was complete: {ref}")
+        if not reopened:
+            require("blocking" not in schedule or dispatch.review_pin.blocks(schedule, worst[i]),
+                    f"a reconciliation followed a pass whose worst finding ({worst[i]}) is below the pin's blocking "
+                    f"levels; its findings are filed, not reviewed again: {ref}")
+        if stall is not None and not reopened:
             run = 0
-            for before, after in reversed(list(zip(worst[:i + 1], worst[1:i + 1]))):
-                if dispatch.SEVERITY_RANK[after] < dispatch.SEVERITY_RANK[before]:
+            for idx in range(i, 0, -1):
+                if dispatch.reopened_complete(tail[idx - 1]) \
+                        or dispatch.SEVERITY_RANK[worst[idx]] < dispatch.SEVERITY_RANK[worst[idx - 1]]:
                     break
                 run += 1
             require(run < stall, f"a reconciliation ran after {run} in a row made no progress, past the pin's "
@@ -820,6 +839,9 @@ def three_pass_ok(root, data, ref, found):
     for (older_name, older), (newer_name, newer) in zip(chain, chain[1:]):
         require(older["run"] <= newer["run"] and is_ancestor(root, older["candidate"], newer["candidate"]),
                 f"the {newer_name} must run after the {older_name}, on a candidate at or after it: {ref}")
+        require(not dispatch.reopened_complete(older) or older["candidate"] != newer["candidate"],
+                f"the {newer_name} after a reopened {older_name} must review a newer commit than "
+                f"{older['candidate']}: {ref}")
     require(chain[-1][1]["candidate"] == sha,
             f"the last review ({chain[-1][0]}) reviewed {chain[-1][1]['candidate']}, not the stamped commit {sha}: {ref}")
     # The promise the stamp holds is the stamped candidate's: it must be the one the failed completion reviewed. A

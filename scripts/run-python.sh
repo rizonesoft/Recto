@@ -23,8 +23,11 @@ if [ -f "$root/build/tools.lock.json" ] && [ "${OS:-}" = "Windows_NT" ] && [ ! -
     exe_file="$tools/cpython-exe.txt"
     lock_ok="$tools/tools.lock.verified"
     py_exe=""
-    if [ -f "$exe_file" ] && [ -f "$lock_ok" ] && cmp -s "$root/build/tools.lock.json" "$lock_ok"; then
-        py_exe=$(tr -d '\r\n' < "$exe_file")
+    if [ -f "$exe_file" ] && [ -f "$lock_ok" ] && cmp -s "$root/build/tools.lock.json" "$lock_ok" 2>/dev/null; then
+        # Speculative fast path: a transient open failure during concurrent bootstrap falls through to bootstrap below.
+        if ! py_exe=$(tr -d '\r\n' < "$exe_file" 2>/dev/null); then
+            py_exe=""
+        fi
     fi
     if [ -z "$py_exe" ] || [ ! -f "$py_exe" ]; then
         ps_exe="powershell.exe"

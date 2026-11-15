@@ -631,6 +631,40 @@ class Blocking(ThreePass):
         self.assertNotIn("blocking", summary)
 
 
+class ReopenedComplete(ThreePass):
+    def test_reopened_complete_completion_reconciles_on_newer_commit(self):
+        built = self.to_completion(top="none", gaps=False)
+        next_commit = self.commit("unreopened", {"src/app/a.py": "x = 2\n"})
+        self.refused("reconciliation", next_commit, "a reconciliation follows one round and a completion")
+        with open(self.record, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n- Reopened: CI build.yml red\n")
+        self.refused("reconciliation", built, "must review a newer commit")
+        fixed = self.commit("fix ci", {"src/app/a.py": "x = 3\n"})
+        done = self.ok("reconciliation", fixed)
+        self.assertEqual((done["kind"], done["candidate"], done["recorded"]), ("reconciliation", fixed, True))
+
+    def test_reopened_complete_reconciliation_reconciles_and_resets_stall(self):
+        stalled = PIN.replace("pass_cap = 5", "pass_cap = 10\nno_progress_cap = 2")
+        self.base = self.commit("stall 2", {".conclave/reviewers.toml": stalled})
+        built = self.to_completion(top="P2", gaps=True)
+        c1 = self.commit("r1", {"src/app/a.py": "x = 2\n"})
+        self.ok("reconciliation", c1, top="none", gaps=False)
+        c2 = self.commit("r2", {"src/app/a.py": "x = 3\n"})
+        self.refused("reconciliation", c2, "already returned complete")
+        with open(self.record, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n- Reopened: CI build.yml red\n")
+        self.refused("reconciliation", c1, "must review a newer commit")
+        c3 = self.commit("r3", {"src/app/a.py": "x = 4\n"})
+        self.ok("reconciliation", c3, top="P2", gaps=True)
+        c4 = self.commit("r4", {"src/app/a.py": "x = 5\n"})
+        self.ok("reconciliation", c4, top="P2", gaps=True)
+        c5 = self.commit("r5", {"src/app/a.py": "x = 6\n"})
+        self.ok("reconciliation", c5, top="P2", gaps=True)
+        c6 = self.commit("r6", {"src/app/a.py": "x = 7\n"})
+        self.refused("reconciliation", c6, "no_progress_cap 2")
+        del built
+
+
 class SectionPin(ThreePass):
     def test_a_section_finishes_under_the_pin_its_plan_review_read(self):
         self.ok("plan", self.base)

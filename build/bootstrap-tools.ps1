@@ -37,6 +37,38 @@ function Get-FileSha256([string]$Path) {
 function Save-FileAtomically([string]$TargetPath, [string]$Content) {
     $parent = Split-Path -Parent $TargetPath
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $desiredBytes = $utf8NoBom.GetBytes($Content)
+    if (Test-Path -LiteralPath $TargetPath -PathType Leaf) {
+        try {
+            $stream = [System.IO.File]::Open($TargetPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+                if ($stream.Length -eq $desiredBytes.Length) {
+                    $existingBytes = New-Object byte[] $desiredBytes.Length
+                    $offset = 0
+                    while ($offset -lt $existingBytes.Length) {
+                        $n = $stream.Read($existingBytes, $offset, $existingBytes.Length - $offset)
+                        if ($n -le 0) { break }
+                        $offset += $n
+                    }
+                    if ($offset -eq $desiredBytes.Length) {
+                        $same = $true
+                        for ($i = 0; $i -lt $desiredBytes.Length; $i++) {
+                            if ($existingBytes[$i] -ne $desiredBytes[$i]) {
+                                $same = $false
+                                break
+                            }
+                        }
+                        if ($same) {
+                            return
+                        }
+                    }
+                }
+            } finally {
+                $stream.Dispose()
+            }
+        } catch [System.IO.IOException] {
+        }
+    }
     $tmp = Join-Path $parent (".tmp-" + [System.IO.Path]::GetFileName($TargetPath) + "-" + [guid]::NewGuid().ToString('N'))
     try {
         [System.IO.File]::WriteAllText($tmp, $Content, $utf8NoBom)
