@@ -411,6 +411,8 @@ The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Re
 
 ## 12. clangd language server for Claude Code over a compile database from the MSBuild build
 
+> **Started:** 2026-11-15T04:48Z
+
 A session that needs a symbol's definition, its callers or its type today searches the sources and reads pieces of them, and the sources are large: `src/pdf/filters.cpp` is 436 KB, `tests/recto-tests/pdf_filters_tests.cpp` 383 KB, `pdf_interpreter_tests.cpp` 320 KB and `src/pdf/document.cpp` 156 KB (measured 2026-11-10). A language server answers those questions in a few lines and reports a compile error without a build. Nothing is set up: the repository has no `compile_commands.json`, no `.clangd` and no language server configuration under `.claude/`, and MSBuild writes no compile database. `clangd.exe` is already on this host inside Visual Studio 2026 (`VC\Tools\Llvm\x64\bin\clangd.exe`, the C++ Clang tools component), so no new tool is fetched. This section writes the compile database from the build that ran, points clangd at it, proves clangd reads every source as MSVC compiles it (`/std:c++23preview`, the Windows SDK, the vcpkg and NuGet include folders), connects it to Claude Code, and bounds its memory, because this host runs short of memory. `§8` later writes the same database from CMake.
 
 Two defaults, each with its cost of changing: clangd comes from Visual Studio and is not pinned in `.tools/` (moving it into `§6`'s lock costs one lock entry and one line in `build/clangd.cmd`), and the database is x64 Debug only (another configuration costs one argument to the generator).
