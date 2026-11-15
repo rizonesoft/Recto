@@ -77,6 +77,8 @@ def _csc_path() -> Path | None:
 def _free_localhost_port() -> int:
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
 
@@ -1062,6 +1064,17 @@ class SccacheConfigurationTests(unittest.TestCase):
             return False
 
     @staticmethod
+    def _port_bindable(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+                return True
+            except OSError:
+                return False
+
+    @staticmethod
     def _deterministic_port(cache_dir: Path) -> int:
         canonical = str(cache_dir.resolve()).rstrip("\\/").lower()
         digest = hashlib.sha256(canonical.encode("utf-8")).digest()
@@ -1498,11 +1511,15 @@ Write-Output "WRAPPER=$w"
             recto_cache: Path | None = None
             p0 = p1 = p2 = 0
             reserved = {unused_probe_port, other_port, recto_explicit_port}
-            for idx in range(256):
+            for idx in range(2048):
                 cand_cache = base / f"recto-cache-{idx}"
                 det_base = self._deterministic_port(cand_cache)
                 c0, c1, c2 = (42000 + ((det_base - 42000 + k) % 20000) for k in range(3))
-                if len({c0, c1, c2} | reserved) == 6 and not any(self._port_listening(p) for p in (c0, c1, c2)):
+                if (
+                    len({c0, c1, c2} | reserved) == 6
+                    and not any(self._port_listening(p) for p in (c0, c1, c2))
+                    and all(self._port_bindable(p) for p in (c0, c1, c2))
+                ):
                     recto_cache = cand_cache
                     p0, p1, p2 = c0, c1, c2
                     break
@@ -1924,6 +1941,76 @@ Write-Output ("PORT=" + $info.ServerPort)
                 self.assertRegex(combined_asan, r"unit_[ab]\.cpp:\d+", combined_asan)
             finally:
                 self._stop_server(sccache_exe, port)
+
+    def test_port_bindable_probe_and_deterministic_selection_skip_reserved_ports(self) -> None:
+        sccache_exe = self._sccache_exe()
+        vs_path = _vs_install_path()
+        if sccache_exe is None or vs_path is None:
+            self.skipTest("tools or Visual Studio not available (.tools/sccache / vswhere)")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            cache_dir = None
+            base_port = 0
+            stride_port = 0
+            for idx in range(2048):
+                cand = base / f"excluded-cache-{idx}"
+                det = self._deterministic_port(cand)
+                first_stride = 42000 + ((det - 42000 + 124) % 20000)
+                if (
+                    not self._port_listening(det)
+                    and self._port_bindable(det)
+                    and not self._port_listening(first_stride)
+                    and self._port_bindable(first_stride)
+                ):
+                    cache_dir = cand
+                    base_port = det
+                    stride_port = first_stride
+                    break
+            self.assertIsNotNone(cache_dir, "could not find candidate cache dir with free base and stride ports")
+            assert cache_dir is not None
+            cache_dir.mkdir()
+
+            blocked_ports = [42000 + ((base_port - 42000 + offset) % 20000) for offset in range(106)]
+            blocked_literal = ",".join(str(p) for p in blocked_ports)
+            ps = (
+                f". '{SCCACHE_PS1}'; "
+                f"$held = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); "
+                f"$held.ExclusiveAddressUse = $true; $held.Start(); "
+                f"try {{ "
+                f"  $heldPort = ([System.Net.IPEndPoint]$held.LocalEndpoint).Port; "
+                f"  if (Test-RectoLocalTcpPortBindable -Port $heldPort) {{ throw 'expected bound port to be unbindable' }}; "
+                f"  $held.Stop(); "
+                f"  if (-not (Test-RectoLocalTcpPortBindable -Port $heldPort)) {{ throw 'expected released port to be bindable' }}; "
+                f"}} finally {{ $held.Stop() }}; "
+                f"$script:origBindable = (Get-Command Test-RectoLocalTcpPortBindable).ScriptBlock; "
+                f"$blocked = @({blocked_literal}); "
+                f"function Test-RectoLocalTcpPortBindable([Parameter(Mandatory=$true)][int]$Port) {{ "
+                f"  if ($blocked -contains $Port) {{ return $false }}; "
+                f"  & $script:origBindable -Port $Port "
+                f"}}; "
+                f"$first = Initialize-RectoSccache -RepoRoot '{ROOT}' -VsPath '{vs_path}'; "
+                f"if (-not (Test-RectoLocalTcpPortListening -Port $first.ServerPort)) {{ throw ('expected sccache listening on ' + $first.ServerPort) }}; "
+                f"$second = Initialize-RectoSccache -RepoRoot '{ROOT}' -VsPath '{vs_path}'; "
+                f"$info = Get-RectoSccacheServerInfo -SccacheExe $env:RECTO_SCCACHE_EXE -Port $second.ServerPort; "
+                f"if ($null -eq $info -or -not $info.IsSccache) {{ throw 'expected verified sccache instance on selected port' }}; "
+                f"Write-Output ($first.ServerPort.ToString() + '|' + $second.ServerPort.ToString())"
+            )
+            env = os.environ.copy()
+            env.pop("SCCACHE_SERVER_PORT", None)
+            env.pop("RECTO_SCCACHE_NO_DAEMON", None)
+            env["SCCACHE_DIR"] = str(cache_dir)
+            env["SCCACHE_CACHE_SIZE"] = "10G"
+            try:
+                proc = _run_managed(
+                    [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                    cwd=ROOT, env=env, timeout=90,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                parts = proc.stdout.strip().splitlines()[-1].split("|")
+                self.assertEqual(parts, [str(stride_port), str(stride_port)], proc.stdout)
+            finally:
+                self._stop_server(sccache_exe, stride_port)
 
 
 if __name__ == "__main__":

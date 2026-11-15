@@ -163,6 +163,23 @@ function Test-RectoLocalTcpPortListening {
     }
 }
 
+function Test-RectoLocalTcpPortBindable {
+    param(
+        [Parameter(Mandatory = $true)][int]$Port
+    )
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+    try {
+        # Detect Windows Hyper-V/WinNAT excluded ranges (WSAEACCES) and already-bound ports before starting sccache.
+        $listener.ExclusiveAddressUse = $true
+        $listener.Start()
+        return $true
+    } catch [System.Net.Sockets.SocketException] {
+        return $false
+    } finally {
+        $listener.Stop()
+    }
+}
+
 function Get-RectoSccacheProbeTimeoutMs {
     param(
         [int]$DefaultMs = 3000
@@ -565,10 +582,21 @@ function Initialize-RectoSccache {
         $selectedPort = $explicitPort
     } else {
         $basePort = Get-RectoDeterministicSccachePort -CanonicalCacheDir $canonicalCacheDir
+        $candidateOffsets = [System.Collections.Generic.List[int]]::new()
         for ($offset = 0; $offset -lt 16; $offset++) {
+            $candidateOffsets.Add($offset)
+        }
+        # Stride 109 (> 100) escapes contiguous Windows Hyper-V/WinNAT excluded TCP port blocks while staying deterministic.
+        for ($step = 1; $step -le 64; $step++) {
+            $candidateOffsets.Add(15 + ($step * 109))
+        }
+        foreach ($offset in $candidateOffsets) {
             $candidatePort = 42000 + (($basePort - 42000 + $offset) % 20000)
             $info = Get-RectoSccacheServerInfo -SccacheExe $sccacheExe -Port $candidatePort
             if ($null -eq $info) {
+                if (-not (Test-RectoLocalTcpPortBindable -Port $candidatePort)) {
+                    continue
+                }
                 $selectedPort = $candidatePort
                 $needsStart = $true
                 break
@@ -583,7 +611,7 @@ function Initialize-RectoSccache {
             }
         }
         if ($null -eq $selectedPort) {
-            throw "Could not find a free local TCP port for sccache (ports near $basePort are all bound by other cache directories)."
+            throw "Could not find a free local TCP port for sccache (ports near $basePort are all bound or unbindable)."
         }
     }
 
