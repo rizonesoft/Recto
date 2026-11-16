@@ -54,7 +54,7 @@ track: M0
 | 5 | §5 | Tiered gates: touched tests while building, the full suite at stamp | §2 | [x] |
 | 6 | §6 | Repo-scoped pinned Ninja, CMake, sccache and CPython under `.tools/` | -- | [x] |
 | 7 | §7 | sccache as the compiler cache for MSVC | §6 | [x] |
-| 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4, §12 | [ ] |
+| 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4, §12 | [x] |
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [x] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [x] |
@@ -297,9 +297,12 @@ MSBuild's scheduler cannot cap compiles and links separately, and its no-change 
 - [x] Write `build/compile_commands.json` from CMake (`CMAKE_EXPORT_COMPILE_COMMANDS`, the `EXTERNAL_INCLUDE` folders named as `/external:I`), only from a full x64 Debug non-ASan build, and retire `§12`'s MSBuild generator once `build.cmd` uses the CMake build, migrating its consumers (`scripts/clangd-lsp.py`, `plan.yml`, `tests/scripts/test_compile_commands.py`). Done when: `tests/scripts/test_compile_commands.py` proves the CMake database names every eligible source with its compile line and that Release, ARM64, ASan and `-Project` builds leave it untouched, `scripts/clangd-lsp.py` starts on it without regenerating it, `build\clangd.cmd --check` reports 0 errors on a source of each module, and `scripts/build-compile-commands.py` is gone with its target.
 - [x] Amend foundation plan D8 (`docs/plans/2026-10-13-recto-foundation.md`), dated: CMake and Ninja are the primary build, `Recto.sln` stays in one CI job for parity until a full milestone has passed, and the cost of going back. Done when: D8 reads so and `scripts/todo-graph.py validate` passes.
 - [x] Move `build.cmd`, `build/build.ps1` and `.github/workflows/build.yml` to the CMake build, keeping the MSBuild solution building in CI until a full milestone has passed on CMake. Done when: CI passes on the CMake build for x64 and ARM64 and `.\build.cmd` uses it locally.
-- [ ] Commit: `build: CMake and Ninja with compile and link job pools`
+- [x] Commit: `build: CMake and Ninja with compile and link job pools`
 
 **Test checkpoint:** `cmake --build --preset x64-debug` followed by the suite passes with 0 warnings, a no-change `cmake --build` runs no compile, and including a `src/pdf` header from `src/ui` fails the ported boundary check.
+
+> **Verified:** 2026-11-16 | §8 | 37ddf4aa46e50a8d98ca13f8e72854dc5a42ae4a
+> **Review:** `docs/reviews/d00-t04-s8.json`
 
 ## 9. CI watched after every push until it completes
 

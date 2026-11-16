@@ -38,7 +38,7 @@ Sections: 61 | Checklist items: 364
 | [x]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
 | [x]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [x]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
-| [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 11    |
+| [x]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 11    |
 | [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
 | [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 7     |
 | [ ]    | D00 T04 §15 | Budget-tight tests made fast enough to leave the serial pass                             | windows-host | 6     |
@@ -952,6 +952,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 114/883 verified sections, 56 ready to run now.
+Progress: 115/883 verified sections, 55 ready to run now.
 
-Checklist: 780/6529 items completed (includes Commit items).
+Checklist: 781/6529 items completed (includes Commit items).
