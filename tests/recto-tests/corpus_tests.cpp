@@ -583,59 +583,75 @@ TEST(Corpus, DetectsUnlistedAndCorruptedFiles)
 
 TEST(Corpus, RejectsUnlistedOrModifiedFile)
 {
+	// One copy of the live corpus serves the four cases (D00 T04 section 15: copying it once per case was most of the
+	// test's time): each case makes its one change, is refused for it, and undoes it, and the copy must validate clean
+	// again before the next case, so every case starts from the corpus exactly as listed.
+	TempDir corpus_copy;
+	copy_live_corpus_to_temp(corpus_copy);
+	{
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
+		ASSERT_TRUE(res.ok) << join_errors(res.errors);
+	}
+	const auto expect_clean_again = [&](const char* after) {
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
+		EXPECT_TRUE(res.ok) << "after undoing " << after << ": " << join_errors(res.errors);
+	};
+
 	// Case 1: Only an unlisted file in the corpus directory.
 	{
-		TempDir temp_corpus;
-		copy_live_corpus_to_temp(temp_corpus);
 		const std::array<uint8_t, 4> stray{'t', 'e', 's', 't'};
-		write_file_bytes(temp_corpus.file_path("seeds/stray-seed.bin"), stray);
+		write_file_bytes(corpus_copy.file_path("seeds/stray-seed.bin"), stray);
 
-		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
 		EXPECT_FALSE(res.ok);
 		EXPECT_TRUE(contains_ErrorSubstring(res.errors, "seeds/stray-seed.bin"))
 			<< join_errors(res.errors);
+		std::error_code ec;
+		ASSERT_TRUE(std::filesystem::remove(to_long_path(corpus_copy.file_path("seeds/stray-seed.bin")), ec));
+		expect_clean_again("the unlisted file");
 	}
 
 	// Case 2: Only a 1-byte modified file in the corpus directory.
 	{
-		TempDir temp_corpus;
-		copy_live_corpus_to_temp(temp_corpus);
 		const std::string target_rel = "convert/tables-and-forms.pdf";
-		auto bytes = read_file_bytes(temp_corpus.file_path(target_rel));
-		ASSERT_FALSE(bytes.empty());
+		const auto original = read_file_bytes(corpus_copy.file_path(target_rel));
+		ASSERT_FALSE(original.empty());
+		auto bytes = original;
 		bytes.back() ^= 0xFFu;
-		write_file_bytes(temp_corpus.file_path(target_rel), bytes);
+		write_file_bytes(corpus_copy.file_path(target_rel), bytes);
 
-		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
 		EXPECT_FALSE(res.ok);
 		EXPECT_TRUE(contains_ErrorSubstring(res.errors, target_rel)) << join_errors(res.errors);
+		write_file_bytes(corpus_copy.file_path(target_rel), original);
+		expect_clean_again("the modified byte");
 	}
 
 	// Case 3: Missing listed file in the corpus directory.
 	{
-		TempDir temp_corpus;
-		copy_live_corpus_to_temp(temp_corpus);
 		const std::string missing_rel = "text/scanned.pdf";
+		const auto original = read_file_bytes(corpus_copy.file_path(missing_rel));
+		ASSERT_FALSE(original.empty());
 		std::error_code ec;
-		ASSERT_TRUE(std::filesystem::remove(to_long_path(temp_corpus.file_path(missing_rel)), ec));
+		ASSERT_TRUE(std::filesystem::remove(to_long_path(corpus_copy.file_path(missing_rel)), ec));
 
-		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
 		EXPECT_FALSE(res.ok);
 		EXPECT_TRUE(contains_ErrorSubstring(res.errors, missing_rel)) << join_errors(res.errors);
+		write_file_bytes(corpus_copy.file_path(missing_rel), original);
+		expect_clean_again("the missing file");
 	}
 
 	// Case 4: Directory symlink or NTFS junction inside corpus directory is rejected.
 	{
-		TempDir temp_corpus;
 		TempDir external_dir;
-		copy_live_corpus_to_temp(temp_corpus);
 		const std::array<uint8_t, 6> hidden{'h', 'i', 'd', 'd', 'e', 'n'};
 		write_file_bytes(external_dir.file_path("unlisted.bin"), hidden);
 
-		const std::filesystem::path link_path = temp_corpus.file_path("render/linked");
+		const std::filesystem::path link_path = corpus_copy.file_path("render/linked");
 		ASSERT_TRUE(create_directory_link_for_test(link_path, external_dir.path()));
 
-		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
+		const CorpusValidationResult res = validate_corpus_directory(corpus_copy.path());
 		RemoveDirectoryW(to_long_path(link_path).c_str());
 
 		EXPECT_FALSE(res.ok);
@@ -644,6 +660,7 @@ TEST(Corpus, RejectsUnlistedOrModifiedFile)
 		EXPECT_TRUE(contains_ErrorSubstring(
 			res.errors, "symlink or reparse point not allowed in corpus directory"))
 			<< join_errors(res.errors);
+		expect_clean_again("the directory link");
 	}
 
 	// Case 5: Directory enumeration failures at root and nested directory are reported.

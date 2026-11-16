@@ -894,6 +894,13 @@ public:
 	// Valid until the next call on this Lexer that reads, seeks, or changes options.
 	[[nodiscard]] PdfResult<const Token*> peek_token_ptr(size_t lookahead_index = 0) noexcept;
 
+	// The parser's hot path (D00 T04 section 15): peek_token_ptr without a PdfResult on success, the error in `err`
+	// and false on failure; and drop_front, which consumes the token a peek left at the front without moving it out.
+	// After drop_front the dropped token stays readable through the pointer peek_into gave until the next call on this
+	// Lexer, so a caller copies what it needs before it peeks or reads again. drop_front requires a peeked token.
+	[[nodiscard]] bool peek_into(size_t lookahead_index, const Token*& out, PdfError& err) noexcept;
+	void drop_front() noexcept;
+
 	// Enforces the ISO 32000-1 section 7.3.8.1 / ISO 32000-2 section 7.3.8.1
 	// `stream` keyword end-of-line rule:
 	// - Skips optional horizontal spaces (0x20 SP, 0x09 HT) after `stream`.

@@ -142,45 +142,46 @@ struct TerminatorScanner {
 	PdfError& err)
 {
 	while (true) {
-		auto res = lexer.peek_token_ptr(0);
-		if (!res.has_value()) {
-			err = std::move(res).error();
+		if (!lexer.peek_into(0, out_tok, err)) {
 			return false;
 		}
-		if (res.value()->kind == TokenKind::Comment) {
-			auto disc = lexer.next_token();
-			if (!disc.has_value()) {
-				err = std::move(disc).error();
-				return false;
-			}
-			continue;
+		if (out_tok->kind != TokenKind::Comment) {
+			return true;
 		}
-		out_tok = res.value();
+		lexer.drop_front();
+	}
+}
+
+// A failed lookahead after an integer is fatal only for an allocation or internal failure; any other means the
+// integer stands alone. `err` then holds no stale lookahead error.
+[[nodiscard]] bool lookahead_fatal(PdfError& err) noexcept
+{
+	if (err.code == ErrorCode::OutOfMemory || err.code == ErrorCode::InternalError) {
 		return true;
 	}
+	err = PdfError{};
+	return false;
 }
 
 [[nodiscard]] bool parse_integer_or_ref(
 	Lexer& lexer,
-	const Token& tok0,
+	int64_t value,
+	uint64_t offset,
 	PdfValue& out,
 	PdfError& err)
 {
 	const Token* p1 = nullptr;
-	PdfError peek_err;
-	if (!peek_first_non_comment_ptr(lexer, p1, peek_err)) {
-		if (peek_err.code == ErrorCode::OutOfMemory ||
-			peek_err.code == ErrorCode::InternalError) {
-			err = std::move(peek_err);
+	if (!peek_first_non_comment_ptr(lexer, p1, err)) {
+		if (lookahead_fatal(err)) {
 			return false;
 		}
-		out = PdfValue(tok0.int_value);
+		out = PdfValue(value);
 		return true;
 	}
 
 	// Copy scalar kind before any further lookahead call that may reallocate lookahead_buf_.
 	if (p1->kind != TokenKind::Integer) {
-		out = PdfValue(tok0.int_value);
+		out = PdfValue(value);
 		return true;
 	}
 
@@ -188,27 +189,27 @@ struct TerminatorScanner {
 	bool is_ref = false;
 
 	if (!lexer.emit_comments()) {
-		auto p2 = lexer.peek_token_ptr(1);
-		if (!p2.has_value()) {
-			if (p2.error().code == ErrorCode::OutOfMemory ||
-				p2.error().code == ErrorCode::InternalError) {
-				err = std::move(p2).error();
+		const Token* p2 = nullptr;
+		if (!lexer.peek_into(1, p2, err)) {
+			if (lookahead_fatal(err)) {
 				return false;
 			}
-			out = PdfValue(tok0.int_value);
+			out = PdfValue(value);
 			return true;
 		}
-		if (p2.value()->is_keyword("R")) {
-			Token gen_tok;
-			Token r_tok;
-			if (!next_non_comment(lexer, gen_tok, err) ||
-				!next_non_comment(lexer, r_tok, err)) {
+		if (p2->is_keyword("R")) {
+			// The second peek may have moved the lookahead, so the generation is read from the front again.
+			const Token* gen_tok = nullptr;
+			if (!lexer.peek_into(0, gen_tok, err)) {
 				return false;
 			}
-			gen_int = gen_tok.int_value;
+			gen_int = gen_tok->int_value;
+			lexer.drop_front();
+			lexer.drop_front();
 			is_ref = true;
 		}
 	} else {
+		PdfError peek_err;
 		const size_t pos_before_p1 = lexer.position();
 		Token gen_tok;
 		if (!next_non_comment(lexer, gen_tok, err)) {
@@ -222,7 +223,7 @@ struct TerminatorScanner {
 				return false;
 			}
 			lexer.seek(pos_before_p1);
-			out = PdfValue(tok0.int_value);
+			out = PdfValue(value);
 			return true;
 		}
 		if (p2->is_keyword("R")) {
@@ -238,23 +239,23 @@ struct TerminatorScanner {
 	}
 
 	if (!is_ref) {
-		out = PdfValue(tok0.int_value);
+		out = PdfValue(value);
 		return true;
 	}
 
-	if (tok0.int_value <= 0 ||
-		tok0.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+	if (value <= 0 ||
+		value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
 		gen_int < 0 ||
 		gen_int > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
 		err = make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"Invalid object or generation number in indirect reference",
-			tok0.byte_offset);
+			offset);
 		return false;
 	}
 
 	out = PdfValue(IndirectRef{
-		static_cast<uint32_t>(tok0.int_value),
+		static_cast<uint32_t>(value),
 		static_cast<uint16_t>(gen_int)});
 	return true;
 }
@@ -490,10 +491,14 @@ bool Parser::parse_direct_object_impl(
 	PdfValue& out,
 	PdfError& err)
 {
-	Token tok0;
-	if (!next_non_comment(*lexer_, tok0, err)) {
+	// The token is read in its lookahead slot and consumed at once (the token every path consumed before); it stays
+	// readable until the next call into the lexer, so each case takes what it needs before it reads further.
+	const Token* front = nullptr;
+	if (!peek_first_non_comment_ptr(*lexer_, front, err)) {
 		return false;
 	}
+	const Token& tok0 = *front;
+	lexer_->drop_front();
 	if (values_parsed_ >= max_total_values_) {
 		err = make_pdf_error(
 			ErrorCode::DamagedFormat,
@@ -524,7 +529,7 @@ bool Parser::parse_direct_object_impl(
 		return true;
 
 	case TokenKind::Integer:
-		return parse_integer_or_ref(*lexer_, tok0, out, err);
+		return parse_integer_or_ref(*lexer_, tok0.int_value, tok0.byte_offset, out, err);
 
 	case TokenKind::Name:
 		if (!charge_bytes(tok0.text.view().size(), tok0.byte_offset, err)) {
@@ -590,13 +595,13 @@ bool Parser::parse_array_body(
 	}
 
 	const Token* peek_tok = nullptr;
-	Token tok;
 	while (true) {
 		if (!peek_first_non_comment_ptr(*lexer_, peek_tok, err)) {
 			return false;
 		}
 		if (peek_tok->kind == TokenKind::ArrayClose) {
-			return next_non_comment(*lexer_, tok, err);
+			lexer_->drop_front();
+			return true;
 		}
 		if (peek_tok->is_eof()) {
 			err = make_pdf_error(
@@ -634,7 +639,6 @@ bool Parser::parse_dictionary_body(
 	}
 
 	const Token* peek_tok = nullptr;
-	Token tok;
 	PdfValue val;
 	size_t pair_count = 0;
 	while (true) {
@@ -642,7 +646,8 @@ bool Parser::parse_dictionary_body(
 			return false;
 		}
 		if (peek_tok->kind == TokenKind::DictClose) {
-			return next_non_comment(*lexer_, tok, err);
+			lexer_->drop_front();
+			return true;
 		}
 		if (peek_tok->is_eof()) {
 			err = make_pdf_error(
@@ -658,9 +663,9 @@ bool Parser::parse_dictionary_body(
 				peek_tok->byte_offset);
 			return false;
 		}
-		if (!next_non_comment(*lexer_, tok, err)) {
-			return false;
-		}
+		// The key is consumed where it lies, and read before the value's first call into the lexer.
+		const Token& tok = *peek_tok;
+		lexer_->drop_front();
 		if (tok.kind != TokenKind::Name) {
 			err = make_pdf_error(
 				ErrorCode::DamagedFormat,

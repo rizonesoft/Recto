@@ -60,13 +60,21 @@ std::vector<uint8_t> pdf_of(size_t pages, std::string_view content)
 	return std::vector<uint8_t>(out.begin(), out.end());
 }
 
-std::string busy_content()
+std::string busy_content(int fills = 2'000)
 {
 	std::string content;
-	for (int i = 0; i < 2'000; ++i) {
+	for (int i = 0; i < fills; ++i) {
 		content += "0." + std::to_string(i % 10) + " 0 0 rg " + std::to_string(i % 180) + " 10 8 8 re f ";
 	}
 	return content;
+}
+
+// One cycle of busy_content's fills: every position it draws at (they repeat every 180 fills), so every tile of a
+// page has a fill to be held in, and a compile is held at its first operator. A test that only needs the load in
+// place uses it; the 2,000 fills of busy_content are for a compile that must keep running (D00 T04 section 15).
+std::string held_load_content()
+{
+	return busy_content(180);
 }
 
 struct Deliveries {
@@ -446,7 +454,9 @@ TEST(Runtime, ShutdownUnderActiveTileLoad)
 {
 	recto::test::TempDir dir;
 	const auto path = dir.file_path("load.pdf");
-	recto::test::write_file_bytes(path, pdf_of(6u, busy_content()));
+	// Fifty rounds, half shut down by shutdown() and half by the destructor; each holds four compiles at their first
+	// operator and eight tiles at their first fill, so one cycle of fills is the whole load each round needs.
+	recto::test::write_file_bytes(path, pdf_of(6u, held_load_content()));
 	for (int iteration = 0; iteration < 50; ++iteration) {
 		SCOPED_TRACE(iteration);
 		double ms = 0.0;

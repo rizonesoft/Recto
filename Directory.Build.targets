@@ -32,6 +32,9 @@
       <SDLCheck Condition="'$(Configuration)' != 'Debug'">true</SDLCheck>
       <RuntimeLibrary Condition="'$(Configuration)' == 'Debug'">MultiThreadedDebugDLL</RuntimeLibrary>
       <RuntimeLibrary Condition="'$(Configuration)' != 'Debug'">MultiThreadedDLL</RuntimeLibrary>
+      <!-- No /JMC: Just My Code only changes how the debugger steps, and its check at every function entry was 30% of
+           a Debug test run (D00 T04 section 15). /RTC1 stays: it catches bugs. -->
+      <SupportJustMyCode>false</SupportJustMyCode>
     </ClCompile>
   </ItemDefinitionGroup>
   <!-- The module libraries on either side of the D13 boundary have cl write, for each source, a JSON report of every

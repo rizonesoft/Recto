@@ -128,12 +128,11 @@ endif()
 add_library(recto_defaults INTERFACE)
 target_compile_definitions(recto_defaults INTERFACE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 # Directory.Build.targets and MSBuild's own defaults: Level4, warnings as errors, conformance, the standard
-# preprocessor, UTF-8, /sdl outside Debug,
-# Just My Code in Debug (not under ASan).
+# preprocessor, UTF-8, /sdl outside Debug. No /JMC in either build: Just My Code only changes how the debugger steps,
+# and its check at every function entry was 30% of a Debug test run (D00 T04 section 15).
 target_compile_options(recto_defaults INTERFACE
     /W4 /WX /permissive- /Zc:preprocessor /utf-8 /EHsc /Zc:inline /FC /diagnostics:column /external:W4
     $<$<NOT:$<CONFIG:Debug>>:/sdl>
-    $<$<AND:$<CONFIG:Debug>,$<NOT:$<BOOL:${RECTO_ASAN}>>>:/JMC>
     $<$<BOOL:${RECTO_ASAN}>:/fsanitize=address>)
 # The developer environment's external include folders, named on each command line so build/compile_commands.json is
 # complete without the environment; as /external:I they stay external, as cl treats EXTERNAL_INCLUDE.

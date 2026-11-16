@@ -283,6 +283,29 @@ PdfResult<Token> Lexer::next_token() noexcept
 
 PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 {
+	const Token* out = nullptr;
+	PdfError err;
+	if (!peek_into(lookahead_index, out, err)) {
+		return err;
+	}
+	return out;
+}
+
+void Lexer::drop_front() noexcept
+{
+	// The token itself stays in its slot until a later peek reuses the slot (a move-assignment, which frees what it held)
+	// or the lookahead is cleared, so nothing is moved or freed on this path.
+	LookaheadEntry* slots = lookahead_slots();
+	logical_cursor_ = slots[lookahead_head_].cursor_after;
+	lookahead_head_ = (lookahead_head_ + 1) % lookahead_capacity_;
+	--lookahead_count_;
+	if (lookahead_count_ == 0) {
+		lookahead_head_ = 0;
+	}
+}
+
+bool Lexer::peek_into(size_t lookahead_index, const Token*& out, PdfError& err) noexcept
+{
 	size_t saved_cursor = cursor_;
 	try {
 		while (lookahead_count_ <= lookahead_index) {
@@ -295,10 +318,11 @@ PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 			}
 			saved_cursor = cursor_;
 			if (!ensure_lookahead_slot()) {
-				return make_pdf_error(
+				err = make_pdf_error(
 					ErrorCode::DecompressionLimitExceeded,
 					"Lexer lookahead limit exceeded",
 					cursor_);
+				return false;
 			}
 			auto res = read_raw_token();
 			if (!res.has_value()) {
@@ -306,7 +330,8 @@ PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 				// silently consume the malformed token before next_token().
 				record_scanned_offset(cursor_);
 				cursor_ = saved_cursor;
-				return std::move(res).error();
+				err = std::move(res).error();
+				return false;
 			}
 			const size_t tail_idx =
 				(lookahead_head_ + lookahead_count_) % lookahead_capacity_;
@@ -320,21 +345,24 @@ PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 		const size_t clamped_index = std::min(lookahead_index, lookahead_count_ - 1);
 		const size_t target_idx =
 			(lookahead_head_ + clamped_index) % lookahead_capacity_;
-		return &lookahead_slots()[target_idx].token;
+		out = &lookahead_slots()[target_idx].token;
+		return true;
 	} catch (const std::bad_alloc&) {
 		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
-		return PdfError{
+		err = PdfError{
 			ErrorCode::OutOfMemory,
 			"Out of memory in Lexer::peek_token",
 			logical_cursor_};
+		return false;
 	} catch (...) {
 		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
-		return PdfError{
+		err = PdfError{
 			ErrorCode::InternalError,
 			"Unexpected failure in Lexer::peek_token",
 			logical_cursor_};
+		return false;
 	}
 }
 
