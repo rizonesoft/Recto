@@ -502,6 +502,40 @@ class InstallSh(unittest.TestCase):
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertIn("automations: 1 task(s) registered for this clone", check.stdout)
 
+    def check_with(self, script):
+        """install.sh --check with a systemctl first on PATH that answers by `script` (a sh case body)."""
+        (self.bin / "systemctl").write_text(f'#!/bin/sh\necho "$*" >> "{self.calls}"\n{script}\n', encoding="utf-8")
+        env = {**os.environ, "XDG_CONFIG_HOME": str(self.config), "PATH": f"{self.bin}:{os.environ['PATH']}"}
+        return subprocess.run(["bash", str(self.root / ".conclave/automations/install.sh"), "--check"], env=env,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_check_names_each_state_through_systemctl_on_path(self):
+        healthy = ('case "$2" in is-enabled) echo enabled ;; is-active) echo active ;; '
+                   'show) echo Result=success; echo ExecMainStatus=0 ;; esac')
+        self.assertEqual(self.install(tasks=[fixture_task("demo-one")]).returncode, 0)
+        units = self.config / "systemd" / "user"
+        service = units / "demo-one.service"
+        body = service.read_text(encoding="utf-8").split("\n", 1)[1]
+        inactive = healthy.replace("is-active) echo active", "is-active) echo inactive")
+        done = self.check_with(inactive)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("disabled: demo-one: its timer is not active", done.stdout)
+        live = Path(self._tmp.name) / "live" / ".conclave" / "automations"
+        live.mkdir(parents=True)
+        (live / "tasks.json").write_text("{}", encoding="utf-8")
+        for want, marker in (("other-clone", str(live / "tasks.json")),
+                             ("stale", "/home/op/gone/.conclave/automations/tasks.json")):
+            with self.subTest(want):
+                service.write_text(run.MARKER + marker + "\n" + body, encoding="utf-8")
+                done = self.check_with(healthy)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertIn(f"{want}: demo-one: registered for ", done.stdout)
+                self.assertIn("next: bash .conclave/automations/install.sh", done.stdout)
+        done = self.check_with('echo "Failed to connect to bus: No medium found" >&2; exit 1')
+        self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+        self.assertIn("unknown: ", done.stdout)
+        self.assertIn("Failed to connect to bus", done.stdout)
+
     def test_a_refused_manifest_installs_nothing(self):
         result = self.install(tasks=[fixture_task("other-name")])
         self.assertNotEqual(result.returncode, 0)
@@ -721,6 +755,31 @@ class SystemdReader(unittest.TestCase):
         self.assertIn("unknown: unit cannot be read", json.loads(out.getvalue())["injectSteps"][0]["systemMessage"]
                       ["systemMessage"])
 
+    def test_a_slow_systemctl_spends_one_deadline_and_reads_unknown(self):
+        now = [0.0]
+
+        def slow(args, **kwargs):
+            now[0] += 4  # every call answers, slowly
+            self.assertLessEqual(kwargs["timeout"], run.DEADLINE_SECONDS)
+            return self.systemctl({})(args)
+        with self.assertRaises(run.SchedulerUnreadable) as caught:
+            run.read_systemd(self.tasks, str(self.units), runner=slow, deadline=run.Deadline(clock=lambda: now[0]))
+        self.assertIn(f"did not answer within {run.DEADLINE_SECONDS} seconds", str(caught.exception))
+        self.assertLessEqual(now[0], run.DEADLINE_SECONDS + 4)
+
+    def test_ownership_is_read_from_the_marker_as_install_sh_reads_it(self):
+        text = (self.units / "demo-one.service").read_text(encoding="utf-8")
+        body = text.split("\n", 1)[1]
+        live = demo_root(Path(self._tmp.name) / "live")
+        cases = {"other-clone": run.MARKER + os.path.join(live, ".conclave", "automations", "tasks.json") + "\n" + body,
+                 "stale": run.MARKER + os.path.join(self._tmp.name, "gone", ".conclave", "automations", "tasks.json")
+                          + "\n" + body,
+                 "unowned": body}
+        for want, unit in cases.items():
+            with self.subTest(want):
+                (self.units / "demo-one.service").write_text(unit, encoding="utf-8")
+                self.assertEqual(self.states()["demo-one"], want)
+
     def test_a_user_bus_that_cannot_be_reached_is_unknown(self):
         def silent(args, **_):
             return subprocess.CompletedProcess(args, 1, "", "Failed to connect to bus: No medium found\n")
@@ -815,6 +874,12 @@ class TaskSchedulerAdapter(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn(f"stale: {self.prefix}moved:", done.stdout)
         self.assertIn("next: pwsh .conclave/automations/install.ps1", done.stdout)
+        unreadable = {**env, "CLAUDE_PROJECT_DIR": self.root.replace("\\", "/"),
+                      "CONCLAVE_SCHEDULER_RECORDS": os.path.join(self._tmp.name, "no-such-records.json")}
+        done = subprocess.run([campaign_guard.git_bash(), "-c", command], capture_output=True, text=True, timeout=60,
+                              env=unreadable, creationflags=0x08000000)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("unknown: CONCLAVE_SCHEDULER_RECORDS cannot be read", done.stdout)
         # Antigravity: the system shell from .agents/ in a git repository with scripts/run-python.sh.
         scripts = Path(self.root) / "scripts"
         scripts.mkdir()
@@ -829,6 +894,12 @@ class TaskSchedulerAdapter(unittest.TestCase):
         message = json.loads(done.stdout)["injectSteps"][0]["systemMessage"]["systemMessage"]
         self.assertIn(f"stale: {self.prefix}moved:", message)
         self.assertIn("next: pwsh .conclave/automations/install.ps1", message)
+        done = subprocess.run(command, shell=True, cwd=os.path.join(self.root, ".agents"), capture_output=True,
+                              text=True, timeout=60, creationflags=0x08000000,
+                              env={**env, "CONCLAVE_SCHEDULER_RECORDS": os.path.join(self._tmp.name, "none.json")})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        message = json.loads(done.stdout)["injectSteps"][0]["systemMessage"]["systemMessage"]
+        self.assertIn("unknown: CONCLAVE_SCHEDULER_RECORDS cannot be read", message)
 
 
 if __name__ == "__main__":

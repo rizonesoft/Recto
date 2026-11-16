@@ -315,6 +315,18 @@ def registration_report(tasks, records, root: str, platform: str) -> list[tuple[
         if record is None:
             report.append(("missing", name, "not registered"))
             continue
+        if "marker" in record:  # a systemd unit: its owner is the tasks.json its marker names, as install.sh reads it
+            marker = record["marker"]
+            if not marker:
+                report.append(("unowned", name, "a unit of this name carries no conclave marker; install.sh will not "
+                                                "replace it, so move it aside first"))
+                continue
+            mine = os.path.join(root, ".conclave", "automations", "tasks.json")
+            if not _same(marker, mine):
+                where = os.path.dirname(os.path.dirname(os.path.dirname(marker)))
+                kind = "other-clone" if os.path.isfile(marker) else "stale"
+                report.append((kind, name, f"registered for {where}, this clone is {root}"))
+                continue
         script = record.get("script") or ""
         their_root = os.path.normpath(os.path.join(os.path.dirname(script), "..", "..")) if script else ""
         if not _same(their_root, root) or not _same(record.get("workdir"), root):
@@ -349,6 +361,26 @@ class SchedulerUnreadable(Exception):
     """The scheduler could not be read: neither healthy nor missing (exit 3)."""
 
 
+# The longest the whole check may spend asking the scheduler, so a session hook (20 seconds) always has time to
+# print the answer and exit: a slow scheduler is `unknown`, never a lost line.
+DEADLINE_SECONDS = 15
+
+
+class Deadline:
+    def __init__(self, seconds=DEADLINE_SECONDS, clock=None):
+        import time
+        self.clock = clock or time.monotonic
+        self.until = self.clock() + seconds
+        self.seconds = seconds
+
+    def left(self) -> float:
+        """Seconds left for the next call; SchedulerUnreadable once they are spent."""
+        left = self.until - self.clock()
+        if left <= 0.5:
+            raise SchedulerUnreadable(f"the scheduler did not answer within {self.seconds} seconds")
+        return left
+
+
 def _platform() -> str:
     return "windows" if os.name == "nt" else "systemd"
 
@@ -358,15 +390,18 @@ def repair_command(platform: str) -> str:
             else "bash .conclave/automations/install.sh")
 
 
-def read_task_scheduler(root: str, runner=subprocess.run) -> list[dict]:
+def read_task_scheduler(root: str, runner=subprocess.run, deadline=None) -> list[dict]:
     """The project folder's tasks as records, from `install.ps1 -Dump` (PowerShell 7)."""
+    deadline = deadline or Deadline()
     pwsh = _which("pwsh")
     if pwsh is None:
         raise SchedulerUnreadable("pwsh (PowerShell 7) is not installed, so Task Scheduler cannot be read")
     try:
         done = runner([pwsh, "-NoProfile", "-NonInteractive", "-File", os.path.join(HERE, "install.ps1"), "-Dump"],
-                      capture_output=True, text=True, timeout=15, cwd=root, creationflags=NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired) as error:
+                      capture_output=True, text=True, timeout=deadline.left(), cwd=root, creationflags=NO_WINDOW)
+    except subprocess.TimeoutExpired:
+        raise SchedulerUnreadable(f"Task Scheduler did not answer within {deadline.seconds} seconds") from None
+    except OSError as error:
         raise SchedulerUnreadable(f"Task Scheduler could not be read: {error}") from None
     if done.returncode != 0:
         reason = (done.stderr or done.stdout or "").strip().splitlines()
@@ -416,9 +451,19 @@ def unit_dir() -> str:
                         "systemd", "user")
 
 
-def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> list[dict]:
-    """Each task's records from the user unit folder and `systemctl --user` (is-enabled, is-active)."""
+def read_systemd(tasks, folder: str | None = None, runner=subprocess.run, deadline=None) -> list[dict]:
+    """Each task's records from the user unit folder (its marker, ExecStart and WorkingDirectory) and `systemctl
+    --user` (the timer's is-enabled and is-active, the service's last result), all within one deadline."""
     folder = folder or unit_dir()
+    deadline = deadline or Deadline()
+
+    def systemctl(*args):
+        try:
+            return runner(["systemctl", "--user", *args], capture_output=True, text=True, timeout=deadline.left())
+        except subprocess.TimeoutExpired:
+            raise SchedulerUnreadable(f"systemctl --user did not answer within {deadline.seconds} seconds") from None
+        except OSError as error:
+            raise SchedulerUnreadable(f"systemctl --user could not be run: {error}") from None
     records = []
     for name in tasks:
         service = os.path.join(folder, f"{name}.service")
@@ -430,25 +475,18 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> lis
         except (OSError, UnicodeDecodeError) as error:  # unreadable is unknown, never healthy or missing
             raise SchedulerUnreadable(f"{service} cannot be read: {error}") from None
         values = {k: v for k, _, v in (line.partition("=") for line in lines if "=" in line and not line.startswith("#"))}
+        marker = lines[0][len(MARKER):] if lines and lines[0].startswith(MARKER) else ""
         args = _unquote_exec(values.get("ExecStart", ""))
         timer = {"present": os.path.isfile(os.path.join(folder, f"{name}.timer"))}
         for verb, key, good in (("is-enabled", "enabled", "enabled"), ("is-active", "active", "active")):
-            try:
-                done = runner(["systemctl", "--user", verb, f"{name}.timer"], capture_output=True, text=True,
-                              timeout=10)
-            except (OSError, subprocess.TimeoutExpired) as error:
-                raise SchedulerUnreadable(f"systemctl --user could not be run: {error}") from None
+            done = systemctl(verb, f"{name}.timer")
             said = (done.stdout or "").strip()
             if not said:  # an answer of disabled or inactive is printed; silence is a bus that cannot be reached
                 reason = (done.stderr or "").strip().splitlines()
                 raise SchedulerUnreadable(f"systemctl --user {verb} answered nothing: "
                                           f"{reason[-1] if reason else done.returncode}")
             timer[key] = said == good
-        try:
-            done = runner(["systemctl", "--user", "show", f"{name}.service", "-p", "Result", "-p", "ExecMainStatus",
-                           "-p", "ExecMainCode"], capture_output=True, text=True, timeout=10)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise SchedulerUnreadable(f"systemctl --user could not be run: {error}") from None
+        done = systemctl("show", f"{name}.service", "-p", "Result", "-p", "ExecMainStatus", "-p", "ExecMainCode")
         show = dict(line.partition("=")[::2] for line in (done.stdout or "").splitlines() if "=" in line)
         if done.returncode != 0 or "Result" not in show:
             reason = (done.stderr or "").strip().splitlines()
@@ -456,7 +494,7 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> lis
                                       f"{reason[-1] if reason else done.returncode}")
         records.append({"name": name, "script": args[1] if len(args) > 1 else "",
                         "workdir": values.get("WorkingDirectory", "").replace("%%", "%"),
-                        "executable": args[0] if args else "", "timer": timer,
+                        "executable": args[0] if args else "", "timer": timer, "marker": marker,
                         "launch_failed": systemd_launch_failed(show)})
     return records
 
