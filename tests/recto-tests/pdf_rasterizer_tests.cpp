@@ -1761,9 +1761,10 @@ TEST(PdfRasterizer, GoldenSeam)
 	const auto font = charstring("cff-outlines.cff", CharstringFormat::Type1C);
 	ASSERT_NE(font, nullptr);
 	const Image image = render_page(small_text_page(font, 24u), 2.0);
-	const std::filesystem::path scratch = std::filesystem::temp_directory_path() / "recto-golden-seam.png";
-	std::error_code error;
-	std::filesystem::remove(scratch, error);
+	// A folder of this run's own: a fixed name under %TEMP% is shared with every other test process on the machine,
+	// so a second process's write or remove lands between this one's (D00 T04 section 11).
+	const recto::test::TempDir dir;
+	const std::filesystem::path scratch = dir.file_path("golden-seam.png");
 	EXPECT_EQ(compare_golden(scratch, image), GoldenResult::Missing);
 	ASSERT_TRUE(write_png(scratch, image));
 	EXPECT_EQ(compare_golden(scratch, image), GoldenResult::Match);
@@ -1783,7 +1784,6 @@ TEST(PdfRasterizer, GoldenSeam)
 	other.tile_height_px = 10u;
 	DisplayListBuilder empty(kPage100);
 	EXPECT_EQ(compare_golden(scratch, render(finished(empty), other)), GoldenResult::WrongSize);
-	std::filesystem::remove(scratch, error);
 }
 
 TEST(PdfRasterizer, OutlineOnlyGlyphRuns)

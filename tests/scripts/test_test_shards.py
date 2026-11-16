@@ -209,6 +209,27 @@ class SerialList(unittest.TestCase):
                     self.assertIn("is not one gtest filter pattern", res.stdout + res.stderr)
 
 
+class SharedTempNames(unittest.TestCase):
+    """No recto-tests source names a file in the machine's shared temp folder: side by side, two processes would write
+    and remove the same file (PdfRasterizer.GoldenSeam did, until 2026-11-16). recto::test::TempDir is the way."""
+
+    # The only allowed uses: TempDir itself, and a disabled test run by hand for an external decoder cross-check.
+    ALLOWED = {
+        ("test_support.cpp", "GetTempPathW"),
+        ("pdf_filters_tests.cpp", '::testing::TempDir()) / "recto-j2k-styles"'),
+    }
+
+    def test_no_test_writes_under_a_shared_temp_name(self):
+        found = []
+        for source in sorted((ROOT / "tests" / "recto-tests").glob("*.cpp")):
+            for lineno, line in enumerate(source.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+                code = line.split("//", 1)[0]
+                for token in ("temp_directory_path", "GetTempPath", "testing::TempDir"):
+                    if token in code and not any(source.name == f and allowed in code for f, allowed in self.ALLOWED):
+                        found.append(f"{source.name}:{lineno}: {line.strip()}")
+        self.assertEqual(found, [], "use recto::test::TempDir, whose folder is this process's own")
+
+
 @unittest.skipUnless(ON_WINDOWS, "needs Windows PowerShell")
 class ShardRun(unittest.TestCase):
     def setUp(self):
