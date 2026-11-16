@@ -147,7 +147,7 @@ jobs:
       - name: List the Release|x64 tests
         shell: pwsh
         run: |
-          $list = & build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_list_tests
+          $list = & build\cmake-bin\x64\Release\recto-tests\recto-tests.exe --gtest_list_tests
           if ($LASTEXITCODE -ne 0) { throw "recto-tests --gtest_list_tests exited $LASTEXITCODE" }
           $list | Set-Content -Encoding utf8NoBOM build\gtest-list.txt
 
@@ -168,7 +168,7 @@ jobs:
             build/test-results-*.xml
             build/test-*.log
             build/test-list-*.txt
-            build/msbuild-*.log
+            build/cmake-*.log
           if-no-files-found: ignore
 
   test-list-note:
@@ -232,9 +232,9 @@ jobs:
           exit 1
 
   asan:
-    name: Build x64 Release with AddressSanitizer and run recto-tests
+    name: Build x64 Debug and Release with AddressSanitizer and run recto-tests
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       # The same commit the build job tests (a manual run's sha is checked there).
       - name: Checkout repository
@@ -288,9 +288,14 @@ jobs:
             build-deps-asan-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
             build-deps-asan-${{ runner.os }}-
 
-      - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address)
+      - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address), Release
         shell: pwsh
         run: powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN
+
+      # Debug under AddressSanitizer (runtime checks off, linking not incremental, D00 T04 section 8).
+      - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address), Debug
+        shell: pwsh
+        run: powershell -File build/build.ps1 -Platform x64 -Configuration Debug -EnableASAN
 
       - name: Upload ASan test results and MSBuild logs on failure
         if: always()
@@ -301,13 +306,14 @@ jobs:
             build/test-results-*.xml
             build/test-*.log
             build/test-list-*.txt
-            build/msbuild-*.log
+            build/cmake-*.log
           if-no-files-found: ignore
 
-  cmake:
-    name: CMake and Ninja build of x64 & ARM64 and recto-tests (parity with MSBuild, D00 T04 §8)
+  msbuild:
+    # Recto.sln keeps building until a full milestone has passed on CMake (foundation plan D8, D00 T04 section 8).
+    name: MSBuild build of Recto.sln for x64 & ARM64 (kept for parity until a milestone passes on CMake)
     runs-on: windows-latest
-    timeout-minutes: 80
+    timeout-minutes: 45
     steps:
       # The same commit the build job tests (a manual run's sha is checked there).
       - name: Checkout repository
@@ -326,11 +332,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File build/bootstrap-tools.ps1
 
-      - name: Configure the vcpkg cache directory
+      - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
         run: |
+          $nugetCache = Join-Path $env:RUNNER_TEMP "nuget-packages"
           $vcpkgCache = Join-Path $env:RUNNER_TEMP "vcpkg-archives"
+          New-Item -ItemType Directory -Path $nugetCache -Force | Out-Null
           New-Item -ItemType Directory -Path $vcpkgCache -Force | Out-Null
+          "NUGET_PACKAGES=$nugetCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VCPKG_DEFAULT_BINARY_CACHE=$vcpkgCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Identify the C++ toolchain for the cache key
@@ -346,36 +355,29 @@ jobs:
           if (-not $vsVersion -or -not $msvc) { throw 'could not identify the Visual Studio 2026 C++ toolchain' }
           "id=vs$vsVersion-msvc$msvc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-      - name: Cache vcpkg binary archives
+      - name: Cache NuGet and vcpkg binary archives
         uses: actions/cache@v6
         with:
-          path: ${{ runner.temp }}/vcpkg-archives
-          key: build-deps-cmake-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          path: |
+            ${{ runner.temp }}/nuget-packages
+            ${{ runner.temp }}/vcpkg-archives
+          key: build-deps-msbuild-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
           restore-keys: |
-            build-deps-cmake-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
-            build-deps-cmake-${{ runner.os }}-
+            build-deps-msbuild-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
+            build-deps-msbuild-${{ runner.os }}-
 
-      - name: CMake build of Debug (x64 and ARM64) and Debug|x64 recto-tests
+      - name: MSBuild build of Debug (x64 and ARM64)
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -CMake -Configuration Debug -Platform x64,ARM64
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -MSBuild -SkipTests -Configuration Debug -Platform x64,ARM64
 
-      - name: CMake build of Release (x64 and ARM64) and Release|x64 recto-tests
+      - name: MSBuild build of Release (x64 and ARM64)
         shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -CMake -Configuration Release -Platform x64,ARM64
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -MSBuild -SkipTests -Configuration Release -Platform x64,ARM64
 
-      # The ASan job runs Release; Debug under AddressSanitizer (no /RTC, no incremental link) runs here.
-      - name: CMake build of Debug|x64 with AddressSanitizer and its recto-tests
-        shell: pwsh
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -CMake -EnableASAN -Configuration Debug
-
-      - name: Upload CMake build logs and test results on failure
+      - name: Upload MSBuild logs on failure
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cmake-build-and-test-diagnostics
-          path: |
-            build/test-results-*.xml
-            build/test-*.log
-            build/test-list-*.txt
-            build/cmake-*.log
+          name: msbuild-diagnostics
+          path: build/msbuild-*.log
           if-no-files-found: ignore

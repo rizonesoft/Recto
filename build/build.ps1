@@ -4,11 +4,13 @@
 #     cd Recto
 #     .\build.cmd
 #
-# That restores NuGet packages, installs the vcpkg manifest (GoogleTest,
-# test-only), and builds Recto.sln for x64 in Debug and Release (ARM64 is
-# built in CI on every code push until Recto v1, D00 T04 section 2; pass
-# -Platform x64,ARM64 or -Platform ARM64 to build ARM64 locally). Exit code 0
-# only when the build also passed the x64 test binaries.
+# That installs the vcpkg manifest (GoogleTest, test-only) and builds every
+# project with CMake and Ninja for x64 in Debug and Release (D00 T04 section 8;
+# ARM64 is built in CI on every code push until Recto v1, D00 T04 section 2;
+# pass -Platform x64,ARM64 or -Platform ARM64 to build ARM64 locally). Exit code
+# 0 only when the build also passed the x64 test binaries. -MSBuild builds
+# Recto.sln with MSBuild instead (restoring its NuGet packages), the path CI keeps
+# building for parity until a full milestone has passed on CMake.
 #
 # Options: -Quick (x64 Debug + tests for fast local iteration),
 # -Platform x64|ARM64 (default x64; pass x64,ARM64 or ARM64 to include ARM64),
@@ -43,7 +45,7 @@ param(
     [switch]$EnableASAN,
     [switch]$ForceRestore,
     [switch]$NoSccache,
-    [switch]$CMake,
+    [switch]$MSBuild,
     [int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
@@ -78,6 +80,8 @@ if (-not $SkipTests) {
     $null = Resolve-TestShardCount -Asan:$EnableASAN
 }
 $useSccache = Resolve-RectoUseSccache -NoSccache:$NoSccache
+# CMake and Ninja by default (D00 T04 section 8); -MSBuild keeps the Recto.sln path.
+$CMake = -not $MSBuild
 if ($CMake) {
     # The CMake and Ninja build (D00 T04 section 8): compile and link pools from one memory budget.
     . (Join-Path $PSScriptRoot 'cmake-build.ps1')
@@ -223,7 +227,8 @@ if (-not $vs) {
     $missing = @($required | Where-Object { -not (& $vswhere -version '[18.0,19.0)' -latest -requires $_ -property installationPath) })
     throw "No Visual Studio 2026 with the required C++ tools (the v145 toolset is VS 2026 only); the newest one lacks: $($missing -join ', ')"
 }
-$msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
+# $msbuildExe, not $msbuild: PowerShell names are case-insensitive, and $MSBuild is the -MSBuild switch.
+$msbuildExe = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) {
     $vsVcpkg = Join-Path $vs 'VC\vcpkg'
     if (Test-Path (Join-Path $vsVcpkg 'scripts\buildsystems\msbuild\vcpkg.props')) {
@@ -234,7 +239,7 @@ if (-not $env:VCPKG_ROOT) {
         $env:VCPKG_ROOT = $vsVcpkg
     }
 }
-Write-Host "MSBuild:    $msbuild"
+Write-Host "MSBuild:    $msbuildExe"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 
 . (Join-Path $PSScriptRoot 'asan-runtime.ps1')
@@ -271,7 +276,7 @@ $restoreStamp = Join-Path $root 'build\restore.stamp'
 $restoreMeta = Get-RestoreFingerprint -RepoRoot $root
 if ((-not $CMake) -and ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $restoreStamp -Meta $restoreMeta))) {
     Write-Host '=== Restoring NuGet packages for Recto.sln'
-    & $msbuild 'Recto.sln' '-t:Restore' "/m:$jobs" '/nr:false' '/nologo' '/v:minimal'
+    & $msbuildExe 'Recto.sln' '-t:Restore' "/m:$jobs" '/nr:false' '/nologo' '/v:minimal'
     if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed (exit $LASTEXITCODE)" }
     Set-Content -Path $restoreStamp -Value $restoreMeta.Hash -Encoding Ascii -NoNewline
 }
@@ -342,10 +347,8 @@ foreach ($plat in $Platform) {
 
         # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
         $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
-        $compileCmdManifests = Join-Path $root "build\compile-commands\$plat\$cfg"
         if (-not $Project) {
             if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
-            if ((-not $EnableASAN) -and (Test-Path $compileCmdManifests)) { Remove-Item $compileCmdManifests -Recurse -Force }
         }
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
         $msbuildArgs = @(
@@ -383,7 +386,7 @@ foreach ($plat in $Platform) {
         } else {
             Write-Host "=== Recto $cfg|$plat"
         }
-        & $msbuild @msbuildArgs
+        & $msbuildExe @msbuildArgs
         if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
         # A warning from any tool MSBuild runs (not only the compiler, which /WX already stops) fails the build: the
         # build is warning-free on x64 and ARM64 by contract (D00 T01 §3, D06 T05 §27).
@@ -395,11 +398,6 @@ foreach ($plat in $Platform) {
         if (-not $Project) {
             & $pinnedPython (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
             if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
-            $buildCompileDb = Join-Path $root 'scripts\build-compile-commands.py'
-            if ((-not $EnableASAN) -and ($plat -eq 'x64') -and ($cfg -eq 'Debug') -and (Test-Path $buildCompileDb)) {
-                & $pinnedPython $buildCompileDb --sln (Join-Path $root 'Recto.sln') --manifests-dir $compileCmdManifests --out (Join-Path $root 'build\compile_commands.json')
-                if ($LASTEXITCODE -ne 0) { throw "build-compile-commands.py failed (exit $LASTEXITCODE)" }
-            }
         }
 
         if ($EnableASAN -and $plat -eq 'x64') {

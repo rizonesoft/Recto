@@ -193,7 +193,7 @@ Sections: 110 | Checklist items: 742
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1317
+Sections: 148 | Checklist items: 1318
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -203,7 +203,7 @@ Sections: 148 | Checklist items: 1317
 | [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 10    |
 | [x]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 19    |
 | [x]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 18    |
-| [ ]    | D10 T04 §1  | Move `src/ui` to `libs/vellum`, rename to `vellum::`, own project and test executable    | windows-host                  | 17    |
+| [ ]    | D10 T04 §1  | Move `src/ui` to `libs/vellum`, rename to `vellum::`, own project and test executable    | windows-host                  | 18    |
 | [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                  | 7     |
 | [ ]    | D10 T01 §4  | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size              | windows-host, display-session | 10    |
 | [ ]    | D10 T01 §5  | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss       | windows-host                  | 9     |
@@ -954,4 +954,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 114/883 verified sections, 56 ready to run now.
 
-Checklist: 771/6528 items completed (includes Commit items).
+Checklist: 771/6529 items completed (includes Commit items).

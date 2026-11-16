@@ -34,6 +34,17 @@ CompileFlags:
     - /Qpar*
     # /diagnostics:*: cl.exe caret/column formatting dialect; clangd formats LSP diagnostics directly.
     - /diagnostics:*
+    # /external:I* and /external:W*: the CMake build names the SDK and CRT folders and holds them to /W4 (D00 T04
+    # section 8); clang-cl turns them into -isystem ahead of its own builtin headers and -Wsystem-headers under -Werror.
+    # clangd finds the same MSVC and SDK folders itself, after its builtins, so they are dropped here.
+    - /external:I*
+    - /external:W*
+    # -std:c++23: the stable switch cl 19.52 and the CMake build use (D00 T04 section 8), which clang-cl 22 does not
+    # know and would ignore, falling back to C++14; added back below as the C++23 switch clang-cl reads.
+    - -std:c++23
+    - /std:c++23
+  Add:
+    - /std:c++23preview
 Index:
   Background: Build
 Diagnostics:

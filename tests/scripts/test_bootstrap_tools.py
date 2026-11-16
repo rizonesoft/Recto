@@ -92,7 +92,7 @@ class ToolsLockAndWorkflowContract(unittest.TestCase):
         self.assertIn("build/bootstrap-tools.ps1", plan_yml)
         self.assertIn(r"run: .\build\python.cmd scripts/run-tests.py --full", plan_yml)
 
-        self.assertEqual(build_yml.count("pwsh -NoProfile -File build/bootstrap-tools.ps1"), 3)  # build, asan, cmake
+        self.assertEqual(build_yml.count("pwsh -NoProfile -File build/bootstrap-tools.ps1"), 3)  # build, asan, msbuild
         self.assertIn(r".\build\python.cmd -m unittest tests.scripts.test_engine_dependency_policy", build_yml)
         self.assertNotIn("run: python -m unittest", build_yml)
 

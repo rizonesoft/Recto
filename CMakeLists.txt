@@ -113,8 +113,10 @@ else()
     set(RECTO_BIN_ROOT "${CMAKE_SOURCE_DIR}/build/cmake-bin/${RECTO_PLATFORM}")
 endif()
 
-# Every compile writes the /sourceDependencies report the D13 boundary check reads, beside its object.
-string(APPEND CMAKE_CXX_COMPILE_OBJECT " /sourceDependencies <OBJECT>.json")
+# Every compile writes the /sourceDependencies report the D13 boundary check reads, beside its object. Joined to its
+# value (cl accepts both forms) so clangd, which does not know the switch, never reads the path as a second source
+# (.clangd removes /sourceDependencies* from the compile database).
+string(APPEND CMAKE_CXX_COMPILE_OBJECT " /sourceDependencies<OBJECT>.json")
 
 if(RECTO_SCCACHE)
     string(JSON recto_sccache_dir GET "${recto_lock}" sccache executable)

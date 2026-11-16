@@ -125,7 +125,7 @@ class EvaluationTests(unittest.TestCase):
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")
         self.assertIn('$boundaryManifests = Join-Path $root "build\\boundary\\$plat\\$cfg"', build)
         self.assertIn("if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }", build)
-        self.assertLess(build.index("Remove-Item $boundaryManifests"), build.index("& $msbuild @msbuildArgs"))
+        self.assertLess(build.index("Remove-Item $boundaryManifests"), build.index("& $msbuildExe @msbuildArgs"))
         self.assertIn("check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs", build)
 
     def test_win32_names_drop_trailing_dots_and_spaces(self):

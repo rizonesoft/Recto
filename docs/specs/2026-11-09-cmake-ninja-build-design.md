@@ -83,3 +83,6 @@ The MSBuild path is never removed in this section: `build.ps1 -MSBuild` builds `
 - GoogleTest's include folder is passed as plain `/I` (its package marks it system), as MSBuild's vcpkg integration passes it.
 - The CMake modules live in `cmake/` at the root; `build/cmake/<preset>` holds only generated build folders.
 - One link budget: `recto-tests` peaked at 457 MB (Debug) and 584 MB (Release) of commit, so a link is budgeted 1,024 MB.
+- `/sourceDependencies` is joined to its value (`/sourceDependencies<object>.json`, which cl accepts): clangd does not know the switch, so a separate value would be read as a second source file; `.clangd` removes the joined switch whole.
+- clang-cl 22 ignores `/std:c++23` (and would fall back to C++14), so `.clangd` swaps it for `/std:c++23preview`, which it reads; the build itself keeps `/std:c++23`.
+- `build.ps1`'s `-MSBuild` switch shares its name, case-insensitively, with the old `$msbuild` path variable, now `$msbuildExe`.

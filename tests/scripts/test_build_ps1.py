@@ -730,7 +730,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
                     f"function global:Get-Counter {{ [pscustomobject]@{{ CounterSamples = @([pscustomobject]@{{ CookedValue = ({counter_body}) }}) }} }}\n"
                     f"function global:Get-CimInstance {{ [pscustomobject]@{{ FreePhysicalMemory = ({cim_kb}) }} }}\n"
-                    f"& '{ws / 'build' / 'build.ps1'}' {extra_ps_args}\n"
+                    f"& '{ws / 'build' / 'build.ps1'}' -MSBuild {extra_ps_args}\n"
                 )
                 res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
                                      capture_output=True, text=True, env=env, timeout=120)
@@ -959,7 +959,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
                     "function global:Get-Counter { [pscustomobject]@{ CounterSamples = @([pscustomobject]@{ CookedValue = 9500 }) } }\n"
                     "function global:Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 9728000 } }\n"
-                    f"& '{base / 'alias-caller' / '..' / 'repo' / 'build' / 'build.ps1'}' {ps_args}\n"
+                    f"& '{base / 'alias-caller' / '..' / 'repo' / 'build' / 'build.ps1'}' -MSBuild {ps_args}\n"
                 )
                 res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
                                      capture_output=True, text=True, env=env, timeout=120)
@@ -1149,8 +1149,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             )
 
             for shell_kind, cmd in (
-                ("cmd", ["cmd.exe", "/d", "/c", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
-                ("pwsh", [POWERSHELL, "-NoProfile", "-Command", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
+                ("cmd", ["cmd.exe", "/d", "/c", r".\build.cmd -MSBuild -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
+                ("pwsh", [POWERSHELL, "-NoProfile", "-Command", r".\build.cmd -MSBuild -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"]),
             ):
                 with self.subTest(shell=shell_kind):
                     for marker in (msbuild_calls, gtest_calls, gen_marker, boundary_marker):
@@ -1179,7 +1179,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             fail_env = dict(env)
             fail_env["RECTO_MOCK_MSBUILD_FAIL"] = "1"
             fail_run = _run_managed(
-                ["cmd.exe", "/d", "/c", r".\build.cmd -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"],
+                ["cmd.exe", "/d", "/c", r".\build.cmd -MSBuild -Platform x64 -Configuration Debug -TestFilter 'PdfError.*'"],
                 cwd=ws, env=fail_env, timeout=90,
             )
             self.assertNotEqual(fail_run.returncode, 0, fail_run.stdout + fail_run.stderr)

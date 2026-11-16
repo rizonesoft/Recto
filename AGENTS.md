@@ -89,7 +89,7 @@ Review lenses read against Recto's sources: `adversarial` covers malformed PDFs,
 
 ## Working rules
 
-- **Self-contained and portable:** `scripts/` uses 100% Python stdlib with zero third-party packages or hardcoded user paths. Portable LSP servers (`scripts/clangd-lsp.py` via `build\clangd.cmd`, `scripts/python-lsp.py` with AST fallback, and `scripts/lsp_mcp.py` in `.lsp.json`, `.mcp.json` and `.agents/plugins/recto-lsp/`) discover VS Clang/`clangd` (`Microsoft.VisualStudio.Component.VC.Llvm.Clang`), MSVC/SDK headers (`scripts/build-compile-commands.py` / `scripts/gen-compile-commands.py`) and `pyright-langserver` dynamically and auto-idle after 5 minutes.
+- **Self-contained and portable:** `scripts/` uses 100% Python stdlib with zero third-party packages or hardcoded user paths. Portable LSP servers (`scripts/clangd-lsp.py` via `build\clangd.cmd`, `scripts/python-lsp.py` with AST fallback, and `scripts/lsp_mcp.py` in `.lsp.json`, `.mcp.json` and `.agents/plugins/recto-lsp/`) discover VS Clang/`clangd` (`Microsoft.VisualStudio.Component.VC.Llvm.Clang`), MSVC/SDK headers (the CMake build's `build/compile_commands.json`, or `scripts/gen-compile-commands.py` before a build) and `pyright-langserver` dynamically and auto-idle after 5 minutes.
 - **LSP first:** query LSP (`lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_diagnostics`) before searching or reading sources to trace symbols, callers, types or syntax; search stays for non-symbol text.
 - **Balanced local-vs-CI cadence:** run the iteration gate while building and after fixes (`.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'` + `-EnableASAN` when named for C++; Python suites via `unittest` / `build\python.cmd scripts/run-tests.py --quick` for Python-only; both for mixed, preserving each section's actual Test checkpoint) with `lsp_diagnostics`/`lsp_symbols`/`lsp_definition`, push candidates so GitHub Actions (`build.yml` x64/ARM64/ASan and `plan.yml` `run-tests.py --full`) runs in parallel with Astra's review (`scripts/ci_status.py --wait` / `--gate`), and run `.\build.cmd` once on the final candidate tip at stamp.
 - **Output discipline:** bound every command (filtered tests, `Select-Object -First`, field extraction). Keep full logs in ignored scratch (`R:\scratch` or `build/`).
@@ -131,6 +131,7 @@ build\python.cmd scripts/gen-compile-commands.py --check # C++23 clangd database
 build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Python cadence (+ --full in CI)
 .\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'  # iteration gate while building and after each review fix (+ -EnableASAN when named; Python-only via unittest/run-tests.py; both for mixed)
 .\build.cmd                                  # stamp gate: x64 Debug and Release, every test, once on the candidate tip that stamps, quoted in stamp --check (-Platform x64,ARM64 adds ARM64)
+.\build.cmd -MSBuild -SkipTests                # Recto.sln through MSBuild, the path CI keeps building for parity until a milestone passes on CMake (D8, D00 T04 §8)
 ```
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.
