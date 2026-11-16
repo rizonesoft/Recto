@@ -49,6 +49,12 @@ A red that a session's own watch has already recorded (`build/ci-watch/<sha>.jso
 email is held for up to an hour (HOLD_SECONDS), a newer green run of the same workflow settles it without one, and a red
 still the newest verdict after the hour is emailed as any other.
 
+Two alerts leave for a red main. This machine's: the session's `--wait` and the `recto-ci-watch` task's `--scheduled`,
+while the workstation is on. GitHub's own: `.github/workflows/ci-red.yml` runs `scripts/ci_red_issue.py` when a watched
+run ends and keeps one `ci-red` issue per workflow open, assigned to the owner, while main is red (D00 T04 section 13).
+A manual rebuild of an older commit (`rebuild of <sha>`) is never main's verdict here, and the deliberate red that
+proves the GitHub alert (`ci-red proof: a deliberate red`) is never emailed from this machine.
+
 A state file that cannot be written (a full disk, a locked file, a refused folder) is exit 3, unknown, with the path
 and what to do: never exit 1, which means red. The file it could not replace stays as it was.
 """
@@ -68,7 +74,21 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON_CMD = r"build\python.cmd" if os.name == "nt" else "./scripts/run-python.sh"
 WORKFLOWS = ("build.yml", "plan.yml")
-FIELDS = "databaseId,headSha,status,conclusion,url,createdAt,event,attempt"
+FIELDS = "databaseId,headSha,status,conclusion,url,createdAt,event,attempt,displayTitle"
+# Runs named at their source as not main's verdict (D00 T04 section 13): a manual build of an older commit
+# (`.github/workflows/build.yml` `run-name`), and the one deliberate red that proves the ci-red alert
+# (`.github/workflows/plan.yml` `fail_on_purpose`).
+REBUILD_PREFIX = "rebuild of "
+PROOF_TITLE = "ci-red proof: a deliberate red"
+
+
+def counts_for_main(run, include_proof=False):
+    """Whether a run is evidence of main's state: never a rebuild of an older commit, and a deliberate proof red only
+    for the ci-red reconciler, which proves itself on it."""
+    title = str(run.get("displayTitle") or "")
+    if title.startswith(REBUILD_PREFIX):
+        return False
+    return include_proof or title != PROOF_TITLE
 LIMIT = 10
 GREEN = {"success", "neutral", "skipped"}
 # A run that was stopped before it judged the commit: no verdict either way.
@@ -171,12 +191,13 @@ def brief(run):
                                                               "createdAt", "event")}
 
 
-def workflow_status(runner, workflow, branch):
+def workflow_status(runner, workflow, branch, include_proof=False):
     runs = gh_json(runner, ["run", "list", "--branch", branch, "--workflow", workflow, "--limit", str(LIMIT),
                             "--json", FIELDS])
     if not isinstance(runs, list) or not all(isinstance(r, dict) for r in runs):
         raise Unavailable(f"gh run list for {workflow} did not return a list of runs")
-    runs = sorted(runs, key=lambda r: str(r.get("createdAt") or ""), reverse=True)
+    runs = sorted((r for r in runs if counts_for_main(r, include_proof)), key=lambda r: str(r.get("createdAt") or ""),
+                  reverse=True)
     completed = [r for r in runs if r.get("status") == "completed"]
     latest = completed[0] if completed else None
     # The decisive run is the latest completed one that was not cancelled; a timed-out run is red, not cancelled.
@@ -872,7 +893,8 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         # First what the list itself says, with no further call: a failed run is red, a green one is not, and a
         # cancelled one is undecided until its jobs say whether it timed out. Each run stands alone, oldest first.
         reds, standing = [], None  # `standing`: the newest run with a verdict, when red; on the first run only it is news
-        runs = sorted((r for r in runs if isinstance(r, dict)), key=lambda r: str(r.get("createdAt") or ""))
+        runs = sorted((r for r in runs if isinstance(r, dict) and counts_for_main(r)),
+                      key=lambda r: str(r.get("createdAt") or ""))
         done = [r for r in runs if r.get("status") == "completed" and isinstance(r.get("databaseId"), int)]
         if done:
             summary.append(f"{workflow}: latest completed run {done[-1].get('conclusion')} at "

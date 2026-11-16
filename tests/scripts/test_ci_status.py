@@ -115,6 +115,26 @@ class CiStatus(unittest.TestCase):
         code, report = status(FakeGh({"build.yml": [run(3, conclusion="cancelled")], "plan.yml": [run(1)]}))
         self.assertEqual((code, report["workflows"][0]["verdict"]), (0, "none"))
 
+    def test_a_rebuild_never_decides_and_the_proof_red_counts_only_when_asked(self):
+        # Named at their source (D00 T04 section 13): a manual build of an older commit, and the deliberate red.
+        rebuild = {**run(5, conclusion="failure", sha=SHA_OLD), "event": "workflow_dispatch",
+                   "displayTitle": "rebuild of " + SHA_OLD}
+        proof = {**run(6, conclusion="failure"), "event": "workflow_dispatch",
+                 "displayTitle": "ci-red proof: a deliberate red"}
+        fake = FakeGh({"build.yml": [rebuild, run(4)], "plan.yml": [proof, run(3)]}, jobs={5: [], 6: []})
+        code, report = status(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual([(w["verdict"], w["verdict_run"]["databaseId"]) for w in report["workflows"]],
+                         [("green", 4), ("green", 3)])
+        plan = ci.workflow_status(fake, "plan.yml", "main", include_proof=True)
+        self.assertEqual((plan["verdict"], plan["verdict_run"]["databaseId"]), ("red", 6))
+        build = ci.workflow_status(fake, "build.yml", "main", include_proof=True)
+        self.assertEqual((build["verdict"], build["verdict_run"]["databaseId"]), ("green", 4))
+        # A run merely named like a proof but without the exact title is evidence like any other.
+        other = {**run(7, conclusion="failure"), "displayTitle": "ci-red proof"}
+        self.assertEqual(ci.workflow_status(FakeGh({"plan.yml": [other]}, jobs={7: []}), "plan.yml", "main")["verdict"],
+                         "red")
+
     def test_no_runs(self):
         code, report = status(FakeGh({}))
         self.assertEqual(code, 0)
@@ -867,6 +887,13 @@ class Gate(unittest.TestCase):
         code, out = self.gate(SHA_NEW, self.GREEN)
         self.assertEqual(code, 0, out)
 
+    def test_a_dispatched_proof_red_on_the_head_commit_does_not_hold_the_gate(self):
+        proof = {**wrun(3, "plan-gates", conclusion="failure", sha=SHA_NEW), "event": "workflow_dispatch",
+                 "displayTitle": "ci-red proof: a deliberate red"}
+        gh = GateGh({"build.yml": [wrun(2, "build", sha=SHA_NEW)], "plan.yml": [proof]}, jobs={3: []})
+        code, out = self.gate(SHA_NEW, self.GREEN, gh=gh)
+        self.assertEqual(code, 0, out)
+
     def test_no_watch_a_dead_watch_and_a_live_watch_hold_it_shut_and_say_what_to_do(self):
         code, out = self.gate(SHA_NEW, None)
         self.assertEqual(code, 6, out)
@@ -1132,6 +1159,16 @@ class Scheduled(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("runs/7", out)
         self.assertNotIn("runs/5;", out)
+
+    def test_the_deliberate_proof_red_and_a_rebuild_red_are_never_emailed(self):
+        self.baseline()
+        proof = {**run(5, conclusion="failure"), "event": "workflow_dispatch",
+                 "displayTitle": "ci-red proof: a deliberate red"}
+        rebuild = {**run(6, conclusion="failure", sha=SHA_OLD), "event": "workflow_dispatch",
+                   "displayTitle": "rebuild of " + SHA_OLD}
+        code, out = self.scheduled(FakeGh({"build.yml": [rebuild, run(1)], "plan.yml": [proof, run(2)]}, jobs=RED_JOBS))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("red run on main", out)
 
     def watch_saw_red(self, run_id, workflow="build.yml", sha=SHA_NEW):
         """A session's `ci_status.py --wait` of `sha` recorded run `run_id` of `workflow` red."""

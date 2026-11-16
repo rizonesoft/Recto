@@ -1,0 +1,44 @@
+name: ci-red
+
+# A red main reported from GitHub itself, with the workstation off (D00 T04 section 13). When a run of a watched
+# workflow ends on main (failed, cancelled, timed out or green, a run cancelled before its first job included), this
+# keeps one issue per workflow, labelled ci-red and assigned to the owner, matching main's current verdict, so GitHub
+# notifies the owner. scripts/ci_red_issue.py never reads the run that woke it: it rebuilds the issue from main's
+# verdict, so the order runs finish in cannot matter. The local watch of section 9 stays as it is.
+on:
+  workflow_run:
+    workflows: [build, plan-gates]
+    types: [completed]
+    branches: [main]
+
+# Reading runs, jobs and timeout annotations, and writing the issue; nothing else.
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  issues: write
+
+# One reconcile per watched workflow at a time, so two overlapping first reds open one issue. A pending reconcile
+# that a newer one replaces loses nothing: each reads the current state.
+concurrency:
+  group: ci-red-${{ github.event.workflow_run.path }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Match the ci-red issue to main's verdict
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Reconcile the ci-red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          WORKFLOW_FILE: ${{ github.event.workflow_run.path }}
+        run: python3 scripts/ci_red_issue.py reconcile --workflow "$WORKFLOW_FILE"

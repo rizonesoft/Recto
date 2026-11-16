@@ -1,4 +1,7 @@
 name: build
+# A manual build of an older commit is not main's verdict: its name says so at the source, and scripts/ci_status.py
+# leaves such a run out of main's verdict (D00 T04 section 13). Any other run keeps GitHub's default name.
+run-name: ${{ inputs.sha != '' && inputs.sha != github.sha && format('rebuild of {0}', inputs.sha) || '' }}
 
 # Product build and test gate (D00 T01 §4, D00 T04 §2): builds all C++23 modules
 # across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64 with
