@@ -116,11 +116,14 @@ class RunTestsCadence(unittest.TestCase):
                 "        time.sleep(60)\n",
                 encoding="utf-8",
             )
-            mod, code, dt, out = RUN_TESTS.run_one("tests.scripts.test_hang", ws, timeout_s=0.6)
+            # The timeout must fire while the worker hangs, after it has started its grandchild: 0.6 s raced Python's
+            # start-up on a loaded CI runner (plan.yml 43789107582, "worker never started"); 8 s is well past start-up and
+            # well inside the 60 s hang, so the kill of the whole tree at the timeout is still what is proven.
+            mod, code, dt, out = RUN_TESTS.run_one("tests.scripts.test_hang", ws, timeout_s=8.0)
             self.assertEqual(mod, "tests.scripts.test_hang")
             self.assertEqual(code, 124)
             self.assertIn("timed out", out)
-            self.assertLess(dt, 15.0)
+            self.assertLess(dt, 25.0)
             self.assertTrue(pid_file.is_file(), f"worker never started: {out}")
             grandchild_pid = int(pid_file.read_text(encoding="utf-8").strip())
             deadline = time.monotonic() + 3.0

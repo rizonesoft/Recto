@@ -1133,6 +1133,48 @@ class Scheduled(unittest.TestCase):
         self.assertIn("runs/7", out)
         self.assertNotIn("runs/5;", out)
 
+    def watch_saw_red(self, run_id, workflow="build.yml", sha=SHA_NEW):
+        """A session's `ci_status.py --wait` of `sha` recorded run `run_id` of `workflow` red."""
+        folder = self.root / "build" / "ci-watch"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{sha}.json").write_text(json.dumps({"sha": sha, "exit": 1, "workflows": {
+            workflow: {"run": run(run_id, conclusion="failure", sha=sha), "failed_jobs": [], "state": "red"}}}),
+            encoding="utf-8")
+
+    def test_a_red_a_session_is_watching_is_held_and_a_later_green_settles_it_without_an_email(self):
+        self.baseline()
+        self.watch_saw_red(5)
+        red = FakeGh({"build.yml": [run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        code, out = self.scheduled(red)
+        self.assertEqual(code, 0, out)
+        self.assertIn("held: build.yml at bbbbbbbbbbbb https://github.com/o/r/actions/runs/5", out)
+        self.assertNotIn("not yet reported by email", out)  # nothing for the runner's email to carry
+        fixed = FakeGh({"build.yml": [run(6), run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        code, out = self.scheduled(fixed, now=self.NOW + 900)
+        self.assertEqual(code, 0, out)
+        self.assertIn("settled without email: build.yml", out)
+        # Settled for good: an hour later it is not raised either.
+        code, out = self.scheduled(fixed, now=self.NOW + 2 * ci.HOLD_SECONDS)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("runs/5", out)
+
+    def test_a_held_red_still_unfixed_after_the_hold_is_emailed(self):
+        self.baseline()
+        self.watch_saw_red(5)
+        red = FakeGh({"build.yml": [run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        self.assertEqual(self.scheduled(red)[0], 0)
+        self.assertEqual(self.scheduled(red, now=self.NOW + ci.HOLD_SECONDS - 60)[0], 0)
+        code, out = self.scheduled(red, now=self.NOW + ci.HOLD_SECONDS)
+        self.assertEqual(code, 1, out)
+        self.assertIn("red run on main: build.yml at bbbbbbbbbbbb https://github.com/o/r/actions/runs/5", out)
+
+    def test_a_red_no_session_watched_is_emailed_at_once_even_beside_a_watch_of_another_run(self):
+        self.baseline()
+        self.watch_saw_red(4)  # a watch of an older red run of that commit, not this one
+        red = FakeGh({"build.yml": [run(5, conclusion="failure"), run(1)], "plan.yml": [run(2)]}, jobs=RED_JOBS)
+        code, out = self.scheduled(red)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn("held:", out)
     def test_two_reds_between_two_polls_are_both_reported_and_a_later_green_hides_neither(self):
         self.baseline()
         gh = FakeGh({"build.yml": [run(9), run(8, conclusion="failure"), run(7, conclusion="failure"), run(1)],

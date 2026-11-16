@@ -45,6 +45,9 @@ timed-out end. `--brief` prints the answer on one line, failed jobs included, an
 10 runs that has not been reported, so the runner's failure email names it, and once when `gh` has been unreachable
 for an hour. A run counts as reported only when the runner's `build/automations/recto-ci-watch/last.json` says that
 email was sent; until then every poll raises it again. Its memory is `build/automations/ci-watch-reported.json`.
+A red that a session's own watch has already recorded (`build/ci-watch/<sha>.json`) is in that session's hands: its
+email is held for up to an hour (HOLD_SECONDS), a newer green run of the same workflow settles it without one, and a red
+still the newest verdict after the hour is emailed as any other.
 
 A state file that cannot be written (a full disk, a locked file, a refused folder) is exit 3, unknown, with the path
 and what to do: never exit 1, which means red. The file it could not replace stays as it was.
@@ -788,6 +791,24 @@ ALERT_BATCH = 40
 # call it makes, nested ones included, is given only what is left of them, and when none is left the call is not made.
 # So the poll always ends by itself, with what it knows saved and printed and the rest left for the next poll.
 POLL_BUDGET = 240
+# A red that a session's own CI watch has already seen (`build/ci-watch/<sha>.json` records it red) is in hand: that
+# session fixes red first (process-phase step 3). Its email is held, and a newer green run of the same workflow settles
+# it without one; a red still the newest verdict this long after it was found is emailed as any other.
+HOLD_SECONDS = 3600
+
+
+def watch_saw(root, item):
+    """Whether a CI watch of the red run's commit recorded that very run of that workflow as red."""
+    sha = item.get("sha") or ""
+    if not sha or not item.get("run"):
+        return False
+    for path in sorted((Path(root) / WATCH_DIR).glob(f"{sha}*.json")):
+        state = read_state(path)
+        entry = (state.get("workflows") or {}).get(item["workflow"]) if isinstance(state, dict) else None
+        if isinstance(entry, dict) and entry.get("state") == "red" and \
+                isinstance(entry.get("run"), dict) and entry["run"].get("databaseId") == item["run"]:
+            return True
+    return False
 
 
 def _epoch(stamp):
@@ -833,6 +854,7 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
         reported += [p["key"] for p in pending if p["key"] in named]
         pending = [p for p in pending if p["key"] not in named]
     began, unread, baseline, summary, undecided = clock(), [], [], [], []
+    newest_green = {}  # workflow -> createdAt of its newest green run in this poll's read
     ask = runner
 
     def runner(args):  # every call below goes through here, so none can outlast the poll
@@ -859,13 +881,17 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
             run_id = run["databaseId"]
             key = f"{run_id}/{run.get('attempt') or 1}"
             if key in passed or key in reported or run_id in reported or any(p["key"] == key for p in pending):
+                if key in passed:
+                    newest_green[workflow] = max(newest_green.get(workflow, ""), str(run.get("createdAt") or ""))
                 continue  # judged on an earlier poll
             verdict = verdict_of(run)
             item = {"key": key, "workflow": workflow, "url": run.get("url"), "sha": str(run.get("headSha") or "")[:12],
-                    "failed_jobs": [], "run": run_id, "attempt": run.get("attempt")}
+                    "failed_jobs": [], "run": run_id, "attempt": run.get("attempt"),
+                    "created": str(run.get("createdAt") or ""), "found_at": now()}
             if verdict == "green":
                 passed.append(key)
                 standing = None
+                newest_green[workflow] = max(newest_green.get(workflow, ""), str(run.get("createdAt") or ""))
             elif verdict == "red":
                 standing = key
                 reds.append(item)
@@ -931,8 +957,25 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
     if whole:
         reported += baseline
     memory.update(reported=reported[-400:], passed=passed[-400:] if whole else [], pending=pending, baselined=whole)
-    shown = pending[:ALERT_BATCH]
-    if pending:
+    # Reds a session's watch has already seen: settled by a newer green, or held while the hour runs (HOLD_SECONDS).
+    held = []
+    for item in list(pending):
+        if item.get("note") or not watch_saw(root, item):
+            continue
+        green = newest_green.get(item["workflow"], "")
+        if green and green > item.get("created", ""):
+            pending.remove(item)
+            reported.append(item["key"])
+            out(f"settled without email: {item['workflow']} at {item.get('sha')} {item.get('url')} was seen by a "
+                "session's CI watch and a newer green run followed")
+        elif now() - float(item.get("found_at") or now()) < HOLD_SECONDS:
+            held.append(item)
+            out(f"held: {item['workflow']} at {item.get('sha')} {item.get('url')} is in a session's hands (its CI "
+                f"watch saw it red); emailed if still the newest verdict {HOLD_SECONDS // 60} minutes after it was found")
+    memory.update(reported=reported[-400:], pending=pending)
+    raised = [p for p in pending if p not in held]
+    shown = raised[:ALERT_BATCH]
+    if raised:
         memory.update(raised_at=now(), raised_keys=[p["key"] for p in shown])
     else:
         memory.pop("raised_at", None)
@@ -947,13 +990,13 @@ def scheduled(*, runner=run_gh, root=ROOT, workflows=WORKFLOWS, branch="main", n
             continue
         jobs = f"; failed jobs: {', '.join(item['failed_jobs'])}" if item.get("failed_jobs") else ""
         out(f"red run on main: {item['workflow']} at {item.get('sha')} {item.get('url')}{jobs}")
-    reds = [p for p in pending if not p.get("note")]
+    reds = [p for p in raised if not p.get("note")]
     if reds:
-        later = f"; {len(pending) - len(shown)} more follow in the next email" if len(pending) > len(shown) else ""
+        later = f"; {len(raised) - len(shown)} more follow in the next email" if len(raised) > len(shown) else ""
         out(f"main has {len(reds)} red run(s) not yet reported by email: "
             f"{', '.join(sorted({p['workflow'] for p in reds}))} (each is reported until its email is sent, then never "
             f"again{later})")
-    return 1 if pending else 0
+    return 1 if raised else 0
 
 
 def main(argv=None, runner=run_gh, root=ROOT, git=run_git):
