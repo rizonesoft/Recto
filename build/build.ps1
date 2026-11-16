@@ -432,8 +432,8 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
                 $argsList += "--gtest_filter=$TestFilter"
             }
             Write-Host "=== recto-tests $cfg|x64"
-            & $tests @argsList
-            $testExit = $LASTEXITCODE
+            # In the same kill-on-close job and under the same deadline as a sharded run (build\test-shards.ps1).
+            $testExit = Invoke-RectoTestSingle -Exe $tests -Arguments $argsList -WorkingDirectory $root -TimeoutMinutes $testTimeoutMinutes
             if ($testExit -ne 0) {
                 $validXml = $false
                 if ((Test-Path $xmlOut) -and (Get-Item $xmlOut).Length -gt 0) {

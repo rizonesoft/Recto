@@ -342,6 +342,34 @@ class ShardRun(unittest.TestCase):
     def test_a_hung_serial_pass_and_its_child_are_killed_at_the_deadline(self):
         self._assert_hang_killed("serial", "serial pass")
 
+    def _single_script(self, timeout_minutes: float) -> str:
+        return (
+            f". '{TEST_SHARDS_PS1}'\n"
+            f"$code = Invoke-RectoTestSingle -Exe '{sys.executable}' -PrefixArguments @('{self.fake}') "
+            f"-Arguments @('--gtest_output=xml:{self.out / 'single.xml'}') -WorkingDirectory '{self.base}' "
+            f"-TimeoutMinutes {timeout_minutes}\n"
+            "Write-Output \"EXIT=$code\"\n"
+        )
+
+    def test_the_single_run_writes_to_the_console_and_returns_its_exit_code(self):
+        res = _ps(self._single_script(2.0), env=self._env())
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("[       OK ] Fast.T0", res.stdout, "the single run's output did not reach the caller's console")
+        self.assertIn("EXIT=0", res.stdout)
+        self.assertTrue((self.out / "single.xml").is_file())
+        failing = _ps(self._single_script(2.0), env=self._env(FAKE_FAIL="Slow.Timed"))
+        self.assertEqual(failing.returncode, 0, failing.stdout + failing.stderr)
+        self.assertIn("[  FAILED  ] Slow.Timed", failing.stdout)
+        self.assertIn("EXIT=1", failing.stdout)
+
+    def test_a_hung_single_run_and_its_child_are_killed_at_the_deadline(self):
+        res = _ps(self._single_script(2 / 60), env=self._env(FAKE_HANG="serial"), timeout=60)
+        self.assertNotEqual(res.returncode, 0, res.stdout)
+        self.assertIn("recto-tests still running; killed with every process it started", res.stdout + res.stderr)
+        child = int((self.pids / "serial.child").read_text())
+        hung = int((self.pids / "serial.pid").read_text())
+        self.assertEqual(_wait_gone([hung, child], 10), [], "the hung single run or its child outlived the deadline")
+
     def test_a_process_that_cannot_start_stops_the_ones_already_started(self):
         script = (
             f". '{TEST_SHARDS_PS1}'\n"

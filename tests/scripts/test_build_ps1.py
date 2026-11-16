@@ -712,7 +712,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
                 env["RECTO_SCCACHE_NO_DAEMON"] = "1"
-                # The fake recto-tests is a PowerShell alias, which only the single-process run can call.
+                # These cases skip the tests or stop before them; a fixed count keeps the test plan off this host's memory.
                 env["RECTO_TEST_SHARDS"] = "1"
                 env.pop("RECTO_USE_SCCACHE", None)
                 if jobs_env is None:
@@ -887,31 +887,50 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 encoding="utf-8",
             )
 
-            fake_tests_ps1 = base / "fake_tests.ps1"
-            fake_tests_ps1.write_text(
-                "$xmlPath = $null\n"
-                "foreach ($a in $args) {\n"
-                "    if ($a -like '--gtest_output=xml:*') { $xmlPath = $a.Substring('--gtest_output=xml:'.Length) }\n"
-                "}\n"
-                "$mode = $env:FAKE_TEST_XML_MODE\n"
-                "if ($mode -eq 'empty' -and $xmlPath) {\n"
-                "    [System.IO.File]::WriteAllBytes($xmlPath, @())\n"
-                "} elseif ($mode -eq 'malformed' -and $xmlPath) {\n"
-                "    Set-Content -LiteralPath $xmlPath -Value '<broken' -Encoding UTF8\n"
-                "} elseif ($mode -ne 'missing' -and $xmlPath) {\n"
-                "    $parts = $mode -split ':', 2\n"
-                "    $caseName = $parts[0]\n"
-                "    $caseTime = $parts[1]\n"
-                "    $xml = \"<?xml version=`\"1.0`\" encoding=`\"UTF-8`\"?><testsuites tests=`\"1`\" failures=`\"0`\" disabled=`\"0`\" errors=`\"0`\" time=`\"$caseTime`\"><testsuite name=`\"Suite`\" tests=`\"1`\" failures=`\"0`\" disabled=`\"0`\" errors=`\"0`\" time=`\"$caseTime`\"><testcase name=`\"$caseName`\" status=`\"run`\" result=`\"completed`\" time=`\"$caseTime`\" classname=`\"Suite`\" /></testsuite></testsuites>\"\n"
-                "    Set-Content -LiteralPath $xmlPath -Value $xml -Encoding UTF8\n"
-                "}\n"
-                "$global:LASTEXITCODE = [int]$env:FAKE_TEST_EXIT\n",
+            # A real executable: build.ps1 starts the test binary with CreateProcessW inside its job object
+            # (build/test-shards.ps1, D00 T04 section 11), which a PowerShell alias cannot stand in for.
+            csc = _csc_path()
+            self.assertIsNotNone(csc, "csc.exe required to compile the fake recto-tests")
+            fake_tests_cs = base / "fake_tests.cs"
+            fake_tests_cs.write_text(
+                "using System; using System.IO; using System.Text;\n"
+                "class T {\n"
+                "    static int Main(string[] args) {\n"
+                "        string xml = null;\n"
+                "        foreach (string a in args) if (a.StartsWith(\"--gtest_output=xml:\")) xml = a.Substring(\"--gtest_output=xml:\".Length);\n"
+                "        string mode = Environment.GetEnvironmentVariable(\"FAKE_TEST_XML_MODE\") ?? \"\";\n"
+                "        if (xml != null) {\n"
+                "            if (mode == \"empty\") File.WriteAllBytes(xml, new byte[0]);\n"
+                "            else if (mode == \"malformed\") File.WriteAllText(xml, \"<broken\");\n"
+                "            else if (mode != \"missing\") {\n"
+                "                string[] parts = mode.Split(new char[] { ':' }, 2);\n"
+                "                string n = parts[0], s = parts.Length > 1 ? parts[1] : \"0\";\n"
+                "                File.WriteAllText(xml, \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><testsuites tests=\\\"1\\\" failures=\\\"0\\\" disabled=\\\"0\\\" errors=\\\"0\\\" time=\\\"\" + s + \"\\\"><testsuite name=\\\"Suite\\\" tests=\\\"1\\\" failures=\\\"0\\\" disabled=\\\"0\\\" errors=\\\"0\\\" time=\\\"\" + s + \"\\\"><testcase name=\\\"\" + n + \"\\\" status=\\\"run\\\" result=\\\"completed\\\" time=\\\"\" + s + \"\\\" classname=\\\"Suite\\\" /></testsuite></testsuites>\", new UTF8Encoding(false));\n"
+                "            }\n"
+                "        }\n"
+                "        string code = Environment.GetEnvironmentVariable(\"FAKE_TEST_EXIT\");\n"
+                "        return string.IsNullOrEmpty(code) ? 0 : int.Parse(code);\n"
+                "    }\n"
+                "}\n",
                 encoding="utf-8",
             )
 
             normal_exe = ws / "build" / "bin" / "x64" / "Debug" / "recto-tests" / "recto-tests.exe"
             asan_exe = ws / "build" / "bin-asan" / "x64" / "Debug" / "recto-tests" / "recto-tests.exe"
-
+            for exe in (normal_exe, asan_exe):
+                exe.parent.mkdir(parents=True)
+                built = _run_managed([str(csc), "/nologo", "/target:exe", f"/out:{exe}", str(fake_tests_cs)],
+                                     cwd=base, env=os.environ.copy(), timeout=60)
+                self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+            # The ASan build stages the runtime its test binary imports, as dumpbin reports it.
+            dumpbin_cs = base / "dumpbin.cs"
+            dumpbin_cs.write_text(
+                'class D { static int Main() { System.Console.WriteLine("    clang_rt.asan_dynamic-x86_64.dll"); return 0; } }\n',
+                encoding="utf-8",
+            )
+            built = _run_managed([str(csc), "/nologo", "/target:exe", f"/out:{asan_dir / 'dumpbin.exe'}", str(dumpbin_cs)],
+                                 cwd=base, env=os.environ.copy(), timeout=60)
+            self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
             def run_case(ps_args: str, xml_mode: str, exit_code: int) -> tuple[int, str]:
                 for xml_file in (ws / "build").glob("test-results-*.xml"):
                     xml_file.unlink()
@@ -920,15 +939,13 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
                 env["RECTO_SCCACHE_NO_DAEMON"] = "1"
-                # The fake recto-tests is a PowerShell alias, which only the single-process run can call.
+                # One process: these cases are about the single run's report and budget handling.
                 env["RECTO_TEST_SHARDS"] = "1"
                 env["FAKE_TEST_XML_MODE"] = xml_mode
                 env["FAKE_TEST_EXIT"] = str(exit_code)
                 cmd = (
                     f"Set-Alias -Name '{vs_installer / 'vswhere.exe'}' -Value '{vswhere_ps1}' -Scope Global\n"
                     f"Set-Alias -Name '{msbuild_dir / 'MSBuild.exe'}' -Value '{msbuild_ps1}' -Scope Global\n"
-                    f"Set-Alias -Name '{normal_exe}' -Value '{fake_tests_ps1}' -Scope Global\n"
-                    f"Set-Alias -Name '{asan_exe}' -Value '{fake_tests_ps1}' -Scope Global\n"
                     "function global:Get-Counter { [pscustomobject]@{ CounterSamples = @([pscustomobject]@{ CookedValue = 9500 }) } }\n"
                     "function global:Get-CimInstance { [pscustomobject]@{ FreePhysicalMemory = 9728000 } }\n"
                     f"& '{base / 'alias-caller' / '..' / 'repo' / 'build' / 'build.ps1'}' {ps_args}\n"

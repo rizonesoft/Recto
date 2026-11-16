@@ -130,6 +130,27 @@ namespace Recto.TestShards {
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern uint ResumeThread(IntPtr thread);
         [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr GetStdHandle(int which);
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetCurrentProcess();
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
+        const uint DUPLICATE_SAME_ACCESS = 0x2;
+
+        // An inheritable copy of this process's standard output or error (-11, -12), or of NUL when it has none, so a
+        // run without a log file writes where build.ps1 writes.
+        static IntPtr InheritableStd(int which, ref SECURITY_ATTRIBUTES inherit) {
+            IntPtr std = GetStdHandle(which);
+            IntPtr copy;
+            if (std != IntPtr.Zero && std != INVALID_HANDLE_VALUE &&
+                DuplicateHandle(GetCurrentProcess(), std, GetCurrentProcess(), out copy, 0, true, DUPLICATE_SAME_ACCESS)) {
+                return copy;
+            }
+            IntPtr nul = CreateFileW("NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, ref inherit, OPEN_EXISTING, 0, IntPtr.Zero);
+            if (nul == INVALID_HANDLE_VALUE) throw new Win32Exception(Marshal.GetLastWin32Error(), "cannot open NUL");
+            return nul;
+        }
+        [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool TerminateProcess(IntPtr process, uint exitCode);
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
@@ -189,28 +210,44 @@ namespace Recto.TestShards {
             return block.ToString();
         }
 
-        // Starts `exe` suspended, with standard output and error written to `logPath` (and no other handle
-        // inherited), assigns it to `job`, and only then lets it run.
+        // Starts `exe` suspended, with standard output and error written to `logPath` (or, when it is null or empty, to this
+        // process's own standard output and error) and no other handle inherited, assigns it to `job`, and only then
+        // lets it run.
         public static Shard Start(IntPtr job, string name, string exe, string[] arguments, string workingDirectory, string logPath, string[] environment) {
             StringBuilder commandLine = new StringBuilder(Quote(exe));
             if (arguments != null) foreach (string argument in arguments) commandLine.Append(' ').Append(Quote(argument));
             SECURITY_ATTRIBUTES inherit = new SECURITY_ATTRIBUTES();
             inherit.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
             inherit.bInheritHandle = 1;
-            IntPtr log = CreateFileW(logPath, GENERIC_WRITE, FILE_SHARE_READ, ref inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
-            if (log == INVALID_HANDLE_VALUE) throw new Win32Exception(Marshal.GetLastWin32Error(), "cannot create " + logPath);
+            IntPtr log;
+            IntPtr errors = IntPtr.Zero;
+            if (!string.IsNullOrEmpty(logPath)) { // PowerShell passes $null to a string parameter as ""
+                log = CreateFileW(logPath, GENERIC_WRITE, FILE_SHARE_READ, ref inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, IntPtr.Zero);
+                if (log == INVALID_HANDLE_VALUE) throw new Win32Exception(Marshal.GetLastWin32Error(), "cannot create " + logPath);
+            } else {
+                log = InheritableStd(-11, ref inherit);
+                try {
+                    errors = InheritableStd(-12, ref inherit);
+                } catch {
+                    CloseHandle(log);
+                    throw;
+                }
+            }
             IntPtr input = CreateFileW("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, ref inherit, OPEN_EXISTING, 0, IntPtr.Zero);
             if (input == INVALID_HANDLE_VALUE) {
                 int error = Marshal.GetLastWin32Error();
                 CloseHandle(log);
+                if (errors != IntPtr.Zero) CloseHandle(errors);
                 throw new Win32Exception(error, "cannot open NUL");
             }
+            int handleCount = errors != IntPtr.Zero ? 3 : 2;
             IntPtr listSize = IntPtr.Zero;
             IntPtr list = IntPtr.Zero;
-            IntPtr handles = Marshal.AllocHGlobal(IntPtr.Size * 2);
+            IntPtr handles = Marshal.AllocHGlobal(IntPtr.Size * 3);
             try {
                 Marshal.WriteIntPtr(handles, 0, log);
                 Marshal.WriteIntPtr(handles, IntPtr.Size, input);
+                if (errors != IntPtr.Zero) Marshal.WriteIntPtr(handles, IntPtr.Size * 2, errors);
                 InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref listSize);
                 list = Marshal.AllocHGlobal(listSize);
                 if (!InitializeProcThreadAttributeList(list, 1, 0, ref listSize)) {
@@ -219,7 +256,7 @@ namespace Recto.TestShards {
                     list = IntPtr.Zero;
                     throw new Win32Exception(error, "InitializeProcThreadAttributeList failed");
                 }
-                if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, (IntPtr)(IntPtr.Size * 2), IntPtr.Zero, IntPtr.Zero)) {
+                if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, (IntPtr)(IntPtr.Size * handleCount), IntPtr.Zero, IntPtr.Zero)) {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute(HANDLE_LIST) failed");
                 }
                 STARTUPINFOEX startup = new STARTUPINFOEX();
@@ -227,7 +264,7 @@ namespace Recto.TestShards {
                 startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
                 startup.StartupInfo.hStdInput = input;
                 startup.StartupInfo.hStdOutput = log;
-                startup.StartupInfo.hStdError = log;
+                startup.StartupInfo.hStdError = errors != IntPtr.Zero ? errors : log;
                 startup.lpAttributeList = list;
                 PROCESS_INFORMATION info;
                 uint flags = CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
@@ -258,6 +295,7 @@ namespace Recto.TestShards {
                 if (list != IntPtr.Zero) { DeleteProcThreadAttributeList(list); Marshal.FreeHGlobal(list); }
                 Marshal.FreeHGlobal(handles);
                 CloseHandle(log);
+                if (errors != IntPtr.Zero) CloseHandle(errors);
                 CloseHandle(input);
             }
         }
@@ -548,5 +586,29 @@ function Invoke-RectoTestShards {
     } finally {
         # Closing the job's last handle kills whatever is still in it: nothing a test started outlives the run.
         [Recto.TestShards.Job]::Close($job, [Recto.TestShards.Shard[]]$all)
+    }
+}
+
+# The single-process run (one shard, or a -TestFilter run): one process over the whole selection, its output on this
+# console as it runs, inside the same kill-on-close job and under the same deadline as a sharded run. Returns the exit
+# code; throws when it cannot start or passes the deadline, with everything it started killed.
+function Invoke-RectoTestSingle {
+    param(
+        [string]$Exe,
+        [string[]]$PrefixArguments = @(),
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory,
+        [double]$TimeoutMinutes = $script:RectoTestTimeoutDefaultMinutes
+    )
+    $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
+    $job = [Recto.TestShards.Job]::Create()
+    $started = $null
+    try {
+        $started = Start-RectoTestProcessSet -Job $job -Exe $Exe -PrefixArguments $PrefixArguments -WorkingDirectory $WorkingDirectory -Specs @(
+            [pscustomobject]@{ Name = 'recto-tests'; Arguments = $Arguments; LogPath = $null; Environment = @() })
+        Wait-RectoTestProcessSet -Job $job -Shards $started -DeadlineUtc $deadline -TimeoutMinutes $TimeoutMinutes
+        return $started[0].ExitCode
+    } finally {
+        [Recto.TestShards.Job]::Close($job, [Recto.TestShards.Shard[]]$started)
     }
 }
