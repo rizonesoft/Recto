@@ -268,7 +268,7 @@ class DirectPresets(unittest.TestCase):
         env_sized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=20000,
                                        extra={"RECTO_CMAKE_POOL_COMPILE": "5", "RECTO_CMAKE_POOL_LINK": "2"})
         self.assertEqual(env_sized.returncode, 0, env_sized.said[-2000:])
-        self.assertIn("compile=5, link=2", env_sized.said)
+        self.assertIn("compile=5, link=2 (sized by build.ps1)", env_sized.said)
         resized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=6200)
         self.assertEqual(resized.returncode, 0, resized.said[-2000:])
         self.assertIn(f"Recto pools: free 6200 MB, {cores} cores: compile={min(cores, (6200 - 2048 - 1024) // 1536)}, link=1",
