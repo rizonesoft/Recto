@@ -3,6 +3,8 @@
     python .conclave/automations/run.py NAME
     python .conclave/automations/run.py --check       (installers) print the folder, or refuse tasks.json
     python .conclave/automations/run.py --units DIR   (install.sh) write a systemd user unit pair per task
+    python .conclave/automations/run.py --check-installed [--hook | --agy-hook]
+                                                      is every task registered for this clone, and able to start?
 
 Windows Task Scheduler starts this through `pythonw.exe` (install.ps1 registers every task in tasks.json with it),
 and on Linux and WSL a systemd user timer starts it (install.sh). It runs the task's command from the repository
@@ -12,6 +14,13 @@ cannot start (126) sends the failure email through alert.py. Every process it st
 the tasks, carries CREATE_NO_WINDOW on Windows, so a scheduled run never opens a console on the desktop. This
 wrapper is the one place a failure is reported on both schedulers. Its own exit is the command's (124 on a timeout,
 or 3 when the alert could not be sent), so Task Scheduler's Last Run Result and a failed systemd unit show it too.
+
+`--check-installed` says whether the scheduler would start this clone's tasks at all, which no failure email can:
+when the clone moves, every start fails before this file runs (Task Scheduler's `0x8007010B`). It reads what the
+scheduler holds (Task Scheduler through `install.ps1 -Dump`, systemd from the user unit folder and `systemctl
+--user`) and names each task that is `missing`, `stale` (registered for a clone whose tasks.json is gone),
+`other-clone` (another checkout that still exists), `disabled`, or `failing` (its last start failed to launch),
+then the command that repairs it. Exit 0 all well, 1 a task needs the repair, 3 the scheduler could not be read.
 """
 
 from __future__ import annotations
@@ -242,7 +251,221 @@ def installable_folder(root: str = REPO) -> str:
     return manifest["folder"]
 
 
-def main(argv: list[str], root: str = REPO, popen=subprocess.Popen, alerter=None, killer=_kill_tree) -> int:
+# Task Scheduler's own status codes (SCHED_S_TASK_READY to SCHED_S_TASK_NOT_SCHEDULED): the task is fine.
+SCHEDULER_STATUS = range(0x41300, 0x41307)
+
+
+def launch_failed(result) -> bool:
+    """Whether a Task Scheduler `LastTaskResult` says the task could not be started at all: a Win32 HRESULT
+    (0x8007xxxx, as 0x8007010B for a working directory that is gone, 0x80070002 for a missing program, 0x800710E0
+    for a start the operator refused). Zero, the scheduler's own status codes and the small exit codes of this
+    runner (which emails those itself) are not."""
+    if not isinstance(result, int) or isinstance(result, bool):
+        return False
+    value = result & 0xFFFFFFFF
+    return value not in SCHEDULER_STATUS and (value & 0xFFFF0000) == 0x80070000
+
+
+def _same(a, b) -> bool:
+    return bool(a) and bool(b) and os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def expected_executable(root: str, platform: str) -> str | None:
+    """The interpreter an install registers on Windows: the pinned `.tools` pythonw.exe (from RECTO_TOOLS_DIR when
+    set), when this clone has the tool bootstrap or names a tools folder; None when any existing pythonw.exe will do
+    (a kit without pinned tools, or systemd, which registers the python that ran install.sh)."""
+    if platform != "windows":
+        return None
+    tools = os.environ.get("RECTO_TOOLS_DIR", "").strip()
+    if not tools and not os.path.isfile(os.path.join(root, "build", "bootstrap-tools.ps1")):
+        return None
+    folder = os.path.abspath(tools) if tools else os.path.join(root, ".tools")
+    return os.path.join(folder, "cpython", "current", "pythonw.exe")
+
+
+def registration_report(tasks, records, root: str, platform: str) -> list[tuple[str, str, str]]:
+    """(state, task, detail) for each task in tasks.json, from the scheduler's records given as data. A record is
+    {name, script, workdir, executable, enabled, last_result (Windows), timer: {present, enabled, active} (systemd)}."""
+    by_name = {r.get("name"): r for r in records if isinstance(r, dict)}
+    expected_exe = expected_executable(root, platform)
+    report = []
+    for name in tasks:
+        record = by_name.get(name)
+        if record is None:
+            report.append(("missing", name, "not registered"))
+            continue
+        script = record.get("script") or ""
+        their_root = os.path.normpath(os.path.join(os.path.dirname(script), "..", "..")) if script else ""
+        if not _same(their_root, root) or not _same(record.get("workdir"), root):
+            where = their_root or record.get("workdir") or "nowhere"
+            alive = bool(their_root) and os.path.isfile(os.path.join(their_root, ".conclave", "automations",
+                                                                      "tasks.json"))
+            report.append(("other-clone" if alive else "stale", name, f"registered for {where}, this clone is {root}"))
+            continue
+        exe = record.get("executable") or ""
+        if (expected_exe and not _same(exe, expected_exe)) or not (exe and os.path.isfile(exe)):
+            report.append(("stale", name, f"runs {exe or 'nothing'}, expected {expected_exe or 'an installed python'}"))
+            continue
+        timer = record.get("timer")
+        if record.get("enabled") is False:
+            report.append(("disabled", name, "the task is disabled"))
+            continue
+        if isinstance(timer, dict) and not (timer.get("present") and timer.get("enabled") and timer.get("active")):
+            missing = [k for k in ("present", "enabled", "active") if not timer.get(k)]
+            report.append(("disabled", name, f"its timer is not {', '.join(missing)}"))
+            continue
+        if launch_failed(record.get("last_result")):
+            report.append(("failing", name, f"last start failed: {record['last_result'] & 0xFFFFFFFF:#010x}"))
+            continue
+        report.append(("ok", name, ""))
+    return report
+
+
+class SchedulerUnreadable(Exception):
+    """The scheduler could not be read: neither healthy nor missing (exit 3)."""
+
+
+def _platform() -> str:
+    return "windows" if os.name == "nt" else "systemd"
+
+
+def repair_command(platform: str) -> str:
+    return ("pwsh .conclave/automations/install.ps1" if platform == "windows"
+            else "bash .conclave/automations/install.sh")
+
+
+def read_task_scheduler(root: str, runner=subprocess.run) -> list[dict]:
+    """The project folder's tasks as records, from `install.ps1 -Dump` (PowerShell 7)."""
+    pwsh = _which("pwsh")
+    if pwsh is None:
+        raise SchedulerUnreadable("pwsh (PowerShell 7) is not installed, so Task Scheduler cannot be read")
+    try:
+        done = runner([pwsh, "-NoProfile", "-NonInteractive", "-File", os.path.join(HERE, "install.ps1"), "-Dump"],
+                      capture_output=True, text=True, timeout=15, cwd=root, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SchedulerUnreadable(f"Task Scheduler could not be read: {error}") from None
+    if done.returncode != 0:
+        reason = (done.stderr or done.stdout or "").strip().splitlines()
+        raise SchedulerUnreadable(f"Task Scheduler could not be read: {reason[-1] if reason else done.returncode}")
+    try:
+        records = json.loads(done.stdout or "[]")
+    except ValueError:
+        raise SchedulerUnreadable("install.ps1 -Dump did not return JSON") from None
+    if isinstance(records, dict):
+        records = [records]
+    if not isinstance(records, list):
+        raise SchedulerUnreadable("install.ps1 -Dump did not return a list")
+    return records
+
+
+def _which(name: str) -> str | None:
+    import shutil
+    return shutil.which(name, path=os.environ.get("PATH", ""))
+
+
+def _unquote_exec(line: str) -> list[str]:
+    """The arguments of an ExecStart= line as systemd_units writes them (each quoted, specifiers doubled)."""
+    out, i = [], 0
+    while i < len(line):
+        if line[i] == '"':
+            j, buf = i + 1, []
+            while j < len(line) and line[j] != '"':
+                if line[j] == "\\" and j + 1 < len(line):
+                    j += 1
+                buf.append(line[j])
+                j += 1
+            out.append("".join(buf).replace("%%", "%"))
+            i = j + 1
+        elif line[i].isspace():
+            i += 1
+        else:
+            j = i
+            while j < len(line) and not line[j].isspace():
+                j += 1
+            out.append(line[i:j].replace("%%", "%"))
+            i = j
+    return out
+
+
+def unit_dir() -> str:
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"),
+                        "systemd", "user")
+
+
+def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> list[dict]:
+    """Each task's records from the user unit folder and `systemctl --user` (is-enabled, is-active)."""
+    folder = folder or unit_dir()
+    records = []
+    for name in tasks:
+        service = os.path.join(folder, f"{name}.service")
+        if not os.path.isfile(service):
+            continue
+        with open(service, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        values = {k: v for k, _, v in (line.partition("=") for line in lines if "=" in line and not line.startswith("#"))}
+        args = _unquote_exec(values.get("ExecStart", ""))
+        timer = {"present": os.path.isfile(os.path.join(folder, f"{name}.timer"))}
+        for verb, key, good in (("is-enabled", "enabled", "enabled"), ("is-active", "active", "active")):
+            try:
+                done = runner(["systemctl", "--user", verb, f"{name}.timer"], capture_output=True, text=True,
+                              timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise SchedulerUnreadable(f"systemctl --user could not be run: {error}") from None
+            said = (done.stdout or "").strip()
+            if not said:  # an answer of disabled or inactive is printed; silence is a bus that cannot be reached
+                reason = (done.stderr or "").strip().splitlines()
+                raise SchedulerUnreadable(f"systemctl --user {verb} answered nothing: "
+                                          f"{reason[-1] if reason else done.returncode}")
+            timer[key] = said == good
+        records.append({"name": name, "script": args[1] if len(args) > 1 else "",
+                        "workdir": values.get("WorkingDirectory", "").replace("%%", "%"),
+                        "executable": args[0] if args else "", "timer": timer})
+    return records
+
+
+def check_installed(root: str = REPO, reader=None) -> tuple[int, list[str]]:
+    """(exit code, lines) for --check-installed."""
+    platform = _platform()
+    repair = f"next: {repair_command(platform)}"
+    try:
+        manifest = load_manifest(os.path.join(root, ".conclave", "automations", "tasks.json"))
+    except (TaskError, OSError, ValueError) as error:
+        return 3, [f"unknown: tasks.json cannot be read: {error}", repair]
+    if not manifest["tasks"]:
+        return 0, ["automations: tasks.json lists no tasks"]
+    # Tests only: CONCLAVE_SCHEDULER_RECORDS names a JSON file of records that stands in for the scheduler, as
+    # RECTO_ASSUME_FREE_MB stands in for the memory reading (PowerShell 7 puts its own folder first on PATH, so a fake
+    # pwsh cannot reach this reader through a launcher that runs in PowerShell).
+    assumed = os.environ.get("CONCLAVE_SCHEDULER_RECORDS", "").strip()
+    try:
+        if assumed and not reader:
+            try:
+                with open(assumed, encoding="utf-8") as fh:
+                    records = json.load(fh)
+            except (OSError, ValueError) as error:
+                raise SchedulerUnreadable(f"CONCLAVE_SCHEDULER_RECORDS cannot be read: {error}") from None
+        else:
+            records = (reader(manifest["tasks"]) if reader else
+                       read_task_scheduler(root) if platform == "windows" else read_systemd(manifest["tasks"]))
+    except SchedulerUnreadable as error:
+        return 3, [f"unknown: {error}", repair]
+    report = registration_report(manifest["tasks"], records, root, platform)
+    bad = [f"{state}: {name}: {detail}" for state, name, detail in report if state != "ok"]
+    if bad:
+        return 1, bad + [repair]
+    return 0, [f"automations: {len(report)} task(s) registered for this clone"]
+
+
+def main(argv: list[str], root: str = REPO, popen=subprocess.Popen, alerter=None, killer=_kill_tree,
+         reader=None) -> int:
+    if argv and argv[0] == "--check-installed" and len(argv) <= 2 and set(argv[1:]) <= {"--hook", "--agy-hook"}:
+        code, lines = check_installed(root, reader)
+        if "--agy-hook" in argv:  # Antigravity's SessionStart contract, as scripts/ci_status.py --agy-hook prints it
+            print(json.dumps({"injectSteps": [{"systemMessage": {"systemMessage": "\n".join(lines)}}]}), flush=True)
+        else:
+            print("\n".join(lines), flush=True)
+        # A session-start hook only informs: its lines carry the state, and a failing hook would block the session.
+        return 0 if ("--hook" in argv or "--agy-hook" in argv) else code
     if argv == ["--check"] or (len(argv) == 2 and argv[0] == "--units"):
         try:
             print(installable_folder(root) if argv[0] == "--check" else write_units(argv[1], root))

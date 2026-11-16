@@ -5,6 +5,11 @@
         "type": "command",
         "command": "git -c alias.py=!scripts/run-python.sh py --from-git-prefix ../scripts/ci_status.py --gate --agy-hook",
         "timeout": 60
+      },
+      {
+        "type": "command",
+        "command": "git -c alias.py=!scripts/run-python.sh py --from-git-prefix ../.conclave/automations/run.py --check-installed --agy-hook",
+        "timeout": 20
       }
     ],
     "PreToolUse": [

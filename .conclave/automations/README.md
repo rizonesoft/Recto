@@ -59,6 +59,8 @@ A notice email ("is available") is recorded as the git ref `refs/recto-notice/<k
 
 ```powershell
 pwsh .conclave/automations/install.ps1              # idempotent; re-run after editing tasks.json, and after moving or renaming the clone
+pwsh .conclave/automations/install.ps1 -Check       # are the tasks this clone's and able to start? changes nothing
+bash .conclave/automations/install.sh --check       # the same on Linux and WSL (systemd user timers)
 pwsh .conclave/automations/install.ps1 -Uninstall   # remove every \Recto\ task
 Get-ScheduledTask -TaskPath '\Recto\' | Get-ScheduledTaskInfo | Format-Table TaskName, NextRunTime, LastRunTime, LastTaskResult
 Start-ScheduledTask -TaskPath '\Recto\' -TaskName <name>   # run one now
@@ -69,6 +71,8 @@ build\python.cmd -m unittest tests.scripts.test_pin_automations
 ```
 
 The installer reads `tasks.json` and registers every task it lists; a task under `\Recto\` that the file no longer lists is removed.
+
+A clone that moves leaves its tasks behind: Task Scheduler still starts the old folder, every task shows `LastTaskResult` `0x8007010B` (the directory name is invalid), and no failure email can say so, because the runner that sends it never starts. The check (`run.py --check-installed`, which `-Check` and `--check` run) names each task that is `missing`, `stale` (registered for a clone that moved away, or an interpreter that is gone), `other-clone` (another checkout that still exists), `disabled` (a disabled task, or a timer that is missing, disabled or inactive) or `failing` (its last start did not launch), then the repair: `pwsh .conclave/automations/install.ps1` on Windows, `bash .conclave/automations/install.sh` on Linux and WSL, where the installer adopts a moved clone's own units and still refuses another live checkout's. Exit 0 all well, 1 a task needs the repair, 3 the scheduler could not be read. Every Claude Code and Antigravity session prints the one line at its start, and so does `scripts/start-unattended-run.ps1`, as a warning when it is not all well.
 
 Installed 2026-10-21 on this PC: `recto-python-pin` and `recto-visual-studio`, next run Monday 2026-10-26. A first run of `recto-visual-studio` exited 0 (Visual Studio 2026 already at 18.11.1, nothing sent). A first run of `recto-python-pin` exited 0 and sent the notice "Recto: a newer Python is available" from "Recto automations <website@rizonetech.com>" to `rizonetech@gmail.com`, received 2026-10-20 23:10:08 UTC (Message-Id `<E1xJIy8-FnQW0hPwWQi-OrwO@message-id.smtpcorp.com>`, SPF, DKIM and DMARC pass).
 

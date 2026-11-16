@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 AUTO = REPO / ".conclave" / "automations"
@@ -459,8 +460,11 @@ class InstallSh(unittest.TestCase):
     def test_a_unit_this_repository_did_not_write_is_never_replaced(self):
         units = self.config / "systemd" / "user"
         units.mkdir(parents=True)
+        live = Path(self._tmp.name) / "live-checkout" / ".conclave" / "automations"
+        live.mkdir(parents=True)
+        (live / "tasks.json").write_text("{}", encoding="utf-8")
         for label, text in (("unmarked", "[Unit]\nDescription=hand-written\n"),
-                            ("another checkout", run.MARKER + "/elsewhere/.conclave/automations/tasks.json\n[Unit]\n")):
+                            ("another live checkout", run.MARKER + str(live / "tasks.json") + "\n[Unit]\n")):
             with self.subTest(label):
                 (units / "demo-one.service").write_text(text, encoding="utf-8")
                 result = self.install(tasks=[fixture_task("demo-one"), fixture_task("demo-two")])
@@ -472,10 +476,321 @@ class InstallSh(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual((units / "demo-one.service").read_text(encoding="utf-8"), text)
 
+    def test_a_moved_clone_s_own_units_are_adopted(self):
+        units = self.config / "systemd" / "user"
+        units.mkdir(parents=True)
+        moved = run.MARKER + "/home/op/old-place/.conclave/automations/tasks.json"
+        (units / "demo-one.service").write_text(moved + "\n[Unit]\nDescription=old\n", encoding="utf-8")
+        (units / "demo-one.timer").write_text(moved + "\n[Timer]\n", encoding="utf-8")
+        result = self.install(tasks=[fixture_task("demo-one")])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sorted(p.name for p in units.iterdir()), ["demo-one.service", "demo-one.timer"])
+        for name in ("demo-one.service", "demo-one.timer"):
+            self.assertEqual((units / name).read_text(encoding="utf-8").splitlines()[0],
+                             run.MARKER + str(self.root / ".conclave" / "automations" / "tasks.json"))
+
+    def test_check_reads_the_units_and_the_timers_through_systemctl(self):
+        result = self.install(tasks=[fixture_task("demo-one")])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (self.bin / "systemctl").write_text(
+            f'#!/bin/sh\necho "$*" >> "{self.calls}"\n'
+            'case "$2" in is-enabled) echo enabled ;; is-active) echo active ;; esac\n', encoding="utf-8")
+        env = {**os.environ, "XDG_CONFIG_HOME": str(self.config), "PATH": f"{self.bin}:{os.environ['PATH']}"}
+        check = subprocess.run(["bash", str(self.root / ".conclave/automations/install.sh"), "--check"], env=env,
+                               capture_output=True, text=True, timeout=60)
+        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+        self.assertIn("automations: 1 task(s) registered for this clone", check.stdout)
+
     def test_a_refused_manifest_installs_nothing(self):
         result = self.install(tasks=[fixture_task("other-name")])
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.config / "systemd" / "user").exists())
+
+
+
+def demo_root(base, folder="\\Demo\\", names=("demo-one", "demo-two")):
+    """A clone whose tasks.json lists `names` in `folder`, with the automation kit copied in."""
+    auto = Path(base) / ".conclave" / "automations"
+    auto.mkdir(parents=True)
+    for name in ("run.py", "alert.py", "install.ps1", "install.sh"):
+        shutil.copy(AUTO / name, auto / name)
+    (auto / "tasks.json").write_text(json.dumps({"schema_version": 1, "folder": folder,
+                                                 "tasks": [fixture_task(n) for n in names]}), encoding="utf-8")
+    return str(Path(base).resolve())
+
+
+class Registrations(unittest.TestCase):
+    """registration_report and --check-installed, from the scheduler's records as data (D00 T04 section 14)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.root = demo_root(base / "clone")
+        self.other = demo_root(base / "other-clone")
+        self.tools = base / "tools"
+        (self.tools / "cpython" / "current").mkdir(parents=True)
+        self.pythonw = str(self.tools / "cpython" / "current" / "pythonw.exe")
+        Path(self.pythonw).write_text("", encoding="utf-8")
+        self.old_python = str(base / "Python314" / "pythonw.exe")  # an interpreter that is no longer there
+        self.env = mock_env(RECTO_TOOLS_DIR=str(self.tools))
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self._tmp.cleanup()
+
+    def record(self, name, root=None, **overrides):
+        root = root or self.root
+        rec = {"name": name, "script": os.path.join(root, ".conclave", "automations", "run.py"), "workdir": root,
+               "executable": self.pythonw, "enabled": True, "last_result": 0}
+        rec.update(overrides)
+        return rec
+
+    def states(self, records, platform="windows"):
+        tasks = {"demo-one": {}, "demo-two": {}}
+        return {name: state for state, name, _ in run.registration_report(tasks, records, self.root, platform)}
+
+    def test_each_state_from_data(self):
+        gone = os.path.join(self._tmp.name, "moved-away")
+        cases = {
+            "ok": self.record("demo-one"),
+            "stale": self.record("demo-one", root=gone),
+            "other-clone": self.record("demo-one", root=self.other),
+            "disabled": self.record("demo-one", enabled=False),
+            "failing": self.record("demo-one", last_result=0x8007010B),
+        }
+        for want, rec in cases.items():
+            with self.subTest(want):
+                self.assertEqual(self.states([rec, self.record("demo-two")])["demo-one"], want)
+        self.assertEqual(self.states([self.record("demo-two")])["demo-one"], "missing")
+
+    def test_an_obsolete_executable_with_correct_paths_and_a_good_result_is_stale(self):
+        self.assertEqual(self.states([self.record("demo-one", executable=self.old_python),
+                                      self.record("demo-two")])["demo-one"], "stale")
+        # The pinned interpreter named through RECTO_TOOLS_DIR must also exist.
+        os.unlink(self.pythonw)
+        self.assertEqual(self.states([self.record("demo-one"), self.record("demo-two")])["demo-one"], "stale")
+
+    def test_scheduler_status_codes_and_the_runner_s_own_exits_are_ok(self):
+        for result in (0, 0x41300, 0x41301, 0x41303, 0x41306, 1, 3, 124):
+            with self.subTest(f"{result:#x}"):
+                self.assertEqual(self.states([self.record("demo-one", last_result=result),
+                                              self.record("demo-two")])["demo-one"], "ok")
+        for result in (0x8007010B, 0x80070002, 0x800710E0, -2147024629):  # the last is 0x8007010B signed
+            with self.subTest(f"{result:#x}"):
+                self.assertTrue(run.launch_failed(result))
+
+    def test_a_systemd_timer_that_is_missing_disabled_or_inactive_is_disabled(self):
+        for timer in ({"present": False, "enabled": False, "active": False},
+                      {"present": True, "enabled": False, "active": True},
+                      {"present": True, "enabled": True, "active": False}):
+            with self.subTest(str(timer)):
+                rec = self.record("demo-one", executable=sys.executable, timer=timer)
+                rec.pop("enabled")
+                rec.pop("last_result")
+                two = self.record("demo-two", executable=sys.executable,
+                                  timer={"present": True, "enabled": True, "active": True})
+                self.assertEqual(self.states([rec, two], platform="systemd")["demo-one"], "disabled")
+
+    def check(self, records=None, raises=None, *flags):
+        def reader(tasks):
+            if raises:
+                raise run.SchedulerUnreadable(raises)
+            return records
+        out = io.StringIO()
+        saved, sys.stdout = sys.stdout, out
+        try:
+            code = run.main(["--check-installed", *flags], root=self.root, reader=reader)
+        finally:
+            sys.stdout = saved
+        return code, out.getvalue()
+
+    def test_check_installed_says_each_line_and_exit(self):
+        good = [self.record("demo-one"), self.record("demo-two")]
+        with mock.patch.object(run, "_platform", return_value="windows"):
+            self.assertEqual(self.check(good), (0, "automations: 2 task(s) registered for this clone\n"))
+            code, said = self.check([self.record("demo-one", root=os.path.join(self._tmp.name, "gone"))])
+            self.assertEqual(code, 1)
+            self.assertIn("stale: demo-one: registered for ", said)
+            self.assertIn("missing: demo-two: not registered", said)
+            self.assertTrue(said.rstrip().endswith("next: pwsh .conclave/automations/install.ps1"))
+            code, said = self.check(raises="Access is denied")
+            self.assertEqual(code, 3)
+            self.assertEqual(said, "unknown: Access is denied\nnext: pwsh .conclave/automations/install.ps1\n")
+        with mock.patch.object(run, "_platform", return_value="systemd"):
+            code, said = self.check(raises="systemctl --user is-enabled answered nothing")
+            self.assertEqual(code, 3)
+            self.assertIn("next: bash .conclave/automations/install.sh", said)
+
+    def test_the_hook_modes_always_exit_0_and_agy_gets_inject_steps(self):
+        with mock.patch.object(run, "_platform", return_value="windows"):
+            code, said = self.check([], None, "--hook")
+            self.assertEqual(code, 0)
+            self.assertIn("missing: demo-one", said)
+            code, said = self.check(None, "Access is denied", "--agy-hook")
+            self.assertEqual(code, 0)
+            message = json.loads(said)["injectSteps"][0]["systemMessage"]["systemMessage"]
+            self.assertEqual(message, "unknown: Access is denied\nnext: pwsh .conclave/automations/install.ps1")
+
+
+def mock_env(**values):
+    return mock.patch.dict(os.environ, values)
+
+
+class SystemdReader(unittest.TestCase):
+    """read_systemd: the unit folder and `systemctl --user`, through a fake systemctl."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = demo_root(Path(self._tmp.name) / "clone")
+        self.units = Path(self._tmp.name) / "units"
+        self.units.mkdir()
+        manifest = run.load_manifest(os.path.join(self.root, ".conclave", "automations", "tasks.json"))
+        for name, text in run.systemd_units(manifest, self.root, sys.executable).items():
+            (self.units / name).write_text(text, encoding="utf-8")
+        self.tasks = manifest["tasks"]
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def systemctl(self, answers):
+        def fake(args, **_):
+            verb, unit = args[2], args[3]
+            said = answers.get((verb, unit), "enabled" if verb == "is-enabled" else "active")
+            return subprocess.CompletedProcess(args, 0 if said in ("enabled", "active") else 1, said + "\n", "")
+        return fake
+
+    def states(self, answers=None):
+        records = run.read_systemd(self.tasks, str(self.units), runner=self.systemctl(answers or {}))
+        return {n: s for s, n, _ in run.registration_report(self.tasks, records, self.root, "systemd")}
+
+    def test_healthy_units_are_ok_with_paths_read_back_from_the_unit(self):
+        records = run.read_systemd(self.tasks, str(self.units), runner=self.systemctl({}))
+        self.assertEqual(records[0]["script"], os.path.join(self.root, ".conclave", "automations", "run.py"))
+        self.assertEqual(records[0]["executable"], sys.executable)
+        self.assertEqual(self.states(), {"demo-one": "ok", "demo-two": "ok"})
+
+    def test_an_inactive_timer_a_missing_timer_and_a_moved_or_other_clone(self):
+        self.assertEqual(self.states({("is-active", "demo-one.timer"): "inactive"})["demo-one"], "disabled")
+        (self.units / "demo-two.timer").unlink()
+        self.assertEqual(self.states()["demo-two"], "disabled")
+        moved = os.path.join(self._tmp.name, "moved")
+        other = demo_root(Path(self._tmp.name) / "other")
+        for where, want in ((moved, "stale"), (other, "other-clone")):
+            with self.subTest(want):
+                manifest = run.load_manifest(os.path.join(self.root, ".conclave", "automations", "tasks.json"))
+                text = run.systemd_units(manifest, where, sys.executable)["demo-one.service"]
+                (self.units / "demo-one.service").write_text(text, encoding="utf-8")
+                self.assertEqual(self.states()["demo-one"], want)
+
+    def test_a_user_bus_that_cannot_be_reached_is_unknown(self):
+        def silent(args, **_):
+            return subprocess.CompletedProcess(args, 1, "", "Failed to connect to bus: No medium found\n")
+        with self.assertRaises(run.SchedulerUnreadable) as caught:
+            run.read_systemd(self.tasks, str(self.units), runner=silent)
+        self.assertIn("Failed to connect to bus", str(caught.exception))
+
+
+PWSH = shutil.which("pwsh")
+
+
+@unittest.skipUnless(os.name == "nt" and PWSH, "Task Scheduler and PowerShell 7 on Windows")
+class TaskSchedulerAdapter(unittest.TestCase):
+    """install.ps1 -Dump and -Check against this host's Task Scheduler, in a throwaway folder removed afterwards;
+    then the repair (install.ps1) read back, and both writers' session hooks run as their files spell them."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        stamp = f"{os.getpid()}{int(time.time()) % 100000}"
+        self.folder_name = f"RectoTest{stamp}"
+        self.prefix = self.folder_name.lower() + "-"
+        self.names = [self.prefix + "ok", self.prefix + "moved", self.prefix + "off", self.prefix + "absent"]
+        self.root = demo_root(Path(self._tmp.name) / "clone", folder=f"\\{self.folder_name}\\", names=self.names)
+        self.pythonw = str(REPO / ".tools" / "cpython" / "current" / "pythonw.exe")
+        self.addCleanup(self.remove_folder)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def ps(self, script, env=None):
+        return subprocess.run([str(PWSH), "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True,
+                              text=True, timeout=180, env=env, creationflags=0x08000000)
+
+    def remove_folder(self):
+        self.ps(f"Get-ScheduledTask -TaskPath '\\{self.folder_name}\\' -ErrorAction Ignore | "
+                "Unregister-ScheduledTask -Confirm:$false; "
+                "$s = New-Object -ComObject Schedule.Service; $s.Connect(); "
+                f"try {{ $s.GetFolder('\\').DeleteFolder('{self.folder_name}', 0) }} catch {{}}")
+
+    def register(self, name, root, enabled=True):
+        runner = os.path.join(root, ".conclave", "automations", "run.py")
+        disable = "" if enabled else f"; Disable-ScheduledTask -TaskPath '\\{self.folder_name}\\' -TaskName '{name}' | Out-Null"
+        done = self.ps(f"$a = New-ScheduledTaskAction -Execute '{self.pythonw}' -Argument '\"{runner}\" {name}' "
+                       f"-WorkingDirectory '{root}'; $t = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday -At 07:00; "
+                       f"Register-ScheduledTask -TaskPath '\\{self.folder_name}\\' -TaskName '{name}' -Action $a "
+                       f"-Trigger $t -Force | Out-Null{disable}")
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+    def check(self, env=None):
+        return subprocess.run([sys.executable, os.path.join(self.root, ".conclave", "automations", "run.py"),
+                               "--check-installed"], capture_output=True, text=True, timeout=120, env=env,
+                              creationflags=0x08000000)
+
+    def test_the_real_scheduler_read_back_then_repaired(self):
+        moved = os.path.join(self._tmp.name, "moved-away")
+        self.register(self.prefix + "ok", self.root)
+        self.register(self.prefix + "moved", moved)
+        self.register(self.prefix + "off", self.root, enabled=False)
+        env = {k: v for k, v in os.environ.items() if k != "RECTO_TOOLS_DIR"}
+        done = self.check(env)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        lines = done.stdout.splitlines()
+        self.assertIn(f"stale: {self.prefix}moved: registered for {moved}, this clone is {self.root}", lines)
+        self.assertIn(f"disabled: {self.prefix}off: the task is disabled", lines)
+        self.assertIn(f"missing: {self.prefix}absent: not registered", lines)
+        self.assertNotIn(f"{self.prefix}ok:", done.stdout)
+        self.assertEqual(lines[-1], "next: pwsh .conclave/automations/install.ps1")
+        self.assertEqual(len(lines), 4)  # the three tasks to repair and the next line
+
+        # Both writers' session hooks, run as their files spell them, show it and never fail.
+        self.run_hooks(env)
+
+        # The repair: install.ps1 over the stale, disabled and missing registrations, then the check again.
+        env_tools = {**env, "RECTO_TOOLS_DIR": str(REPO / ".tools")}
+        installed = self.ps(f"& '{os.path.join(self.root, '.conclave', 'automations', 'install.ps1')}'", env=env_tools)
+        self.assertEqual(installed.returncode, 0, installed.stdout + installed.stderr)
+        listed = self.ps(f"@(Get-ScheduledTask -TaskPath '\\{self.folder_name}\\').TaskName -join ','")
+        self.assertEqual(sorted(listed.stdout.strip().split(",")), sorted(self.names))
+        done = self.check(env_tools)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.stdout.strip(), f"automations: {len(self.names)} task(s) registered for this clone")
+
+    def run_hooks(self, env):
+        sys.path.insert(0, str(REPO / "scripts"))
+        import campaign_guard  # the Git Bash Claude Code runs hooks through
+        claude = json.loads((REPO / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        command = next(h["command"] for h in claude["hooks"]["SessionStart"][0]["hooks"]
+                       if "--check-installed" in h["command"])
+        done = subprocess.run([campaign_guard.git_bash(), "-c", command], capture_output=True, text=True, timeout=60,
+                              env={**env, "CLAUDE_PROJECT_DIR": self.root.replace("\\", "/")},
+                              creationflags=0x08000000)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f"stale: {self.prefix}moved:", done.stdout)
+        self.assertIn("next: pwsh .conclave/automations/install.ps1", done.stdout)
+        # Antigravity: the system shell from .agents/ in a git repository with scripts/run-python.sh.
+        scripts = Path(self.root) / "scripts"
+        scripts.mkdir()
+        shutil.copy(REPO / "scripts" / "run-python.sh", scripts / "run-python.sh")
+        (Path(self.root) / ".agents").mkdir()
+        subprocess.run(["git", "init", "-q", self.root], check=True, timeout=60, creationflags=0x08000000)
+        agy = json.loads((REPO / ".agents" / "hooks.json").read_text(encoding="utf-8"))
+        command = next(h["command"] for h in agy["recto-campaign"]["SessionStart"] if "--check-installed" in h["command"])
+        done = subprocess.run(command, shell=True, cwd=os.path.join(self.root, ".agents"), capture_output=True,
+                              text=True, timeout=60, env=env, creationflags=0x08000000)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        message = json.loads(done.stdout)["injectSteps"][0]["systemMessage"]["systemMessage"]
+        self.assertIn(f"stale: {self.prefix}moved:", message)
+        self.assertIn("next: pwsh .conclave/automations/install.ps1", message)
 
 
 if __name__ == "__main__":

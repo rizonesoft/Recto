@@ -12,16 +12,50 @@
   Settings on every task: start when available (a run missed while the PC was off fires at the next chance,
   as systemd's Persistent=true does), ignore a new start while one runs, an execution limit five minutes past
   the task's timeout, and run on battery. Weekly tasks carry a five-minute random delay.
+
+  -Check says whether every task is registered for this clone and able to start (run.py --check-installed: exit 0
+  all well, 1 with one line per task to repair, 3 when Task Scheduler cannot be read), changing nothing. -Dump is
+  the Task Scheduler reader it uses: the project folder's tasks as JSON. Neither runs the tool bootstrap.
 .EXAMPLE
   pwsh .conclave/automations/install.ps1
+  pwsh .conclave/automations/install.ps1 -Check
   pwsh .conclave/automations/install.ps1 -Uninstall
 #>
 [CmdletBinding()]
-param([switch]$Uninstall)
+param([switch]$Uninstall, [switch]$Check, [switch]$Dump)
 $ErrorActionPreference = 'Stop'
 
 $here = $PSScriptRoot
 $repo = (Resolve-Path (Join-Path $here '..\..')).Path
+
+if ($Dump) {
+  # What Task Scheduler holds for this project's folder, as run.py's records; no bootstrap, no change.
+  $folderName = (Get-Content -Raw -Path (Join-Path $here 'tasks.json') | ConvertFrom-Json).folder
+  if (-not $folderName) { '[]'; return }
+  $records = @(Get-ScheduledTask | Where-Object TaskPath -eq $folderName | ForEach-Object {
+    $action = @($_.Actions)[0]
+    $info = Get-ScheduledTaskInfo -TaskPath $_.TaskPath -TaskName $_.TaskName
+    $arguments = [string]$action.Arguments
+    $script = if ($arguments -match '^\s*"([^"]+)"') { $Matches[1] } elseif ($arguments -match '^\s*(\S+)') { $Matches[1] } else { '' }
+    [ordered]@{
+      name = $_.TaskName; script = $script; workdir = [string]$action.WorkingDirectory
+      executable = [string]$action.Execute; enabled = ([string]$_.State -ne 'Disabled')
+      last_result = [long]$info.LastTaskResult
+    }
+  })
+  ConvertTo-Json -InputObject $records -Depth 3 -Compress
+  return
+}
+
+if ($Check) {
+  # The comparison lives in run.py, which reads Task Scheduler back through -Dump.
+  $toolsCheck = if ($env:RECTO_TOOLS_DIR -and $env:RECTO_TOOLS_DIR.Trim()) { $env:RECTO_TOOLS_DIR.Trim() } else { Join-Path $repo '.tools' }
+  $python = Join-Path $toolsCheck 'cpython\current\python.exe'
+  if (-not (Test-Path -LiteralPath $python)) { $python = (Get-Command python.exe -ErrorAction Ignore).Source }
+  if (-not $python) { 'unknown: no python to compare the registrations with'; 'next: pwsh build/bootstrap-tools.ps1'; exit 3 }
+  & $python (Join-Path $here 'run.py') --check-installed
+  exit $LASTEXITCODE
+}
 $bootstrap = Join-Path $repo 'build\bootstrap-tools.ps1'
 $toolsDir = if ($env:RECTO_TOOLS_DIR -and $env:RECTO_TOOLS_DIR.Trim()) {
   [System.IO.Path]::GetFullPath($env:RECTO_TOOLS_DIR.Trim())
@@ -37,6 +71,8 @@ if (Test-Path -LiteralPath $bootstrap) {
     throw "Pinned pythonw.exe was not found at $candidateW after bootstrap"
   }
   $pythonw = $candidateW
+} elseif ($env:RECTO_TOOLS_DIR -and (Test-Path -LiteralPath (Join-Path $toolsDir 'cpython\current\pythonw.exe'))) {
+  $pythonw = Join-Path $toolsDir 'cpython\current\pythonw.exe'  # a named tools folder, as run.py expects
 } else {
   $pythonw = (Get-Command pythonw.exe -ErrorAction Ignore).Source  # absent is the throw below
 }

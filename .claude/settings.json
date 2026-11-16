@@ -30,6 +30,11 @@
             "type": "command",
             "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; if [ -f \"$d/scripts/run-python.sh\" ]; then sh \"$d/scripts/run-python.sh\" \"$d/scripts/ci_status.py\" --gate --brief; elif command -v python3 >/dev/null 2>&1 && python3 -c \"\" >/dev/null 2>&1; then python3 \"$d/scripts/ci_status.py\" --gate --brief; else python \"$d/scripts/ci_status.py\" --gate --brief; fi",
             "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "d=\"${CLAUDE_PROJECT_DIR:-.}\"; if [ -f \"$d/scripts/run-python.sh\" ]; then sh \"$d/scripts/run-python.sh\" \"$d/.conclave/automations/run.py\" --check-installed --hook; elif command -v python3 >/dev/null 2>&1 && python3 -c \"\" >/dev/null 2>&1; then python3 \"$d/.conclave/automations/run.py\" --check-installed --hook; else python \"$d/.conclave/automations/run.py\" --check-installed --hook; fi",
+            "timeout": 20
           }
         ]
       }

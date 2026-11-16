@@ -1,4 +1,4 @@
-﻿# Starts Recto's unattended plan run in Claude Code or Google Antigravity. The Desktop shortcuts "Recto Claude
+# Starts Recto's unattended plan run in Claude Code or Google Antigravity. The Desktop shortcuts "Recto Claude
 # campaign" (-Runner claude, the default) and "Recto Carbon campaign" (-Runner agy, Antigravity on Orchestrator (Carbon))
 # run this file. It prints the state of the machine and the tree, holds Windows awake while the session runs, and
 # starts an interactive session on the runner's writer model with permission prompts off and the session goal below.
@@ -135,6 +135,14 @@ $hookFile = @{ claude = '.claude/settings.json'; agy = '.agents/hooks.json' }[$R
 $guardOut = & $pinnedPython (Join-Path $PSScriptRoot 'campaign_guard.py') --self-test --hook-file $hookFile 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Warning "Stop hook self-test failed ($hookFile): $guardOut"
+}
+# The scheduled tasks are this clone's and can start (D00 T04 section 14): a moved clone leaves every task failing
+# to launch, and nothing else would say so.
+$automations = & $pinnedPython (Join-Path $root '.conclave\automations\run.py') --check-installed 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Scheduled tasks: $($automations -join '; ')"
+} else {
+    Write-Host ($automations -join '; ')
 }
 
 # The token goes from 1Password into claude.exe's environment and nowhere else: it is set just before claude.exe starts

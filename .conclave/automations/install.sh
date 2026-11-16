@@ -4,14 +4,18 @@
 # file), each marked with this repository's tasks.json path; this script copies them into the user unit
 # directory, enables every timer, and removes the units carrying this repository's marker that tasks.json no
 # longer lists. Units without the marker (another project's, or hand-written ones) are never touched.
-# Idempotent: re-run it after editing tasks.json.
+# Idempotent: re-run it after editing tasks.json. A unit marked for a clone of this project that has since moved
+# (the tasks.json its marker names no longer exists) is this project's own and is replaced; one marked for a
+# checkout that still exists, or carrying no marker, is never touched. --check changes nothing: it says whether
+# every task is registered for this clone and its timer is enabled and active (run.py --check-installed).
 #
 #   bash .conclave/automations/install.sh
+#   bash .conclave/automations/install.sh --check
 #   bash .conclave/automations/install.sh --uninstall
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s [--uninstall]\n' "$0" >&2
+  printf 'Usage: %s [--uninstall | --check]\n' "$0" >&2
 }
 
 uninstall=0
@@ -19,8 +23,11 @@ if [ "$#" -gt 1 ]; then
   usage
   exit 2
 elif [ "$#" -eq 1 ]; then
-  [ "$1" = "--uninstall" ] || { usage; exit 2; }
-  uninstall=1
+  case "$1" in
+    --uninstall) uninstall=1 ;;
+    --check) exec python3 "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/run.py" --check-installed ;;
+    *) usage; exit 2 ;;
+  esac
 fi
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -31,14 +38,26 @@ trap 'rm -rf -- "$work"' EXIT
 marker=$(python3 "$here/run.py" --units "$work")
 mkdir -p -- "$unit_dir"
 
+# A unit marked for a clone of this project whose tasks.json no longer exists: that clone moved, and the unit is
+# this project's own to replace. Any other marker names a checkout that still exists.
+moved_clone_unit() {
+  local first named
+  first=$(head -n 1 -- "$1")
+  case "$first" in
+    "# conclave-automations: "*) named=${first#"# conclave-automations: "} ;;
+    *) return 1 ;;
+  esac
+  [ ! -e "$named" ]
+}
+
 # Ownership first, before anything changes: a unit of the same name that this repository did not write (a
-# hand-written one, or another checkout's) is never replaced.
+# hand-written one, or another live checkout's) is never replaced.
 if [ "$uninstall" -eq 0 ]; then
   for unit in "$work"/*.service "$work"/*.timer; do
     [ -f "$unit" ] || continue
     destination="$unit_dir/$(basename -- "$unit")"
     if [ -e "$destination" ] || [ -L "$destination" ]; then
-      if [ -L "$destination" ] || ! head -n 1 -- "$destination" | grep -qxF -- "$marker"; then
+      if [ -L "$destination" ] || { ! head -n 1 -- "$destination" | grep -qxF -- "$marker" && ! moved_clone_unit "$destination"; }; then
         printf 'Refusing to replace %s: it is not marked as this repository'"'"'s unit\n' "$destination" >&2
         exit 1
       fi

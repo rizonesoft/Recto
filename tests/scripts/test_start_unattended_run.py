@@ -47,10 +47,12 @@ def no_window() -> int:
 @unittest.skipUnless(POWERSHELL, "needs PowerShell 7")
 class Launcher(unittest.TestCase):
     def run_launcher(self, *switches: str, op_exit: int = 0, op_hangs: bool = False, with_op: bool = True,
-                     before: str = "", after: str = "",
-                     inherited_token: str = "") -> tuple[subprocess.CompletedProcess, dict | None]:
+                     before: str = "", after: str = "", inherited_token: str = "",
+                     extra: dict[str, str] | None = None) -> tuple[subprocess.CompletedProcess, dict | None]:
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
+            for name, text in (extra or {}).items():  # more fakes beside the others
+                (tmp / name).write_text(text, encoding="utf-8")
             for runner in ("claude", "agy", "codex"):  # each fake records its own name
                 (tmp / f"{runner}.ps1").write_text(FAKE_CLAUDE, encoding="utf-8")
             if with_op:
@@ -66,6 +68,8 @@ class Launcher(unittest.TestCase):
                 path_entries.append(entry)
             env = dict(os.environ, PATH=os.pathsep.join(path_entries), RECTO_TEST_RECORD=str(record),
                        RECTO_TEST_EXPECTED_TOKEN=TOKEN)
+            if extra and "scheduler.json" in extra:
+                env["CONCLAVE_SCHEDULER_RECORDS"] = str(tmp / "scheduler.json")
             env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
             env.pop("CONCLAVE_UNATTENDED_RUN", None)
             if inherited_token:
@@ -182,6 +186,31 @@ class Launcher(unittest.TestCase):
             self.assertEqual(shortcut["style"], 1)
             self.assertTrue(shortcut["icon_exists"], shortcut["icon"])
             self.assertTrue(shortcut["icon"].endswith(f"recto-campaign-{badge}.ico,0"), shortcut["icon"])
+
+    @staticmethod
+    def fake_scheduler(records):
+        """Task Scheduler's records for run.py --check-installed (CONCLAVE_SCHEDULER_RECORDS, its tests-only stand-in)."""
+        return {"scheduler.json": json.dumps(records)}
+
+    def healthy_records(self):
+        tasks = json.loads((ROOT / ".conclave" / "automations" / "tasks.json").read_text(encoding="utf-8"))["tasks"]
+        tools = os.environ.get("RECTO_TOOLS_DIR", "").strip() or str(ROOT / ".tools")
+        return [{"name": task["name"], "script": str(ROOT / ".conclave" / "automations" / "run.py"),
+                 "workdir": str(ROOT), "executable": str(Path(tools) / "cpython" / "current" / "pythonw.exe"),
+                 "enabled": True, "last_result": 0} for task in tasks]
+
+    @unittest.skipUnless(os.name == "nt", "the Task Scheduler reader runs on Windows")
+    def test_it_warns_when_the_scheduled_tasks_are_not_this_clone_s(self):
+        run, _ = self.run_launcher("-PrintOnly", extra=self.fake_scheduler([]))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        said = " ".join((run.stdout + run.stderr).split())
+        self.assertIn("WARNING: Scheduled tasks: missing: ", said)
+        self.assertIn("missing: recto-ci-watch: not registered", said)
+        self.assertIn("next: pwsh .conclave/automations/install.ps1", said)
+        run, _ = self.run_launcher("-PrintOnly", extra=self.fake_scheduler(self.healthy_records()))
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertNotIn("Scheduled tasks:", run.stdout + run.stderr)
+        self.assertIn("task(s) registered for this clone", run.stdout)
 
     def test_every_process_this_file_starts_opens_no_window(self):
         self.assertEqual(no_window(), 0x08000000 if os.name == "nt" else 0)

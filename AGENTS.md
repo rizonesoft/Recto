@@ -127,6 +127,7 @@ build\python.cmd scripts/check-vcpkg-baseline.py check # vcpkg baseline is lates
 build\python.cmd scripts/check-python-pin.py check   # CI and .tools/ Python are newest stable CPython (D4)
 build\python.cmd scripts/check-visual-studio.py check # Visual Studio is at latest servicing release
 build\python.cmd scripts/ci_status.py                # main's latest build.yml and plan.yml runs
+pwsh .conclave/automations/install.ps1 -Check # tasks are this clone's
 build\python.cmd scripts/gen-compile-commands.py --check # C++23 clangd database matches Recto.sln
 build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Python cadence (+ --full in CI)
 .\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'  # iteration gate while building and after each review fix (+ -EnableASAN when named; Python-only via unittest/run-tests.py; both for mixed)
