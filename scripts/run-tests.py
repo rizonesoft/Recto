@@ -36,6 +36,8 @@ HEAVY_MODULES: dict[str, tuple[str, ...]] = {
     "tests.scripts.test_render_mockups": ("design/", "resources/", "scripts/render"),
     "tests.scripts.test_release_notes": ("scripts/release", "CHANGELOG", "docs/release"),
     "tests.scripts.test_build_ps1": ("build/", "Directory.Build."),
+    "tests.scripts.test_test_shards": ("build/test-shards.ps1", "build/parallelism.ps1", "scripts/test-times.py",
+                                       "tests/recto-tests/serial-tests.txt", "tests/scripts/test_test_shards.py"),
     "tests.scripts.test_compile_commands": (
         "scripts/build-compile-commands.py",
         "scripts/gen-compile-commands.py",

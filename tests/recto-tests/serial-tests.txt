@@ -1,0 +1,47 @@
+# Tests that run in the serial pass, alone, after the parallel shards (D00 T04 section 11).
+# One gtest filter pattern per line; '#' starts a comment. build/build.ps1 excludes these from every shard and runs
+# them in one process of their own, so a measured latency or wall-clock limit is proven on a host that no sibling
+# shard is loading. recto::test::expect_cancel_latency (cancel_test_support.h) and Runtime.ShutdownLatency turn a
+# missed limit into a report when other processes use more than half the processors, so beside the shards they would
+# stop proving their limit without failing.
+
+# The D01 T02 section 7 cancel limits, through expect_cancel_latency.
+Actor.CloseDuringOpen                                  # cancel latency of an open closed mid-way
+AtomicWrite.CancelDuringReadBack                       # cancel latency during the save read-back
+PdfFilters.CancelDuringDecode                          # cancel latency inside each decoder
+PdfFilters.CancelWhileRunning                          # cancel latency from another thread, each decoder
+PdfInterpreter.CancelCompilation                       # cancel latency during display-list compilation
+PdfInterpreter.CancelDuringCffParse                    # cancel latency inside the CFF parser
+PdfInterpreter.CancelDuringFontLoad                    # cancel latency inside CID font loading
+PdfInterpreter.CancelInForms                           # cancel latency inside nested forms
+PdfInterpreter.CancelInImageDecode                     # cancel latency inside an inline image decode
+PdfRasterizer.CancelAfterLastPoll                      # cancel latency after the last poll
+PdfRasterizer.CancelDuringHeaviestGlyph                # cancel latency inside the heaviest glyph
+PdfRasterizer.CancelInsideOneCommand                   # cancel latency inside one display-list command
+PdfRasterizer.CancelWhileRunning                       # cancel latency from another thread during replay
+PdfRasterizer.FlushBoundsEndDraw                       # cancel latency bounded across EndDraw
+PdfRasterizer.MidReplayCancelUnder10Ms                 # the 10 ms mid-replay cancel promise
+PdfRasterizer.RenderTargetReusableAfterCancel          # cancel latency before the target is reused
+PdfRasterizer.Type0Text                                # cancel latency inside Type0 text
+Runtime.ShutdownLatency                                # shutdown under load, held on a quiet host
+Scheduler.JumpLatency                                  # scheduler jump latency
+
+# Wall-clock limits asserted on the code under test.
+Actor.CloseDuringCompile                               # close() returns in under 50 ms
+Actor.CloseRaces                                       # close() returns in under 50 ms
+Runtime.CloseReturnsAtOnce                             # close_document returns in under 50 ms
+Scheduler.CallbackAdmission                            # admission finishes within 30 s
+PdfDocument.EncryptedFilterReferenceChainIsNotInlined  # a hostile reference chain opens within 2 s
+PdfDocument.SharedAnnotationsAreReadOnce               # shared annotations read within 15 s
+PdfDisplayList.TinyDashPatternsRecordInBoundedTime     # tiny dash patterns record within 5 s
+PdfFont.TrueTypeCmapMalformed                          # malformed cmaps load within 3 s each
+PdfFilters.CcittAndMmrBounds                           # hostile CCITT and MMR decode within 3 s
+PdfFilters.CcittRecoveryRoundOne                       # CCITT recovery within 3 s
+PdfFilters.FlateCompressSpeed                          # the 20 MB/s Flate compression floor
+PdfInterpreter.FormXObjectWork                         # form XObject work within 1 s
+PdfInterpreter.TextFontLookupWork                      # last cached font name no slower than twice the first
+PdfRasterizer.HostileGeometry                          # hostile geometry within 20 s
+PdfRasterizer.PreCancelledTile                         # a pre-cancelled tile returns in under 10 us
+PdfXref.RecoveryLengthRoundOne                         # xref recovery within 30 s
+Ui.App.SelfTestStartupBudget                           # median Recto.exe startup under 400 ms
+Ui.Project.StalledChildIsReaped                        # a stalled child is reaped within 10 s

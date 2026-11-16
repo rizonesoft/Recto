@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report GoogleTest run times and enforce a per-test time budget."""
+"""Report GoogleTest run times, enforce a per-test time budget, and prove a sharded run covered every test once."""
 from __future__ import annotations
 
 import argparse
@@ -205,6 +205,94 @@ def cmd_check(xml_paths: list[Path], budget_path: Path, mode: str) -> int:
     return 0
 
 
+def parse_test_list(list_path: Path) -> list[str]:
+    """Full test names from `recto-tests.exe --gtest_list_tests` output, in order.
+
+    A suite line starts at column 0 and ends with '.' (after any `# TypeParam = ...` comment is cut); a test line is
+    indented (its `# GetParam() = ...` comment cut). Any other column-0 line (gtest_main's `Running main() from ...`)
+    is not a test.
+    """
+    if not list_path.is_file():
+        raise UsageOrInputError(f"test list not found: {list_path}")
+    try:
+        text = list_path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise UsageOrInputError(f"cannot read test list {list_path}: {exc}") from exc
+    names: list[str] = []
+    suite: str | None = None
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip():
+            continue
+        body = raw.split("#", 1)[0].rstrip()
+        if raw[0] not in " \t":
+            suite = body if body.endswith(".") and " " not in body else None
+            continue
+        name = body.strip()
+        if not name:
+            continue
+        if suite is None:
+            raise UsageOrInputError(f"{list_path}:{lineno}: test {name!r} listed outside a test suite")
+        names.append(suite + name)
+    if not names:
+        raise UsageOrInputError(f"test list {list_path} names no tests")
+    return names
+
+
+def _matches_disabled(part: str) -> bool:
+    # GoogleTest's kDisableTestFilter, "DISABLED_*:*/DISABLED_*", on the suite name and on the test name.
+    return part.startswith("DISABLED_") or "/DISABLED_" in part
+
+
+def is_disabled(full_name: str, suite: str) -> bool:
+    name = full_name[len(suite) + 1:] if full_name.startswith(suite + ".") else full_name
+    return _matches_disabled(suite) or _matches_disabled(name)
+
+
+def cmd_coverage(list_path: Path, xml_paths: list[Path]) -> int:
+    """Every listed test reported exactly once across the reports, enabled tests run and disabled tests not."""
+    listed = parse_test_list(list_path)
+    report = load_xml_reports(xml_paths)
+    problems: list[str] = []
+    listed_set: set[str] = set()
+    for name in listed:
+        if name in listed_set:
+            problems.append(f"listed twice by --gtest_list_tests: {name}")
+        listed_set.add(name)
+    reported: dict[str, list[TestCaseTiming]] = {}
+    for case in report.cases:
+        reported.setdefault(case.full_name, []).append(case)
+    for name in listed:
+        if name not in reported:
+            problems.append(f"missing from every report: {name}")
+    enabled = disabled = 0
+    for name, cases in sorted(reported.items()):
+        if name not in listed_set:
+            problems.append(f"reported but not listed: {name}")
+            continue
+        if len(cases) > 1:
+            problems.append(f"reported {len(cases)} times: {name}")
+            continue
+        case = cases[0]
+        if is_disabled(name, case.suite):
+            disabled += 1
+            if case.status != "notrun":
+                problems.append(f"disabled test reported as {case.status!r}, not 'notrun': {name}")
+        else:
+            enabled += 1
+            if case.status != "run":
+                problems.append(f"enabled test reported as {case.status!r}, not 'run': {name}")
+    if problems:
+        print(f"FAIL: test coverage over {len(xml_paths)} report(s): {len(problems)} problem(s):", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+    print(
+        f"OK: {len(listed)} listed tests each reported exactly once across {len(xml_paths)} report(s) "
+        f"({enabled} enabled run, {disabled} disabled not run)"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Report test timings and check per-test budgets.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -216,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
     check_p.add_argument("xml", nargs="+", type=Path, help="GoogleTest XML file(s)")
     check_p.add_argument("--budget", required=True, type=Path, help="Path to time-budget.json")
     check_p.add_argument("--mode", required=True, choices=VALID_MODES, help="Budget mode to check")
+
+    coverage_p = subparsers.add_parser(
+        "coverage", help="Check every test --gtest_list_tests names is reported exactly once across the XML reports."
+    )
+    coverage_p.add_argument("list", type=Path, help="Output of recto-tests.exe --gtest_list_tests")
+    coverage_p.add_argument("xml", nargs="+", type=Path, help="GoogleTest XML file(s), one per shard")
     return parser
 
 
@@ -225,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "report":
             return cmd_report(args.xml)
+        if args.command == "coverage":
+            return cmd_coverage(args.list, args.xml)
         return cmd_check(args.xml, args.budget, args.mode)
     except UsageOrInputError as exc:
         print(f"test-times: {exc}", file=sys.stderr)

@@ -145,5 +145,118 @@ class TestTimesCliTests(unittest.TestCase):
             self.assertIn("Corpus.DoesNotExist", unknown.stderr)
 
 
+def _write_status_xml(path: Path, cases: list[tuple[str, str, str]]) -> None:
+    """A GoogleTest report of (suite, name, status) cases; a 'notrun' case carries result="suppressed" as gtest writes."""
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>', f'<testsuites tests="{len(cases)}" time="0.0" name="AllTests">']
+    for suite, name, status in cases:
+        result = "suppressed" if status == "notrun" else "completed"
+        lines.append(f'  <testsuite name="{suite}" tests="1" time="0.0">')
+        lines.append(f'    <testcase name="{name}" status="{status}" result="{result}" time="0.0" classname="{suite}" />')
+        lines.append("  </testsuite>")
+    lines.append("</testsuites>")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# The shape --gtest_list_tests prints, gtest_main's banner and a parameterized test's comment included.
+LIST_TEXT = (
+    "Running main() from D:\\gtest\\gtest_main.cc\n"
+    "PdfDoc.\n"
+    "  Opens\n"
+    "  DISABLED_Probe\n"
+    "Ui.\n"
+    "  App.Starts\n"
+    "  DISABLED_Project.Stall\n"
+    "Inst/Param.\n"
+    "  Reads/0  # GetParam() = 1\n"
+)
+
+
+class TestCoverageCliTests(unittest.TestCase):
+    """`test-times.py coverage`: every listed test reported exactly once across a sharded run (D00 T04 section 11)."""
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([sys.executable, str(SCRIPT), *args], cwd=ROOT, capture_output=True, text=True, timeout=30)
+
+    def _fixture(self, tmp: str) -> tuple[Path, list[tuple[str, str, str]]]:
+        listing = Path(tmp) / "list.txt"
+        listing.write_text(LIST_TEXT, encoding="utf-8")
+        cases = [
+            ("PdfDoc", "Opens", "run"),
+            ("PdfDoc", "DISABLED_Probe", "notrun"),
+            ("Ui", "App.Starts", "run"),
+            ("Ui", "DISABLED_Project.Stall", "notrun"),
+            ("Inst/Param", "Reads/0", "run"),
+        ]
+        return listing, cases
+
+    def test_split_reports_cover_every_listed_test_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0, shard1 = Path(tmp) / "shard0.xml", Path(tmp) / "shard1.xml"
+            _write_status_xml(shard0, cases[:2])
+            _write_status_xml(shard1, cases[2:])
+            res = self._run("coverage", str(listing), str(shard0), str(shard1))
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            self.assertIn("OK: 5 listed tests each reported exactly once across 2 report(s) (3 enabled run, 2 disabled not run)", res.stdout)
+
+    def test_missing_test_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0 = Path(tmp) / "shard0.xml"
+            _write_status_xml(shard0, [c for c in cases if c[1] != "App.Starts"])
+            res = self._run("coverage", str(listing), str(shard0))
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn("missing from every report: Ui.App.Starts", res.stderr)
+
+    def test_duplicated_test_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0, shard1 = Path(tmp) / "shard0.xml", Path(tmp) / "shard1.xml"
+            _write_status_xml(shard0, cases)
+            _write_status_xml(shard1, [("PdfDoc", "Opens", "run")])
+            res = self._run("coverage", str(listing), str(shard0), str(shard1))
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn("reported 2 times: PdfDoc.Opens", res.stderr)
+            self.assertNotIn("Ui.App.Starts", res.stderr)
+
+    def test_unlisted_test_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0 = Path(tmp) / "shard0.xml"
+            _write_status_xml(shard0, cases + [("PdfDoc", "Ghost", "run")])
+            res = self._run("coverage", str(listing), str(shard0))
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn("reported but not listed: PdfDoc.Ghost", res.stderr)
+
+    def test_enabled_test_reported_notrun_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0 = Path(tmp) / "shard0.xml"
+            _write_status_xml(shard0, [(s, n, "notrun" if n == "Reads/0" else st) for s, n, st in cases])
+            res = self._run("coverage", str(listing), str(shard0))
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn("enabled test reported as 'notrun', not 'run': Inst/Param.Reads/0", res.stderr)
+
+    def test_disabled_test_reported_run_is_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0 = Path(tmp) / "shard0.xml"
+            _write_status_xml(shard0, [(s, n, "run" if n == "DISABLED_Project.Stall" else st) for s, n, st in cases])
+            res = self._run("coverage", str(listing), str(shard0))
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn("disabled test reported as 'run', not 'notrun': Ui.DISABLED_Project.Stall", res.stderr)
+
+    def test_unreadable_inputs_exit_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            listing, cases = self._fixture(tmp)
+            shard0 = Path(tmp) / "shard0.xml"
+            _write_status_xml(shard0, cases)
+            self.assertEqual(self._run("coverage", str(Path(tmp) / "nope.txt"), str(shard0)).returncode, 2)
+            self.assertEqual(self._run("coverage", str(listing), str(Path(tmp) / "gone.xml")).returncode, 2)
+            empty = Path(tmp) / "empty.txt"
+            empty.write_text("Running main() from x\n", encoding="utf-8")
+            self.assertEqual(self._run("coverage", str(empty), str(shard0)).returncode, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

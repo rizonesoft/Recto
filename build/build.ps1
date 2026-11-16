@@ -15,6 +15,10 @@
 # -Configuration Debug|Release (default both, or Debug under -Quick),
 # -Project <vcxproj-or-target> (single project/target for fast local iteration),
 # -TestFilter <pattern>, -TestOutputDir <folder> (default build\),
+# A full test run (no -TestFilter) runs the x64 suite in parallel GoogleTest shards
+# sized from free memory, then tests\recto-tests\serial-tests.txt alone
+# (build\test-shards.ps1; RECTO_TEST_SHARDS=<1..cores> overrides the count, 1
+# is the single-process run; RECTO_TEST_TIMEOUT_MINUTES, default 30, bounds it).
 # -SkipTests, -EnableASAN, -ForceRestore, -NoSccache (or RECTO_USE_SCCACHE=0 to
 # bypass sccache), -MaxCpuCount <N> (0 = auto memory-bounded sizing with 2,048 MB
 # reserve, refusing below 3,584 MB free; RECTO_BUILD_JOBS=<1..cores> overrides
@@ -66,6 +70,12 @@ $pinnedPython = Join-Path $PSScriptRoot 'python.cmd'
 
 . (Join-Path $PSScriptRoot 'parallelism.ps1')
 . (Join-Path $PSScriptRoot 'sccache.ps1')
+. (Join-Path $PSScriptRoot 'test-shards.ps1')
+if (-not $SkipTests) {
+    # A bad RECTO_TEST_SHARDS or RECTO_TEST_TIMEOUT_MINUTES is refused before anything is built.
+    $testTimeoutMinutes = Resolve-TestTimeoutMinutes
+    $null = Resolve-TestShardCount -Asan:$EnableASAN
+}
 $parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
 $jobs = $parallelism.Projects
 $clMpCount = $parallelism.ClMpCount
@@ -388,7 +398,35 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
             New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
             $xmlTag = if ($EnableASAN) { "$cfg-asan" } else { "$cfg" }
             $xmlOut = Join-Path $xmlDir "test-results-x64-$xmlTag.xml"
-            if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
+            # This configuration's reports and logs from an earlier run, single or sharded, never pass for this one's.
+            foreach ($stale in @(Get-ChildItem -LiteralPath $xmlDir -File | Where-Object {
+                        $_.Name -eq "test-results-x64-$xmlTag.xml" -or $_.Name -like "test-results-x64-$xmlTag-shard*.xml" -or
+                        $_.Name -eq "test-results-x64-$xmlTag-serial.xml" -or $_.Name -like "test-x64-$xmlTag-shard*.log" -or
+                        $_.Name -eq "test-x64-$xmlTag-serial.log" -or $_.Name -eq "test-list-x64-$xmlTag.txt" })) {
+                Remove-Item -LiteralPath $stale.FullName -Force
+            }
+            $testTimesScript = Join-Path $root 'scripts\test-times.py'
+            $budgetPath = Join-Path $root 'tests\recto-tests\time-budget.json'
+            $budgetMode = if ($EnableASAN) { 'asan' } elseif ($cfg -ieq 'Release') { 'release' } else { 'debug' }
+            if (-not $TestFilter) {
+                # The whole suite in parallel shards, then the serial list alone (D00 T04 section 11).
+                $shardPlan = Resolve-TestShardCount -Asan:$EnableASAN
+                Write-Host "=== recto-tests $cfg|x64: $($shardPlan.Count) shard(s) ($($shardPlan.Reason))"
+                if ($shardPlan.Count -gt 1) {
+                    $serialPatterns = Read-SerialTestPatterns (Join-Path $root 'tests\recto-tests\serial-tests.txt')
+                    $started = [DateTime]::UtcNow
+                    $sharded = Invoke-RectoTestShards -Exe $tests -WorkingDirectory $root -XmlDir $xmlDir -Tag $xmlTag `
+                        -Shards $shardPlan.Count -SerialPatterns $serialPatterns -TimeoutMinutes $testTimeoutMinutes
+                    Write-Host "recto-tests $cfg|x64: $($shardPlan.Count) shards and the serial pass in $([int]([DateTime]::UtcNow - $started).TotalSeconds) s"
+                    & $pinnedPython $testTimesScript coverage $sharded.List @($sharded.Xml)
+                    if ($LASTEXITCODE -ne 0) { throw "recto-tests coverage failed: $cfg|x64 (a test missing, run twice or not run)" }
+                    & $pinnedPython $testTimesScript report @($sharded.Xml)
+                    if ($LASTEXITCODE -ne 0) { throw "test-times report failed: $cfg|x64 (exit $LASTEXITCODE)" }
+                    & $pinnedPython $testTimesScript check @($sharded.Xml) --budget $budgetPath --mode $budgetMode
+                    if ($LASTEXITCODE -ne 0) { throw "recto-tests exceeded per-test time budget ($budgetMode): $cfg|x64" }
+                    continue
+                }
+            }
             $argsList = @("--gtest_output=xml:$xmlOut")
             if ($TestFilter) {
                 $argsList += "--gtest_filter=$TestFilter"
@@ -396,8 +434,6 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
             Write-Host "=== recto-tests $cfg|x64"
             & $tests @argsList
             $testExit = $LASTEXITCODE
-            $testTimesScript = Join-Path $root 'scripts\test-times.py'
-            $budgetPath = Join-Path $root 'tests\recto-tests\time-budget.json'
             if ($testExit -ne 0) {
                 $validXml = $false
                 if ((Test-Path $xmlOut) -and (Get-Item $xmlOut).Length -gt 0) {
@@ -427,7 +463,6 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
             & $pinnedPython $testTimesScript report $xmlOut
             if ($LASTEXITCODE -ne 0) { throw "test-times report failed: $cfg|x64 (exit $LASTEXITCODE)" }
             if (-not $TestFilter) {
-                $budgetMode = if ($EnableASAN) { 'asan' } elseif ($cfg -ieq 'Release') { 'release' } else { 'debug' }
                 & $pinnedPython $testTimesScript check $xmlOut --budget $budgetPath --mode $budgetMode
                 if ($LASTEXITCODE -ne 0) { throw "recto-tests exceeded per-test time budget ($budgetMode): $cfg|x64" }
             }

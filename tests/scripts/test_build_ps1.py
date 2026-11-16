@@ -663,7 +663,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
+                         "test-shards.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             stub_wrapper = base / "wrapper" / "sccache-cl.exe"
             stub_wrapper.parent.mkdir(parents=True)
@@ -711,6 +712,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
                 env["RECTO_SCCACHE_NO_DAEMON"] = "1"
+                # The fake recto-tests is a PowerShell alias, which only the single-process run can call.
+                env["RECTO_TEST_SHARDS"] = "1"
                 env.pop("RECTO_USE_SCCACHE", None)
                 if jobs_env is None:
                     env.pop("RECTO_BUILD_JOBS", None)
@@ -822,6 +825,18 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             self.assertIn("RECTO_USE_SCCACHE", out)
             self.assertEqual(calls, [], f"MSBuild should not start on invalid RECTO_USE_SCCACHE: {out}")
 
+            # A bad test shard count or test deadline is refused before anything is built (D00 T04 section 11),
+            # and only when tests will run.
+            for variable, bad in (("RECTO_TEST_SHARDS", "0"), ("RECTO_TEST_SHARDS", "many"),
+                                  ("RECTO_TEST_TIMEOUT_MINUTES", "0"), ("RECTO_TEST_TIMEOUT_MINUTES", "soon")):
+                with self.subTest(variable=variable, bad=bad):
+                    rc, out, calls = invoke_build("", extra_env={variable: bad})
+                    self.assertNotEqual(rc, 0, out)
+                    self.assertIn(variable, out)
+                    self.assertEqual(calls, [], f"MSBuild should not start on {variable}={bad}: {out}")
+            rc, out, calls = invoke_build("-SkipTests", extra_env={"RECTO_TEST_SHARDS": "many"})
+            self.assertEqual(rc, 0, out)
+
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows PowerShell")
     def test_build_ps1_test_timing_report_budget_and_asan_xml(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -836,7 +851,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
+                         "test-shards.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             shutil.copy2(ROOT / "scripts" / "test-times.py", ws / "scripts" / "test-times.py")
             shutil.copy2(ROOT / "tests" / "recto-tests" / "time-budget.json",
@@ -904,6 +920,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
                 env["RECTO_SCCACHE_NO_DAEMON"] = "1"
+                # The fake recto-tests is a PowerShell alias, which only the single-process run can call.
+                env["RECTO_TEST_SHARDS"] = "1"
                 env["FAKE_TEST_XML_MODE"] = xml_mode
                 env["FAKE_TEST_EXIT"] = str(exit_code)
                 cmd = (
@@ -979,7 +997,8 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
+                         "test-shards.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             stub_wrapper = base / "wrapper" / "sccache-cl.exe"
             stub_wrapper.parent.mkdir(parents=True)

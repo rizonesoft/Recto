@@ -1,7 +1,7 @@
 # Derived output: always reproducible from the tracked sources. The tracked
 # files under build/ are Recto's one-command build driver at build/build.ps1
 # and the helpers it loads (asan-runtime.ps1, msbuild-log.ps1, parallelism.ps1,
-# build-evidence.ps1, sccache.ps1, sccache-cl.cpp, tools.lock.json,
+# build-evidence.ps1, sccache.ps1, test-shards.ps1, sccache-cl.cpp, tools.lock.json,
 # bootstrap-tools.ps1, python.cmd, clangd.cmd).
 build/*
 !build/build.ps1
@@ -10,6 +10,7 @@ build/*
 !build/parallelism.ps1
 !build/build-evidence.ps1
 !build/sccache.ps1
+!build/test-shards.ps1
 !build/sccache-cl.cpp
 !build/tools.lock.json
 !build/bootstrap-tools.ps1

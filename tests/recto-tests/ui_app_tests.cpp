@@ -637,6 +637,35 @@ BOOL CALLBACK find_visible_window(HWND window, LPARAM lparam)
 	return TRUE;
 }
 
+struct ClassSearch {
+	const wchar_t* class_name;
+	DWORD process_id;
+	HWND found;
+};
+
+BOOL CALLBACK find_class_window(HWND window, LPARAM lparam)
+{
+	auto* search = reinterpret_cast<ClassSearch*>(lparam);
+	DWORD owner = 0;
+	GetWindowThreadProcessId(window, &owner);
+	wchar_t name[256]{};
+	if (owner == search->process_id && GetClassNameW(window, name, static_cast<int>(std::size(name))) > 0 &&
+		std::wstring_view(name) == search->class_name) {
+		search->found = window;
+		return FALSE;
+	}
+	return TRUE;
+}
+
+// A top-level window of `class_name` that this process owns, or null. FindWindowW searches the whole desktop, where
+// another process's window of the same class would answer for this one.
+HWND find_own_window_of_class(const wchar_t* class_name)
+{
+	ClassSearch search{class_name, GetCurrentProcessId(), nullptr};
+	EnumWindows(find_class_window, reinterpret_cast<LPARAM>(&search));
+	return search.found;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -886,6 +915,28 @@ RECTO_UI_TEST(App, StartupFailureIsReported)
 	// collapsing to a bare exit code. The class Application::run registers is
 	// taken first, in this process, so its RegisterClassExW fails for real.
 	constexpr wchar_t kTakenClass[] = L"Recto.Bootstrap";
+	// Another process's window of the same class is on the desktop while this test runs, as when a second test
+	// process has launched Recto.exe (D00 T04 section 11): it is not this startup's window and must not count as one.
+	const fs::path exe = recto_exe();
+	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	Process other;
+	ASSERT_NO_FATAL_FAILURE(launch(other, exe, L"", SW_SHOWMINNOACTIVE));
+	ASSERT_EQ(WaitForInputIdle(other.info().hProcess, 5000), 0U) << "Recto.exe did not reach its message loop";
+	HWND other_window = nullptr;
+	for (int attempt = 0; attempt < 50 && other_window == nullptr; ++attempt) {
+		for (HWND w = FindWindowExW(nullptr, nullptr, kTakenClass, nullptr); w != nullptr; w = FindWindowExW(nullptr, w, kTakenClass, nullptr)) {
+			DWORD owner = 0;
+			GetWindowThreadProcessId(w, &owner);
+			if (owner == other.info().dwProcessId) {
+				other_window = w;
+				break;
+			}
+		}
+		if (other_window == nullptr) {
+			Sleep(100);
+		}
+	}
+	ASSERT_NE(other_window, nullptr) << "the other Recto.exe showed no " << narrow(kTakenClass) << " window";
 	const HINSTANCE instance = GetModuleHandleW(nullptr);
 	WNDCLASSEXW taken{};
 	taken.cbSize = sizeof(taken);
@@ -902,7 +953,8 @@ RECTO_UI_TEST(App, StartupFailureIsReported)
 	ASSERT_NE(failure.operation, nullptr);
 	EXPECT_EQ(std::wstring_view(failure.operation), L"RegisterClassExW");
 	EXPECT_EQ(failure.error, static_cast<unsigned long>(ERROR_CLASS_ALREADY_EXISTS));
-	EXPECT_EQ(FindWindowW(kTakenClass, nullptr), nullptr) << "a failed startup left a window behind";
+	// Only this process's windows: a Recto.exe that another test process launched has a window of this class too.
+	EXPECT_EQ(find_own_window_of_class(kTakenClass), nullptr) << "a failed startup left a window behind";
 
 	// A null out-parameter is allowed and still fails cleanly.
 	ASSERT_NE(RegisterClassExW(&taken), 0);
