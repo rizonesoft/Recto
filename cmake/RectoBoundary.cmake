@@ -58,4 +58,12 @@ function(recto_boundary_check)
         COMMENT "Checking the engine/recto-ui boundary (D13) from the compiler's and librarian's own records"
         VERBATIM)
     add_custom_target(recto-boundary-check ALL DEPENDS "${stamp}")
+    # ALL covers only the default target: a build of one target (`--target Recto`, build.ps1 -Project) would skip the
+    # check. Every executable links the module libraries, so each depends on it, and a named build of any of them fails
+    # on a crossing as the full build does. (build.ps1 -Project names the check too, for a library built alone.)
+    foreach(executable IN ITEMS Recto recto-cli recto-tests recto-fuzz)
+        if(TARGET ${executable})
+            add_dependencies(${executable} recto-boundary-check)
+        endif()
+    endforeach()
 endfunction()

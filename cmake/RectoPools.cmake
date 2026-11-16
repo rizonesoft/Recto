@@ -1,5 +1,7 @@
-# Ninja compile and link pools from one memory budget (D00 T04 sections 3 and 8). build/build.ps1 passes
-# RECTO_COMPILE_JOBS and RECTO_LINK_JOBS from free memory each run; a preset run directly (a developer prompt, Visual
+# Ninja compile and link pools from one memory budget (D00 T04 sections 3 and 8). build/build.ps1 passes the sizes it
+# reads from free memory each run in the RECTO_CMAKE_POOL_COMPILE and RECTO_CMAKE_POOL_LINK environment variables, which
+# never persist, so a later configure sizes the pools afresh; RECTO_COMPILE_JOBS and RECTO_LINK_JOBS are only a person's
+# own explicit override; a preset run directly (a developer prompt, Visual
 # Studio's Open Folder) sizes them here at configure, and the build-start gate (memory-gate.cmake) checks them again
 # before every build, so memory another program took since configure is never assumed free.
 set(RECTO_RESERVE_MB 2048)    # left for the OS and desktop, as section 3
@@ -31,6 +33,8 @@ if(recto_free LESS recto_minimum)
 endif()
 if(RECTO_LINK_JOBS)
     set(recto_links "${RECTO_LINK_JOBS}")
+elseif(NOT "$ENV{RECTO_CMAKE_POOL_LINK}" STREQUAL "")
+    set(recto_links "$ENV{RECTO_CMAKE_POOL_LINK}")
 else()
     # A second link only when two links and two compilers still fit.
     math(EXPR recto_two "2 * ${RECTO_LINK_MB} + 2 * ${RECTO_COMPILER_MB}")
@@ -42,6 +46,8 @@ else()
 endif()
 if(RECTO_COMPILE_JOBS)
     set(recto_compiles "${RECTO_COMPILE_JOBS}")
+elseif(NOT "$ENV{RECTO_CMAKE_POOL_COMPILE}" STREQUAL "")
+    set(recto_compiles "$ENV{RECTO_CMAKE_POOL_COMPILE}")
 elseif(DEFINED ENV{RECTO_BUILD_JOBS} AND NOT "$ENV{RECTO_BUILD_JOBS}" STREQUAL "")
     set(recto_compiles "$ENV{RECTO_BUILD_JOBS}")
 else()

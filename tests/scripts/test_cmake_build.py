@@ -15,9 +15,14 @@ from pathlib import Path
 import re
 import subprocess
 import unittest
+import sys
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.lib.proc_group import spawn_managed_process  # noqa: E402
+
 LOCK = json.loads((ROOT / "build" / "tools.lock.json").read_text(encoding="utf-8"))
 CMAKE = ROOT / ".tools" / "cmake" / LOCK["cmake"]["version"] / LOCK["cmake"]["executable"]
 PROJECTS = {
@@ -201,21 +206,31 @@ class DirectPresets(unittest.TestCase):
     architecture than the prompt's, and refuses a CMake other than the pinned one."""
 
     def run_in_prompt(self, arch: str, args: list[str], free: int | None = None, cmake: Path = CMAKE,
-                      timeout: float = 600) -> subprocess.CompletedProcess[str]:
+                      timeout: float = 600, extra: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         vcvars = VS / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
         quoted = " ".join(f'"{a}"' for a in args)
         env = {**os.environ}
         env.pop("RECTO_BUILD_JOBS", None)
+        for name in ("RECTO_CMAKE_POOL_COMPILE", "RECTO_CMAKE_POOL_LINK"):
+            env.pop(name, None)
+        env.update(extra or {})
         if free is not None:
             env["RECTO_ASSUME_FREE_MB"] = str(free)
         # A batch file, not a /c string: Python's argument quoting and cmd's quote rules do not mix.
         script = self.binary.parent / f"{self.binary.name}-{arch}.cmd"
         script.write_text(f'@echo off\r\ncall "{vcvars}" {arch} 10.0.26100.0 >nul 2>&1 || exit /b 97\r\n'
                           f'cd /d "{ROOT}"\r\n"{cmake}" {quoted}\r\n', encoding="ascii")
+        # In a job object (scripts/lib/proc_group.py): on a timeout CMake, vcpkg and any compiler it started go with the
+        # shell, and the output pipes cannot hold the test open.
+        managed = spawn_managed_process(["cmd.exe", "/d", "/c", str(script)], cwd=ROOT, env=env, capture_output=True)
         try:
-            res = subprocess.run(["cmd.exe", "/d", "/c", str(script)], cwd=ROOT, capture_output=True, text=True,
-                                 timeout=timeout, env=env, creationflags=0x08000000)
+            stdout, stderr = managed.proc.communicate(timeout=timeout)
+            res = subprocess.CompletedProcess(managed.proc.args, managed.proc.returncode, stdout or "", stderr or "")
+        except subprocess.TimeoutExpired:
+            managed.drain_after_terminate()
+            raise
         finally:
+            managed.terminate_and_close()
             script.unlink(missing_ok=True)
         res.said = " ".join((res.stdout + res.stderr).split())  # type: ignore[attr-defined]
         return res
@@ -237,6 +252,27 @@ class DirectPresets(unittest.TestCase):
         cores = os.cpu_count() or 1
         compiles = min(cores, (9000 - 2048 - 2 * 1024) // 1536)  # 6,952 MB holds two links and two compilers
         self.assertIn(f"Recto pools: free 9000 MB, {cores} cores: compile={compiles}, link=2", sized.said)
+        # Every executable depends on the D13 check, so a named build (--target Recto, build.ps1 -Project) runs it too.
+        ninja = ROOT / ".tools" / "ninja" / LOCK["ninja"]["version"] / LOCK["ninja"]["executable"]
+        for target in ("Recto", "recto-cli", "recto-tests", "recto-fuzz"):
+            with self.subTest(target=target):
+                phony = subprocess.run([str(ninja), "-C", str(self.binary), "-t", "query", target], capture_output=True,
+                                       text=True, timeout=60, creationflags=0x08000000)
+                self.assertEqual(phony.returncode, 0, phony.stderr)
+                exe = next(line.strip() for line in phony.stdout.splitlines() if line.strip().endswith(".exe"))
+                query = subprocess.run([str(ninja), "-C", str(self.binary), "-t", "query", exe], capture_output=True,
+                                       text=True, timeout=60, creationflags=0x08000000)
+                self.assertEqual(query.returncode, 0, query.stderr)
+                self.assertIn("recto-boundary-check", query.stdout)
+        # Sizes build.ps1 passed (through the environment) do not persist: configuring again sizes from what is free now.
+        env_sized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=20000,
+                                       extra={"RECTO_CMAKE_POOL_COMPILE": "5", "RECTO_CMAKE_POOL_LINK": "2"})
+        self.assertEqual(env_sized.returncode, 0, env_sized.said[-2000:])
+        self.assertIn("compile=5, link=2", env_sized.said)
+        resized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=6200)
+        self.assertEqual(resized.returncode, 0, resized.said[-2000:])
+        self.assertIn(f"Recto pools: free 6200 MB, {cores} cores: compile={min(cores, (6200 - 2048 - 1024) // 1536)}, link=1",
+                      resized.said)
         # The memory taken since configure is seen when the build starts, with no reconfigure.
         gated = self.run_in_prompt("x64", ["--build", str(self.binary), "--target", "recto-memory-gate"], free=4000)
         self.assertNotEqual(gated.returncode, 0)

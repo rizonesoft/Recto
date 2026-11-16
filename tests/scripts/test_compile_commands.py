@@ -179,37 +179,72 @@ class ClangdAndProcessTests(unittest.TestCase):
 
 
 class CMakeDatabaseIsKept(unittest.TestCase):
-    """A build/compile_commands.json the CMake build wrote (D00 T04 section 8) is never replaced by the .vcxproj
-    generator that scripts/clangd-lsp.py runs at start."""
+    """A build/compile_commands.json the CMake build wrote (D00 T04 section 8) is kept by the .vcxproj generator that
+    scripts/clangd-lsp.py runs at start only while it is current; a stale one fails --check and is regenerated."""
 
     def _gen(self):
-        import importlib.util
         spec = importlib.util.spec_from_file_location("gen_compile_commands", ROOT / "scripts" / "gen-compile-commands.py")
         mod = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(mod)
         return mod
 
-    def test_a_cmake_database_survives_ensure_database_and_another_does_not_count(self):
-        import json as _json
+    def _tree(self, tmp):
+        root = Path(tmp).resolve()
+        folder = root / "build" / "cmake" / "x64-debug"
+        folder.mkdir(parents=True)
+        (root / "src").mkdir()
+        (root / "cmake").mkdir()
+        (root / "CMakeLists.txt").write_text("project(x)\n", encoding="utf-8")
+        (root / "Recto.sln").write_text("", encoding="utf-8")
+        sources = [str(root / "src" / name) for name in ("a.cpp", "b.cpp")]
+        db = root / "build" / "compile_commands.json"
+        db.write_text(json.dumps([{"directory": str(folder), "command": f"cl.exe /c {s}", "file": s} for s in sources]),
+                      encoding="utf-8")
+        return root, db, sources
+
+    def test_a_current_cmake_database_survives_and_another_does_not_count(self):
         gen = self._gen()
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp).resolve()
-            folder = root / "build" / "cmake" / "x64-debug"
-            folder.mkdir(parents=True)
-            db = root / "build" / "compile_commands.json"
-            entries = [{"directory": str(folder), "command": "cl.exe /c a.cpp", "file": str(root / "src" / "a.cpp")}]
-            db.write_text(_json.dumps(entries), encoding="utf-8")
-            (root / "Recto.sln").write_text("", encoding="utf-8")  # a newer solution would trigger regeneration
+            root, db, sources = self._tree(tmp)
+            gen.build_database = lambda r: [{"file": s} for s in sources]
+            writes = []
+            gen._write_entries = lambda path, entries: writes.append(path)
             before = db.read_bytes()
             self.assertTrue(gen.is_cmake_database(db, root))
+            self.assertIsNone(gen.cmake_database_problem(db, root))
             self.assertEqual(gen.ensure_database(db, root), db)
-            self.assertEqual(db.read_bytes(), before)
-            entries.append({"directory": str(root / "src"), "command": "cl.exe /c b.cpp", "file": str(root / "src" / "b.cpp")})
-            db.write_text(_json.dumps(entries), encoding="utf-8")
+            self.assertEqual((db.read_bytes(), writes), (before, []))
+            ok, msg = gen.check_database(db, root)
+            self.assertTrue(ok, msg)
+            self.assertIn("ok (CMake): 2 translation units", msg)
+            entries = json.loads(db.read_text(encoding="utf-8")) + [
+                {"directory": str(root / "src"), "command": "cl.exe /c c.cpp", "file": str(root / "src" / "c.cpp")}]
+            db.write_text(json.dumps(entries), encoding="utf-8")
             self.assertFalse(gen.is_cmake_database(db, root))
             db.write_text("not json", encoding="utf-8")
             self.assertFalse(gen.is_cmake_database(db, root))
+
+    def test_a_stale_cmake_database_fails_check_and_is_regenerated(self):
+        gen = self._gen()
+        with tempfile.TemporaryDirectory() as tmp:
+            root, db, sources = self._tree(tmp)
+            # A source added since the build wrote it.
+            gen.build_database = lambda r: [{"file": s} for s in sources + [str(root / "src" / "new.cpp")]]
+            writes = []
+            gen._write_entries = lambda path, entries: writes.append(path)
+            ok, msg = gen.check_database(db, root)
+            self.assertFalse(ok)
+            self.assertIn("stale CMake database: it names 2 sources where the projects compile 3 (missing new.cpp)", msg)
+            gen.ensure_database(db, root)
+            self.assertEqual(writes, [db])
+            # A CMake input changed after it was written.
+            gen.build_database = lambda r: [{"file": s} for s in sources]
+            later = db.stat().st_mtime + 10
+            os.utime(root / "CMakeLists.txt", (later, later))
+            ok, msg = gen.check_database(db, root)
+            self.assertFalse(ok)
+            self.assertIn("CMakeLists.txt changed after it was written", msg)
 
 if __name__ == "__main__":
     unittest.main()

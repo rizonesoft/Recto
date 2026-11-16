@@ -371,6 +371,9 @@ def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
     if not out_path.is_file():
         return False, f"{out_path} is missing (run: {PYTHON_CMD} scripts/gen-compile-commands.py)"
     if is_cmake_database(out_path, root):
+        problem = cmake_database_problem(out_path, root)
+        if problem:
+            return False, f"{out_path} is a stale CMake database: {problem} (run: .\\build.cmd -Quick)"
         return True, f"ok (CMake): {len(json.loads(out_path.read_text(encoding='utf-8')))} translation units"
     return _check_against_expected(out_path, build_database(root))
 
@@ -393,11 +396,35 @@ def is_cmake_database(out_path: Path, root: Path = ROOT) -> bool:
     return True
 
 
+def cmake_database_problem(out_path: Path, root: Path = ROOT) -> str | None:
+    """Why a CMake-written database is not current, or None when it is: it must name exactly the sources the projects
+    compile (the solution's, which tests/scripts/test_cmake_build.py holds equal to the CMake targets') and be newer
+    than every CMake input (each CMakeLists.txt, cmake/*.cmake, CMakePresets.json). A build rewrites it."""
+    try:
+        entries = json.loads(out_path.read_text(encoding="utf-8"))
+        db_mtime = out_path.stat().st_mtime
+    except (OSError, ValueError) as exc:
+        return f"cannot read {out_path}: {exc}"
+    have = {os.path.normcase(str(Path(e["file"]).resolve())) for e in entries if isinstance(e, dict) and e.get("file")}
+    want = {os.path.normcase(str(Path(e["file"]).resolve())) for e in build_database(root)}
+    if have != want:
+        missing, extra = sorted(want - have), sorted(have - want)
+        return (f"it names {len(have)} sources where the projects compile {len(want)}"
+                + (f" (missing {Path(missing[0]).name}{' ...' if len(missing) > 1 else ''})" if missing else "")
+                + (f" (extra {Path(extra[0]).name}{' ...' if len(extra) > 1 else ''})" if extra else ""))
+    inputs = [p for p in root.rglob("CMakeLists.txt") if "build" not in p.relative_to(root).parts[:1]]
+    inputs += list((root / "cmake").glob("*.cmake")) + [root / "CMakePresets.json"]
+    newer = [p for p in inputs if p.is_file() and p.stat().st_mtime > db_mtime]
+    if newer:
+        return f"{newer[0].relative_to(root).as_posix()} changed after it was written"
+    return None
+
+
 def ensure_database(out_path: Path = OUT, root: Path = ROOT) -> Path:
     """Regenerate `out_path` when missing, older than project files, or out of sync with `root` (e.g. moved checkout);
     a database the CMake build wrote is kept as it is."""
     root = root.resolve()
-    if is_cmake_database(out_path, root):
+    if is_cmake_database(out_path, root) and cmake_database_problem(out_path, root) is None:
         return out_path
     sln = root / "Recto.sln"
     if not sln.is_file():
@@ -425,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
         print(msg, file=sys.stdout if ok else sys.stderr)
         return 0 if ok else 1
     if out_path == OUT.resolve():
-        if is_cmake_database(out_path, ROOT):
+        if is_cmake_database(out_path, ROOT) and cmake_database_problem(out_path, ROOT) is None:
             print(f"preserved the CMake build's compile commands at {out_path}")
             return 0
     entries = write_database(out_path, ROOT)

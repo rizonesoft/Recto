@@ -84,7 +84,11 @@ function Invoke-RectoCMakeBuild {
     param(
         [string]$Root, [string]$CMake, [string]$Preset, [object]$Pools, [bool]$Sccache, [string[]]$Targets = @()
     )
-    $configure = @('--preset', $Preset, "-DRECTO_COMPILE_JOBS=$($Pools.Compiles)", "-DRECTO_LINK_JOBS=$($Pools.Links)",
+    # The pools go in through the environment, which never persists in the cache, so a later configure (a person's, or
+    # the one the memory gate asks for) sizes them afresh; -U drops any an older build.ps1 left cached as overrides.
+    $env:RECTO_CMAKE_POOL_COMPILE = "$($Pools.Compiles)"
+    $env:RECTO_CMAKE_POOL_LINK = "$($Pools.Links)"
+    $configure = @('--preset', $Preset, '-U', 'RECTO_COMPILE_JOBS', '-U', 'RECTO_LINK_JOBS',
         "-DRECTO_SCCACHE=$(if ($Sccache) { 'ON' } else { 'OFF' })")
     Write-Host "=== cmake $($configure -join ' ')"
     & $CMake @configure

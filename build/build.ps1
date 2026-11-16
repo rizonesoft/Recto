@@ -321,6 +321,8 @@ if ($CMake) {
             if ($resolvedProject) {
                 $targets = @($resolvedProject)
                 if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests')) { $targets += 'recto-tests' }
+                # The D13 check runs for a library built alone too (cmake/RectoBoundary.cmake).
+                $targets += 'recto-boundary-check'
             }
             Invoke-RectoCMakeBuild -Root $root -CMake $cmakeExe -Preset $preset -Pools $cmakePools -Sccache ([bool]$useSccache) -Targets $targets
             if ($EnableASAN -and $plat -eq 'x64') {
