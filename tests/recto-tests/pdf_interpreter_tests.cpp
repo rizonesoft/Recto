@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <optional>
@@ -1472,15 +1473,25 @@ PdfError refusal_of(const std::vector<std::string>& objects)
 
 // A one-input, one-output 8-bit sampled function of `count` samples all `value`, compressed with FlateDecode, so a
 // table of many megabytes costs a few kilobytes of file.
+// `count` copies of `value`, Flate-compressed once per (count, value) for the whole run: a fixture is the same bytes
+// every time it is asked for, and compressing 15 MiB again for each space was most of what the tests that use it cost.
+const std::string& flat_samples(size_t count, uint8_t value)
+{
+	static std::map<std::pair<size_t, uint8_t>, std::string> packed_by_shape;
+	const auto key = std::make_pair(count, value);
+	if (const auto found = packed_by_shape.find(key); found != packed_by_shape.end()) {
+		return found->second;
+	}
+	auto packed = flate_compress(std::vector<uint8_t>(count, value));
+	EXPECT_TRUE(packed.has_value());
+	return packed_by_shape.emplace(key, packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string()).first->second;
+}
+
 std::string flat_table(size_t count, uint8_t value)
 {
-	const std::vector<uint8_t> samples(count, value);
-	auto packed = flate_compress(samples);
-	EXPECT_TRUE(packed.has_value());
-	const std::string data = packed.has_value() ? std::string(packed->begin(), packed->end()) : std::string();
 	return stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [" + std::to_string(count) +
 			"] /BitsPerSample 8 /Filter /FlateDecode",
-		data);
+		flat_samples(count, value));
 }
 
 bool recorded(ErrorCode code, RefusalReason reason = RefusalReason::None)
@@ -2343,7 +2354,7 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 			spaces += "/S" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray " +
 				std::to_string(5 + k) + " 0 R] ";
 			content += "/S" + std::to_string(k) + " cs 1 scn 0 0 10 10 re f ";
-			objects.push_back(flat_table(fifteen, static_cast<uint8_t>(0xFFu - k)));
+			objects.push_back(flat_table(fifteen, 0xFFu)); // five objects, one compressed table: each is decoded on its own
 		}
 		clear_diagnostics();
 		const auto r = interpret_spaces(content, spaces, objects);
@@ -2396,18 +2407,21 @@ TEST(PdfInterpreter, SeparationAndDeviceN)
 		EXPECT_LT(work, size_t{64} << 20u) << "the failed tint transform was decoded again for each space";
 	}
 	// Decoding tint transforms costs a page at most 256 MiB: twenty distinct functions whose 15 MiB tables are a byte
-	// short exhaust it after eighteen, and the rest are refused undecoded with their limit recorded.
+	// short exhaust it after eighteen, and the rest are refused undecoded with their limit recorded. Twenty function
+	// objects over the same compressed bytes: each is its own object, decoded on its own, so the budget is spent as with
+	// twenty different tables (were equal streams shared, the eighteenth would not exhaust it and the refusal would not
+	// be recorded).
 	{
 		const size_t fifteen = size_t{15} << 20u;
+		const std::string& short_table = flat_samples(fifteen - 1u, 0u);
+		ASSERT_FALSE(short_table.empty());
 		std::string spaces;
 		std::string content;
 		std::vector<std::string> objects;
 		for (int k = 0; k < 20; ++k) {
-			auto packed = flate_compress(std::vector<uint8_t>(fifteen - 1u, static_cast<uint8_t>(k)));
-			ASSERT_TRUE(packed.has_value());
 			objects.push_back(stream_object("/FunctionType 0 /Domain [0 1] /Range [0 1] /Size [" + std::to_string(fifteen) +
 					"] /BitsPerSample 8 /Filter /FlateDecode",
-				std::string(packed->begin(), packed->end())));
+				short_table));
 			spaces += "/D" + std::to_string(k) + " [/Separation /Spot" + std::to_string(k) + " /DeviceGray " +
 				std::to_string(5 + k) + " 0 R] ";
 			content += "/D" + std::to_string(k) + " cs ";

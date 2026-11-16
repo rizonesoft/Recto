@@ -11,6 +11,9 @@
 
 $script:RectoTestShardReserveMb = 2048
 $script:RectoTestShardPerShardMb = 1024
+# An AddressSanitizer test process commits about 4 GB (shadow memory and the quarantine): 4,006 MB peak in each of two
+# x64 Debug ASan runs side by side on 2026-11-16, so an ASan shard is budgeted 4,096 MB.
+$script:RectoTestShardPerAsanShardMb = 4096
 $script:RectoTestShardMax = 6
 $script:RectoTestTimeoutDefaultMinutes = 30.0
 
@@ -314,7 +317,7 @@ namespace Recto.TestShards {
 
 # How many shard processes a full run starts, and why. RECTO_TEST_SHARDS (1 to the core count) wins; otherwise the
 # free memory read now, with section 3's formula (2,048 MB reserve) and the measured 1,024 MB per shard (a 6-shard Debug run peaked at 784 MB in one process), capped at one shard per physical core and at 6,
-# halved under AddressSanitizer, and 1 when memory is short or cannot be read.
+# 4,096 MB per shard under AddressSanitizer, and 1 when memory is short or cannot be read.
 function Resolve-TestShardCount {
     param(
         [int]$Cores = [Environment]::ProcessorCount,
@@ -350,13 +353,12 @@ function Resolve-TestShardCount {
     if ($PhysicalCores -lt 1) { $PhysicalCores = Get-PhysicalCoreCount -Cores $Cores }
     $PhysicalCores = [Math]::Max(1, [Math]::Min($PhysicalCores, $Cores))
     $freeText = $freeMb.ToString('N0', [System.Globalization.CultureInfo]::InvariantCulture)
-    $fit = [int][Math]::Floor(($freeMb - $script:RectoTestShardReserveMb) / [double]$script:RectoTestShardPerShardMb)
+    $perShard = if ($Asan) { $script:RectoTestShardPerAsanShardMb } else { $script:RectoTestShardPerShardMb }
+    $perText = $perShard.ToString('N0', [System.Globalization.CultureInfo]::InvariantCulture)
+    $fit = [int][Math]::Floor(($freeMb - $script:RectoTestShardReserveMb) / [double]$perShard)
     $count = [Math]::Min([Math]::Min($PhysicalCores, $script:RectoTestShardMax), [Math]::Max(1, $fit))
-    $why = "free $freeText MB, $PhysicalCores physical cores ($Cores logical): 2,048 MB reserve + 1,024 MB per shard fits $([Math]::Max(0, $fit)), one shard per physical core, at most $($script:RectoTestShardMax)"
-    if ($Asan) {
-        $count = [Math]::Max(1, [int][Math]::Floor($count / 2))
-        $why += ', halved under AddressSanitizer'
-    }
+    $kind = if ($Asan) { 'AddressSanitizer shard' } else { 'shard' }
+    $why = "free $freeText MB, $PhysicalCores physical cores ($Cores logical): 2,048 MB reserve + $perText MB per $kind fits $([Math]::Max(0, $fit)), one shard per physical core, at most $($script:RectoTestShardMax)"
     if ($fit -lt 1) { $why += ', too little for a second process' }
     return [pscustomobject]@{ Count = $count; FreeMb = $freeMb; Reason = $why }
 }

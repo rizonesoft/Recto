@@ -142,7 +142,9 @@ class ShardCount(unittest.TestCase):
             ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 4096", 2),
             ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3072", 1),
             ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3071", 1),     # too little for a second process
-            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan", 3),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan", 5),   # (25000 - 2048) / 4096
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 10240 -Asan", 2),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 8000 -Asan", 1),    # two ASan processes do not fit
             ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 4096 -Asan", 1),
             ("-Cores 1 -PhysicalCores 1 -ShardsEnv '' -AvailableMb 25000", 1),
         ]
@@ -153,7 +155,7 @@ class ShardCount(unittest.TestCase):
                 self.assertIn("MB", got["Reason"])
         low = self._count("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3071")
         self.assertIn("too little for a second process", low["Reason"])
-        self.assertIn("halved under AddressSanitizer", self._count("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan")["Reason"])
+        self.assertIn("4,096 MB per AddressSanitizer shard", self._count("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan")["Reason"])
         self.assertIn("6 physical cores (12 logical)", low["Reason"])
 
     def test_physical_cores_fall_back_to_half_the_logical_count(self):
