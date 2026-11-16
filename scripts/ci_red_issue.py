@@ -80,14 +80,25 @@ def gh_with_body(runner, args, body):
         os.unlink(path)
 
 
-def cancelled_jobs(runner, run):
-    """The cancelled jobs of a run, named in its issue as a red run's failed jobs are."""
+def problem_jobs(runner, run):
+    """Every job of the run that did not pass, whatever the run as a whole concluded: failed, cancelled, and cancelled
+    by its `timeout-minutes` (said in the job's check-run annotation, as ci_status reads it), each with its own state.
+    A red build can hold a cancelled sibling and a cancelled one a timed-out job; the issue names them all."""
     view = ci_status.gh_json(runner, ci_status.view_jobs(run.get("databaseId"), run.get("attempt")))
     jobs = view.get("jobs") if isinstance(view, dict) else None
     if not isinstance(jobs, list):
         raise ci_status.Unavailable("gh run view returned no job list")
-    return [{"name": j.get("name"), "conclusion": j.get("conclusion"), "url": j.get("url")} for j in jobs
-            if isinstance(j, dict) and (j.get("conclusion") or "").lower() == "cancelled"][:ci_status.MAX_JOBS]
+    timed_out = {j.get("name"): j for j in ci_status.timed_out_jobs(runner, run)}
+    found = []
+    for job in jobs:
+        if not isinstance(job, dict) or job.get("status") not in (None, "completed"):
+            continue
+        conclusion = (job.get("conclusion") or "").lower()
+        if job.get("name") in timed_out and conclusion == "cancelled":
+            found.append(timed_out[job.get("name")])
+        elif conclusion in ("failure", "cancelled", "timed_out", "startup_failure", "action_required"):
+            found.append({"name": job.get("name"), "conclusion": job.get("conclusion"), "url": job.get("url")})
+    return found[:ci_status.MAX_JOBS]
 
 
 def state_of(entry):
@@ -111,7 +122,9 @@ def describe(workflow, state, run, jobs):
              f"- Commit: `{sha[:12]}` ({sha})",
              f"- Run: {run.get('url')} (attempt {run.get('attempt') or 1}, {run.get('event')})"]
     for job in jobs:
-        kind = "Cancelled job" if (job.get("conclusion") or "").lower() == "cancelled" else "Failed job"
+        conclusion = (job.get("conclusion") or "").lower()
+        kind = ("Cancelled job" if conclusion == "cancelled" else
+                "Timed-out job" if conclusion.startswith("timed") else "Failed job")
         lines.append(f"- {kind}: {job.get('name')} ({job.get('conclusion')}) {job.get('url') or ''}".rstrip())
     lines += ["", "This issue closes itself on the next green run of this workflow on main."]
     return "\n".join(lines)
@@ -149,8 +162,8 @@ def reconcile(workflow, runner=ci_status.run_gh, out=print):
         raise Usage(f"{workflow} is not a watched workflow ({', '.join(ci_status.WORKFLOWS)})")
     entry = ci_status.workflow_status(runner, workflow, BRANCH, include_proof=True)
     state, run, jobs = state_of(entry)
-    if state == "cancelled":
-        jobs = cancelled_jobs(runner, run)
+    if state in ("red", "cancelled"):
+        jobs = problem_jobs(runner, run)
     issue = open_issue(runner, workflow)
     if state in ("red", "cancelled"):
         body = describe(workflow, state, run, jobs)

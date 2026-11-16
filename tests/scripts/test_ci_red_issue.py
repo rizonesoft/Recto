@@ -129,6 +129,30 @@ class Reconcile(unittest.TestCase):
         reconcile(fake)
         self.assertEqual(len(open_issues(fake)), 1)
 
+    def test_every_problem_job_is_named_whatever_the_run_concluded(self):
+        mixed = [{"name": "Build x64 & ARM64 and run recto-tests", "status": "completed", "conclusion": "failure",
+                  "url": "https://github.com/o/r/job/1", "databaseId": 1},
+                 {"name": "AddressSanitizer", "status": "completed", "conclusion": "cancelled",
+                  "url": "https://github.com/o/r/job/2", "databaseId": 2},
+                 {"name": "MSBuild", "status": "completed", "conclusion": "success", "databaseId": 3}]
+        fake = FakeGh(runs=[run(11, "failure", "2026-11-16T10:00:00Z")], jobs={"11": mixed})
+        reconcile(fake)
+        (issue,) = open_issues(fake)
+        self.assertIn("- Failed job: Build x64 & ARM64 and run recto-tests (failure)", issue["body"])
+        self.assertIn("- Cancelled job: AddressSanitizer (cancelled)", issue["body"])
+        self.assertNotIn("MSBuild", issue["body"])
+        # A cancelled run holding a timed-out job and a plainly cancelled one names both, each as what it was.
+        both = [{"name": "asan", "status": "completed", "conclusion": "cancelled", "databaseId": 9, "url": "j9"},
+                {"name": "build", "status": "completed", "conclusion": "cancelled", "databaseId": 8, "url": "j8"}]
+        fake = FakeGh(runs=[run(21, "success", "2026-11-16T09:00:00Z"), run(22, "cancelled", "2026-11-16T10:00:00Z")],
+                      jobs={"22": both},
+                      annotations={"9": [{"message": "The job has exceeded the maximum execution time of 45m0s"}]})
+        reconcile(fake)
+        (issue,) = open_issues(fake)
+        self.assertIn("is red", issue["body"])
+        self.assertIn("- Timed-out job: asan (timed out", issue["body"])
+        self.assertIn("- Cancelled job: build (cancelled)", issue["body"])
+
     def test_a_timed_out_run_is_red(self):
         fake = FakeGh(runs=[run(11, "cancelled", "2026-11-16T10:00:00Z")],
                       jobs={"11": [{"name": "asan", "status": "completed", "conclusion": "cancelled", "databaseId": 9,
