@@ -7,7 +7,9 @@ name: ci-red
 # verdict, so the order runs finish in cannot matter. The local watch of section 9 stays as it is.
 on:
   workflow_run:
-    workflows: [build, plan-gates]
+    # By name, and by path: GitHub names a run of a workflow file it cannot parse after the file's path, so a broken
+    # build.yml or plan.yml is reported as fast as a failed one.
+    workflows: [build, plan-gates, .github/workflows/build.yml, .github/workflows/plan.yml]
     types: [completed]
     branches: [main]
 

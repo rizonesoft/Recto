@@ -74,6 +74,16 @@ def gh_with_body(runner, args, body):
         os.unlink(path)
 
 
+def cancelled_jobs(runner, run):
+    """The cancelled jobs of a run, named in its issue as a red run's failed jobs are."""
+    view = ci_status.gh_json(runner, ci_status.view_jobs(run.get("databaseId"), run.get("attempt")))
+    jobs = view.get("jobs") if isinstance(view, dict) else None
+    if not isinstance(jobs, list):
+        raise ci_status.Unavailable("gh run view returned no job list")
+    return [{"name": j.get("name"), "conclusion": j.get("conclusion"), "url": j.get("url")} for j in jobs
+            if isinstance(j, dict) and (j.get("conclusion") or "").lower() == "cancelled"][:ci_status.MAX_JOBS]
+
+
 def state_of(entry):
     """('red', run, jobs), ('cancelled', run, []), ('green', run, []) or ('none', {}, []) from a workflow_status. The
     newest completed run decides first: one cancelled with nothing after it is named even behind an older red, since
@@ -95,7 +105,8 @@ def describe(workflow, state, run, jobs):
              f"- Commit: `{sha[:12]}` ({sha})",
              f"- Run: {run.get('url')} (attempt {run.get('attempt') or 1}, {run.get('event')})"]
     for job in jobs:
-        lines.append(f"- Failed job: {job.get('name')} ({job.get('conclusion')}) {job.get('url') or ''}".rstrip())
+        kind = "Cancelled job" if (job.get("conclusion") or "").lower() == "cancelled" else "Failed job"
+        lines.append(f"- {kind}: {job.get('name')} ({job.get('conclusion')}) {job.get('url') or ''}".rstrip())
     lines += ["", "This issue closes itself on the next green run of this workflow on main."]
     return "\n".join(lines)
 
@@ -132,6 +143,8 @@ def reconcile(workflow, runner=ci_status.run_gh, out=print):
         raise Usage(f"{workflow} is not a watched workflow ({', '.join(ci_status.WORKFLOWS)})")
     entry = ci_status.workflow_status(runner, workflow, BRANCH, include_proof=True)
     state, run, jobs = state_of(entry)
+    if state == "cancelled":
+        jobs = cancelled_jobs(runner, run)
     issue = open_issue(runner, workflow)
     if state in ("red", "cancelled"):
         body = describe(workflow, state, run, jobs)

@@ -88,6 +88,7 @@ class Reconcile(unittest.TestCase):
         (issue,) = open_issues(fake)
         self.assertIn("cancelled, with no verdict after it", issue["body"])
         self.assertIn("actions/runs/12", issue["body"])
+        self.assertIn("- Cancelled job: build (cancelled)", issue["body"])
 
     def test_a_cancelled_run_after_a_red_is_named_on_the_open_issue(self):
         fake = FakeGh(runs=[run(11, "failure", "2026-11-16T10:00:00Z")], jobs={"11": failed_job()})
@@ -100,6 +101,7 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(len(issue["comments"]), 1, said)
         self.assertIn("actions/runs/12", issue["comments"][0])
         self.assertIn("cancelled, with no verdict after it", issue["comments"][0])
+        self.assertIn("- Cancelled job: build (cancelled)", issue["comments"][0])
 
     def test_a_failing_rerun_attempt_is_named_as_a_new_red(self):
         fake = FakeGh(runs=[run(11, "failure", "2026-11-16T10:00:00Z")], jobs={"11": failed_job()})
@@ -220,7 +222,7 @@ class Wiring(unittest.TestCase):
     def test_it_watches_exactly_both_workflows_by_their_names_on_main(self):
         names = [re.search(r"^name:\s*(\S+)", workflow_text(f), re.M).group(1) for f in ("build.yml", "plan.yml")]
         self.assertEqual(names, ["build", "plan-gates"])
-        self.assertRegex(self.text, r"workflow_run:\s*\n\s+workflows: \[build, plan-gates\]\s*\n\s+types: \[completed\]"
+        self.assertRegex(self.text, r"workflow_run:\s*\n(?:\s+#.*\n)*\s+workflows: \[build, plan-gates, \.github/workflows/build\.yml, \.github/workflows/plan\.yml\]\s*\n\s+types: \[completed\]"
                                     r"\s*\n\s+branches: \[main\]")
 
     def test_permissions_and_the_serialising_concurrency_group(self):
