@@ -130,3 +130,4 @@ jobs:
       - name: Run full Recto and Conclave kit Python test suites in parallel
         shell: pwsh
         run: .\build\python.cmd scripts/run-tests.py --full
+ci-red-proof: an unparseable value: on purpose
