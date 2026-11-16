@@ -362,6 +362,35 @@ class ShardRun(unittest.TestCase):
         self.assertIn("[  FAILED  ] Slow.Timed", failing.stdout)
         self.assertIn("EXIT=1", failing.stdout)
 
+    def test_the_single_run_shares_a_real_console(self):
+        # From a terminal, build.ps1's output is a console handle, which only a process attached to that console can
+        # write to. A host on a console of its own (hidden, so nothing shows) runs a probe that records whether its
+        # write to standard output succeeded and whether it has a console.
+        probe = self.base / "probe.py"
+        result = self.base / "probe.txt"
+        probe.write_text(
+            "import ctypes, os, sys\n"
+            "try:\n"
+            "    wrote = os.write(1, b'probe on the console\\n')\n"
+            "except OSError as exc:\n"
+            "    wrote = f'error {exc}'\n"
+            "attached = bool(ctypes.windll.kernel32.GetConsoleWindow())\n"
+            f"open(r'{result}', 'w').write(f'{{wrote}} {{attached}}')\n",
+            encoding="utf-8",
+        )
+        script = (
+            f". '{TEST_SHARDS_PS1}'\n"
+            f"$code = Invoke-RectoTestSingle -Exe '{sys.executable}' -PrefixArguments @('{probe}') -WorkingDirectory '{self.base}' -TimeoutMinutes 1\n"
+            "exit $code\n"
+        )
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = 0  # SW_HIDE: a console of its own that nobody sees
+        host = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                              creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=startup, timeout=120)
+        self.assertEqual(host.returncode, 0)
+        self.assertEqual(result.read_text(encoding="utf-8"), "21 True", "the single run could not write to the caller's console")
+
     def test_a_hung_single_run_and_its_child_are_killed_at_the_deadline(self):
         res = _ps(self._single_script(2 / 60), env=self._env(FAKE_HANG="serial"), timeout=60)
         self.assertNotEqual(res.returncode, 0, res.stdout)

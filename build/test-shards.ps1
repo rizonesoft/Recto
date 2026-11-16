@@ -136,6 +136,8 @@ namespace Recto.TestShards {
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool DuplicateHandle(IntPtr sourceProcess, IntPtr source, IntPtr targetProcess, out IntPtr target, uint access, bool inherit, uint options);
         const uint DUPLICATE_SAME_ACCESS = 0x2;
+        [DllImport("kernel32.dll")]
+        static extern IntPtr GetConsoleWindow();
 
         // An inheritable copy of this process's standard output or error (-11, -12), or of NUL when it has none, so a
         // run without a log file writes where build.ps1 writes.
@@ -267,7 +269,11 @@ namespace Recto.TestShards {
                 startup.StartupInfo.hStdError = errors != IntPtr.Zero ? errors : log;
                 startup.lpAttributeList = list;
                 PROCESS_INFORMATION info;
-                uint flags = CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+                // A run that writes to this process's own output shares its console, as `& recto-tests.exe` did, so console
+                // output still reaches the terminal; with a log file, or with no console to share, no console is made, so no
+                // window ever appears.
+                bool shareConsole = string.IsNullOrEmpty(logPath) && GetConsoleWindow() != IntPtr.Zero;
+                uint flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | (shareConsole ? 0u : CREATE_NO_WINDOW);
                 if (!CreateProcessW(exe, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags, Environment(environment), workingDirectory, ref startup, out info)) {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "cannot start " + exe);
                 }
