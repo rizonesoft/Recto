@@ -529,8 +529,17 @@ class InstallSh(unittest.TestCase):
                 service.write_text(run.MARKER + marker + "\n" + body, encoding="utf-8")
                 done = self.check_with(healthy)
                 self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-                self.assertIn(f"{want}: demo-one: registered for ", done.stdout)
+                self.assertIn(f"{want}: demo-one: its service is registered for ", done.stdout)
                 self.assertIn("next: bash .conclave/automations/install.sh", done.stdout)
+        # A hand-written timer beside this clone's service: install.sh refuses it, and the check says so.
+        service.write_text(run.MARKER + str(self.root / ".conclave" / "automations" / "tasks.json") + "\n" + body,
+                           encoding="utf-8")
+        timer = units / "demo-one.timer"
+        timer.write_text(timer.read_text(encoding="utf-8").split("\n", 1)[1], encoding="utf-8")
+        done = self.check_with(healthy)
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn("unowned: demo-one: its timer carries no conclave marker", done.stdout)
+        self.assertNotEqual(self.install(tasks=[fixture_task("demo-one")]).returncode, 0)
         done = self.check_with('echo "Failed to connect to bus: No medium found" >&2; exit 1')
         self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
         self.assertIn("unknown: ", done.stdout)
@@ -778,6 +787,19 @@ class SystemdReader(unittest.TestCase):
         for want, unit in cases.items():
             with self.subTest(want):
                 (self.units / "demo-one.service").write_text(unit, encoding="utf-8")
+                self.assertEqual(self.states()["demo-one"], want)
+        # The timer is owned the same way: a correct service beside a timer that is not this clone's is not ok.
+        (self.units / "demo-one.service").write_text(text, encoding="utf-8")
+        timer = (self.units / "demo-one.timer").read_text(encoding="utf-8")
+        timer_body = timer.split("\n", 1)[1]
+        timers = {"other-clone": run.MARKER + os.path.join(live, ".conclave", "automations", "tasks.json") + "\n"
+                                 + timer_body,
+                  "stale": run.MARKER + os.path.join(self._tmp.name, "gone2", ".conclave", "automations", "tasks.json")
+                           + "\n" + timer_body,
+                  "unowned": timer_body}
+        for want, unit in timers.items():
+            with self.subTest(f"timer {want}"):
+                (self.units / "demo-one.timer").write_text(unit, encoding="utf-8")
                 self.assertEqual(self.states()["demo-one"], want)
 
     def test_a_user_bus_that_cannot_be_reached_is_unknown(self):

@@ -315,17 +315,24 @@ def registration_report(tasks, records, root: str, platform: str) -> list[tuple[
         if record is None:
             report.append(("missing", name, "not registered"))
             continue
-        if "marker" in record:  # a systemd unit: its owner is the tasks.json its marker names, as install.sh reads it
-            marker = record["marker"]
-            if not marker:
-                report.append(("unowned", name, "a unit of this name carries no conclave marker; install.sh will not "
-                                                "replace it, so move it aside first"))
-                continue
-            mine = os.path.join(root, ".conclave", "automations", "tasks.json")
-            if not _same(marker, mine):
-                where = os.path.dirname(os.path.dirname(os.path.dirname(marker)))
-                kind = "other-clone" if os.path.isfile(marker) else "stale"
-                report.append((kind, name, f"registered for {where}, this clone is {root}"))
+        if "marker" in record:  # systemd units: each file's owner is the tasks.json its marker names, as install.sh
+            mine = os.path.join(root, ".conclave", "automations", "tasks.json")  # reads the service and the timer
+            markers = [("service", record["marker"])]
+            if (record.get("timer") or {}).get("present"):
+                markers.append(("timer", record.get("timer_marker") or ""))
+            verdict = None
+            for unit, marker in markers:
+                if not marker:
+                    verdict = ("unowned", f"its {unit} carries no conclave marker; install.sh will not replace it, "
+                                          "so move it aside first")
+                elif not _same(marker, mine):
+                    where = os.path.dirname(os.path.dirname(os.path.dirname(marker)))
+                    verdict = ("other-clone" if os.path.isfile(marker) else "stale",
+                               f"its {unit} is registered for {where}, this clone is {root}")
+                if verdict:
+                    break
+            if verdict:
+                report.append((verdict[0], name, verdict[1]))
                 continue
         script = record.get("script") or ""
         their_root = os.path.normpath(os.path.join(os.path.dirname(script), "..", "..")) if script else ""
@@ -477,7 +484,16 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run, deadli
         values = {k: v for k, _, v in (line.partition("=") for line in lines if "=" in line and not line.startswith("#"))}
         marker = lines[0][len(MARKER):] if lines and lines[0].startswith(MARKER) else ""
         args = _unquote_exec(values.get("ExecStart", ""))
-        timer = {"present": os.path.isfile(os.path.join(folder, f"{name}.timer"))}
+        timer_path = os.path.join(folder, f"{name}.timer")
+        timer = {"present": os.path.isfile(timer_path)}
+        timer_marker = ""
+        if timer["present"]:
+            try:
+                with open(timer_path, encoding="utf-8") as fh:
+                    first = fh.readline().rstrip("\n")
+            except (OSError, UnicodeDecodeError) as error:
+                raise SchedulerUnreadable(f"{timer_path} cannot be read: {error}") from None
+            timer_marker = first[len(MARKER):] if first.startswith(MARKER) else ""
         for verb, key, good in (("is-enabled", "enabled", "enabled"), ("is-active", "active", "active")):
             done = systemctl(verb, f"{name}.timer")
             said = (done.stdout or "").strip()
@@ -495,6 +511,7 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run, deadli
         records.append({"name": name, "script": args[1] if len(args) > 1 else "",
                         "workdir": values.get("WorkingDirectory", "").replace("%%", "%"),
                         "executable": args[0] if args else "", "timer": timer, "marker": marker,
+                        "timer_marker": timer_marker,
                         "launch_failed": systemd_launch_failed(show)})
     return records
 
