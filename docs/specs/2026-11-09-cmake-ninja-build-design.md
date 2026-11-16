@@ -16,7 +16,7 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 ## Layout
 
 - One `CMakeLists.txt` at the root and one beside each `.vcxproj`, each declaring the one target its project declares, with the same source list (the projects list sources explicitly; so do the CMake files, so a new file is added to both until the MSBuild path is retired).
-- `CMakePresets.json`: configure, build and test presets `x64-debug`, `x64-release`, `x64-asan-debug`, `x64-asan-release`, `arm64-debug`, `arm64-release`, generator `Ninja`, binary folder `build/cmake/<preset>`, the `.tools/` CMake and Ninja.
+- `CMakePresets.json`: configure and build presets (no test presets: the suite runs only through `build.ps1`'s runner of `§11`, with its shards, serial pass, deadline, coverage and time budget, which a CTest registration would bypass) `x64-debug`, `x64-release`, `x64-asan-debug`, `x64-asan-release`, `arm64-debug`, `arm64-release`, generator `Ninja`, binary folder `build/cmake/<preset>`, the `.tools/` CMake and Ninja.
 - Outputs: `build/cmake-bin[-asan]/<platform>/<configuration>/<target>/`, the layout `build/bin` uses (so `Ui.App`'s `recto_exe()`, the ASan runtime staging and the test runner work unchanged) in a folder of its own, so neither backend ever runs the other's executables.
 - One `recto_defaults` interface target carries the shared flags; every target links it, as every project imports `Directory.Build.*`.
 
@@ -32,7 +32,8 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 
 - Each preset names its architecture and host toolset with `"strategy": "external"` (`x64` or `arm64`, `host=x64`), which is how Visual Studio sets up the matching developer environment; on the command line the developer prompt supplies it, and configure refuses a compiler whose target does not match the preset.
 - Configure sizes the pools itself when `build.ps1` passed none: `cmake_host_system_information(AVAILABLE_PHYSICAL_MEMORY)` with the same budget as below, and the same refusal below one compiler and one link (`RECTO_ASSUME_FREE_MB` stands in for the reading in tests, as `-AvailableMb` does for `parallelism.ps1`).
-- The presets name the `.tools/` Ninja and CMake; configure refuses with the `build/bootstrap-tools.ps1` command when they are absent.
+- The presets name the `.tools/` Ninja (`CMAKE_MAKE_PROGRAM`) and, for Visual Studio, the `.tools/` CMake (`cmakeExecutable`, which only IDEs read). On the command line `build\cmake.cmd` runs the pinned CMake, as `build\python.cmd` runs the pinned CPython; configure refuses any other CMake (its version is not the one `build/tools.lock.json` pins) with that command, and refuses with the `build/bootstrap-tools.ps1` command when `.tools/` is absent.
+- Memory is checked when each build starts, not only at configure: a gate target every other target depends on runs `cmake -P build/cmake/memory-gate.cmake`, which reads free memory and fails the build below the configured pools' budget (with the command that reconfigures them) or below one compiler and one link; `build.ps1` reconfigures with fresh pool sizes on every run.
 - The boundary check is part of the build graph: a custom command whose output is a stamp file, depending on the four module libraries, their manifests and `scripts/check-ui-boundary.py`, runs the check after any of them changes and fails the build when it does. A direct `cmake --build` or a Visual Studio build therefore fails on a crossing exactly as `build.ps1` does, and a no-change build runs nothing.
 
 ## Job pools and memory
