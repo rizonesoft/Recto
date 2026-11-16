@@ -8,7 +8,7 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 
 ## What stays the same
 
-- The toolset (MSVC v145 from Visual Studio 2026, D4), the Windows SDK 10.0.26100 target with 10.0.22621 minimum, C++23 through `/std:c++23preview` (D14), and every compile flag in `Directory.Build.targets`: `/W4 /WX /permissive- /Zc:preprocessor /utf-8`, `WIN32_LEAN_AND_MEAN`, `NOMINMAX`, `UNICODE`, `/Z7`, `/MDd` or `/MD`, `/sdl` outside Debug, `/bigobj` where a project has it, `/fsanitize=address` in the ASan presets.
+- The toolset (MSVC v145 from Visual Studio 2026, D4), the Windows SDK 10.0.26100 target with 10.0.22621 minimum, C++23 through `/std:c++23preview` (D14), and every compile flag in `Directory.Build.targets`: `/W4 /WX /permissive- /Zc:preprocessor /utf-8`, `WIN32_LEAN_AND_MEAN`, `NOMINMAX`, `UNICODE`, `/Z7`, `/MDd` or `/MD`, `/sdl` outside Debug, `/bigobj` where a project has it, `/fsanitize=address` in the ASan presets. MSBuild's Debug defaults that CMake does not give are added (`/RTC1`, `/JMC`), and under ASan, as MSBuild does for `EnableASAN`, runtime checks are off (`CMAKE_MSVC_RUNTIME_CHECKS` empty, policy CMP0184), linking is not incremental and `/JMC` is dropped, since MSVC's AddressSanitizer refuses `/RTC` and incremental linking.
 - The module graph: `recto-pdf`, `recto-core`, `recto-services` and `recto-ui` static libraries; `Recto`, `recto-cli`, `recto-tests` and `recto-fuzz` executables, with the same `ProjectReference` edges and the same system libraries.
 - The pinned tools from `§6` (`.tools/` CMake, Ninja, sccache, CPython) and the sccache cache of `§7`.
 - `Recto.sln` builds as today and stays in CI (`build.ps1 -MSBuild`) until a full milestone has passed on CMake.
@@ -26,6 +26,15 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 - sccache (the default): `CMAKE_C_COMPILER_LAUNCHER` and `CMAKE_CXX_COMPILER_LAUNCHER` name `.tools/` sccache, with the server and cache settings `Initialize-RectoSccache` already gives. As in MSBuild's sccache mode, no precompiled header is built and `pch.h` is force-included (`/FIpch.h`), because sccache does not cache `/Yc` and `/Yu`. Under `-NoSccache` each target uses `target_precompile_headers(pch.h)`.
 - Every compile writes `/sourceDependencies <object>.json` (an override of `CMAKE_CXX_COMPILE_OBJECT`), which the boundary check reads; the cache proof checks that a report exists and is current after a cache hit, and if sccache does not restore it, the wrapper of `§7` (`build/sccache-cl.cpp`) stands between Ninja and sccache as it does for MSBuild.
 
+## Entry points
+
+`build/build.ps1` is one way in; a preset run directly (`cmake --preset x64-debug` from a Visual Studio developer prompt, or Visual Studio's Open Folder) is the other, and it must be as safe:
+
+- Each preset names its architecture and host toolset with `"strategy": "external"` (`x64` or `arm64`, `host=x64`), which is how Visual Studio sets up the matching developer environment; on the command line the developer prompt supplies it, and configure refuses a compiler whose target does not match the preset.
+- Configure sizes the pools itself when `build.ps1` passed none: `cmake_host_system_information(AVAILABLE_PHYSICAL_MEMORY)` with the same budget as below, and the same refusal below one compiler and one link (`RECTO_ASSUME_FREE_MB` stands in for the reading in tests, as `-AvailableMb` does for `parallelism.ps1`).
+- The presets name the `.tools/` Ninja and CMake; configure refuses with the `build/bootstrap-tools.ps1` command when they are absent.
+- The boundary check is part of the build graph: a custom command whose output is a stamp file, depending on the four module libraries, their manifests and `scripts/check-ui-boundary.py`, runs the check after any of them changes and fails the build when it does. A direct `cmake --build` or a Visual Studio build therefore fails on a crossing exactly as `build.ps1` does, and a no-change build runs nothing.
+
 ## Job pools and memory
 
 - `set_property(GLOBAL PROPERTY JOB_POOLS compile=<C> link=<L>)` with `CMAKE_JOB_POOL_COMPILE` and `CMAKE_JOB_POOL_LINK`, `C` and `L` passed by `build.ps1` as cache variables.
@@ -39,7 +48,7 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 
 ## The D13 boundary check
 
-`scripts/check-ui-boundary.py` stays the proof. CMake writes, at generate time, one manifest per module target in the format the `RectoBoundaryManifest` target writes (`project|<CMakeLists.txt>|<object folder>|<library>` and one `unit|...` line per source with its object and report paths) into `build/cmake/<preset>/boundary/`, and the script takes `--manifests-dir`. A unit whose report is missing is refused, so a wrong object path fails closed. `dumpbin /directives`, `/symbols` and `lib /list` read the CMake-built libraries as they read the MSBuild ones.
+`scripts/check-ui-boundary.py` stays the proof, run by the build graph itself (see Entry points). CMake writes, at generate time, one manifest per module target in the format the `RectoBoundaryManifest` target writes (`project|<CMakeLists.txt>|<object folder>|<library>` and one `unit|...` line per source with its object and report paths) into `build/cmake/<preset>/boundary/`, and the script takes `--manifests-dir`. A unit whose report is missing is refused, so a wrong object path fails closed. `dumpbin /directives`, `/symbols` and `lib /list` read the CMake-built libraries as they read the MSBuild ones.
 
 ## Compile database
 
@@ -49,12 +58,18 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 
 Visual Studio 2026 opens the folder and reads `CMakePresets.json` (Open Folder or `devenv .`), with the same presets the command line uses. `Recto.sln` keeps opening as today while it exists.
 
+## The governing decision
+
+Foundation plan D8 names MSBuild the primary build system. When `build.cmd` moves to CMake, D8 gets a dated amendment: CMake and Ninja primary, `Recto.sln` kept in one CI job for parity until a full milestone has passed, and the cost of going back below.
+
 ## Going back to MSBuild
 
 The MSBuild path is never removed in this section: `build.ps1 -MSBuild` builds `Recto.sln` as today and CI keeps one job on it. Going back is one change to `build.cmd`'s default and CI's job list; nothing in the sources depends on the generator. Deleting the CMake files afterwards loses only the job pools and the no-change speed.
 
 ## Proof
 
+- ASan: the x64 Debug and Release ASan presets each build and pass the suite (CI runs Release only today, so Debug is proven locally).
+- Entry points: a preset run from a developer prompt with no `build.ps1` builds, sizes its pools and refuses on low memory; an `arm64-*` preset run from an x64 prompt is refused; a forbidden include fails `cmake --build` itself.
 - Parity: each backend builds and runs the suite from its own folder on the same commit; both list the same tests and pass, and the boundary check passes on both.
 - Speed and memory: clean and no-change x64 Debug times of both, no-change CMake under 2 s, and the lowest free memory during a clean CMake build started with about 6 GB free at or above 2,048 MB.
 - Cache: a warm rebuild hits for every unit; header and forced-include edits miss where they should; reports exist after hits; a compile error fails the build.
