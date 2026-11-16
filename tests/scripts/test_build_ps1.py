@@ -899,6 +899,16 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 "        string xml = null;\n"
                 "        foreach (string a in args) if (a.StartsWith(\"--gtest_output=xml:\")) xml = a.Substring(\"--gtest_output=xml:\".Length);\n"
                 "        string mode = Environment.GetEnvironmentVariable(\"FAKE_TEST_XML_MODE\") ?? \"\";\n"
+                "        if (Array.IndexOf(args, \"--gtest_list_tests\") >= 0) { Console.WriteLine(\"Suite.\"); Console.WriteLine(\"  \" + mode.Split(new char[] { ':' }, 2)[0]); return 0; }\n"
+                "        // A sharded run: the one test lands in shard 0; the other shards and the serial pass (a positive filter\n"
+                "        // with FAKE_SHARDED set) report none, as a real shard whose share is empty would.\n"
+                "        bool sharded = Environment.GetEnvironmentVariable(\"FAKE_SHARDED\") == \"1\";\n"
+                "        string index = Environment.GetEnvironmentVariable(\"GTEST_SHARD_INDEX\");\n"
+                "        bool positive = false; foreach (string a in args) if (a.StartsWith(\"--gtest_filter=\") && !a.StartsWith(\"--gtest_filter=-\")) positive = true;\n"
+                "        if (sharded && xml != null && ((index != null && index != \"0\") || (index == null && positive))) {\n"
+                "            File.WriteAllText(xml, \"<?xml version=\\\"1.0\\\" encoding=\\\"UTF-8\\\"?><testsuites tests=\\\"0\\\" time=\\\"0\\\"></testsuites>\", new UTF8Encoding(false));\n"
+                "            return 0;\n"
+                "        }\n"
                 "        if (xml != null) {\n"
                 "            if (mode == \"empty\") File.WriteAllBytes(xml, new byte[0]);\n"
                 "            else if (mode == \"malformed\") File.WriteAllText(xml, \"<broken\");\n"
@@ -931,7 +941,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
             built = _run_managed([str(csc), "/nologo", "/target:exe", f"/out:{asan_dir / 'dumpbin.exe'}", str(dumpbin_cs)],
                                  cwd=base, env=os.environ.copy(), timeout=60)
             self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
-            def run_case(ps_args: str, xml_mode: str, exit_code: int) -> tuple[int, str]:
+            def run_case(ps_args: str, xml_mode: str, exit_code: int, shards: str = "1") -> tuple[int, str]:
                 for xml_file in (ws / "build").glob("test-results-*.xml"):
                     xml_file.unlink()
                 env = os.environ.copy()
@@ -939,8 +949,9 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 env["RECTO_TOOLS_DIR"] = str(ROOT / ".tools")
                 env["RECTO_SCCACHE_WRAPPER_EXE"] = str(stub_wrapper)
                 env["RECTO_SCCACHE_NO_DAEMON"] = "1"
-                # One process: these cases are about the single run's report and budget handling.
-                env["RECTO_TEST_SHARDS"] = "1"
+                # One process unless a case asks for shards: most cases are about the single run's report and budget.
+                env["RECTO_TEST_SHARDS"] = shards
+                env["FAKE_SHARDED"] = "1" if shards != "1" else "0"
                 env["FAKE_TEST_XML_MODE"] = xml_mode
                 env["FAKE_TEST_EXIT"] = str(exit_code)
                 cmd = (
@@ -994,6 +1005,23 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     rc, out = run_case("-Configuration Debug", bad_mode, 1)
                     self.assertNotEqual(rc, 0, out)
                     self.assertIn("recto-tests failed: Debug|x64 (exit 1)", out)
+
+            # (g) A sharded run writes its reports, logs and test list into -TestOutputDir, relative (from the
+            # repository root) or absolute, under names a plain and an ASan run never share (D00 T04 section 11).
+            shutil.copy2(ROOT / "tests" / "recto-tests" / "serial-tests.txt", ws / "tests" / "recto-tests" / "serial-tests.txt")
+            absolute = base / "abs out"
+            for ps_args, folder, tag in (("-Configuration Debug -TestOutputDir out\\rel", ws / "out" / "rel", "Debug"),
+                                         (f"-Configuration Debug -EnableASAN -TestOutputDir '{absolute}'", absolute, "Debug-asan")):
+                with self.subTest(ps_args=ps_args):
+                    rc, out = run_case(ps_args, "Sharded:0.100", 0, shards="2")
+                    self.assertEqual(rc, 0, out)
+                    self.assertIn("2 shard(s) (RECTO_TEST_SHARDS=2)", out)
+                    self.assertIn("OK: 1 listed tests each reported exactly once across 3 report(s)", out)
+                    names = sorted(p.name for p in folder.iterdir())
+                    self.assertEqual(names, sorted([
+                        f"test-results-x64-{tag}-shard0.xml", f"test-results-x64-{tag}-shard1.xml",
+                        f"test-results-x64-{tag}-serial.xml", f"test-x64-{tag}-shard0.log", f"test-x64-{tag}-shard1.log",
+                        f"test-x64-{tag}-serial.log", f"test-list-x64-{tag}.txt"]), out)
 
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows cmd.exe and PowerShell")
     def test_build_cmd_iteration_gate_forwards_debug_x64_and_strips_cmd_quotes_on_test_filter(self):
