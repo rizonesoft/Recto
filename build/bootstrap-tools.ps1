@@ -511,6 +511,10 @@ try {
     $cpythonEntry = $lockObj.cpython
     $cpythonExe = Join-Path (Join-Path (Join-Path $ToolsDir 'cpython') ([string]$cpythonEntry.version)) (([string]$cpythonEntry.executable).Replace('/', '\'))
     Save-FileAtomically -TargetPath (Join-Path $ToolsDir 'cpython-exe.txt') -Content $cpythonExe
+    # build\cmake.cmd runs the pinned CMake through the same kind of pointer (D00 T04 section 8).
+    $cmakeEntry = $lockObj.cmake
+    $cmakeExe = Join-Path (Join-Path (Join-Path $ToolsDir 'cmake') ([string]$cmakeEntry.version)) (([string]$cmakeEntry.executable).Replace('/', '\'))
+    Save-FileAtomically -TargetPath (Join-Path $ToolsDir 'cmake-exe.txt') -Content $cmakeExe
     Save-FileAtomically -TargetPath (Join-Path $ToolsDir 'tools.lock.verified') -Content $rawLock
     $global:LASTEXITCODE = 0
 } finally {

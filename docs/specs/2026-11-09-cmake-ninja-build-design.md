@@ -33,7 +33,7 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 - Each preset names its architecture and host toolset with `"strategy": "external"` (`x64` or `arm64`, `host=x64`), which is how Visual Studio sets up the matching developer environment; on the command line the developer prompt supplies it, and configure refuses a compiler whose target does not match the preset.
 - Configure sizes the pools itself when `build.ps1` passed none: `cmake_host_system_information(AVAILABLE_PHYSICAL_MEMORY)` with the same budget as below, and the same refusal below one compiler and one link (`RECTO_ASSUME_FREE_MB` stands in for the reading in tests, as `-AvailableMb` does for `parallelism.ps1`).
 - The presets name the `.tools/` Ninja (`CMAKE_MAKE_PROGRAM`) and, for Visual Studio, the `.tools/` CMake (`cmakeExecutable`, which only IDEs read). On the command line `build\cmake.cmd` runs the pinned CMake, as `build\python.cmd` runs the pinned CPython; configure refuses any other CMake (its version is not the one `build/tools.lock.json` pins) with that command, and refuses with the `build/bootstrap-tools.ps1` command when `.tools/` is absent.
-- Memory is checked when each build starts, not only at configure: a gate target every other target depends on runs `cmake -P build/cmake/memory-gate.cmake`, which reads free memory and fails the build below the configured pools' budget (with the command that reconfigures them) or below one compiler and one link; `build.ps1` reconfigures with fresh pool sizes on every run.
+- Memory is checked when each build starts, not only at configure: a gate target every other target depends on runs `cmake -P cmake/memory-gate.cmake`, which reads free memory and fails the build below the configured pools' budget (with the command that reconfigures them) or below one compiler and one link; `build.ps1` reconfigures with fresh pool sizes on every run.
 - The boundary check is part of the build graph: a custom command whose output is a stamp file, depending on the four module libraries, their manifests and `scripts/check-ui-boundary.py`, runs the check after any of them changes and fails the build when it does. A direct `cmake --build` or a Visual Studio build therefore fails on a crossing exactly as `build.ps1` does, and a no-change build runs nothing.
 
 ## Job pools and memory
@@ -49,11 +49,11 @@ MSBuild cannot cap compiles and links separately: `/m` counts projects and `CL_M
 
 ## The D13 boundary check
 
-`scripts/check-ui-boundary.py` stays the proof, run by the build graph itself (see Entry points). CMake writes, at generate time, one manifest per module target in the format the `RectoBoundaryManifest` target writes (`project|<CMakeLists.txt>|<object folder>|<library>` and one `unit|...` line per source with its object and report paths) into `build/cmake/<preset>/boundary/`, and the script takes `--manifests-dir`. A unit whose report is missing is refused, so a wrong object path fails closed. `dumpbin /directives`, `/symbols` and `lib /list` read the CMake-built libraries as they read the MSBuild ones.
+`scripts/check-ui-boundary.py` stays the proof, run by the build graph itself (see Entry points). CMake writes, at generate time, one manifest per module target in the format the `RectoBoundaryManifest` target writes (`project|<CMakeLists.txt>|<object folder>|<library>` and one `unit|...` line per source with its object and report paths) into `build/cmake/<preset>/boundary/`, and the script reads them through its existing `--manifests` option; the project line names `build.ninja`, whose folder is where Ninja runs the librarian, so the member paths `lib /list` reports resolve as they do under MSBuild. A unit whose report is missing is refused, so a wrong object path fails closed. `dumpbin /directives`, `/symbols` and `lib /list` read the CMake-built libraries as they read the MSBuild ones.
 
 ## Compile database
 
-`CMAKE_EXPORT_COMPILE_COMMANDS` with the developer environment's `INCLUDE` folders named as `CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES`, so each command line is complete without the environment. `build.ps1` copies it to `build/compile_commands.json` only after a full x64 Debug non-ASan build; `scripts/clangd-lsp.py` keeps using an existing database, and `scripts/build-compile-commands.py` and its MSBuild target go once `build.cmd` uses CMake.
+`CMAKE_EXPORT_COMPILE_COMMANDS`, with each of the developer environment's `EXTERNAL_INCLUDE` folders named on the command line as `/external:I` (as plain `/I` they would stop being external and fail `/W4 /WX` on SDK headers), so each command line is complete without the environment. `build.ps1` copies it to `build/compile_commands.json` only after a full x64 Debug non-ASan build; `scripts/clangd-lsp.py` keeps using an existing database, and `scripts/build-compile-commands.py` and its MSBuild target go once `build.cmd` uses CMake.
 
 ## Visual Studio
 
@@ -74,3 +74,12 @@ The MSBuild path is never removed in this section: `build.ps1 -MSBuild` builds `
 - Parity: each backend builds and runs the suite from its own folder on the same commit; both list the same tests and pass, and the boundary check passes on both.
 - Speed and memory: clean and no-change x64 Debug times of both, no-change CMake under 2 s, and the lowest free memory during a clean CMake build started with about 6 GB free at or above 2,048 MB.
 - Cache: a warm rebuild hits for every unit; header and forced-include edits miss where they should; reports exist after hits; a compile error fails the build.
+
+## Notes from the build
+
+- C++23 comes from `CMAKE_CXX_STANDARD 23`, which absorbs GoogleTest's `cxx_std_17`; on toolsets before 19.52 the switch is `/std:c++23preview`, as MSBuild's own `cl.xml` maps `stdcpp23` there, and from 19.52 `/std:c++23` in both builds.
+- Module scanning and the `import std` target that CMake 4.5 adds for C++23 are off, as MSBuild's `ScanSourceForModuleDependencies` is.
+- CMake's platform defaults (`/DWIN32 /D_WINDOWS`, `/Ob0`, `/Ob2 /DNDEBUG`) are replaced after `project()` by MSBuild's `/Od` and `/O2`.
+- GoogleTest's include folder is passed as plain `/I` (its package marks it system), as MSBuild's vcpkg integration passes it.
+- The CMake modules live in `cmake/` at the root; `build/cmake/<preset>` holds only generated build folders.
+- One link budget: `recto-tests` peaked at 457 MB (Debug) and 584 MB (Release) of commit, so a link is budgeted 1,024 MB.

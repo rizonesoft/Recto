@@ -11,6 +11,7 @@ build/*
 !build/build-evidence.ps1
 !build/sccache.ps1
 !build/test-shards.ps1
+!build/cmake.cmd
 !build/sccache-cl.cpp
 !build/tools.lock.json
 !build/bootstrap-tools.ps1

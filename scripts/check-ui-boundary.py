@@ -169,8 +169,11 @@ class Unit:
 class Project:
     """One module project in one configuration as the build saw it: its compiled units and where its outputs went."""
 
-    def __init__(self, name, units, int_dir, library):
+    def __init__(self, name, units, int_dir, library, folder=None):
         self.name, self.units, self.int_dir, self.library = name, units, int_dir, library
+        # The folder the build ran its tools in, which a relative path the librarian reports is relative to: the
+        # project folder under MSBuild, the binary folder under Ninja (D00 T04 section 8).
+        self.folder = folder
 
     @property
     def sources(self):
@@ -197,7 +200,8 @@ def output_path(project_folder, value, filename, extension, completes):
 
 # One line per fact, written by the RectoBoundaryManifest target in Directory.Build.targets after ClCompile ran, so
 # every value is what the build compiled with, target-time changes included:
-#   project|<project file>|<IntDir>|<library file>
+#   project|<project file>|<IntDir>|<library file>   (the project file's folder is where the build ran its tools:
+#                                                     the .vcxproj under MSBuild, build.ninja under the CMake build)
 #   unit|<source>|<ExcludedFromBuild>|<GenerateSourceDependencies>|<SourceDependenciesFile>|<ObjectFileName>|
 #        <PrecompiledHeader>|<PrecompiledHeaderOutputFile>|<AdditionalOptions, the rest of the line>
 MANIFESTS = REPO / "build" / "boundary"
@@ -251,7 +255,7 @@ def read_manifest(name, path):
     units = compiled_units(folder, items)
     if not units:
         raise EvidenceError(f"{name}: the build compiled no ClCompile items")
-    return Project(name, units, normalized(folder / project[1]), normalized(folder / project[2]))
+    return Project(name, units, normalized(folder / project[1]), normalized(folder / project[2]), folder)
 
 
 def report_paths(report):
@@ -511,7 +515,7 @@ def check(configuration, platform, vs=None, manifests=None):
                                    {m for n in names for m in modules[n]})
         found += directive_crossings(name, project.library, [other.library for other in others], folders + outputs,
                                      tools / "dumpbin.exe")
-        found += member_crossings(name, project.library, PROJECTS[name].parent, [unit.obj for unit in project.units],
+        found += member_crossings(name, project.library, project.folder, [unit.obj for unit in project.units],
                                   tools / "lib.exe")
     tables = {name: symbol_table(project.library, tools / "dumpbin.exe") for name, project in projects.items()}
     for name in projects:
