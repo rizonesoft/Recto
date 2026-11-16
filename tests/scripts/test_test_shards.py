@@ -39,23 +39,24 @@ FAKE_GTEST = textwrap.dedent(
     import fnmatch, os, subprocess, sys, time
     TESTS = [f"Fast.T{i}" for i in range(8)] + ["Slow.Timed", "Slow.Budget", "Ui.App.Starts", "Ui.DISABLED_App.Probe"]
     args = sys.argv[1:]
+    xml = next((a.split(":", 1)[1] for a in args if a.startswith("--gtest_output=xml:")), None)
+    # Like gtest: --gtest_filter wins, GTEST_FILTER stands in when no flag is given, and the list honours it too.
+    flt = next((a.split("=", 1)[1] for a in args if a.startswith("--gtest_filter=")), os.environ.get("GTEST_FILTER", "*"))
+    pos, _, neg = flt.partition("-")
+    pos = pos or "*"
+    def match(name, pats):
+        return any(fnmatch.fnmatchcase(name, p) for p in pats.split(":") if p)
+    selected = [t for t in TESTS if match(t, pos) and not (neg and match(t, neg))]
     if "--gtest_list_tests" in args:
         print("Running main() from fake_gtest.py")
         suite = None
-        for name in TESTS:
+        for name in selected:
             s, t = name.split(".", 1)
             if s != suite:
                 print(s + ".")
                 suite = s
             print("  " + t)
         sys.exit(0)
-    xml = next((a.split(":", 1)[1] for a in args if a.startswith("--gtest_output=xml:")), None)
-    flt = next((a.split("=", 1)[1] for a in args if a.startswith("--gtest_filter=")), "*")
-    pos, _, neg = flt.partition("-")
-    pos = pos or "*"
-    def match(name, pats):
-        return any(fnmatch.fnmatchcase(name, p) for p in pats.split(":") if p)
-    selected = [t for t in TESTS if match(t, pos) and not (neg and match(t, neg))]
     total = int(os.environ.get("GTEST_TOTAL_SHARDS", "1"))
     index = int(os.environ.get("GTEST_SHARD_INDEX", "0"))
     me = f"shard{index}" if "GTEST_TOTAL_SHARDS" in os.environ else "serial"
@@ -309,6 +310,28 @@ class ShardRun(unittest.TestCase):
         self.assertEqual(partial.returncode, 1, partial.stdout + partial.stderr)
         self.assertIn("missing from every report: Fast.T1", partial.stderr)
         self.assertIn("peak commit", res.stdout)
+
+    def test_an_inherited_gtest_filter_narrows_neither_the_list_nor_the_runs(self):
+        # Round 1 #2: the list inherited GTEST_FILTER while the runs' own filters replaced it, so coverage refused a
+        # correct run as "reported but not listed".
+        res = _ps(self._invoke_script(), env=self._env(GTEST_FILTER="Fast.T0"))
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        xml = [line for line in res.stdout.splitlines() if line.endswith(".xml")]
+        listing = next(line[5:] for line in res.stdout.splitlines() if line.startswith("LIST="))
+        cov = subprocess.run([sys.executable, str(TEST_TIMES), "coverage", listing, *xml], capture_output=True, text=True,
+                             timeout=60, creationflags=windowless())
+        self.assertEqual(cov.returncode, 0, cov.stdout + cov.stderr)
+        self.assertIn("12 listed tests each reported exactly once across 4 report(s)", cov.stdout)
+
+    def test_every_process_is_created_inside_the_job(self):
+        # Round 1 #1: CreateProcessW then AssignProcessToJobObject leaves a moment when a killed host orphans the
+        # suspended child. The job goes in the attribute list (PROC_THREAD_ATTRIBUTE_JOB_LIST), so creation is the
+        # assignment; the race cannot be forced in a test, so the source is held to it.
+        source = TEST_SHARDS_PS1.read_text(encoding="utf-8")
+        self.assertIn("PROC_THREAD_ATTRIBUTE_JOB_LIST = (IntPtr)0x0002000D", source)
+        self.assertIn("UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, jobs", source)
+        self.assertNotIn("AssignProcessToJobObject(", source)
+        self.assertEqual(source.count("CreateProcessW("), 2, "one declaration and one call, both through the attribute list")
 
     def test_a_failing_test_fails_the_run_with_its_log_printed(self):
         res = _ps(self._invoke_script(), env=self._env(FAKE_FAIL="Fast.T4"))

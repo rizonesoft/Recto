@@ -55,6 +55,9 @@ namespace Recto.TestShards {
         const uint WAIT_OBJECT_0 = 0;
         const uint WAIT_TIMEOUT = 0x102;
         static readonly IntPtr PROC_THREAD_ATTRIBUTE_HANDLE_LIST = (IntPtr)0x00020002;
+        // ProcThreadAttributeValue(ProcThreadAttributeJobList = 13, input): the process is created inside the job, so no
+        // moment exists, as between CreateProcessW and AssignProcessToJobObject, when the host could die and leave it out.
+        static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST = (IntPtr)0x0002000D;
         static readonly IntPtr INVALID_HANDLE_VALUE = (IntPtr)(-1);
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -110,8 +113,6 @@ namespace Recto.TestShards {
         static extern bool QueryInformationJobObject(IntPtr job, int infoClass, out JOBOBJECT_BASIC_ACCOUNTING_INFORMATION info, int length, IntPtr returned);
         [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "QueryInformationJobObject")]
         static extern bool QueryExtendedLimits(IntPtr job, int infoClass, out JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int length, IntPtr returned);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool TerminateJobObject(IntPtr job, uint exitCode);
         [DllImport("kernel32.dll", SetLastError = true)]
@@ -212,9 +213,8 @@ namespace Recto.TestShards {
             return block.ToString();
         }
 
-        // Starts `exe` suspended, with standard output and error written to `logPath` (or, when it is null or empty, to this
-        // process's own standard output and error) and no other handle inherited, assigns it to `job`, and only then
-        // lets it run.
+        // Starts `exe` suspended and already inside `job` (PROC_THREAD_ATTRIBUTE_JOB_LIST), with standard output and error written to `logPath` (or, when it is null or empty, to this
+        // process's own standard output and error) and no other handle inherited, and only then lets it run.
         public static Shard Start(IntPtr job, string name, string exe, string[] arguments, string workingDirectory, string logPath, string[] environment) {
             StringBuilder commandLine = new StringBuilder(Quote(exe));
             if (arguments != null) foreach (string argument in arguments) commandLine.Append(' ').Append(Quote(argument));
@@ -246,13 +246,15 @@ namespace Recto.TestShards {
             IntPtr listSize = IntPtr.Zero;
             IntPtr list = IntPtr.Zero;
             IntPtr handles = Marshal.AllocHGlobal(IntPtr.Size * 3);
+            IntPtr jobs = Marshal.AllocHGlobal(IntPtr.Size);
             try {
                 Marshal.WriteIntPtr(handles, 0, log);
                 Marshal.WriteIntPtr(handles, IntPtr.Size, input);
                 if (errors != IntPtr.Zero) Marshal.WriteIntPtr(handles, IntPtr.Size * 2, errors);
-                InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref listSize);
+                Marshal.WriteIntPtr(jobs, 0, job);
+                InitializeProcThreadAttributeList(IntPtr.Zero, 2, 0, ref listSize);
                 list = Marshal.AllocHGlobal(listSize);
-                if (!InitializeProcThreadAttributeList(list, 1, 0, ref listSize)) {
+                if (!InitializeProcThreadAttributeList(list, 2, 0, ref listSize)) {
                     int error = Marshal.GetLastWin32Error();
                     Marshal.FreeHGlobal(list);
                     list = IntPtr.Zero;
@@ -260,6 +262,9 @@ namespace Recto.TestShards {
                 }
                 if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles, (IntPtr)(IntPtr.Size * handleCount), IntPtr.Zero, IntPtr.Zero)) {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute(HANDLE_LIST) failed");
+                }
+                if (!UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, jobs, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) {
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute(JOB_LIST) failed");
                 }
                 STARTUPINFOEX startup = new STARTUPINFOEX();
                 startup.StartupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
@@ -277,15 +282,9 @@ namespace Recto.TestShards {
                 if (!CreateProcessW(exe, commandLine, IntPtr.Zero, IntPtr.Zero, true, flags, Environment(environment), workingDirectory, ref startup, out info)) {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "cannot start " + exe);
                 }
-                if (!AssignProcessToJobObject(job, info.hProcess)) {
-                    int error = Marshal.GetLastWin32Error();
-                    TerminateProcess(info.hProcess, 1);
-                    CloseHandle(info.hThread);
-                    CloseHandle(info.hProcess);
-                    throw new Win32Exception(error, "AssignProcessToJobObject failed for " + name);
-                }
                 if (ResumeThread(info.hThread) == 0xFFFFFFFF) {
                     int error = Marshal.GetLastWin32Error();
+                    TerminateProcess(info.hProcess, 1);
                     CloseHandle(info.hThread);
                     CloseHandle(info.hProcess);
                     throw new Win32Exception(error, "ResumeThread failed for " + name);
@@ -300,6 +299,7 @@ namespace Recto.TestShards {
             } finally {
                 if (list != IntPtr.Zero) { DeleteProcThreadAttributeList(list); Marshal.FreeHGlobal(list); }
                 Marshal.FreeHGlobal(handles);
+                Marshal.FreeHGlobal(jobs);
                 CloseHandle(log);
                 if (errors != IntPtr.Zero) CloseHandle(errors);
                 CloseHandle(input);
@@ -532,7 +532,9 @@ function Invoke-RectoTestShards {
         [double]$TimeoutMinutes = $script:RectoTestTimeoutDefaultMinutes
     )
     if ($Shards -lt 2) { throw "Invoke-RectoTestShards needs at least 2 shards (got $Shards); one process is the single run" }
-    $unshard = @('GTEST_TOTAL_SHARDS=', 'GTEST_SHARD_INDEX=', 'GTEST_SHARD_STATUS_FILE=')
+    # An inherited GTEST_FILTER would narrow the list but not the runs, whose own filters replace it, so no process of a
+    # full run sees one.
+    $unshard = @('GTEST_TOTAL_SHARDS=', 'GTEST_SHARD_INDEX=', 'GTEST_SHARD_STATUS_FILE=', 'GTEST_FILTER=')
     $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
     $job = [Recto.TestShards.Job]::Create()
     $all = @()
@@ -553,7 +555,7 @@ function Invoke-RectoTestShards {
                 Name = "shard $i of $Shards"; XmlPath = $xml
                 Arguments = @("--gtest_output=xml:$xml") + $exclude
                 LogPath = Join-Path $XmlDir "test-x64-$Tag-shard$i.log"
-                Environment = @("GTEST_TOTAL_SHARDS=$Shards", "GTEST_SHARD_INDEX=$i", 'GTEST_SHARD_STATUS_FILE=')
+                Environment = @("GTEST_TOTAL_SHARDS=$Shards", "GTEST_SHARD_INDEX=$i", 'GTEST_SHARD_STATUS_FILE=', 'GTEST_FILTER=')
             }
         }
         $serialXml = Join-Path $XmlDir "test-results-x64-$Tag-serial.xml"
