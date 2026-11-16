@@ -1,0 +1,93 @@
+{
+  "ref": "D00 T04 \u00a711",
+  "title": "The x64 test suite run in parallel shards within the memory bound",
+  "implementation_sha": "4b7aff9a63057f8e13a26a1d82c42a8bda88c8a0",
+  "date": "2026-11-16",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s11.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    ".\\build.cmd -> exit 0; Debug|x64 3 shards and the serial pass in 187 s, OK: 512 listed tests each reported exactly once across 4 report(s) (509 enabled run, 3 disabled not run), OK: 512 tests within debug time budget (max=15.707s); Release|x64 3 shards and the serial pass in 23 s, OK: 512 listed tests each reported exactly once across 4 report(s), OK: 512 tests within release time budget (max=2.479s); check-ui-boundary clean",
+    "build\\python.cmd -m unittest tests.scripts.test_test_shards tests.scripts.test_test_times -> Ran 33 tests OK",
+    "test-times.py coverage with one shard XML left out -> FAIL: 155 problem(s), missing from every report",
+    "RECTO_TEST_TIMEOUT_MINUTES=0.5 build.cmd -Quick -> exit 1, recto-tests passed its deadline, 0 recto-tests or Recto processes left (4 shards and RECTO_TEST_SHARDS=1)"
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s11.md",
+    "verdict": "complete",
+    "candidate": "4b7aff9a63057f8e13a26a1d82c42a8bda88c8a0",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s11.md",
+    "candidate": "79c49a61ff0189cd3f087e234da5381c22e84a95",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "79c49a61ff0189cd3f087e234da5381c22e84a95",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 3,
+  "pass_cap": 33
+}

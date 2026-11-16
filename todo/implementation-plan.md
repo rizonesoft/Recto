@@ -36,7 +36,7 @@ Sections: 61 | Checklist items: 361
 | [x]    | D00 T04 §7  | sccache as the compiler cache for MSVC                                                   | windows-host | 4     |
 | [x]    | D00 T04 §9  | CI watched after every push until it completes                                           | windows-host | 17    |
 | [x]    | D00 T04 §10 | Slow tests fixed at their cause and held by a per-test time budget                       | windows-host | 12    |
-| [ ]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
+| [x]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [x]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
 | [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
@@ -952,6 +952,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 113/883 verified sections, 56 ready to run now.
+Progress: 114/883 verified sections, 56 ready to run now.
 
 Checklist: 770/6525 items completed (includes Commit items).

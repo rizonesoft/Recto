@@ -57,7 +57,7 @@ track: M0
 | 8 | §8 | CMake and Ninja build with compile and link job pools | §6, §7, §4, §12 | [ ] |
 | 9 | §9 | CI watched after every push until it completes | -- | [x] |
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [x] |
-| 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [ ] |
+| 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [x] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [ ] |
@@ -420,6 +420,9 @@ The budget is a default, not a measured law: 20 s for a test in Debug, 5 s in Re
 - [x] Commit: `tests: run the x64 suite in parallel shards within the memory bound`
 
 **Test checkpoint:** `build.ps1 -Platform x64` passes with the suite in shards and `python scripts/test-times.py coverage` reporting every listed test exactly once; leaving one shard's XML out of the coverage check fails it; a hung shard is killed with its children at the deadline; and `build\python.cmd -m unittest tests.scripts.test_test_shards tests.scripts.test_test_times` passes.
+
+> **Verified:** 2026-11-16 | §11 | 4b7aff9a63057f8e13a26a1d82c42a8bda88c8a0
+> **Review:** `docs/reviews/d00-t04-s11.json`
 
 ## 12. clangd language server for Claude Code over a compile database from the MSBuild build
 
