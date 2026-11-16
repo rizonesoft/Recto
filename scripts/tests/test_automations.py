@@ -494,7 +494,8 @@ class InstallSh(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         (self.bin / "systemctl").write_text(
             f'#!/bin/sh\necho "$*" >> "{self.calls}"\n'
-            'case "$2" in is-enabled) echo enabled ;; is-active) echo active ;; esac\n', encoding="utf-8")
+            'case "$2" in is-enabled) echo enabled ;; is-active) echo active ;; '
+            'show) echo Result=success; echo ExecMainStatus=0 ;; esac\n', encoding="utf-8")
         env = {**os.environ, "XDG_CONFIG_HOME": str(self.config), "PATH": f"{self.bin}:{os.environ['PATH']}"}
         check = subprocess.run(["bash", str(self.root / ".conclave/automations/install.sh"), "--check"], env=env,
                                capture_output=True, text=True, timeout=60)
@@ -576,9 +577,12 @@ class Registrations(unittest.TestCase):
             with self.subTest(f"{result:#x}"):
                 self.assertEqual(self.states([self.record("demo-one", last_result=result),
                                               self.record("demo-two")])["demo-one"], "ok")
-        for result in (0x8007010B, 0x80070002, 0x800710E0, -2147024629):  # the last is 0x8007010B signed
-            with self.subTest(f"{result:#x}"):
+        for result in (0x8007010B, 0x80070002, 0x800710E0, 0x80041323, 0xC000013A, -2147024629):
+            with self.subTest(f"{result:#x}"):  # the last is 0x8007010B signed, as PowerShell may print it
                 self.assertTrue(run.launch_failed(result))
+        # A scheduler-native launch failure on an otherwise valid registration is failing, not ok.
+        self.assertEqual(self.states([self.record("demo-one", last_result=0x80041323),
+                                      self.record("demo-two")])["demo-one"], "failing")
 
     def test_a_systemd_timer_that_is_missing_disabled_or_inactive_is_disabled(self):
         for timer in ({"present": False, "enabled": False, "active": False},
@@ -656,6 +660,9 @@ class SystemdReader(unittest.TestCase):
     def systemctl(self, answers):
         def fake(args, **_):
             verb, unit = args[2], args[3]
+            if verb == "show":
+                said = answers.get((verb, unit), "Result=success\nExecMainStatus=0\nExecMainCode=exited")
+                return subprocess.CompletedProcess(args, 0, said + "\n", "")
             said = answers.get((verb, unit), "enabled" if verb == "is-enabled" else "active")
             return subprocess.CompletedProcess(args, 0 if said in ("enabled", "active") else 1, said + "\n", "")
         return fake
@@ -682,6 +689,37 @@ class SystemdReader(unittest.TestCase):
                 text = run.systemd_units(manifest, where, sys.executable)["demo-one.service"]
                 (self.units / "demo-one.service").write_text(text, encoding="utf-8")
                 self.assertEqual(self.states()["demo-one"], want)
+
+    def test_a_service_that_systemd_could_not_start_is_failing_and_the_runner_s_own_exit_is_ok(self):
+        noexec = ("show", "demo-one.service")
+        self.assertEqual(self.states({noexec: "Result=exit-code\nExecMainStatus=203\nExecMainCode=exited"})["demo-one"],
+                         "failing")
+        self.assertEqual(self.states({noexec: "Result=start-limit-hit\nExecMainStatus=0"})["demo-one"], "failing")
+        self.assertEqual(self.states({noexec: "Result=exit-code\nExecMainStatus=1\nExecMainCode=exited"})["demo-one"],
+                         "ok")
+
+    def test_an_unreadable_unit_is_unknown_and_the_hook_still_succeeds(self):
+        real_open = open
+
+        def refusing(path, *a, **k):
+            if str(path).endswith("demo-one.service"):
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_open(path, *a, **k)
+        with mock.patch("builtins.open", refusing):
+            with self.assertRaises(run.SchedulerUnreadable) as caught:
+                run.read_systemd(self.tasks, str(self.units), runner=self.systemctl({}))
+        self.assertIn("Permission denied", str(caught.exception))
+        out = io.StringIO()
+        saved, sys.stdout = sys.stdout, out
+        try:
+            with mock.patch.object(run, "_platform", return_value="systemd"), \
+                    mock.patch.object(run, "read_systemd", side_effect=run.SchedulerUnreadable("unit cannot be read")):
+                code = run.main(["--check-installed", "--agy-hook"], root=self.root)
+        finally:
+            sys.stdout = saved
+        self.assertEqual(code, 0)
+        self.assertIn("unknown: unit cannot be read", json.loads(out.getvalue())["injectSteps"][0]["systemMessage"]
+                      ["systemMessage"])
 
     def test_a_user_bus_that_cannot_be_reached_is_unknown(self):
         def silent(args, **_):

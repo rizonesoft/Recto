@@ -256,14 +256,35 @@ SCHEDULER_STATUS = range(0x41300, 0x41307)
 
 
 def launch_failed(result) -> bool:
-    """Whether a Task Scheduler `LastTaskResult` says the task could not be started at all: a Win32 HRESULT
-    (0x8007xxxx, as 0x8007010B for a working directory that is gone, 0x80070002 for a missing program, 0x800710E0
-    for a start the operator refused). Zero, the scheduler's own status codes and the small exit codes of this
-    runner (which emails those itself) are not."""
+    """Whether a Task Scheduler `LastTaskResult` says the run did not start or was stopped from outside: any
+    failure HRESULT (the high bit set), as 0x8007010B for a working directory that is gone, 0x80070002 for a
+    missing program, 0x800710E0 for a start the operator refused, the scheduler's own 0x80041323 when its service is
+    too busy, or 0xC000013A for a run ended by a console close. Zero, the scheduler's own status codes and the small
+    exit codes of this runner (which emails those itself) are not."""
     if not isinstance(result, int) or isinstance(result, bool):
         return False
     value = result & 0xFFFFFFFF
-    return value not in SCHEDULER_STATUS and (value & 0xFFFF0000) == 0x80070000
+    return value not in SCHEDULER_STATUS and value >= 0x80000000
+
+
+# systemd's own exit statuses for a service it could not start (EXIT_CHDIR 200 to EXIT_..., 203 EXIT_EXEC among
+# them, systemd.exec(5)), as opposed to the runner's own exit; and the results that mean it was never run.
+SYSTEMD_EXEC_STATUS = range(200, 244)
+SYSTEMD_NOT_RUN = {"resources", "start-limit-hit", "protocol"}
+
+
+def systemd_launch_failed(show: dict) -> str | None:
+    """Why `systemctl --user show <service>` says its last start never reached the runner, or None."""
+    result = show.get("Result", "")
+    try:
+        status = int(show.get("ExecMainStatus") or 0)
+    except ValueError:
+        status = 0
+    if result in SYSTEMD_NOT_RUN:
+        return f"last start: {result}"
+    if result == "exit-code" and status in SYSTEMD_EXEC_STATUS:
+        return f"last start failed before the runner: status {status}/{show.get('ExecMainCode') or 'exited'}"
+    return None
 
 
 def _same(a, b) -> bool:
@@ -316,6 +337,9 @@ def registration_report(tasks, records, root: str, platform: str) -> list[tuple[
             continue
         if launch_failed(record.get("last_result")):
             report.append(("failing", name, f"last start failed: {record['last_result'] & 0xFFFFFFFF:#010x}"))
+            continue
+        if record.get("launch_failed"):
+            report.append(("failing", name, str(record["launch_failed"])))
             continue
         report.append(("ok", name, ""))
     return report
@@ -400,8 +424,11 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> lis
         service = os.path.join(folder, f"{name}.service")
         if not os.path.isfile(service):
             continue
-        with open(service, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
+        try:
+            with open(service, encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except (OSError, UnicodeDecodeError) as error:  # unreadable is unknown, never healthy or missing
+            raise SchedulerUnreadable(f"{service} cannot be read: {error}") from None
         values = {k: v for k, _, v in (line.partition("=") for line in lines if "=" in line and not line.startswith("#"))}
         args = _unquote_exec(values.get("ExecStart", ""))
         timer = {"present": os.path.isfile(os.path.join(folder, f"{name}.timer"))}
@@ -417,9 +444,20 @@ def read_systemd(tasks, folder: str | None = None, runner=subprocess.run) -> lis
                 raise SchedulerUnreadable(f"systemctl --user {verb} answered nothing: "
                                           f"{reason[-1] if reason else done.returncode}")
             timer[key] = said == good
+        try:
+            done = runner(["systemctl", "--user", "show", f"{name}.service", "-p", "Result", "-p", "ExecMainStatus",
+                           "-p", "ExecMainCode"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise SchedulerUnreadable(f"systemctl --user could not be run: {error}") from None
+        show = dict(line.partition("=")[::2] for line in (done.stdout or "").splitlines() if "=" in line)
+        if done.returncode != 0 or "Result" not in show:
+            reason = (done.stderr or "").strip().splitlines()
+            raise SchedulerUnreadable(f"systemctl --user show {name}.service answered nothing: "
+                                      f"{reason[-1] if reason else done.returncode}")
         records.append({"name": name, "script": args[1] if len(args) > 1 else "",
                         "workdir": values.get("WorkingDirectory", "").replace("%%", "%"),
-                        "executable": args[0] if args else "", "timer": timer})
+                        "executable": args[0] if args else "", "timer": timer,
+                        "launch_failed": systemd_launch_failed(show)})
     return records
 
 
