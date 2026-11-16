@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 60 | Checklist items: 355
+Sections: 61 | Checklist items: 361
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -41,6 +41,7 @@ Sections: 60 | Checklist items: 355
 | [ ]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 8     |
 | [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
 | [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 7     |
+| [ ]    | D00 T04 §15 | Budget-tight tests made fast enough to leave the serial pass                             | windows-host | 6     |
 | [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
 | [ ]    | D00 T05 §2  | Portable C++23 and Python LSP servers and MCP bridge across runners                      | windows-host | 4     |
 | [ ]    | D00 T05 §3  | Antigravity PreToolUse hook guards, Orchestrator alignment and mutation runner           | none         | 4     |
@@ -951,6 +952,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 113/882 verified sections, 56 ready to run now.
+Progress: 113/883 verified sections, 56 ready to run now.
 
-Checklist: 762/6519 items completed (includes Commit items).
+Checklist: 762/6525 items completed (includes Commit items).
