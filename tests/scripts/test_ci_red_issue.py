@@ -268,7 +268,7 @@ class NamedAtTheSource(unittest.TestCase):
 
     def test_plan_has_the_deliberate_red_input_its_failing_step_and_its_name(self):
         text = workflow_text("plan.yml")
-        self.assertIn("run-name: ${{ inputs.fail_on_purpose && 'ci-red proof: a deliberate red' || '' }}", text)
+        self.assertIn("run-name: \"${{ inputs.fail_on_purpose && 'ci-red proof: a deliberate red' || '' }}\"", text)
         self.assertRegex(text, r"fail_on_purpose:\s*\n(\s+.*\n)*?\s+type: boolean\s*\n(\s+.*\n)*?\s+default: false")
         step = re.search(r"- name: Fail on purpose \(ci-red proof\)\n\s+if: (.+)\n(?:\s+.*\n)*?\s+run: (.+)", text)
         self.assertEqual(step.group(1).strip(), "inputs.fail_on_purpose")

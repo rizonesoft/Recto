@@ -1,7 +1,7 @@
 name: plan-gates
 # The one deliberate red, for proving the ci-red alert from GitHub (D00 T04 section 13): named at the source so the
 # local watch of section 9 never emails it. Every other run keeps GitHub's default name.
-run-name: ${{ inputs.fail_on_purpose && 'ci-red proof: a deliberate red' || '' }}
+run-name: "${{ inputs.fail_on_purpose && 'ci-red proof: a deliberate red' || '' }}"
 
 # The TODO graph is the execution plan: a malformed graph or a stale
 # generated plan fails CI like any other defect. The app build workflow
@@ -90,7 +90,7 @@ jobs:
       - name: Fail on purpose (ci-red proof)
         if: inputs.fail_on_purpose
         shell: pwsh
-        run: throw 'fail_on_purpose was set: a deliberate red to prove the ci-red alert'
+        run: "throw 'fail_on_purpose was set: a deliberate red to prove the ci-red alert'"
       - uses: actions/checkout@v7
         with:
           # Stamp ancestry checks need real history, not a shallow checkout.
