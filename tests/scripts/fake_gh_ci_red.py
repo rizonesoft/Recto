@@ -38,12 +38,14 @@ def body_of(args):
 
 def answer(state, args):
     state["calls"].append(args)
-    if state.get("fail") and args[:2] == state["fail"]:
+    fail = state.get("fail")
+    if fail and args[:2] == fail[:2] and (len(fail) < 3 or fail[2] in args):
         return 1, "", "HTTP 502: Bad Gateway"
     head = args[:2]
     if head == ["run", "list"]:
-        workflow = flag(args, "--workflow")
-        runs = [r for r in state["runs"] if r.get("workflow", "build.yml") == workflow]
+        workflow, commit = flag(args, "--workflow"), flag(args, "--commit")
+        runs = [r for r in state["runs"] if r.get("workflow", "build.yml") == workflow
+                and (commit is None or r.get("headSha") == commit)]
         return 0, json.dumps([{k: v for k, v in r.items() if k != "workflow"} for r in runs]), ""
     if head == ["run", "view"]:
         return 0, json.dumps({"jobs": state["jobs"].get(args[2], [])}), ""

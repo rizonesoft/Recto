@@ -222,14 +222,21 @@ class Wiring(unittest.TestCase):
     def test_it_watches_exactly_both_workflows_by_their_names_on_main(self):
         names = [re.search(r"^name:\s*(\S+)", workflow_text(f), re.M).group(1) for f in ("build.yml", "plan.yml")]
         self.assertEqual(names, ["build", "plan-gates"])
-        self.assertRegex(self.text, r"workflow_run:\s*\n(?:\s+#.*\n)*\s+workflows: \[build, plan-gates, \.github/workflows/build\.yml, \.github/workflows/plan\.yml\]\s*\n\s+types: \[completed\]"
+        self.assertRegex(self.text, r"workflow_run:\s*\n\s+workflows: \[build, plan-gates\]\s*\n\s+types: \[completed\]"
                                     r"\s*\n\s+branches: \[main\]")
+
+    def test_a_push_changing_either_watched_file_wakes_it(self):
+        # A run of a file GitHub cannot parse wakes no workflow_run workflow (plan.yml 43863425161).
+        push = re.search(r"^  push:\n((?:    .*\n)+)", self.text, re.M).group(1)
+        self.assertIn("branches: [main]", push)
+        self.assertEqual(re.findall(r"^      - (.+)$", push, re.M),
+                         [".github/workflows/build.yml", ".github/workflows/plan.yml"])
 
     def test_permissions_and_the_serialising_concurrency_group(self):
         block = re.search(r"^permissions:\n((?:  .*\n)+)", self.text, re.M).group(1)
         self.assertEqual(sorted(line.strip() for line in block.splitlines()),
                          ["actions: read", "checks: read", "contents: read", "issues: write"])
-        self.assertIn("group: ci-red-${{ github.event.workflow_run.path }}", self.text)
+        self.assertRegex(self.text, r"concurrency:\n  group: ci-red\n  cancel-in-progress: false\n")
         self.assertIn("cancel-in-progress: false", self.text)
 
     def env_and_run(self):
@@ -241,14 +248,15 @@ class Wiring(unittest.TestCase):
     def test_the_token_and_repository_are_bound(self):
         env, run_line = self.env_and_run()
         self.assertEqual(env, {"GH_TOKEN": "${{ github.token }}", "GH_REPO": "${{ github.repository }}",
-                               "WORKFLOW_FILE": "${{ github.event.workflow_run.path }}"})
-        self.assertEqual(run_line, 'python3 scripts/ci_red_issue.py reconcile --workflow "$WORKFLOW_FILE"')
+                               "PUSHED_SHA": "${{ github.event_name == 'push' && github.sha || '' }}"})
+        self.assertEqual(run_line, 'python3 scripts/ci_red_issue.py reconcile --all --wait-for "$PUSHED_SHA"')
 
-    def execute(self, runs, jobs=None, annotations=None, token=True):
-        """Run the step's own command, as the runner would, with a fake gh first on PATH."""
+    def execute(self, runs, jobs=None, annotations=None, token=True, pushed=""):
+        """Run the step's own command, as the runner would, with a fake gh first on PATH. `pushed` is the commit a
+        push event names (empty for a workflow_run event, as the expression gives)."""
         env_map, run_line = self.env_and_run()
         values = {"${{ github.token }}": "token", "${{ github.repository }}": "o/r",
-                  "${{ github.event.workflow_run.path }}": ".github/workflows/build.yml"}
+                  "${{ github.event_name == 'push' && github.sha || '' }}": pushed}
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             fake = FakeGh(runs=runs, jobs=jobs or {}, annotations=annotations or {})
@@ -266,7 +274,7 @@ class Wiring(unittest.TestCase):
                 env.pop("GH_TOKEN")
             env["PATH"] = str(tmp) + os.pathsep + env.get("PATH", "")
             env["FAKE_GH_STATE"] = str(state)
-            argv = shlex.split(run_line.replace('"$WORKFLOW_FILE"', shlex.quote(env["WORKFLOW_FILE"])))
+            argv = shlex.split(run_line.replace('"$PUSHED_SHA"', shlex.quote(env["PUSHED_SHA"])))
             self.assertEqual(argv[0], "python3")
             done = subprocess.run([sys.executable, *argv[1:]], cwd=ROOT, env=env, capture_output=True, text=True,
                                   timeout=120)
@@ -292,11 +300,63 @@ class Wiring(unittest.TestCase):
                                    {"11": [{"name": "test-list-note", "status": "completed", "conclusion": "skipped"}]})
         self.assertEqual((done.returncode, state["issues"]), (0, []))
 
+    def test_a_push_that_breaks_plan_yml_opens_its_issue(self):
+        sha = "c" * 40
+        broken = run(31, "failure", "2026-11-16T12:05:30Z", sha=sha, title=".github/workflows/plan.yml",
+                     workflow="plan.yml")
+        green_build = run(32, "success", "2026-11-16T12:05:31Z", sha=sha)
+        done, state = self.execute([run(30, "success", "2026-11-16T12:00:00Z", workflow="plan.yml"), broken,
+                                    green_build], {"31": []}, pushed=sha)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([i["title"] for i in state["issues"] if i["state"] == "open"], ["main is red: plan.yml"])
+        self.assertIn("actions/runs/31", state["issues"][0]["body"])
+
     def test_without_the_token_the_step_fails(self):
         done, state = self.execute([run(11, "failure", "2026-11-16T10:00:00Z")], {"11": failed_job()}, token=False)
         self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
         self.assertIn("GH_TOKEN", done.stdout)
         self.assertEqual(state["issues"], [])
+
+
+class Push(unittest.TestCase):
+    """reconcile --all --wait-for: the push path, for a workflow file GitHub cannot parse."""
+
+    def run_main(self, fake, argv):
+        now, said, slept = [0.0], [], []
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+        code = ci_red_issue.main(argv, runner=fake, out=said.append, sleep=sleep, clock=lambda: now[0])
+        return code, said, slept
+
+    def test_it_waits_for_the_pushed_commit_s_runs_then_reconciles_both(self):
+        sha = "d" * 40
+        fake = FakeGh(runs=[run(41, "failure", "2026-11-16T12:00:00Z", sha=sha, workflow="plan.yml",
+                                title=".github/workflows/plan.yml"),
+                            run(42, "success", "2026-11-16T12:00:01Z", sha=sha)], jobs={"41": []})
+        code, said, slept = self.run_main(fake, ["reconcile", "--all", "--wait-for", sha])
+        self.assertEqual((code, slept), (0, []), said)
+        self.assertEqual([i["title"] for i in open_issues(fake)], ["main is red: plan.yml"])
+        self.assertEqual(sum(1 for line in said if line.startswith("ci-red: ")), 2)
+
+    def test_a_workflow_the_push_did_not_start_ends_the_wait_at_its_limit(self):
+        sha = "e" * 40
+        fake = FakeGh(runs=[run(51, "failure", "2026-11-16T12:00:00Z", sha=sha, workflow="plan.yml")],
+                      jobs={"51": failed_job("plan-gates")})
+        code, said, slept = self.run_main(fake, ["reconcile", "--all", "--wait-for", sha])
+        self.assertEqual(code, 0, said)
+        self.assertEqual(sum(slept), ci_red_issue.WAIT_SECONDS)
+        self.assertIn(f"after {ci_red_issue.WAIT_SECONDS} s no run of eeeeeeeeeeee is listed for build.yml", said[0])
+        self.assertEqual([i["title"] for i in open_issues(fake)], ["main is red: plan.yml"])
+
+    def test_one_workflow_s_outage_never_hides_the_other_s_red(self):
+        fake = FakeGh(runs=[run(61, "failure", "2026-11-16T12:00:00Z", workflow="plan.yml")],
+                      jobs={"61": failed_job("plan-gates")}, fail=["run", "list", "build.yml"])
+        code, said, slept = self.run_main(fake, ["reconcile", "--all"])
+        self.assertEqual(code, 3, said)
+        self.assertEqual([i["title"] for i in open_issues(fake)], ["main is red: plan.yml"])
+        self.assertIn("unknown, nothing changed for build.yml", said[-1])
 
 
 class NamedAtTheSource(unittest.TestCase):

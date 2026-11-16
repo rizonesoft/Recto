@@ -7,11 +7,16 @@ name: ci-red
 # verdict, so the order runs finish in cannot matter. The local watch of section 9 stays as it is.
 on:
   workflow_run:
-    # By name, and by path: GitHub names a run of a workflow file it cannot parse after the file's path, so a broken
-    # build.yml or plan.yml is reported as fast as a failed one.
-    workflows: [build, plan-gates, .github/workflows/build.yml, .github/workflows/plan.yml]
+    workflows: [build, plan-gates]
     types: [completed]
     branches: [main]
+  # A run of a workflow file GitHub cannot parse is named after its path and wakes no workflow_run workflow (proven
+  # with plan.yml 43863425161); such a file only arrives by a push that changes it, so that push wakes this too.
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build.yml
+      - .github/workflows/plan.yml
 
 # Reading runs, jobs and timeout annotations, and writing the issue; nothing else.
 permissions:
@@ -20,10 +25,10 @@ permissions:
   contents: read
   issues: write
 
-# One reconcile per watched workflow at a time, so two overlapping first reds open one issue. A pending reconcile
-# that a newer one replaces loses nothing: each reads the current state.
+# One reconcile at a time, so two overlapping first reds open one issue. Every run reconciles both workflows from
+# the current state, so a pending run that a newer one replaces loses nothing.
 concurrency:
-  group: ci-red-${{ github.event.workflow_run.path }}
+  group: ci-red
   cancel-in-progress: false
 
 jobs:
@@ -42,5 +47,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          WORKFLOW_FILE: ${{ github.event.workflow_run.path }}
-        run: python3 scripts/ci_red_issue.py reconcile --workflow "$WORKFLOW_FILE"
+          PUSHED_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
+        run: python3 scripts/ci_red_issue.py reconcile --all --wait-for "$PUSHED_SHA"

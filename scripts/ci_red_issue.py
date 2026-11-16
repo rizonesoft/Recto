@@ -2,9 +2,13 @@
 """Keep one GitHub issue open while main is red, from GitHub itself (D00 T04 section 13).
 
     python scripts/ci_red_issue.py reconcile --workflow build.yml
+    python scripts/ci_red_issue.py reconcile --all [--wait-for <sha>]
 
-`.github/workflows/ci-red.yml` runs this when a run of a watched workflow (`build.yml`, `plan.yml`) ends on main, with
-the workflow's own token. It never reads the run that woke it: it reads main's current verdict for that workflow by
+`.github/workflows/ci-red.yml` runs `reconcile --all` with the workflow's own token when a run of a watched workflow
+(`build.yml`, `plan.yml`) ends on main, and on a push to main that changes either file: GitHub names a run of a
+workflow file it cannot parse after the file's path and wakes no `workflow_run` workflow for it, and such a file can
+only arrive by a push that changes it, so that push run waits (`--wait-for`, at most WAIT_SECONDS) until the commit's
+watched runs are listed and reconciles with them. It never reads the run that woke it: it reads main's current verdict for that workflow by
 the rule `scripts/ci_status.py` applies (the newest completed run that is not a rebuild of an older commit; a
 cancelled run carries no verdict, a timed-out one is red), so the order runs finish in cannot change the outcome, and
 makes the issue `main is red: <workflow>` (label `ci-red`, assigned to the repository owner) match it:
@@ -34,6 +38,8 @@ LABEL = "ci-red"
 LABEL_COLOR = "B60205"
 LABEL_TEXT = "main is red: opened and closed by .github/workflows/ci-red.yml"
 BRANCH = "main"
+WAIT_SECONDS = 45  # the longest a push reconcile waits for the commit's watched runs to be listed
+POLL_SECONDS = 5
 
 
 class Usage(Exception):
@@ -169,24 +175,58 @@ def reconcile(workflow, runner=ci_status.run_gh, out=print):
     return done
 
 
-def main(argv=None, runner=ci_status.run_gh, out=print):
+def wait_for(sha, runner, *, sleep, clock, out=print):
+    """Wait, at most WAIT_SECONDS, until every watched workflow lists a run of `sha` (any state): a run of a file
+    GitHub cannot parse is listed, already failed, within seconds of the push. A workflow the push did not start never
+    lists one, so the wait ends at the limit and the reconcile goes on with what is listed."""
+    began = clock()
+    while True:
+        missing = []
+        for workflow in ci_status.WORKFLOWS:
+            runs = ci_status.gh_json(runner, ["run", "list", "--workflow", workflow, "--commit", sha, "--limit", "5",
+                                              "--json", "databaseId"])
+            if not (isinstance(runs, list) and runs):
+                missing.append(workflow)
+        if not missing:
+            return
+        if clock() - began >= WAIT_SECONDS:
+            out(f"ci-red: after {WAIT_SECONDS} s no run of {sha[:12]} is listed for {', '.join(missing)}; "
+                f"reconciling with what is")
+            return
+        sleep(POLL_SECONDS)
+
+
+def main(argv=None, runner=ci_status.run_gh, out=print, sleep=None, clock=None):
+    import time
     parser = argparse.ArgumentParser(description="Keep one GitHub issue open while main is red (D00 T04 section 13).")
     sub = parser.add_subparsers(dest="command", required=True)
-    rec = sub.add_parser("reconcile", help="make the workflow's ci-red issue match main's verdict")
-    rec.add_argument("--workflow", required=True, help="the watched workflow's file, as build.yml or plan.yml")
+    rec = sub.add_parser("reconcile", help="make the ci-red issues match main's verdict")
+    which = rec.add_mutually_exclusive_group(required=True)
+    which.add_argument("--workflow", help="one watched workflow's file, as build.yml or plan.yml")
+    which.add_argument("--all", action="store_true", help="every watched workflow")
+    rec.add_argument("--wait-for", default="", help="a pushed commit whose watched runs to wait for first")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return 2 if exc.code else 0
     # GitHub's workflow_run event names the file with its folder (.github/workflows/build.yml).
-    workflow = Path(args.workflow).name
+    workflows = list(ci_status.WORKFLOWS) if args.all else [Path(args.workflow).name]
+    unknown = []
     try:
-        reconcile(workflow, runner=runner, out=out)
-    except Usage as exc:
-        out(f"ci-red: {exc}")
-        return 2
+        if args.wait_for:
+            wait_for(args.wait_for, runner, sleep=sleep or time.sleep, clock=clock or time.monotonic, out=out)
     except ci_status.Unavailable as exc:
-        out(f"ci-red: unknown, nothing changed: {exc}")
+        unknown.append(f"waiting for {args.wait_for[:12]}: {exc}")
+    for workflow in workflows:
+        try:
+            reconcile(workflow, runner=runner, out=out)
+        except Usage as exc:
+            out(f"ci-red: {exc}")
+            return 2
+        except ci_status.Unavailable as exc:  # each workflow on its own: one outage never hides the other's red
+            unknown.append(f"{workflow}: {exc}")
+    if unknown:
+        out(f"ci-red: unknown, nothing changed for {'; '.join(unknown)}")
         return 3
     return 0
 
