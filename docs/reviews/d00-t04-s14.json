@@ -1,0 +1,91 @@
+{
+  "ref": "D00 T04 \u00a714",
+  "title": "Scheduled tasks that follow the clone when it moves, and say so when they do not",
+  "implementation_sha": "9a449f3c6d0d7b50716dadd8a9e39ee78956094e",
+  "date": "2026-11-16",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s14.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "python -m unittest discover -s scripts/tests -> Ran 443 tests, OK (skipped=87); pwsh .conclave/automations/install.ps1 -Check -> automations: 5 task(s) registered for this clone (exit 0); a task registered for a moved clone in the throwaway folder makes it exit 1 naming the task and the repair, and exit 0 after the repair (TaskSchedulerAdapter)",
+    ".\\build.cmd -> OK: 512 tests within debug time budget (max=15.540s); recto-tests Release|x64: 3 shards and the serial pass in 24 s, OK: 512 tests within release time budget (max=2.582s); Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s14.md",
+    "verdict": "reconciled",
+    "candidate": "9a449f3c6d0d7b50716dadd8a9e39ee78956094e",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s14.md",
+    "candidate": "7b99030af72ef52e7d53dcae945f4438441bf261",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "7b99030af72ef52e7d53dcae945f4438441bf261",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 5,
+  "pass_cap": 33
+}

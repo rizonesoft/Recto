@@ -60,7 +60,7 @@ track: M0
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [x] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [x] |
-| 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [ ] |
+| 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [x] |
 | 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
@@ -535,9 +535,12 @@ Found on 2026-11-10 while proving `§9` end to end: every task under `\Recto\` i
 - [x] Print the check at a session's start: a `SessionStart` hook entry in `.claude/settings.json` and in `.agents/hooks.json`, beside the CI line, runs `.conclave/automations/run.py --check-installed` through `scripts/run-python.sh` (Antigravity's with `--agy-hook`), bounded to 20 seconds, and never fails the hook. Done when: the test runs both hook commands as written in those files with a stale record and reads the `stale:` line and `next:` command in each one's output, and reads exit 0 from the hook on a check that exits 1 or 3.
 - [x] Have `scripts/start-unattended-run.ps1` print the same check with its other start-up lines, as a warning when it exits 1 or 3. Done when: `tests/scripts/test_start_unattended_run.py` reads the warning with a fake check that exits 1 and none with one that exits 0.
 - [x] Document it in `.conclave/automations/README.md` ("Install and inspect") and in `AGENTS.md`'s Validation block. Done when: both show the check command, the repair command for each platform, and what a stale registration looks like (`LastTaskResult` `0x8007010B` on every task).
-- [ ] Commit: `automations: check that the scheduled tasks are registered for this clone`
+- [x] Commit: `automations: check that the scheduled tasks are registered for this clone`
 
 **Test checkpoint:** `python -m unittest discover -s scripts/tests` passes; `pwsh .conclave/automations/install.ps1 -Check` exits 0 on this machine; a task registered for a moved clone (in the throwaway folder) makes it exit 1 naming the task and the repair command, and the check exits 0 again after the repair.
+
+> **Verified:** 2026-11-16 | §14 | 9a449f3c6d0d7b50716dadd8a9e39ee78956094e
+> **Review:** `docs/reviews/d00-t04-s14.json`
 
 ## 15. Budget-tight tests made fast enough to leave the serial pass
 

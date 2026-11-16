@@ -40,7 +40,7 @@ Sections: 61 | Checklist items: 369
 | [x]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
 | [x]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 11    |
 | [x]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 10    |
-| [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 10    |
+| [x]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 10    |
 | [ ]    | D00 T04 §15 | Budget-tight tests made fast enough to leave the serial pass                             | windows-host | 6     |
 | [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
 | [ ]    | D00 T05 §2  | Portable C++23 and Python LSP servers and MCP bridge across runners                      | windows-host | 4     |
@@ -952,6 +952,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 116/883 verified sections, 54 ready to run now.
+Progress: 117/883 verified sections, 53 ready to run now.
 
-Checklist: 800/6534 items completed (includes Commit items).
+Checklist: 801/6534 items completed (includes Commit items).
