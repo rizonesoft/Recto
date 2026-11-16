@@ -89,6 +89,44 @@ class Reconcile(unittest.TestCase):
         self.assertIn("cancelled, with no verdict after it", issue["body"])
         self.assertIn("actions/runs/12", issue["body"])
 
+    def test_a_cancelled_run_after_a_red_is_named_on_the_open_issue(self):
+        fake = FakeGh(runs=[run(11, "failure", "2026-11-16T10:00:00Z")], jobs={"11": failed_job()})
+        reconcile(fake)
+        fake.state["runs"].append(run(12, "cancelled", "2026-11-16T10:20:00Z"))
+        fake.state["jobs"]["12"] = [{"name": "build", "status": "completed", "conclusion": "cancelled", "databaseId": 5}]
+        code, said = reconcile(fake)
+        (issue,) = fake.state["issues"]
+        self.assertEqual(code, 0, said)
+        self.assertEqual(len(issue["comments"]), 1, said)
+        self.assertIn("actions/runs/12", issue["comments"][0])
+        self.assertIn("cancelled, with no verdict after it", issue["comments"][0])
+
+    def test_a_failing_rerun_attempt_is_named_as_a_new_red(self):
+        fake = FakeGh(runs=[run(11, "failure", "2026-11-16T10:00:00Z")], jobs={"11": failed_job()})
+        reconcile(fake)
+        fake.state["runs"] = [run(11, "failure", "2026-11-16T10:00:00Z", attempt=2)]
+        code, said = reconcile(fake)
+        (issue,) = fake.state["issues"]
+        self.assertEqual(len(issue["comments"]), 1, said)
+        self.assertIn("attempt 2", issue["comments"][0])
+        self.assertIn("<!-- ci-red run=11/2 -->", issue["comments"][0])
+
+    def test_a_push_whose_commit_message_looks_like_a_rebuild_still_counts(self):
+        # GitHub names a push run after its commit message, so a title proves nothing about a push.
+        for title in ("rebuild of test fixtures", "rebuild of " + "a" * 40, "ci-red proof: a deliberate red"):
+            with self.subTest(title=title):
+                fake = FakeGh(runs=[run(11, "success", "2026-11-16T10:00:00Z"),
+                                    run(12, "failure", "2026-11-16T10:20:00Z", title=title)],
+                              jobs={"12": failed_job()})
+                reconcile(fake)
+                self.assertEqual([i["title"] for i in open_issues(fake)], ["main is red: build.yml"])
+        # A manual run named `rebuild of` without the full commit is not the workflow's own rebuild name either.
+        fake = FakeGh(runs=[run(11, "success", "2026-11-16T10:00:00Z"),
+                            run(12, "failure", "2026-11-16T10:20:00Z", title="rebuild of fixtures",
+                                event="workflow_dispatch")], jobs={"12": failed_job()})
+        reconcile(fake)
+        self.assertEqual(len(open_issues(fake)), 1)
+
     def test_a_timed_out_run_is_red(self):
         fake = FakeGh(runs=[run(11, "cancelled", "2026-11-16T10:00:00Z")],
                       jobs={"11": [{"name": "asan", "status": "completed", "conclusion": "cancelled", "databaseId": 9,

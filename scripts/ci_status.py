@@ -80,13 +80,19 @@ FIELDS = "databaseId,headSha,status,conclusion,url,createdAt,event,attempt,displ
 # (`.github/workflows/plan.yml` `fail_on_purpose`).
 REBUILD_PREFIX = "rebuild of "
 PROOF_TITLE = "ci-red proof: a deliberate red"
+# Only a manual run carries a name its workflow chose: a push run is named after its commit message, which anyone
+# can write, so a title alone never excludes one. The rebuild name ends in the full commit the run built.
+REBUILD_TITLE = re.compile(r"rebuild of [0-9a-f]{40}")
 
 
 def counts_for_main(run, include_proof=False):
-    """Whether a run is evidence of main's state: never a rebuild of an older commit, and a deliberate proof red only
-    for the ci-red reconciler, which proves itself on it."""
+    """Whether a run is evidence of main's state: never a manual rebuild of an older commit, and the deliberate proof
+    red only for the ci-red reconciler, which proves itself on it. Both are `workflow_dispatch` runs named by their
+    workflow; a push run always counts, whatever its commit message says."""
+    if run.get("event") != "workflow_dispatch":
+        return True
     title = str(run.get("displayTitle") or "")
-    if title.startswith(REBUILD_PREFIX):
+    if REBUILD_TITLE.fullmatch(title):
         return False
     return include_proof or title != PROOF_TITLE
 LIMIT = 10
@@ -188,7 +194,7 @@ def settle(runner, run):
 
 def brief(run):
     return None if run is None else {k: run.get(k) for k in ("databaseId", "headSha", "status", "conclusion", "url",
-                                                              "createdAt", "event")}
+                                                              "createdAt", "event", "attempt")}
 
 
 def workflow_status(runner, workflow, branch, include_proof=False):

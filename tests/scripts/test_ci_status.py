@@ -130,6 +130,15 @@ class CiStatus(unittest.TestCase):
         self.assertEqual((plan["verdict"], plan["verdict_run"]["databaseId"]), ("red", 6))
         build = ci.workflow_status(fake, "build.yml", "main", include_proof=True)
         self.assertEqual((build["verdict"], build["verdict_run"]["databaseId"]), ("green", 4))
+        # A push is named after its commit message: whatever the title, it is evidence of main.
+        push = {**run(8, conclusion="failure"), "displayTitle": "rebuild of " + SHA_OLD}
+        self.assertEqual(ci.workflow_status(FakeGh({"build.yml": [push, run(4)]}, jobs={8: []}), "build.yml",
+                                            "main")["verdict"], "red")
+        # The run's attempt reaches the shared result, so a failing rerun is a new red to name.
+        self.assertEqual(plan["verdict_run"]["attempt"], None)
+        rerun = {**run(9, conclusion="failure"), "attempt": 2}
+        self.assertEqual(ci.workflow_status(FakeGh({"build.yml": [rerun]}, jobs={9: []}), "build.yml",
+                                            "main")["verdict_run"]["attempt"], 2)
         # A run merely named like a proof but without the exact title is evidence like any other.
         other = {**run(7, conclusion="failure"), "displayTitle": "ci-red proof"}
         self.assertEqual(ci.workflow_status(FakeGh({"plan.yml": [other]}, jobs={7: []}), "plan.yml", "main")["verdict"],

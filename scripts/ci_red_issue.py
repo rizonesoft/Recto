@@ -75,11 +75,13 @@ def gh_with_body(runner, args, body):
 
 
 def state_of(entry):
-    """('red', run, jobs), ('cancelled', run, []), ('green', run, []) or ('none', {}, []) from a workflow_status."""
-    if entry.get("verdict") == "red":
-        return "red", entry.get("verdict_run") or {}, entry.get("failed_jobs") or []
+    """('red', run, jobs), ('cancelled', run, []), ('green', run, []) or ('none', {}, []) from a workflow_status. The
+    newest completed run decides first: one cancelled with nothing after it is named even behind an older red, since
+    main's newest commit then has no verdict; a timed-out one is already red in `latest_completed_state`."""
     if entry.get("latest_completed_state") == "cancelled":
         return "cancelled", entry.get("latest_completed") or {}, []
+    if entry.get("verdict") == "red":
+        return "red", entry.get("verdict_run") or {}, entry.get("failed_jobs") or []
     if entry.get("verdict") == "green":
         return "green", entry.get("verdict_run") or {}, []
     return "none", {}, []
