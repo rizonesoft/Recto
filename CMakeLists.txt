@@ -135,7 +135,12 @@ target_compile_options(recto_defaults INTERFACE
     $<$<BOOL:${RECTO_ASAN}>:/fsanitize=address>)
 # The developer environment's external include folders, named on each command line so build/compile_commands.json is
 # complete without the environment; as /external:I they stay external, as cl treats EXTERNAL_INCLUDE.
-foreach(dir IN LISTS ENV{EXTERNAL_INCLUDE})
+# (foreach IN LISTS takes a variable name; ENV{...} is not one and would iterate nothing.)
+set(recto_external_include "$ENV{EXTERNAL_INCLUDE}")
+if(NOT recto_external_include)
+    message(FATAL_ERROR "EXTERNAL_INCLUDE is empty: configure inside the Visual Studio developer environment (build\\build.ps1 does).")
+endif()
+foreach(dir IN LISTS recto_external_include)
     if(dir)
         file(TO_CMAKE_PATH "${dir}" dir)
         target_compile_options(recto_defaults INTERFACE "/external:I${dir}")

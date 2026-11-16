@@ -329,11 +329,8 @@ if ($CMake) {
             }
             # build/compile_commands.json only from a full x64 Debug build without ASan, the configuration clangd reads
             # (D00 T04 sections 8 and 12); every other build leaves it alone.
-            if ((-not $EnableASAN) -and ($plat -eq 'x64') -and ($cfg -eq 'Debug') -and (-not $Project)) {
-                $db = Join-Path $root "build\cmake\$preset\compile_commands.json"
-                Copy-Item -LiteralPath $db -Destination (Join-Path $root 'build\compile_commands.json.tmp') -Force
-                Move-Item -LiteralPath (Join-Path $root 'build\compile_commands.json.tmp') -Destination (Join-Path $root 'build\compile_commands.json') -Force
-                Write-Host "compile_commands.json from $preset"
+            if (Test-RectoWritesCompileDatabase -Platform $plat -Configuration $cfg -Asan ([bool]$EnableASAN) -Project $Project) {
+                Write-RectoCompileDatabase -Root $root -Preset $preset
             }
         }
     }

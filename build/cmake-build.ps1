@@ -106,3 +106,19 @@ function Invoke-RectoCMakeBuild {
         throw "build produced $($warnings.Count) warning line(s): $Preset (log $log)"
     }
 }
+
+# Whether a build writes build/compile_commands.json: only a full x64 Debug build without AddressSanitizer, the
+# configuration clangd reads (D00 T04 sections 8 and 12). Release, ARM64, ASan and -Project builds leave it alone.
+function Test-RectoWritesCompileDatabase([string]$Platform, [string]$Configuration, [bool]$Asan, [string]$Project) {
+    return (-not $Asan) -and ($Platform -eq 'x64') -and ($Configuration -eq 'Debug') -and (-not $Project)
+}
+
+# Replaces build/compile_commands.json with the preset's, through a temporary file in the same folder.
+function Write-RectoCompileDatabase([string]$Root, [string]$Preset) {
+    $source = Join-Path $Root "build\cmake\$Preset\compile_commands.json"
+    $target = Join-Path $Root 'build\compile_commands.json'
+    $temporary = "$target.tmp"
+    Copy-Item -LiteralPath $source -Destination $temporary -Force
+    Move-Item -LiteralPath $temporary -Destination $target -Force
+    Write-Host "compile_commands.json from $Preset"
+}

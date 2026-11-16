@@ -296,5 +296,48 @@ class CMakeBuildFailures(unittest.TestCase):
         self.assertNotIn("BUILD RETURNED", res.stdout)
         self.assertIn("build produced 1 warning line(s): x64-debug", " ".join((res.stdout + res.stderr).split()))
 
+@unittest.skipUnless(os.name == "nt" and bool(POWERSHELL), "needs Windows PowerShell")
+class CompileDatabaseScope(unittest.TestCase):
+    """Only a full x64 Debug build without ASan writes build/compile_commands.json (sections 8 and 12)."""
+
+    def test_only_the_full_x64_debug_build_writes_the_database(self):
+        cases = {
+            ("x64", "Debug", "$false", "''"): True,
+            ("x64", "Release", "$false", "''"): False,
+            ("ARM64", "Debug", "$false", "''"): False,
+            ("x64", "Debug", "$true", "''"): False,
+            ("x64", "Debug", "$false", "'recto-pdf'"): False,
+        }
+        lines = "; ".join(f"Test-RectoWritesCompileDatabase -Platform {p} -Configuration {c} -Asan {a} -Project {j}"
+                          for p, c, a, j in cases)
+        script = f". '{ROOT / 'build' / 'cmake-build.ps1'}'; {lines}"
+        res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                             capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertEqual([line == "True" for line in res.stdout.split()], list(cases.values()))
+
+
+LIVE_DB = ROOT / "build" / "cmake" / "x64-debug" / "compile_commands.json"
+
+
+@unittest.skipUnless(LIVE_DB.is_file(), "needs a CMake x64-debug build (build.ps1 -CMake -Quick)")
+class LiveCompileDatabase(unittest.TestCase):
+    """The CMake database names every source the projects compile, each with a complete cl line (section 8)."""
+
+    def test_every_eligible_source_has_one_complete_compile_line(self):
+        entries = json.loads(LIVE_DB.read_text(encoding="utf-8"))
+        files = [os.path.normcase(str(Path(e["file"]).resolve())) for e in entries]
+        self.assertEqual(len(files), len(set(files)), "a source is listed twice")
+        expected = {os.path.normcase(str((project.parent / name).resolve()))
+                    for project in PROJECTS.values() for name in vcxproj_sources(project)}
+        self.assertEqual(set(files), expected)
+        for entry in entries:
+            with self.subTest(file=Path(entry["file"]).name):
+                command = entry["command"]
+                self.assertIn("cl.exe", command)
+                self.assertRegex(command, r"-std:c\+\+23")
+                self.assertIn("/FIpch.h", command)
+                self.assertIn("/external:I", command, "the SDK and CRT folders are not named")
+
 if __name__ == "__main__":
     unittest.main()
