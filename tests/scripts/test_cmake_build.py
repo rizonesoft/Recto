@@ -258,5 +258,43 @@ class DirectPresets(unittest.TestCase):
         self.assertTrue("Run build\\cmake.cmd, which runs the pinned one" in res.said
                         or "version" in res.said.lower(), res.said[-1500:])
 
+@unittest.skipUnless(os.name == "nt" and bool(POWERSHELL), "needs Windows PowerShell")
+class CMakeBuildFailures(unittest.TestCase):
+    """build/cmake-build.ps1's Invoke-RectoCMakeBuild stops the run on a failed build or any warning line, so
+    build.ps1 never goes on to run stale tests (section 8)."""
+
+    def run_build(self, build_exit: int, build_output: str) -> subprocess.CompletedProcess[str]:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "build").mkdir()
+            fake = base / "fake-cmake.cmd"
+            # Configure succeeds; --build prints `build_output` and exits `build_exit`.
+            fake.write_text("@echo off\r\nif \"%1\"==\"--build\" goto build\r\nexit /b 0\r\n:build\r\n"
+                            f"echo {build_output}\r\nexit /b {build_exit}\r\n", encoding="ascii")
+            script = (f". '{ROOT / 'build' / 'cmake-build.ps1'}'; "
+                      "$pools = [pscustomobject]@{ Compiles = 1; Links = 1 }; "
+                      f"Invoke-RectoCMakeBuild -Root '{base}' -CMake '{fake}' -Preset x64-debug -Pools $pools -Sccache $true; "
+                      "'BUILD RETURNED'")
+            return subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                                  capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+
+    def test_a_clean_build_returns(self):
+        res = self.run_build(0, "[86/86] Linking CXX executable recto-tests.exe")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("BUILD RETURNED", res.stdout)
+
+    def test_a_failed_compile_stops_before_anything_else_runs(self):
+        res = self.run_build(1, "FAILED: src/pdf/CMakeFiles/recto-pdf.dir/document.cpp.obj")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BUILD RETURNED", res.stdout)
+        self.assertIn("build failed: x64-debug (exit 1)", res.stdout + res.stderr)
+
+    def test_a_warning_line_fails_a_build_that_exited_zero(self):
+        res = self.run_build(0, "cl : Command line warning D9025 : overriding '/external:W0' with '/external:W4'")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BUILD RETURNED", res.stdout)
+        self.assertIn("build produced 1 warning line(s): x64-debug", " ".join((res.stdout + res.stderr).split()))
+
 if __name__ == "__main__":
     unittest.main()
