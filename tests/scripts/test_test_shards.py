@@ -133,24 +133,36 @@ class ShardCount(unittest.TestCase):
 
     def test_automatic_count_from_injected_memory_and_cores(self):
         cases = [
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 25000", 6),   # the cap of 6
-            ("-Cores 4 -ShardsEnv '' -AvailableMb 25000", 4),    # the core cap
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 6394", 4),    # (6394 - 2048) / 1024
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 4096", 2),
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 3072", 1),
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 3071", 1),    # too little for a second process: 1, not a failure
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 25000 -Asan", 3),
-            ("-Cores 12 -ShardsEnv '' -AvailableMb 4096 -Asan", 1),
-            ("-Cores 1 -ShardsEnv '' -AvailableMb 25000", 1),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000", 6),    # this host: one per physical core
+            ("-Cores 4 -PhysicalCores 2 -ShardsEnv '' -AvailableMb 25000", 2),     # a 4-vCPU CI runner
+            ("-Cores 4 -PhysicalCores 4 -ShardsEnv '' -AvailableMb 25000", 4),     # no SMT
+            ("-Cores 32 -PhysicalCores 16 -ShardsEnv '' -AvailableMb 25000", 6),   # the cap of 6
+            ("-Cores 4 -PhysicalCores 8 -ShardsEnv '' -AvailableMb 25000", 4),     # never above the logical count
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 6394", 4),     # (6394 - 2048) / 1024
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 4096", 2),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3072", 1),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3071", 1),     # too little for a second process
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan", 3),
+            ("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 4096 -Asan", 1),
+            ("-Cores 1 -PhysicalCores 1 -ShardsEnv '' -AvailableMb 25000", 1),
         ]
         for args, want in cases:
             with self.subTest(args=args):
                 got = self._count(args)
                 self.assertEqual(got["Count"], want, got)
                 self.assertIn("MB", got["Reason"])
-        low = self._count("-Cores 12 -ShardsEnv '' -AvailableMb 3071")
+        low = self._count("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 3071")
         self.assertIn("too little for a second process", low["Reason"])
-        self.assertIn("halved under AddressSanitizer", self._count("-Cores 12 -ShardsEnv '' -AvailableMb 25000 -Asan")["Reason"])
+        self.assertIn("halved under AddressSanitizer", self._count("-Cores 12 -PhysicalCores 6 -ShardsEnv '' -AvailableMb 25000 -Asan")["Reason"])
+        self.assertIn("6 physical cores (12 logical)", low["Reason"])
+
+    def test_physical_cores_fall_back_to_half_the_logical_count(self):
+        pre = "function global:Get-CimInstance { throw 'wmi gone' }\n"
+        for cores, want in ((12, 6), (4, 2), (1, 1)):
+            with self.subTest(cores=cores):
+                res = _ps(f"{pre}. '{TEST_SHARDS_PS1}'; Get-PhysicalCoreCount -Cores {cores}")
+                self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+                self.assertEqual(int(res.stdout.strip()), want)
 
     def test_unreadable_memory_falls_back_to_one_process(self):
         pre = ("function global:Get-Counter { throw 'counter gone' }\n"

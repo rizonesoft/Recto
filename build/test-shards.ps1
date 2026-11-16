@@ -313,14 +313,15 @@ namespace Recto.TestShards {
 }
 
 # How many shard processes a full run starts, and why. RECTO_TEST_SHARDS (1 to the core count) wins; otherwise the
-# free memory read now, with section 3's formula (2,048 MB reserve) and the measured 1,024 MB per shard (a 6-shard Debug run peaked at 784 MB in one process), capped by the cores and at 6,
+# free memory read now, with section 3's formula (2,048 MB reserve) and the measured 1,024 MB per shard (a 6-shard Debug run peaked at 784 MB in one process), capped at one shard per physical core and at 6,
 # halved under AddressSanitizer, and 1 when memory is short or cannot be read.
 function Resolve-TestShardCount {
     param(
         [int]$Cores = [Environment]::ProcessorCount,
         [AllowNull()][AllowEmptyString()][string]$ShardsEnv = $env:RECTO_TEST_SHARDS,
         [switch]$Asan,
-        [AllowNull()][object]$AvailableMb = $null
+        [AllowNull()][object]$AvailableMb = $null,
+        [int]$PhysicalCores = 0
     )
     if ($Cores -lt 1) { throw "Invalid logical processor count: $Cores." }
     if ($null -ne $ShardsEnv -and $ShardsEnv.Length -gt 0) {
@@ -343,16 +344,33 @@ function Resolve-TestShardCount {
     } catch {
         return [pscustomobject]@{ Count = 1; FreeMb = $null; Reason = "free memory unreadable ($($_.Exception.Message)), one process" }
     }
+    # One shard per physical core: the tests start worker pools of their own (RenderPool, the tile scheduler), and a
+    # shard on every logical processor starves them (on a 4-vCPU CI runner, 4 shards ran three tests past the 20 s
+    # Debug budget). A count Windows cannot report is taken as half the logical processors.
+    if ($PhysicalCores -lt 1) { $PhysicalCores = Get-PhysicalCoreCount -Cores $Cores }
+    $PhysicalCores = [Math]::Max(1, [Math]::Min($PhysicalCores, $Cores))
     $freeText = $freeMb.ToString('N0', [System.Globalization.CultureInfo]::InvariantCulture)
     $fit = [int][Math]::Floor(($freeMb - $script:RectoTestShardReserveMb) / [double]$script:RectoTestShardPerShardMb)
-    $count = [Math]::Min([Math]::Min($Cores, $script:RectoTestShardMax), [Math]::Max(1, $fit))
-    $why = "free $freeText MB, $Cores cores: 2,048 MB reserve + 1,024 MB per shard fits $([Math]::Max(0, $fit)), at most $($script:RectoTestShardMax)"
+    $count = [Math]::Min([Math]::Min($PhysicalCores, $script:RectoTestShardMax), [Math]::Max(1, $fit))
+    $why = "free $freeText MB, $PhysicalCores physical cores ($Cores logical): 2,048 MB reserve + 1,024 MB per shard fits $([Math]::Max(0, $fit)), one shard per physical core, at most $($script:RectoTestShardMax)"
     if ($Asan) {
         $count = [Math]::Max(1, [int][Math]::Floor($count / 2))
         $why += ', halved under AddressSanitizer'
     }
     if ($fit -lt 1) { $why += ', too little for a second process' }
     return [pscustomobject]@{ Count = $count; FreeMb = $freeMb; Reason = $why }
+}
+
+# The machine's physical cores (Win32_Processor.NumberOfCores over every socket), or half the logical processors when
+# WMI cannot say.
+function Get-PhysicalCoreCount([int]$Cores = [Environment]::ProcessorCount) {
+    try {
+        $sum = (Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop | Measure-Object -Property NumberOfCores -Sum).Sum
+        if ($null -ne $sum -and [int]$sum -ge 1) { return [int]$sum }
+    } catch {
+        Write-Verbose "Win32_Processor unreadable: $($_.Exception.Message)"
+    }
+    return [Math]::Max(1, [int][Math]::Floor($Cores / 2))
 }
 
 # The whole test run's deadline in minutes: RECTO_TEST_TIMEOUT_MINUTES (a positive number, decimals allowed) or 30.

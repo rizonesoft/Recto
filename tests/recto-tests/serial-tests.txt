@@ -45,3 +45,14 @@ PdfRasterizer.PreCancelledTile                         # a pre-cancelled tile re
 PdfXref.RecoveryLengthRoundOne                         # xref recovery within 30 s
 Ui.App.SelfTestStartupBudget                           # median Recto.exe startup under 400 ms
 Ui.Project.StalledChildIsReaped                        # a stalled child is reaped within 10 s
+
+# Over half the per-test time budget (tests/recto-tests/time-budget.json) when run alone on CI's 4-vCPU runner
+# (build.yml 43748312398: Debug over 10 s of 20, Release over 2.5 s of 5). They start worker pools of their own, so
+# beside a shard they ran to 22-39 s (build.yml 43785567841, 43786938551): the budget is a wall-clock limit too.
+PdfSerialize.Failures                                  # 19.1 s Debug alone
+PdfDocument.RetainedPageDictionariesShareOneBudget     # 16.0 s Debug alone
+PdfInterpreter.SeparationAndDeviceN                    # 15.5 s Debug, 4.96 s Release alone
+PdfDocument.OpenPageTreeLevelsShareOneBudget           # 14.9 s Debug alone
+Runtime.ShutdownUnderActiveTileLoad                    # 14.8 s Debug alone
+PdfXref.RecoveryRoundOneFixes                          # 10.5 s Debug alone
+Corpus.RejectsUnlistedOrModifiedFile                   # 3.6 s Release alone
