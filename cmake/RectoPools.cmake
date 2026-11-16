@@ -8,11 +8,12 @@ set(RECTO_COMPILER_MB 1536)   # per concurrent cl.exe, as section 3
 set(RECTO_LINK_MB 1024 CACHE STRING "Budget for one link, MB (measured: recto-tests 457 MB Debug, 584 MB Release)")
 set(RECTO_COMPILE_JOBS "" CACHE STRING "Compile pool depth (empty: sized from free memory at configure)")
 set(RECTO_LINK_JOBS "" CACHE STRING "Link pool depth, at most 2 (empty: sized from free memory at configure)")
-set(RECTO_ASSUME_FREE_MB "" CACHE STRING "Tests only: the free memory to assume instead of reading it")
 
+# Tests only: the RECTO_ASSUME_FREE_MB environment variable stands in for the reading, at configure here and at build time
+# in memory-gate.cmake, as -AvailableMb does for build/parallelism.ps1.
 function(recto_free_mb out)
-    if(RECTO_ASSUME_FREE_MB)
-        set(${out} "${RECTO_ASSUME_FREE_MB}" PARENT_SCOPE)
+    if(DEFINED ENV{RECTO_ASSUME_FREE_MB} AND NOT "$ENV{RECTO_ASSUME_FREE_MB}" STREQUAL "")
+        set(${out} "$ENV{RECTO_ASSUME_FREE_MB}" PARENT_SCOPE)
     else()
         cmake_host_system_information(RESULT free QUERY AVAILABLE_PHYSICAL_MEMORY)
         set(${out} "${free}" PARENT_SCOPE)
@@ -68,6 +69,6 @@ set(CMAKE_JOB_POOL_LINK link)
 add_custom_target(recto-memory-gate
     COMMAND "${CMAKE_COMMAND}" -DRECTO_RESERVE_MB=${RECTO_RESERVE_MB} -DRECTO_COMPILER_MB=${RECTO_COMPILER_MB}
         -DRECTO_LINK_MB=${RECTO_LINK_MB} -DRECTO_POOL_COMPILE=${recto_compiles} -DRECTO_POOL_LINK=${recto_links}
-        "-DRECTO_ASSUME_FREE_MB=${RECTO_ASSUME_FREE_MB}" -P "${CMAKE_SOURCE_DIR}/cmake/memory-gate.cmake"
+        -P "${CMAKE_SOURCE_DIR}/cmake/memory-gate.cmake"
     COMMENT "Checking free memory against the configured pools"
     VERBATIM)

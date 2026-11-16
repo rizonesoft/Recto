@@ -105,24 +105,26 @@ class PresetPins(unittest.TestCase):
 @unittest.skipUnless(os.name == "nt" and CMAKE.is_file(), "needs the pinned CMake (build/bootstrap-tools.ps1)")
 class MemoryGate(unittest.TestCase):
     def gate(self, free: int, compiles: int = 4, links: int = 1) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, "RECTO_ASSUME_FREE_MB": str(free)}
         return subprocess.run(
             [str(CMAKE), "-DRECTO_RESERVE_MB=2048", "-DRECTO_COMPILER_MB=1536", "-DRECTO_LINK_MB=1024",
-             f"-DRECTO_POOL_COMPILE={compiles}", f"-DRECTO_POOL_LINK={links}", f"-DRECTO_ASSUME_FREE_MB={free}",
+             f"-DRECTO_POOL_COMPILE={compiles}", f"-DRECTO_POOL_LINK={links}",
              "-P", str(ROOT / "cmake" / "memory-gate.cmake")],
-            capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+            capture_output=True, text=True, timeout=60, env=env, creationflags=0x08000000)
 
     @staticmethod
     def said(res: subprocess.CompletedProcess[str]) -> str:
         return " ".join(res.stderr.split())  # CMake wraps its messages
 
     def test_enough_memory_for_the_pools_passes(self):
-        # 2,048 + 4 * 1,536 + 1,024 = 9,216 MB
+        # 2,048 + 4 * 1,536 + 1,024 = 9,216 MB; up to one compiler's 1,536 MB below it is ordinary movement.
         self.assertEqual(self.gate(9216).returncode, 0)
+        self.assertEqual(self.gate(7680).returncode, 0)
 
     def test_pools_that_no_longer_fit_are_refused_with_the_command_that_resizes_them(self):
-        res = self.gate(9215)
+        res = self.gate(7679)
         self.assertNotEqual(res.returncode, 0)
-        self.assertIn("need 9216 MB but 9215 MB is free now", self.said(res))
+        self.assertIn("need 9216 MB but 7679 MB is free now", self.said(res))
         self.assertIn("build\\build.ps1", self.said(res))
 
     def test_below_one_compiler_and_one_link_is_refused(self):
@@ -131,6 +133,130 @@ class MemoryGate(unittest.TestCase):
         self.assertIn("below the 4608 MB minimum", self.said(res))
         self.assertEqual(self.gate(4608, compiles=1).returncode, 0)
 
+
+POWERSHELL = __import__("shutil").which("powershell") or __import__("shutil").which("pwsh") or ""
+
+
+@unittest.skipUnless(os.name == "nt" and bool(POWERSHELL), "needs Windows PowerShell")
+class CMakePools(unittest.TestCase):
+    """build/cmake-build.ps1's Resolve-RectoCMakePools: one budget over compiles and links (section 8)."""
+
+    def pools(self, args: str) -> subprocess.CompletedProcess[str]:
+        script = (f". '{ROOT / 'build' / 'parallelism.ps1'}'; . '{ROOT / 'build' / 'cmake-build.ps1'}'; "
+                  f"Resolve-RectoCMakePools {args} | ConvertTo-Json -Compress")
+        return subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                              capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+
+    def sized(self, args: str) -> dict:
+        res = self.pools(args)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        return json.loads(res.stdout.strip())
+
+    def test_compiles_and_links_share_one_budget(self):
+        cases = [
+            # free, cores -> (compiles, links): 2,048 reserve, 1,536 per compile, 1,024 per link
+            (4608, 12, 1, 1),     # the minimum: one of each
+            (6400, 12, 2, 1),     # (6400 - 2048 - 1024) / 1536 = 2; two links need 2*1024 + 2*1536 = 5,120 of 4,352
+            (7168, 12, 2, 2),     # budget 5,120 holds two links and two compilers: (5120 - 2 * 1024) / 1536 = 2
+            (25000, 12, 12, 2),   # capped by the cores
+            (25000, 4, 4, 2),
+        ]
+        for free, cores, compiles, links in cases:
+            with self.subTest(free=free, cores=cores):
+                got = self.sized(f"-Cores {cores} -JobsEnv '' -MaxCpuCount 0 -AvailableMb {free}")
+                self.assertEqual((got["Compiles"], got["Links"]), (compiles, links))
+                budget = free - 2048
+                self.assertLessEqual(got["Compiles"] * 1536 + got["Links"] * 1024, max(budget, 1536 + 1024))
+
+    def test_below_one_compiler_and_one_link_is_refused(self):
+        res = self.pools("-Cores 12 -JobsEnv '' -MaxCpuCount 0 -AvailableMb 4607")
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("4,607 MB is below the 4,608 MB minimum", " ".join((res.stdout + res.stderr).split()))
+
+    def test_the_overrides_set_the_compile_pool_and_are_validated(self):
+        self.assertEqual(self.sized("-Cores 12 -JobsEnv '3' -MaxCpuCount 0 -AvailableMb 25000")["Compiles"], 3)
+        self.assertEqual(self.sized("-Cores 12 -JobsEnv '' -MaxCpuCount 5 -AvailableMb 25000")["Compiles"], 5)
+        for args in ("-Cores 12 -JobsEnv '13' -MaxCpuCount 0 -AvailableMb 25000",
+                     "-Cores 12 -JobsEnv 'x' -MaxCpuCount 0 -AvailableMb 25000",
+                     "-Cores 12 -JobsEnv '' -MaxCpuCount 13 -AvailableMb 25000"):
+            with self.subTest(args=args):
+                self.assertNotEqual(self.pools(args).returncode, 0)
+
+def _visual_studio() -> Path | None:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.is_file():
+        return None
+    out = subprocess.run([str(vswhere), "-version", "[18.0,19.0)", "-latest", "-property", "installationPath"],
+                         capture_output=True, text=True, timeout=60, creationflags=0x08000000).stdout.strip()
+    return Path(out) if out else None
+
+
+VS = _visual_studio() if os.name == "nt" else None
+
+
+@unittest.skipUnless(VS is not None and CMAKE.is_file(), "needs Visual Studio 2026 and the pinned CMake")
+class DirectPresets(unittest.TestCase):
+    """A preset run straight from a developer prompt, as Visual Studio's Open Folder runs it, with no build.ps1: it sizes
+    its own pools, refuses on low memory (at configure and again when a build starts), refuses a preset for another
+    architecture than the prompt's, and refuses a CMake other than the pinned one."""
+
+    def run_in_prompt(self, arch: str, args: list[str], free: int | None = None, cmake: Path = CMAKE,
+                      timeout: float = 600) -> subprocess.CompletedProcess[str]:
+        vcvars = VS / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat"
+        quoted = " ".join(f'"{a}"' for a in args)
+        env = {**os.environ}
+        env.pop("RECTO_BUILD_JOBS", None)
+        if free is not None:
+            env["RECTO_ASSUME_FREE_MB"] = str(free)
+        # A batch file, not a /c string: Python's argument quoting and cmd's quote rules do not mix.
+        script = self.binary.parent / f"{self.binary.name}-{arch}.cmd"
+        script.write_text(f'@echo off\r\ncall "{vcvars}" {arch} 10.0.26100.0 >nul 2>&1 || exit /b 97\r\n'
+                          f'cd /d "{ROOT}"\r\n"{cmake}" {quoted}\r\n', encoding="ascii")
+        try:
+            res = subprocess.run(["cmd.exe", "/d", "/c", str(script)], cwd=ROOT, capture_output=True, text=True,
+                                 timeout=timeout, env=env, creationflags=0x08000000)
+        finally:
+            script.unlink(missing_ok=True)
+        res.said = " ".join((res.stdout + res.stderr).split())  # type: ignore[attr-defined]
+        return res
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="recto-preset-")
+        self.binary = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_configure_sizes_its_own_pools_and_refuses_below_the_minimum(self):
+        refused = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=4607)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("4607 MB free is below the 4608 MB minimum", refused.said)
+        sized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=9000)
+        self.assertEqual(sized.returncode, 0, sized.said[-2000:])
+        cores = os.cpu_count() or 1
+        compiles = min(cores, (9000 - 2048 - 2 * 1024) // 1536)  # 6,952 MB holds two links and two compilers
+        self.assertIn(f"Recto pools: free 9000 MB, {cores} cores: compile={compiles}, link=2", sized.said)
+        # The memory taken since configure is seen when the build starts, with no reconfigure.
+        gated = self.run_in_prompt("x64", ["--build", str(self.binary), "--target", "recto-memory-gate"], free=4000)
+        self.assertNotEqual(gated.returncode, 0)
+        self.assertIn("4000 MB free is below the 4608 MB minimum", gated.said)
+
+    def test_a_preset_for_another_architecture_than_the_prompt_is_refused(self):
+        res = self.run_in_prompt("x64", ["--preset", "arm64-debug", "-B", str(self.binary)], free=9000)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("The preset builds ARM64 but this developer environment's cl.exe targets x64", res.said)
+
+    def test_a_cmake_other_than_the_pinned_one_is_refused(self):
+        bundled = VS / "Common7" / "IDE" / "CommonExtensions" / "Microsoft" / "CMake" / "CMake" / "bin" / "cmake.exe"
+        if not bundled.is_file():
+            self.skipTest("this Visual Studio bundles no CMake")
+        res = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=9000, cmake=bundled)
+        self.assertNotEqual(res.returncode, 0)
+        # A bundled CMake new enough to read the presets reaches Recto's own check; an older one stops at the
+        # presets' or cmake_minimum_required's version. Either way it never configures.
+        self.assertTrue("Run build\\cmake.cmd, which runs the pinned one" in res.said
+                        or "version" in res.said.lower(), res.said[-1500:])
 
 if __name__ == "__main__":
     unittest.main()

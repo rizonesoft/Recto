@@ -390,9 +390,30 @@ def check_database(out_path: Path = OUT, root: Path = ROOT) -> tuple[bool, str]:
     return _check_against_expected(out_path, build_database(root))
 
 
+def is_cmake_database(out_path: Path, root: Path = ROOT) -> bool:
+    """True when `out_path` is the database the CMake build wrote (D00 T04 section 8): every entry ran in a folder under
+    `build/cmake/` of `root`. The CMake build rewrites it after each full x64 Debug build, so it is never replaced by one
+    generated from the .vcxproj files."""
+    try:
+        entries = json.loads(out_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(entries, list) or not entries:
+        return False
+    cmake_root = os.path.normcase(str((root / "build" / "cmake").resolve()))
+    for entry in entries:
+        folder = entry.get("directory") if isinstance(entry, dict) else None
+        if not isinstance(folder, str) or not os.path.normcase(str(Path(folder).resolve())).startswith(cmake_root + os.sep):
+            return False
+    return True
+
+
 def ensure_database(out_path: Path = OUT, root: Path = ROOT) -> Path:
-    """Regenerate `out_path` when missing, older than project files, or out of sync with `root` (e.g. moved checkout)."""
+    """Regenerate `out_path` when missing, older than project files, or out of sync with `root` (e.g. moved checkout);
+    a database the CMake build wrote is kept as it is."""
     root = root.resolve()
+    if is_cmake_database(out_path, root):
+        return out_path
     sln = root / "Recto.sln"
     if not sln.is_file():
         return out_path

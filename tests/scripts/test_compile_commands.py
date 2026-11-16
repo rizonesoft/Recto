@@ -1025,5 +1025,38 @@ class BuildCompileCommandsTests(unittest.TestCase):
         self.assertGreaterEqual(len(units), 74)
 
 
+class CMakeDatabaseIsKept(unittest.TestCase):
+    """A build/compile_commands.json the CMake build wrote (D00 T04 section 8) is never replaced by the .vcxproj
+    generator that scripts/clangd-lsp.py runs at start."""
+
+    def _gen(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("gen_compile_commands", ROOT / "scripts" / "gen-compile-commands.py")
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_cmake_database_survives_ensure_database_and_another_does_not_count(self):
+        import json as _json
+        gen = self._gen()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            folder = root / "build" / "cmake" / "x64-debug"
+            folder.mkdir(parents=True)
+            db = root / "build" / "compile_commands.json"
+            entries = [{"directory": str(folder), "command": "cl.exe /c a.cpp", "file": str(root / "src" / "a.cpp")}]
+            db.write_text(_json.dumps(entries), encoding="utf-8")
+            (root / "Recto.sln").write_text("", encoding="utf-8")  # a newer solution would trigger regeneration
+            before = db.read_bytes()
+            self.assertTrue(gen.is_cmake_database(db, root))
+            self.assertEqual(gen.ensure_database(db, root), db)
+            self.assertEqual(db.read_bytes(), before)
+            entries.append({"directory": str(root / "src"), "command": "cl.exe /c b.cpp", "file": str(root / "src" / "b.cpp")})
+            db.write_text(_json.dumps(entries), encoding="utf-8")
+            self.assertFalse(gen.is_cmake_database(db, root))
+            db.write_text("not json", encoding="utf-8")
+            self.assertFalse(gen.is_cmake_database(db, root))
+
 if __name__ == "__main__":
     unittest.main()
