@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -65,6 +66,12 @@ FAKE_GTEST = textwrap.dedent(
     if piddir:
         with open(os.path.join(piddir, me + ".pid"), "w") as f:
             f.write(str(os.getpid()))
+    if piddir:
+        with open(os.path.join(piddir, me + ".start"), "w") as f:
+            f.write(repr(time.time()))
+    slow, _, seconds = os.environ.get("FAKE_SLOW", "").partition(":")
+    if slow == me:
+        time.sleep(float(seconds))
     if os.environ.get("FAKE_HANG") == me:
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"], creationflags=0x08000000)
         if piddir:
@@ -91,6 +98,9 @@ FAKE_GTEST = textwrap.dedent(
         with open(xml, "w", encoding="utf-8") as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?><testsuites tests="%d" time="0.01">%s</testsuites>\n'
                     % (len(rows), "".join(rows)))
+    if piddir:
+        with open(os.path.join(piddir, me + ".end"), "w") as f:
+            f.write(repr(time.time()))
     sys.exit(1 if failed else 0)
     '''
 )
@@ -245,6 +255,10 @@ class SharedTempNames(unittest.TestCase):
         self.assertEqual(found, [], "use recto::test::TempDir, whose folder is this process's own")
 
 
+# The shards three slots work through: 3 x RectoTestChunksPerShard in build/test-shards.ps1.
+CHUNKS = 3 * 4
+
+
 @unittest.skipUnless(ON_WINDOWS, "needs Windows PowerShell")
 class ShardRun(unittest.TestCase):
     def setUp(self):
@@ -259,7 +273,7 @@ class ShardRun(unittest.TestCase):
 
     def tearDown(self):
         # Whatever a failing test left is killed here, by pid, before the folder goes.
-        leftovers = [int(p.read_text()) for p in self.pids.iterdir() if p.read_text().strip().isdigit()]
+        leftovers = [int(p.read_text()) for p in self.pids.iterdir() if p.suffix in (".pid", ".child")]
         for pid in leftovers:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, creationflags=windowless())
         self._tmp.cleanup()
@@ -276,40 +290,58 @@ class ShardRun(unittest.TestCase):
 
     def _env(self, **extra: str) -> dict[str, str]:
         env = os.environ.copy()
-        for key in ("FAKE_FAIL", "FAKE_NO_XML", "FAKE_HANG", "GTEST_TOTAL_SHARDS", "GTEST_SHARD_INDEX"):
+        for key in ("FAKE_FAIL", "FAKE_NO_XML", "FAKE_HANG", "FAKE_SLOW", "GTEST_TOTAL_SHARDS", "GTEST_SHARD_INDEX"):
             env.pop(key, None)
         env["FAKE_PID_DIR"] = str(self.pids)
         env.update(extra)
         return env
 
     def _pids(self) -> list[int]:
-        return [int(p.read_text()) for p in self.pids.iterdir() if p.read_text().strip().isdigit()]
+        return [int(p.read_text()) for p in self.pids.iterdir() if p.suffix == ".pid"]
 
     def test_shards_and_serial_pass_cover_every_test_once(self):
         res = _ps(self._invoke_script(tag="Debug-asan"), env=self._env())
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
         xml = [line for line in res.stdout.splitlines() if line.endswith(".xml")]
         names = sorted(Path(x).name for x in xml)
-        self.assertEqual(names, sorted([f"test-results-x64-Debug-asan-shard{i}.xml" for i in range(3)] + ["test-results-x64-Debug-asan-serial.xml"]))
+        self.assertEqual(names, sorted([f"test-results-x64-Debug-asan-shard{i}.xml" for i in range(CHUNKS)] + ["test-results-x64-Debug-asan-serial.xml"]))
         for x in xml:
             self.assertEqual(Path(x).parent, self.out)
-        for i in range(3):
+        for i in range(CHUNKS):
             self.assertTrue((self.out / f"test-x64-Debug-asan-shard{i}.log").is_file())
         serial_log = (self.out / "test-x64-Debug-asan-serial.log").read_text(encoding="utf-8")
         self.assertIn("[       OK ] Slow.Timed", serial_log)
-        for i in range(3):
+        for i in range(CHUNKS):
             self.assertNotIn("Slow.", (self.out / f"test-x64-Debug-asan-shard{i}.log").read_text(encoding="utf-8"))
         listing = next(line[5:] for line in res.stdout.splitlines() if line.startswith("LIST="))
         cov = subprocess.run([sys.executable, str(TEST_TIMES), "coverage", listing, *xml], capture_output=True, text=True,
                              timeout=60, creationflags=windowless())
         self.assertEqual(cov.returncode, 0, cov.stdout + cov.stderr)
-        self.assertIn("12 listed tests each reported exactly once across 4 report(s) (11 enabled run, 1 disabled not run)", cov.stdout)
+        self.assertIn(f"12 listed tests each reported exactly once across {CHUNKS + 1} report(s) (11 enabled run, 1 disabled not run)", cov.stdout)
         # One shard's report left out of the coverage check fails it, naming that shard's tests.
-        partial = subprocess.run([sys.executable, str(TEST_TIMES), "coverage", listing, *[x for x in xml if "shard1" not in x]],
+        partial = subprocess.run([sys.executable, str(TEST_TIMES), "coverage", listing, *[x for x in xml if not x.endswith("shard1.xml")]],
                                  capture_output=True, text=True, timeout=60, creationflags=windowless())
         self.assertEqual(partial.returncode, 1, partial.stdout + partial.stderr)
         self.assertIn("missing from every report: Fast.T1", partial.stderr)
         self.assertIn("peak commit", res.stdout)
+
+    def test_a_slot_takes_the_next_shard_while_another_is_held(self):
+        # D00 T04 section 15: one fixed shard per slot ran 12 s to 40 s apart, and the run waited for the slowest. Three
+        # slots work through twelve shards from a queue, so while shard 0 is held the other slots finish all the rest.
+        res = _ps(self._invoke_script(), env=self._env(FAKE_SLOW="shard0:4"))
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        held_end = float((self.pids / "shard0.end").read_text())
+        for i in range(1, CHUNKS):
+            started = float((self.pids / f"shard{i}.start").read_text())
+            ended = float((self.pids / f"shard{i}.end").read_text())
+            self.assertLess(ended, held_end, f"shard {i} waited for the held shard 0")
+            self.assertGreater(started, float((self.pids / "shard0.start").read_text()) - 1)
+        # Never more than three at once: every shard after the first three starts only once an earlier one has ended.
+        spans = sorted((float((self.pids / f"shard{i}.start").read_text()), float((self.pids / f"shard{i}.end").read_text()))
+                       for i in range(CHUNKS))
+        for start, _ in spans:
+            alive = sum(1 for s, e in spans if s <= start < e)
+            self.assertLessEqual(alive, 3, spans)
 
     def test_an_inherited_gtest_filter_narrows_neither_the_list_nor_the_runs(self):
         # Round 1 #2: the list inherited GTEST_FILTER while the runs' own filters replaced it, so coverage refused a
@@ -321,7 +353,7 @@ class ShardRun(unittest.TestCase):
         cov = subprocess.run([sys.executable, str(TEST_TIMES), "coverage", listing, *xml], capture_output=True, text=True,
                              timeout=60, creationflags=windowless())
         self.assertEqual(cov.returncode, 0, cov.stdout + cov.stderr)
-        self.assertIn("12 listed tests each reported exactly once across 4 report(s)", cov.stdout)
+        self.assertIn(f"12 listed tests each reported exactly once across {CHUNKS + 1} report(s)", cov.stdout)
 
     def test_every_process_is_created_inside_the_job(self):
         # Round 1 #1: CreateProcessW then AssignProcessToJobObject leaves a moment when a killed host orphans the
@@ -337,12 +369,12 @@ class ShardRun(unittest.TestCase):
         res = _ps(self._invoke_script(), env=self._env(FAKE_FAIL="Fast.T4"))
         self.assertNotEqual(res.returncode, 0, res.stdout)
         out = res.stdout + res.stderr
-        self.assertIn("recto-tests failed: shard 1 of 3 exit 1", out)
+        self.assertIn(f"recto-tests failed: shard 4 of {CHUNKS} exit 1", out)
         self.assertIn("fake_gtest.py: Failure in Fast.T4", out)
         self.assertIn("[  FAILED  ] Fast.T4", out)
 
     def test_a_process_that_leaves_no_report_fails_the_run(self):
-        for who, name in (("shard0", "shard 0 of 3"), ("serial", "serial pass")):
+        for who, name in (("shard0", f"shard 0 of {CHUNKS}"), ("serial", "serial pass")):
             with self.subTest(who=who):
                 res = _ps(self._invoke_script(), env=self._env(FAKE_NO_XML=who))
                 self.assertNotEqual(res.returncode, 0, res.stdout)
@@ -353,14 +385,18 @@ class ShardRun(unittest.TestCase):
         res = _ps(self._invoke_script(timeout_minutes=2 / 60), env=self._env(FAKE_HANG=who), timeout=60)
         self.assertNotEqual(res.returncode, 0, res.stdout)
         self.assertIn("passed its deadline of", res.stdout + res.stderr)
-        self.assertIn(f"{running} still running; killed with every process it started", res.stdout + res.stderr)
+        said = re.search(r"\(RECTO_TEST_TIMEOUT_MINUTES\): (.*?) still running; killed with every process it started",
+                         " ".join((res.stdout + res.stderr).split()))  # the console wraps the line
+        if said is None:
+            self.fail(res.stdout + res.stderr)
+        self.assertIn(running, said.group(1).split(", "))
         child = int((self.pids / f"{who}.child").read_text())
         hung = int((self.pids / f"{who}.pid").read_text())
         self.assertEqual(_wait_gone([hung, child], 10), [], "the hung process or its child outlived the deadline")
         self.assertLess(time.monotonic() - started, 2 + 10 + 20, "the deadline kill took too long")
 
     def test_a_hung_shard_and_its_child_are_killed_at_the_deadline(self):
-        self._assert_hang_killed("shard1", "shard 1 of 3")
+        self._assert_hang_killed("shard1", f"shard 1 of {CHUNKS}")
 
     def test_a_hung_serial_pass_and_its_child_are_killed_at_the_deadline(self):
         self._assert_hang_killed("serial", "serial pass")
@@ -453,8 +489,8 @@ class ShardRun(unittest.TestCase):
                 self.assertLess(time.monotonic(), until, "the hung shard never started its child")
                 time.sleep(0.1)
             time.sleep(0.3)
-            pids = self._pids()
-            self.assertGreaterEqual(len(pids), 4, pids)  # three shards and the hung one's child
+            pids = self._pids() + [int(child_file.read_text())]
+            self.assertGreaterEqual(len(pids), 3, pids)  # the hung shard and the two slots beside it, at least
             managed.proc.kill()  # the host alone, as an interrupted or killed build.ps1; its job handle closes with it
             managed.proc.wait(timeout=30)
             self.assertEqual(_wait_gone(pids, 10), [], "a test process outlived the PowerShell host that started it")

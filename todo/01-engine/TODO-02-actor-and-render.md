@@ -22,6 +22,7 @@ track: M1
 - `design/SPEC.md` section 9.2 (page outlines immediately, tiles fill in, stretched zoom preview, dark-theme page colour modes).
 - -> XREF: D01 T01 §1 -- consumes `recto::pdf::Document` (`§10`), `PdfResult<T>` (`§1`), and decoded page content and resource streams (`§7`, `§8`) from `src/pdf`.
 - -> XREF: D01 T03 §6 -- the thread-safety verification battery in `D01 T03 §6` and `§7` stress-tests the actor, display-list, render-pool and cancellation machinery built here.
+- -> XREF: D00 T04 §15 -- the budget-tight tests section measured a fresh render worker's first tile (21 ms of each \Runtime.ShutdownUnderActiveTileLoad\ round in Release) and defers it to \§53\.
 - -> XREF: D01 T03 §1 -- the CLI exit-code contract in `D01 T03 §1` maps the `ResourceLimit` and `InvalidArgument` codes added in `§18`.
 - -> XREF: D02 T01 §3 -- `DocumentTabSession` in `D02 T01 §3` owns a per-tab `DocumentHandle` and closes its `DocumentActor` (`§8`) on tab close; `OpenDocumentPipeline` in `D02 T01 §5` drives the actor's async open/authenticate flow, and `Save` in `D02 T01 §8` invokes `§5`'s incremental writer.
 - -> XREF: D02 T02 §3 -- the viewer's presentation thread, `TileTextureCache` (`D02 T02 §3`), and viewport-to-scheduler driver (`D02 T02 §4`) consume the `TileKey`, BGRA premultiplied tile buffers, and `TileScheduler` (`§9`) built here.
@@ -110,6 +111,7 @@ track: M1
 | 50 | §50 | A cancelled tile's `EndDraw` bounded by the pixel work it waits on | §7 | [ ] |
 | 51 | §51 | `filters.cpp` split into one source per filter family, with no behaviour change | -- | [ ] |
 | 52 | §52 | The filter and interpreter test files split by subject, every test name kept | §51 | [ ] |
+| 53 | §53 | A fresh render worker's first tile, measured and cut | §7 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1794,6 +1796,28 @@ Filed 2026-11-10 at the owner's request. `tests/recto-tests/pdf_filters_tests.cp
 - [ ] Commit: `tests: split the filter and interpreter tests by subject, names unchanged`
 
 **Test checkpoint:** `recto-tests.exe --gtest_list_tests` is identical to the baseline; `recto-tests.exe --gtest_filter=PdfFilters.*:PdfInterpreter.*` passes in x64 Debug, Release and under ASan; and deleting one moved test from a new source makes the list comparison fail naming it.
+
+## 53. A fresh render worker's first tile, measured and cut
+
+Filed 2026-11-16 from the `D00 T04 §15` build: in `Runtime.ShutdownUnderActiveTileLoad` (`tests/recto-tests/runtime_tests.cpp`), each round's eight new workers took 21 ms of the round's 32 ms in x64 Release between the tile requests and every worker reaching its first `RasterCommand` poll (64 commands of a 512 by 512 tile), while creating eight `Rasterizer`s alone took 2.1 ms (`Rasterizer::create`: the WIC, Direct2D and DirectWrite factories) and the tile's commands are cheap fills. The first tile a worker draws therefore pays a one-time cost that later tiles do not: the software `ID2D1RenderTarget` over a WIC bitmap (`Rasterizer::State::ensure_target`, `src/pdf/rasterizer.cpp`) and whatever Direct2D and the WARP rasterizer set up behind it on first use. A user meets it on the first page of every document the viewer opens, once per worker. This section measures where the 21 ms goes and moves it off the first tile: done once per worker when the pool starts, before any tile waits on it, or avoided.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that each worker still owns its `Rasterizer` on its own thread only, that a worker's warm-up is cancelled and joined with the pool on shutdown like any tile, and that tile output is unchanged pixel for pixel.
+
+**Build order:**
+
+1. Measure the first tile in `src/pdf/rasterizer.cpp` and `src/core/render_pool.cpp`. Done when: the findings file records, for a fresh worker in Release, the time in `ensure_target`, in the first `BeginDraw` and `EndDraw`, and in the replay, against the same tile drawn a second time.
+2. Move the one-time part off the first tile. Done when: a fresh worker's first 512 by 512 tile takes no more than 2 ms longer than its second, in Release on this host.
+
+- [ ] Add `PdfRasterizer.FirstTileCost`: a fresh `Rasterizer` on a fresh thread draws the same 512 by 512 tile twice and reports `ensure_target`, `BeginDraw`/`EndDraw` and replay times for each. Done when: the test prints both and the findings file names the step that holds the difference.
+- [ ] Do the one-time work at worker start in `src/core/render_pool.cpp`: each worker, once its `Rasterizer` exists, prepares its target at the default tile size (and whatever the measurement names) before it takes its first tile, polling the pool's cancel so a shutdown during warm-up stops it. Done when: `PdfRasterizer.FirstTileCost`'s first tile is within 2 ms of its second, and `Runtime.ShutdownUnderActiveTileLoad` still passes 50 rounds with no live worker after either shutdown.
+- [ ] Keep the pool's start cheap: warming eight workers adds no more than the warm-up of one to the time from `Runtime` creation to its first delivered tile. Done when: `RenderPool.WarmStartCost` measures `Runtime` creation to first tile with and without warm-up and the findings file records both.
+- [ ] Record what it gives the test that found it: `Runtime.ShutdownUnderActiveTileLoad` in x64 Release, alone, before and after. Done when: the findings file has both times.
+- [ ] Commit: `core: warm each render worker before its first tile`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.FirstTileCost:RenderPool.WarmStartCost:Runtime.ShutdownUnderActiveTileLoad` passes in x64 Release on the Windows host, with the first tile within 2 ms of the second; and without the warm-up the first tile is over that bound.
 
 ## Verification
 

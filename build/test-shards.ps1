@@ -15,6 +15,10 @@ $script:RectoTestShardPerShardMb = 1024
 # x64 Debug ASan runs side by side on 2026-11-16, so an ASan shard is budgeted 4,096 MB.
 $script:RectoTestShardPerAsanShardMb = 4096
 $script:RectoTestShardMax = 6
+# The suite is cut into this many gtest shards per process slot, and each slot takes the next one from a queue when
+# it finishes: one fixed shard per slot ran 12 s to 40 s apart on 2026-11-16 (x64 Debug, five slots), because the
+# heavy tests fall where gtest's round robin puts them, and the run waits for the slowest (D00 T04 section 15).
+$script:RectoTestChunksPerShard = 4
 $script:RectoTestTimeoutDefaultMinutes = 30.0
 
 if (-not ('Recto.TestShards.Job' -as [type])) {
@@ -159,6 +163,8 @@ namespace Recto.TestShards {
         static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
         [DllImport("kernel32.dll", SetLastError = true)]
         static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint WaitForMultipleObjects(uint count, IntPtr[] handles, bool waitAll, uint milliseconds);
 
         // A job whose last handle closing kills every process in it: when build.ps1 exits, is interrupted or is killed,
         // the kernel closes the handle and the shards and everything they started go with it.
@@ -325,6 +331,23 @@ namespace Recto.TestShards {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "QueryInformationJobObject(extended limits) failed");
             }
             return new long[] { (long)(info.PeakProcessMemoryUsed.ToUInt64() / (1024 * 1024)), (long)(info.PeakJobMemoryUsed.ToUInt64() / (1024 * 1024)) };
+        }
+
+        // Waits until one of `shards` (at most 64) exits or `deadlineUtc` passes. The index of one that exited, its exit
+        // code read, or -1 on the deadline.
+        public static int WaitAny(Shard[] shards, DateTime deadlineUtc) {
+            if (shards.Length == 0 || shards.Length > 64) throw new ArgumentException("WaitAny takes 1 to 64 processes");
+            IntPtr[] handles = new IntPtr[shards.Length];
+            for (int i = 0; i < shards.Length; i++) handles[i] = shards[i].Process;
+            double left = (deadlineUtc - DateTime.UtcNow).TotalMilliseconds;
+            uint wait = left <= 0 ? 0u : (uint)Math.Min(left, 0xFFFFFFFEu);
+            uint r = WaitForMultipleObjects((uint)handles.Length, handles, false, wait);
+            if (r == WAIT_TIMEOUT) return -1;
+            if (r >= WAIT_OBJECT_0 + (uint)handles.Length) throw new Win32Exception(Marshal.GetLastWin32Error(), "WaitForMultipleObjects failed");
+            int index = (int)(r - WAIT_OBJECT_0);
+            uint code;
+            shards[index].ExitCode = GetExitCodeProcess(shards[index].Process, out code) ? unchecked((int)code) : -1;
+            return index;
         }
 
         public static bool Exited(Shard shard) {
@@ -496,6 +519,25 @@ function Wait-RectoTestProcessSet {
     }
 }
 
+# Waits until one of `Shards` exits, in half-second slices so Ctrl+C reaches build.ps1 between them, and returns its
+# index. On `DeadlineUtc` every process in `Job` is killed and the error names those still running.
+function Wait-RectoTestProcessAny {
+    param([IntPtr]$Job, [Recto.TestShards.Shard[]]$Shards, [DateTime]$DeadlineUtc, [double]$TimeoutMinutes)
+    while ($true) {
+        $slice = [DateTime]::UtcNow.AddMilliseconds(500)
+        if ($slice -gt $DeadlineUtc) { $slice = $DeadlineUtc }
+        $index = [Recto.TestShards.Job]::WaitAny($Shards, $slice)
+        if ($index -ge 0) { return $index }
+        if ([DateTime]::UtcNow -ge $DeadlineUtc) {
+            $running = @($Shards | Where-Object { -not [Recto.TestShards.Job]::Exited($_) } | ForEach-Object { $_.Name })
+            $clean = [Recto.TestShards.Job]::Kill($Job, 10000)
+            $note = if ($clean) { 'killed with every process it started' } else { 'killed, but a process was still alive 10 s later' }
+            $minutes = $TimeoutMinutes.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+            throw "recto-tests passed its deadline of $minutes minute(s) (RECTO_TEST_TIMEOUT_MINUTES): $($running -join ', ') still running; $note"
+        }
+    }
+}
+
 # The block of each failed test from a shard's console log ([ RUN ] to [ FAILED ], at most 200 lines each) and the
 # log's last 30 lines, so a failure is read without opening the file.
 function Write-RectoTestShardFailure([Recto.TestShards.Shard]$Shard) {
@@ -515,7 +557,8 @@ function Write-RectoTestShardFailure([Recto.TestShards.Shard]$Shard) {
     $lines | Select-Object -Last 30 | ForEach-Object { Write-Host "  $_" }
 }
 
-# Runs the full suite as `Shards` processes side by side (the serial list excluded), then the serial list in one
+# Runs the full suite as `Shards` processes side by side (the serial list excluded), each taking the next of
+# `Shards` x RectoTestChunksPerShard gtest shards from a queue, then the serial list in one
 # process, inside one kill-on-close job and under one deadline. Writes test-results-x64-<Tag>-shard<i>.xml,
 # -serial.xml and test-x64-<Tag>-shard<i>.log / -serial.log into `XmlDir`, and the test list into
 # test-list-x64-<Tag>.txt. Returns the XML paths. Throws, with each failed process's log printed, when a process fails,
@@ -547,24 +590,39 @@ function Invoke-RectoTestShards {
         if ($lister[0].ExitCode -ne 0) { throw "recto-tests --gtest_list_tests failed (exit $($lister[0].ExitCode)); output: $listPath" }
 
         $exclude = if ($SerialPatterns.Count -gt 0) { @("--gtest_filter=-$($SerialPatterns -join ':')") } else { @() }
+        # `Shards` processes at a time over `Shards` x RectoTestChunksPerShard gtest shards: each slot starts the next
+        # shard in the queue the moment its last one exits, so no slot idles while another works through a heavy shard.
+        $chunks = $Shards * $script:RectoTestChunksPerShard
         $specs = @()
-        for ($i = 0; $i -lt $Shards; $i++) {
+        foreach ($old in @(Get-ChildItem -LiteralPath $XmlDir -Filter "test-results-x64-$Tag-shard*.xml")) {
+            Remove-Item -LiteralPath $old.FullName -Force
+        }
+        for ($i = 0; $i -lt $chunks; $i++) {
             $xml = Join-Path $XmlDir "test-results-x64-$Tag-shard$i.xml"
-            if (Test-Path -LiteralPath $xml) { Remove-Item -LiteralPath $xml -Force }
             $specs += [pscustomobject]@{
-                Name = "shard $i of $Shards"; XmlPath = $xml
+                Name = "shard $i of $chunks"; XmlPath = $xml
                 Arguments = @("--gtest_output=xml:$xml") + $exclude
                 LogPath = Join-Path $XmlDir "test-x64-$Tag-shard$i.log"
-                Environment = @("GTEST_TOTAL_SHARDS=$Shards", "GTEST_SHARD_INDEX=$i", 'GTEST_SHARD_STATUS_FILE=', 'GTEST_FILTER=')
+                Environment = @("GTEST_TOTAL_SHARDS=$chunks", "GTEST_SHARD_INDEX=$i", 'GTEST_SHARD_STATUS_FILE=', 'GTEST_FILTER=')
             }
         }
         $serialXml = Join-Path $XmlDir "test-results-x64-$Tag-serial.xml"
         if (Test-Path -LiteralPath $serialXml) { Remove-Item -LiteralPath $serialXml -Force }
-        $started = Start-RectoTestProcessSet -Job $job -Exe $Exe -PrefixArguments $PrefixArguments -WorkingDirectory $WorkingDirectory -Specs $specs
-        for ($i = 0; $i -lt $started.Count; $i++) { $started[$i].XmlPath = $specs[$i].XmlPath }
-        $all += $started
-        Wait-RectoTestProcessSet -Job $job -Shards $started -DeadlineUtc $deadline -TimeoutMinutes $TimeoutMinutes
-        $ran = @($started)
+        $ran = @()
+        $running = New-Object System.Collections.Generic.List[Recto.TestShards.Shard]
+        $next = 0
+        while ($next -lt $chunks -or $running.Count -gt 0) {
+            while ($next -lt $chunks -and $running.Count -lt $Shards) {
+                $one = Start-RectoTestProcessSet -Job $job -Exe $Exe -PrefixArguments $PrefixArguments -WorkingDirectory $WorkingDirectory -Specs @($specs[$next])
+                $one[0].XmlPath = $specs[$next].XmlPath
+                $all += $one
+                $ran += $one
+                $running.Add($one[0])
+                $next++
+            }
+            $done = Wait-RectoTestProcessAny -Job $job -Shards $running.ToArray() -DeadlineUtc $deadline -TimeoutMinutes $TimeoutMinutes
+            $running.RemoveAt($done)
+        }
         if ($SerialPatterns.Count -gt 0) {
             $serial = Start-RectoTestProcessSet -Job $job -Exe $Exe -PrefixArguments $PrefixArguments -WorkingDirectory $WorkingDirectory -Specs @(
                 [pscustomobject]@{

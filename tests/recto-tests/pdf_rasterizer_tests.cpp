@@ -2266,10 +2266,9 @@ TEST(PdfRasterizer, CancelWhileRunning)
 		const auto list = finished(builder);
 		CancelBench bench;
 		(void)expect_cancelled_while_running(CancelSite::GeometryVerb, "building one path of 400,000 curves", [&](const CancelToken& token) { return bench.run(list, token); });
-		// What cannot be interrupted, for the record: the whole of that one fill, geometry and `FillGeometry` both.
-		const auto started = std::chrono::steady_clock::now();
-		(void)render(list, bench.spec, *bench.worker_owned);
-		std::printf("[          ] that path, uncancelled: %.3f ms\n", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+		// The one fill that cannot be interrupted (that path's geometry and `FillGeometry`, one Direct2D call) is
+		// D01 T02 section 19's to bound and to measure; rendering it uncancelled here proved nothing and was most of
+		// this test's time (3.8 s of 5.0 s in Release, D00 T04 section 15).
 	}
 }
 

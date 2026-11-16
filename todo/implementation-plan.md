@@ -76,7 +76,7 @@ Sections: 61 | Checklist items: 369
 
 ### Phase 1: M1 Engine core
 
-Sections: 110 | Checklist items: 742
+Sections: 111 | Checklist items: 747
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -153,6 +153,7 @@ Sections: 110 | Checklist items: 742
 | [ ]    | D01 T02 §38 | Cancellable Flate compression and incremental revisions (`CancelToken`)                  | windows-host              | 4     |
 | [ ]    | D01 T02 §49 | Blending in a transparency group's own colour space (`/CS`)                              | windows-host              | 4     |
 | [ ]    | D01 T02 §50 | A cancelled tile's `EndDraw` bounded by the pixel work it waits on                       | windows-host              | 4     |
+| [ ]    | D01 T02 §53 | A fresh render worker's first tile, measured and cut                                     | windows-host              | 5     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
@@ -952,6 +953,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 117/883 verified sections, 53 ready to run now.
+Progress: 117/884 verified sections, 54 ready to run now.
 
-Checklist: 801/6534 items completed (includes Commit items).
+Checklist: 805/6539 items completed (includes Commit items).
