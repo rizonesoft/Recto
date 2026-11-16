@@ -218,6 +218,18 @@ class CMakeDatabaseIsKept(unittest.TestCase):
             ok, msg = gen.check_database(db, root)
             self.assertTrue(ok, msg)
             self.assertIn("ok (CMake): 2 translation units", msg)
+            # A build without sccache adds each target's generated precompiled-header unit: still current; any other
+            # unit the projects do not compile makes it stale.
+            folder = root / "build" / "cmake" / "x64-debug"
+            pch = str(folder / "src" / "CMakeFiles" / "a.dir" / "cmake_pch.cxx")
+            db.write_text(json.dumps(json.loads(before) + [{"directory": str(folder), "command": "cl.exe /Yc", "file": pch}]),
+                          encoding="utf-8")
+            self.assertIsNone(gen.cmake_database_problem(db, root))
+            other = str(folder / "src" / "generated.cpp")
+            db.write_text(json.dumps(json.loads(before) + [{"directory": str(folder), "command": "cl.exe", "file": other}]),
+                          encoding="utf-8")
+            self.assertIn("extra generated.cpp", gen.cmake_database_problem(db, root))
+            db.write_bytes(before)
             entries = json.loads(db.read_text(encoding="utf-8")) + [
                 {"directory": str(root / "src"), "command": "cl.exe /c c.cpp", "file": str(root / "src" / "c.cpp")}]
             db.write_text(json.dumps(entries), encoding="utf-8")

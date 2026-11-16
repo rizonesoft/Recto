@@ -122,14 +122,17 @@ class MemoryGate(unittest.TestCase):
         return " ".join(res.stderr.split())  # CMake wraps its messages
 
     def test_enough_memory_for_the_pools_passes(self):
-        # 2,048 + 4 * 1,536 + 1,024 = 9,216 MB; up to one compiler's 1,536 MB below it is ordinary movement.
+        # 2,048 + 4 * 1,536 + 1,024 = 9,216 MB: the full reserve stays free under the whole budgeted load.
         self.assertEqual(self.gate(9216).returncode, 0)
-        self.assertEqual(self.gate(7680).returncode, 0)
+        self.assertEqual(self.gate(4608, compiles=1).returncode, 0)
 
     def test_pools_that_no_longer_fit_are_refused_with_the_command_that_resizes_them(self):
-        res = self.gate(7679)
+        res = self.gate(9215)
         self.assertNotEqual(res.returncode, 0)
-        self.assertIn("need 9216 MB but 7679 MB is free now", self.said(res))
+        self.assertIn("need 9216 MB (2048 MB reserve included) but 9215 MB is free now", self.said(res))
+        self.assertIn("Size them again", self.said(res))
+        # The case the completion review named: 7,680 MB free under four compilers and a link would leave 512 MB.
+        self.assertNotEqual(self.gate(7680).returncode, 0)
         self.assertIn("build\\build.ps1", self.said(res))
 
     def test_below_one_compiler_and_one_link_is_refused(self):
@@ -265,10 +268,12 @@ class DirectPresets(unittest.TestCase):
                 self.assertEqual(query.returncode, 0, query.stderr)
                 self.assertIn("recto-boundary-check", query.stdout)
         # Sizes build.ps1 passed (through the environment) do not persist: configuring again sizes from what is free now.
+        # (One compiler and two links through the environment, two compilers and one link sized here: valid on any runner
+        # with two or more cores, and told apart.)
         env_sized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=20000,
-                                       extra={"RECTO_CMAKE_POOL_COMPILE": "5", "RECTO_CMAKE_POOL_LINK": "2"})
+                                       extra={"RECTO_CMAKE_POOL_COMPILE": "1", "RECTO_CMAKE_POOL_LINK": "2"})
         self.assertEqual(env_sized.returncode, 0, env_sized.said[-2000:])
-        self.assertIn("compile=5, link=2 (sized by build.ps1)", env_sized.said)
+        self.assertIn("compile=1, link=2 (sized by build.ps1)", env_sized.said)
         resized = self.run_in_prompt("x64", ["--preset", "x64-debug", "-B", str(self.binary)], free=6200)
         self.assertEqual(resized.returncode, 0, resized.said[-2000:])
         self.assertIn(f"Recto pools: free 6200 MB, {cores} cores: compile={min(cores, (6200 - 2048 - 1024) // 1536)}, link=1",
@@ -299,21 +304,55 @@ class CMakeBuildFailures(unittest.TestCase):
     """build/cmake-build.ps1's Invoke-RectoCMakeBuild stops the run on a failed build or any warning line, so
     build.ps1 never goes on to run stale tests (section 8)."""
 
-    def run_build(self, build_exit: int, build_output: str) -> subprocess.CompletedProcess[str]:
+    GATE = "CMake Error at cmake/memory-gate.cmake:19 (message): ... Size them again: run build.ps1"
+
+    def run_build(self, build_exit: int, build_output: str, refusals: int = 0,
+                  resize: bool = False) -> subprocess.CompletedProcess[str]:
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             (base / "build").mkdir()
+            calls = base / "calls.txt"
+            count = base / "builds.txt"
             fake = base / "fake-cmake.cmd"
-            # Configure succeeds; --build prints `build_output` and exits `build_exit`.
-            fake.write_text("@echo off\r\nif \"%1\"==\"--build\" goto build\r\nexit /b 0\r\n:build\r\n"
-                            f"echo {build_output}\r\nexit /b {build_exit}\r\n", encoding="ascii")
+            # Configure records the compile pool it was given and prints a line, as CMake does; --build prints the gate's refusal for the first
+            # `refusals` builds, then prints `build_output` and exits `build_exit`.
+            fake.write_text(
+                "@echo off\r\nif \"%1\"==\"--build\" goto build\r\n"
+                f"echo configure %RECTO_CMAKE_POOL_COMPILE% >>\"{calls}\"\r\necho -- Configuring done\r\nexit /b 0\r\n:build\r\n"
+                f"echo build>>\"{calls}\"\r\necho x>>\"{count}\"\r\n"
+                f"for /f %%n in ('type \"{count}\" ^| find /c \"x\"') do set n=%%n\r\n"
+                f"if %n% LEQ {refusals} goto refuse\r\n"
+                f"echo {build_output}\r\nexit /b {build_exit}\r\n:refuse\r\necho {self.GATE}\r\nexit /b 1\r\n", encoding="ascii")
+            resize_arg = ("-Resize { [pscustomobject]@{ Compiles = 1; Links = 1; Header = 'resized to 1' } }"
+                          if resize else "")
             script = (f". '{ROOT / 'build' / 'cmake-build.ps1'}'; "
-                      "$pools = [pscustomobject]@{ Compiles = 1; Links = 1 }; "
-                      f"Invoke-RectoCMakeBuild -Root '{base}' -CMake '{fake}' -Preset x64-debug -Pools $pools -Sccache $true; "
-                      "'BUILD RETURNED'")
-            return subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-                                  capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+                      "$pools = [pscustomobject]@{ Compiles = 3; Links = 1 }; "
+                      f"Invoke-RectoCMakeBuild -Root '{base}' -CMake '{fake}' -Preset x64-debug -Pools $pools "
+                      f"-Sccache $true {resize_arg}; 'BUILD RETURNED'")
+            res = subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                                 capture_output=True, text=True, timeout=60, creationflags=0x08000000)
+            res.calls = calls.read_text(encoding="ascii").split() if calls.exists() else []
+            return res
+
+    def test_a_gate_refusal_is_sized_again_and_built_once_more(self):
+        res = self.run_build(0, "[86/86] Linking CXX executable recto-tests.exe", refusals=1, resize=True)
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("BUILD RETURNED", res.stdout)
+        self.assertIn("memory fell after sizing; resized to 1, building again", res.stdout)
+        self.assertEqual(res.calls, ["configure", "3", "build", "configure", "1", "build"])
+
+    def test_a_second_gate_refusal_stops_the_run(self):
+        res = self.run_build(0, "[86/86] Linking CXX executable recto-tests.exe", refusals=2, resize=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BUILD RETURNED", res.stdout)
+        self.assertIn("the memory gate refused the pools", " ".join((res.stdout + res.stderr).split()))
+
+    def test_a_gate_refusal_without_resize_stops_the_run(self):
+        res = self.run_build(0, "ok", refusals=1)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertNotIn("BUILD RETURNED", res.stdout)
+        self.assertEqual(res.calls, ["configure", "3", "build"])
 
     def test_a_clean_build_returns(self):
         res = self.run_build(0, "[86/86] Linking CXX executable recto-tests.exe")
@@ -354,6 +393,10 @@ class CompileDatabaseScope(unittest.TestCase):
 
 
 LIVE_DB = ROOT / "build" / "cmake" / "x64-debug" / "compile_commands.json"
+_GEN_SPEC = __import__("importlib.util").util.spec_from_file_location("gen_compile_commands",
+                                                                     ROOT / "scripts" / "gen-compile-commands.py")
+GEN = __import__("importlib.util").util.module_from_spec(_GEN_SPEC)
+_GEN_SPEC.loader.exec_module(GEN)
 
 
 @unittest.skipUnless(LIVE_DB.is_file(), "needs a CMake x64-debug build (build.ps1 -CMake -Quick)")
@@ -366,13 +409,17 @@ class LiveCompileDatabase(unittest.TestCase):
         self.assertEqual(len(files), len(set(files)), "a source is listed twice")
         expected = {os.path.normcase(str((project.parent / name).resolve()))
                     for project in PROJECTS.values() for name in vcxproj_sources(project)}
-        self.assertEqual(set(files), expected)
-        for entry in entries:
+        # Without sccache CMake also compiles each target's precompiled header from its generated cmake_pch.cxx.
+        sources = set(GEN.cmake_sources(files, ROOT))
+        self.assertEqual(sources, expected)
+        self.assertTrue(all(Path(f).name == "cmake_pch.cxx" for f in set(files) - sources))
+        for entry in (e for e in entries if os.path.normcase(str(Path(e["file"]).resolve())) in sources):
             with self.subTest(file=Path(entry["file"]).name):
                 command = entry["command"]
                 self.assertIn("cl.exe", command)
                 self.assertRegex(command, r"-std:c\+\+23")
-                self.assertIn("/FIpch.h", command)
+                # pch.h itself with sccache, or CMake's generated header that includes it with precompiled headers.
+                self.assertRegex(command, r"/FI(pch\.h|\S*cmake_pch\.hxx)")
                 self.assertIn("/external:I", command, "the SDK and CRT folders are not named")
 
 if __name__ == "__main__":

@@ -324,7 +324,12 @@ if ($CMake) {
                 # The D13 check runs for a library built alone too (cmake/RectoBoundary.cmake).
                 $targets += 'recto-boundary-check'
             }
-            Invoke-RectoCMakeBuild -Root $root -CMake $cmakeExe -Preset $preset -Pools $cmakePools -Sccache ([bool]$useSccache) -Targets $targets
+            # Sized again for each preset from what is free now (a Release build starts minutes after Debug), and again if
+            # the build-start gate finds memory fell after sizing.
+            $resize = { Resolve-RectoCMakePools -MaxCpuCount $MaxCpuCount }
+            $cmakePools = & $resize
+            Write-Host $cmakePools.Header
+            Invoke-RectoCMakeBuild -Root $root -CMake $cmakeExe -Preset $preset -Pools $cmakePools -Sccache ([bool]$useSccache) -Targets $targets -Resize $resize
             if ($EnableASAN -and $plat -eq 'x64') {
                 foreach ($exeProj in @('recto-tests', 'recto-cli', 'Recto')) {
                     $exe = Join-Path $root "build\$binFolder\x64\$cfg\$exeProj\$exeProj.exe"

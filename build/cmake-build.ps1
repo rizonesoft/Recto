@@ -77,10 +77,28 @@ function Get-RectoCMakePreset([string]$Platform, [string]$Configuration, [bool]$
     return "$arch-$cfg"
 }
 
-# Configures and builds one preset with pools sized now, then returns the folder its executables are in. `-Target`
-# narrows the build to one target (and recto-tests, as MSBuild's -Project path does); the boundary check and the
-# build-start memory gate run inside the build itself (cmake/RectoBoundary.cmake, cmake/memory-gate.cmake).
+# Configures and builds one preset with the given pools. `-Target` narrows the build to one target (and recto-tests, as
+# MSBuild's -Project path does); the boundary check and the build-start memory gate run inside the build itself
+# (cmake/RectoBoundary.cmake, cmake/memory-gate.cmake). When the gate refuses because memory fell after sizing,
+# `-Resize` (build.ps1 passes Resolve-RectoCMakePools) sizes the pools from what is free now and the build runs once more;
+# a second refusal, or a reading below one compiler and one link, stops the run.
 function Invoke-RectoCMakeBuild {
+    param(
+        [string]$Root, [string]$CMake, [string]$Preset, [object]$Pools, [bool]$Sccache, [string[]]$Targets = @(),
+        [scriptblock]$Resize = $null
+    )
+    for ($attempt = 1; ; $attempt++) {
+        $refused = Invoke-RectoCMakeBuildOnce -Root $Root -CMake $CMake -Preset $Preset -Pools $Pools -Sccache $Sccache -Targets $Targets
+        if (-not $refused) { return }
+        if ($null -eq $Resize -or $attempt -ge 2) { throw "build failed: $Preset (the memory gate refused the pools)" }
+        $Pools = & $Resize
+        Write-Host "memory fell after sizing; $($Pools.Header), building again"
+    }
+}
+
+# One configure and build. Returns $true only when the memory gate refused the pools (nothing was compiled); any other
+# failure throws.
+function Invoke-RectoCMakeBuildOnce {
     param(
         [string]$Root, [string]$CMake, [string]$Preset, [object]$Pools, [bool]$Sccache, [string[]]$Targets = @()
     )
@@ -91,7 +109,8 @@ function Invoke-RectoCMakeBuild {
     $configure = @('--preset', $Preset, '-U', 'RECTO_COMPILE_JOBS', '-U', 'RECTO_LINK_JOBS',
         "-DRECTO_SCCACHE=$(if ($Sccache) { 'ON' } else { 'OFF' })")
     Write-Host "=== cmake $($configure -join ' ')"
-    & $CMake @configure
+    # To the host, not the pipeline: this function's only output is whether the memory gate refused the pools.
+    & $CMake @configure | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "cmake configure failed: $Preset (exit $LASTEXITCODE)" }
     $build = @('--build', '--preset', $Preset)
     if ($Targets.Count -gt 0) { $build += @('--target') + $Targets }
@@ -100,7 +119,10 @@ function Invoke-RectoCMakeBuild {
     $global:LASTEXITCODE = 0
     & $CMake @build 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log | Out-Host
     $buildExit = $LASTEXITCODE
-    if ($buildExit -ne 0) { throw "build failed: $Preset (exit $buildExit)" }
+    if ($buildExit -ne 0) {
+        if (Select-String -LiteralPath $log -Pattern 'Size them again' -SimpleMatch -Quiet) { return $true }
+        throw "build failed: $Preset (exit $buildExit)"
+    }
     # The build is warning-free by contract (D00 T01 section 3, D06 T05 section 27): /WX makes compiler warnings errors,
     # but command-line warnings (D9xxx) and tool warnings are not, so any warning line fails the build here, as
     # Assert-NoMSBuildWarnings does for MSBuild.
@@ -109,6 +131,7 @@ function Invoke-RectoCMakeBuild {
         $warnings | Select-Object -First 20 | ForEach-Object { Write-Host "  $($_.Line)" }
         throw "build produced $($warnings.Count) warning line(s): $Preset (log $log)"
     }
+    return $false
 }
 
 # Whether a build writes build/compile_commands.json: only a full x64 Debug build without AddressSanitizer, the

@@ -396,6 +396,13 @@ def is_cmake_database(out_path: Path, root: Path = ROOT) -> bool:
     return True
 
 
+def cmake_sources(files, root: Path = ROOT) -> list[str]:
+    """The entries of a CMake database that are project sources: every file except the precompiled-header units CMake
+    generates under build/ (`cmake_pch.cxx`). Any other generated unit is kept, so a stray one is seen."""
+    build = os.path.normcase(str((root / "build").resolve())) + os.sep
+    return [f for f in files if not (f.startswith(build) and os.path.basename(f) == "cmake_pch.cxx")]
+
+
 def cmake_database_problem(out_path: Path, root: Path = ROOT) -> str | None:
     """Why a CMake-written database is not current, or None when it is: it must name exactly the sources the projects
     compile (the solution's, which tests/scripts/test_cmake_build.py holds equal to the CMake targets') and be newer
@@ -405,7 +412,10 @@ def cmake_database_problem(out_path: Path, root: Path = ROOT) -> str | None:
         db_mtime = out_path.stat().st_mtime
     except (OSError, ValueError) as exc:
         return f"cannot read {out_path}: {exc}"
-    have = {os.path.normcase(str(Path(e["file"]).resolve())) for e in entries if isinstance(e, dict) and e.get("file")}
+    files = {os.path.normcase(str(Path(e["file"]).resolve())) for e in entries if isinstance(e, dict) and e.get("file")}
+    # A build without sccache compiles each target's precompiled header from a unit CMake generates under build/
+    # (cmake_pch.cxx); it is compiled but it is not a project source, so only the sources are compared.
+    have = set(cmake_sources(files, root))
     want = {os.path.normcase(str(Path(e["file"]).resolve())) for e in build_database(root)}
     if have != want:
         missing, extra = sorted(want - have), sorted(have - want)
