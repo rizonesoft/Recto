@@ -12,6 +12,7 @@ build/*
 !build/sccache.ps1
 !build/test-shards.ps1
 !build/cmake.cmd
+!build/cmake-build.ps1
 !build/sccache-cl.cpp
 !build/tools.lock.json
 !build/bootstrap-tools.ps1

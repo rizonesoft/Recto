@@ -1,4 +1,4 @@
-﻿# Recto's one-command build (D00 T01 section 3). From a clean clone:
+# Recto's one-command build (D00 T01 section 3). From a clean clone:
 #
 #     git clone https://github.com/rizonesoft/Recto.git
 #     cd Recto
@@ -43,6 +43,7 @@ param(
     [switch]$EnableASAN,
     [switch]$ForceRestore,
     [switch]$NoSccache,
+    [switch]$CMake,
     [int]$MaxCpuCount = 0
 )
 $ErrorActionPreference = 'Stop'
@@ -76,11 +77,18 @@ if (-not $SkipTests) {
     $testTimeoutMinutes = Resolve-TestTimeoutMinutes
     $null = Resolve-TestShardCount -Asan:$EnableASAN
 }
-$parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
-$jobs = $parallelism.Projects
-$clMpCount = $parallelism.ClMpCount
 $useSccache = Resolve-RectoUseSccache -NoSccache:$NoSccache
-Write-Host $parallelism.Header
+if ($CMake) {
+    # The CMake and Ninja build (D00 T04 section 8): compile and link pools from one memory budget.
+    . (Join-Path $PSScriptRoot 'cmake-build.ps1')
+    $cmakePools = Resolve-RectoCMakePools -MaxCpuCount $MaxCpuCount
+    Write-Host $cmakePools.Header
+} else {
+    $parallelism = Resolve-BuildParallelism -MaxCpuCount $MaxCpuCount
+    $jobs = $parallelism.Projects
+    $clMpCount = $parallelism.ClMpCount
+    Write-Host $parallelism.Header
+}
 
 function Get-RestoreFingerprint([string]$RepoRoot) {
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -261,7 +269,7 @@ Get-ChildItem -Path (Join-Path $root 'build') -Recurse -Filter '*_manifest.rc' -
 
 $restoreStamp = Join-Path $root 'build\restore.stamp'
 $restoreMeta = Get-RestoreFingerprint -RepoRoot $root
-if ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $restoreStamp -Meta $restoreMeta)) {
+if ((-not $CMake) -and ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $restoreStamp -Meta $restoreMeta))) {
     Write-Host '=== Restoring NuGet packages for Recto.sln'
     & $msbuild 'Recto.sln' '-t:Restore' "/m:$jobs" '/nr:false' '/nologo' '/v:minimal'
     if ($LASTEXITCODE -ne 0) { throw "NuGet restore failed (exit $LASTEXITCODE)" }
@@ -269,7 +277,7 @@ if ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $root -StampFile $rest
 }
 
 $genCompileDb = Join-Path $root 'scripts\gen-compile-commands.py'
-if (Test-Path $genCompileDb) {
+if ((-not $CMake) -and (Test-Path $genCompileDb)) {
     & $pinnedPython $genCompileDb | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "gen-compile-commands.py failed (exit $LASTEXITCODE)" }
 }
@@ -288,6 +296,48 @@ if ($EnableASAN -and $resolvedProject -and ($asanProjects -notcontains $resolved
 }
 $binFolder = if ($EnableASAN) { 'bin-asan' } else { 'bin' }
 
+if ($CMake) {
+    $binFolder = if ($EnableASAN) { 'cmake-bin-asan' } else { 'cmake-bin' }
+    $cmakeExe = Join-Path $PSScriptRoot 'cmake.cmd'
+    $cleanEnvironment = @{}
+    foreach ($entry in [Environment]::GetEnvironmentVariables('Process').GetEnumerator()) { $cleanEnvironment[$entry.Key] = $entry.Value }
+    foreach ($plat in $Platform) {
+        # Each platform from the environment build.ps1 started with, so one platform's developer prompt never leaks into
+        # the next.
+        foreach ($name in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
+            if (-not $cleanEnvironment.ContainsKey($name)) { [Environment]::SetEnvironmentVariable($name, $null, 'Process') }
+        }
+        foreach ($entry in $cleanEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') }
+        $arch = if ($plat -eq 'ARM64') { 'x64_arm64' } else { 'x64' }
+        Enter-RectoDevEnvironment -VsPath $vs -Arch $arch -SdkVersion '10.0.26100.0'
+        foreach ($cfg in $Configuration) {
+            $preset = Get-RectoCMakePreset -Platform $plat -Configuration $cfg -Asan ([bool]$EnableASAN)
+            $targets = @()
+            if ($resolvedProject) {
+                $targets = @($resolvedProject)
+                if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests')) { $targets += 'recto-tests' }
+            }
+            Invoke-RectoCMakeBuild -Root $root -CMake $cmakeExe -Preset $preset -Pools $cmakePools -Sccache ([bool]$useSccache) -Targets $targets
+            if ($EnableASAN -and $plat -eq 'x64') {
+                foreach ($exeProj in @('recto-tests', 'recto-cli', 'Recto')) {
+                    $exe = Join-Path $root "build\$binFolder\x64\$cfg\$exeProj\$exeProj.exe"
+                    if (Test-Path $exe) {
+                        $staged = Copy-AsanRuntime -ExePath $exe -AsanBinDir $asanBinDir -Dumpbin (Join-Path $asanBinDir 'dumpbin.exe')
+                        Write-Host "Staged for ${exeProj}: $($staged -join ', ')"
+                    }
+                }
+            }
+            # build/compile_commands.json only from a full x64 Debug build without ASan, the configuration clangd reads
+            # (D00 T04 sections 8 and 12); every other build leaves it alone.
+            if ((-not $EnableASAN) -and ($plat -eq 'x64') -and ($cfg -eq 'Debug') -and (-not $Project)) {
+                $db = Join-Path $root "build\cmake\$preset\compile_commands.json"
+                Copy-Item -LiteralPath $db -Destination (Join-Path $root 'build\compile_commands.json.tmp') -Force
+                Move-Item -LiteralPath (Join-Path $root 'build\compile_commands.json.tmp') -Destination (Join-Path $root 'build\compile_commands.json') -Force
+                Write-Host "compile_commands.json from $preset"
+            }
+        }
+    }
+} else {
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
         # An ASan build has its own obj and bin folders (Directory.Build.props), so neither build touches the other's.
@@ -386,6 +436,8 @@ if ($useSccache -and $null -ne $sccacheInfo -and $null -ne $sccacheInfo.ServerPo
         }
         Write-Host "sccache:    requests=$reqDelta, hits=$hitDelta, misses=$missDelta, non-cacheable=$nonCacheDelta (port $($sccacheInfo.ServerPort))"
     }
+}
+
 }
 
 if (-not $SkipTests -and $Platform -contains 'x64') {

@@ -1,6 +1,10 @@
 {
   "version": 10,
-  "cmakeMinimumRequired": { "major": 4, "minor": 0, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 0,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -8,7 +12,10 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/cmake/${presetName}",
       "cmakeExecutable": "${sourceDir}/.tools/cmake/4.5.0/cmake-4.5.0-windows-x86_64/bin/cmake.exe",
-      "toolset": { "value": "host=x64", "strategy": "external" },
+      "toolset": {
+        "value": "host=x64",
+        "strategy": "external"
+      },
       "cacheVariables": {
         "CMAKE_MAKE_PROGRAM": "${sourceDir}/.tools/ninja/1.13.2/ninja.exe",
         "CMAKE_C_COMPILER": "cl.exe",
@@ -22,35 +29,103 @@
       "name": "x64",
       "hidden": true,
       "inherits": "base",
-      "architecture": { "value": "x64", "strategy": "external" },
-      "cacheVariables": { "RECTO_TARGET_ARCH": "x64", "VCPKG_TARGET_TRIPLET": "x64-windows" }
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "RECTO_TARGET_ARCH": "x64",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
     },
     {
       "name": "arm64",
       "hidden": true,
       "inherits": "base",
-      "architecture": { "value": "arm64", "strategy": "external" },
-      "cacheVariables": { "RECTO_TARGET_ARCH": "arm64", "VCPKG_TARGET_TRIPLET": "arm64-windows" }
+      "architecture": {
+        "value": "arm64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "RECTO_TARGET_ARCH": "arm64",
+        "VCPKG_TARGET_TRIPLET": "arm64-windows"
+      }
     },
-    { "name": "x64-debug", "displayName": "x64 Debug", "inherits": "x64", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "x64-release", "displayName": "x64 Release", "inherits": "x64", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } },
     {
-      "name": "x64-asan-debug", "displayName": "x64 Debug, AddressSanitizer", "inherits": "x64",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "RECTO_ASAN": "ON" }
+      "name": "x64-debug",
+      "displayName": "x64 Debug",
+      "inherits": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     },
     {
-      "name": "x64-asan-release", "displayName": "x64 Release, AddressSanitizer", "inherits": "x64",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "RECTO_ASAN": "ON" }
+      "name": "x64-release",
+      "displayName": "x64 Release",
+      "inherits": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     },
-    { "name": "arm64-debug", "displayName": "ARM64 Debug", "inherits": "arm64", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } },
-    { "name": "arm64-release", "displayName": "ARM64 Release", "inherits": "arm64", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" } }
+    {
+      "name": "x64-asan-debug",
+      "displayName": "x64 Debug, AddressSanitizer",
+      "inherits": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "RECTO_ASAN": "ON"
+      }
+    },
+    {
+      "name": "x64-asan-release",
+      "displayName": "x64 Release, AddressSanitizer",
+      "inherits": "x64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "RECTO_ASAN": "ON"
+      }
+    },
+    {
+      "name": "arm64-debug",
+      "displayName": "ARM64 Debug",
+      "inherits": "arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "arm64-release",
+      "displayName": "ARM64 Release",
+      "inherits": "arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
   ],
   "buildPresets": [
-    { "name": "x64-debug", "configurePreset": "x64-debug" },
-    { "name": "x64-release", "configurePreset": "x64-release" },
-    { "name": "x64-asan-debug", "configurePreset": "x64-asan-debug" },
-    { "name": "x64-asan-release", "configurePreset": "x64-asan-release" },
-    { "name": "arm64-debug", "configurePreset": "arm64-debug" },
-    { "name": "arm64-release", "configurePreset": "arm64-release" }
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64-debug"
+    },
+    {
+      "name": "x64-release",
+      "configurePreset": "x64-release"
+    },
+    {
+      "name": "x64-asan-debug",
+      "configurePreset": "x64-asan-debug"
+    },
+    {
+      "name": "x64-asan-release",
+      "configurePreset": "x64-asan-release"
+    },
+    {
+      "name": "arm64-debug",
+      "configurePreset": "arm64-debug"
+    },
+    {
+      "name": "arm64-release",
+      "configurePreset": "arm64-release"
+    }
   ]
 }

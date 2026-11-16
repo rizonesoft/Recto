@@ -242,6 +242,25 @@ def resolve_update_checksum(tool: str, latest: dict[str, str | None], download=f
     }
 
 
+PRESETS_REL = "CMakePresets.json"
+# The preset fields that name a pinned tool's folder (D00 T04 section 8): a bump of the lock moves them in the same change.
+PRESET_TOOL_FIELDS = {"ninja": ("cacheVariables", "CMAKE_MAKE_PROGRAM"), "cmake": (None, "cmakeExecutable")}
+
+
+def preset_tool_path(tool: str, entry: dict[str, str]) -> str:
+    return f"${{sourceDir}}/.tools/{tool}/{entry['version']}/{entry['executable']}"
+
+
+def rewrite_presets(text: str, lock: dict) -> str:
+    """CMakePresets.json with the base preset's Ninja and CMake paths at the lock's versions, everything else kept."""
+    doc = json.loads(text)
+    base = next(p for p in doc["configurePresets"] if p["name"] == "base")
+    for tool, (section, field) in PRESET_TOOL_FIELDS.items():
+        holder = base[section] if section else base
+        holder[field] = preset_tool_path(tool, lock[tool])
+    return json.dumps(doc, indent=2) + "\n"
+
+
 def open_pr(updates: list[tuple[str, str, dict[str, str]]], root: Path = ROOT, run_gh=None) -> int:
     def rewrite(tree):
         lock_path = Path(tree) / LOCK_REL
@@ -254,7 +273,15 @@ def open_pr(updates: list[tuple[str, str, dict[str, str]]], root: Path = ROOT, r
         if not changed:
             return []
         lock_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8", newline="\n")
-        return [LOCK_REL]
+        paths = [LOCK_REL]
+        presets_path = Path(tree) / PRESETS_REL
+        if presets_path.is_file():
+            old = presets_path.read_text(encoding="utf-8")
+            new = rewrite_presets(old, doc)
+            if new != old:
+                presets_path.write_text(new, encoding="utf-8", newline="\n")
+                paths.append(PRESETS_REL)
+        return paths
 
     def checks(tree):
         current = read_lock(Path(tree))
