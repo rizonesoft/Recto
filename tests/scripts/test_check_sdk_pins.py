@@ -119,5 +119,107 @@ class CheckSdkPinsTests(unittest.TestCase):
         self.assertEqual(line[:2], (10, 0))
 
 
+def lock(versions, **overrides):
+    """A build/tools.lock.json with the two owned entries at `versions` (and the other tools, which this check ignores)."""
+    names = {"Microsoft.Windows.CppWinRT": "cppwinrt", "Microsoft.Windows.SDK.BuildTools": "sdk-buildtools"}
+    doc = {"ninja": {"version": "1.13.2", "url": "u", "sha256": "0" * 64, "executable": "ninja.exe"}}
+    for package, version in versions.items():
+        doc[names[package]] = {"version": version,
+                               "url": f"https://www.nuget.org/api/v2/package/{package}/{version}",
+                               "sha256": "a" * 64, "executable": "bin/x.exe", "owner": "check-sdk-pins"}
+    for name, entry in overrides.items():
+        doc[name].update(entry)
+    return json.dumps(doc, indent=2) + "\n"
+
+
+class LockPinsTests(unittest.TestCase):
+    """build/tools.lock.json's NuGet entries move with Recto.vcxproj (D00 T04 section 8): one update path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.mod = load_check_sdk_pins()
+
+    def test_live_lock_names_the_versions_the_project_pins(self):
+        pins, _ = self.mod.read_project(self.mod.PROJECT.read_text(encoding="utf-8"))
+        locked = self.mod.read_lock(self.mod.LOCK.read_text(encoding="utf-8"))
+        self.assertEqual(self.mod.lock_faults(pins, locked), [])
+
+    def test_a_lock_entry_on_another_version_is_a_fault_that_no_pr_settles(self):
+        locked = self.mod.read_lock(lock({**CURRENT, "Microsoft.Windows.CppWinRT": "3.0.260715.1"}))
+        faults = self.mod.lock_faults(CURRENT, locked)
+        self.assertEqual(len(faults), 1)
+        package, pinned, latest, problem = faults[0]
+        self.assertEqual((package, pinned, latest), ("Microsoft.Windows.CppWinRT", "3.0.260715.1", None))
+        self.assertIn("not the 3.0.260818.1", problem)
+
+    def test_a_lock_entry_this_check_does_not_own_or_cannot_trust_is_refused(self):
+        for overrides in ({"cppwinrt": {"owner": "someone-else"}},
+                          {"cppwinrt": {"url": "https://example.invalid/cppwinrt.nupkg"}},
+                          {"sdk-buildtools": {"sha256": "not-a-hash"}}):
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(self.mod.CannotCheck):
+                    self.mod.read_lock(lock(CURRENT, **overrides))
+        with self.assertRaises(self.mod.CannotCheck):
+            self.mod.read_lock(json.dumps({"ninja": {}}))
+
+    def test_a_proposed_bump_moves_the_project_and_the_lock_together(self):
+        import hashlib
+        import tempfile
+        bumped = "10.0.26100.9457"
+        payload = b"the 10.0.26100.9457 package bytes"
+        fetched = []
+
+        def fetch(package, version):
+            fetched.append((package, version))
+            return payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp)
+            (tree / "src" / "app").mkdir(parents=True)
+            (tree / "build").mkdir()
+            (tree / "src" / "app" / "Recto.vcxproj").write_text(project(REFERENCES), encoding="utf-8")
+            (tree / "build" / "tools.lock.json").write_text(lock(CURRENT), encoding="utf-8")
+            newer = [("Microsoft.Windows.SDK.BuildTools", CURRENT["Microsoft.Windows.SDK.BuildTools"], bumped)]
+            self.assertNotEqual(self.mod.tree_faults(tree, newer), [])
+            changed = self.mod.rewrite_tree(tree, newer, fetch=fetch)
+            self.assertEqual(changed, ["src/app/Recto.vcxproj", "build/tools.lock.json"])
+            self.assertEqual(fetched, [("Microsoft.Windows.SDK.BuildTools", bumped)])
+            self.assertEqual(self.mod.tree_faults(tree, newer), [])
+            pins, _ = self.mod.read_project((tree / "src" / "app" / "Recto.vcxproj").read_text(encoding="utf-8"))
+            self.assertEqual(pins["Microsoft.Windows.SDK.BuildTools"], bumped)
+            entry = json.loads((tree / "build" / "tools.lock.json").read_text(encoding="utf-8"))["sdk-buildtools"]
+            self.assertEqual(entry["version"], bumped)
+            self.assertEqual(entry["url"], f"https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.BuildTools/{bumped}")
+            self.assertEqual(entry["sha256"], hashlib.sha256(payload).hexdigest())
+            self.assertEqual(entry["owner"], "check-sdk-pins")
+            # C++/WinRT was not proposed and did not move, and nothing was fetched for it.
+            self.assertEqual(json.loads((tree / "build" / "tools.lock.json").read_text(encoding="utf-8"))["cppwinrt"]["version"],
+                             CURRENT["Microsoft.Windows.CppWinRT"])
+
+    def test_the_sdk_line_still_bounds_what_a_bump_may_propose(self):
+        faults = self.mod.check(CURRENT, LINE, fetch=FEED.__getitem__)
+        proposed = [latest for package, _, latest, _ in faults if package == "Microsoft.Windows.SDK.BuildTools"]
+        self.assertTrue(all(latest is None or latest.startswith("10.0.26100.") for latest in proposed), proposed)
+
+
+class ToolPinsOwnershipTests(unittest.TestCase):
+    """scripts/check-tool-pins.py leaves the entries check-sdk-pins owns alone and still refuses any other extra one."""
+
+    def test_owned_entries_are_skipped_and_unowned_extras_refused(self):
+        import tempfile
+        spec = importlib.util.spec_from_file_location("check_tool_pins", REPO_ROOT / "scripts" / "check-tool-pins.py")
+        tools = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tools)
+        live = json.loads((REPO_ROOT / "build" / "tools.lock.json").read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build").mkdir()
+            (root / "build" / "tools.lock.json").write_text(json.dumps(live), encoding="utf-8")
+            self.assertEqual(set(tools.read_lock(root)), set(tools.TOOL_SPECS))
+            live["stray"] = {"version": "1", "url": "u", "sha256": "0" * 64, "executable": "x.exe"}
+            (root / "build" / "tools.lock.json").write_text(json.dumps(live), encoding="utf-8")
+            with self.assertRaises(tools.CannotCheck):
+                tools.read_lock(root)
+
 if __name__ == "__main__":
     unittest.main()

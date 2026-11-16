@@ -22,5 +22,19 @@
     "url": "https://www.python.org/ftp/python/3.15.2/python-3.15.2-embed-amd64.zip",
     "sha256": "d012f3aa29cf07436dae8aea1fec0fd195c2612a0b059b1f915ae0afb9ad1f62",
     "executable": "python.exe"
+  },
+  "cppwinrt": {
+    "version": "3.0.260818.1",
+    "url": "https://www.nuget.org/api/v2/package/Microsoft.Windows.CppWinRT/3.0.260818.1",
+    "sha256": "a8993608ae9263a8288e1a1d9ee2684a5632f4acc59e1e89ddd86b3b889a7367",
+    "executable": "bin/cppwinrt.exe",
+    "owner": "check-sdk-pins"
+  },
+  "sdk-buildtools": {
+    "version": "10.0.26100.9457",
+    "url": "https://www.nuget.org/api/v2/package/Microsoft.Windows.SDK.BuildTools/10.0.26100.9457",
+    "sha256": "4c2e0d85f3490e7f7c065c35b4c47fe913b1bc9627e9711ae349b2cdc7edc791",
+    "executable": "bin/10.0.26100.0/x64/rc.exe",
+    "owner": "check-sdk-pins"
   }
 }

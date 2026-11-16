@@ -60,10 +60,16 @@ class ToolsLockAndWorkflowContract(unittest.TestCase):
     def test_lock_has_four_pinned_https_entries_with_valid_sha256(self):
         self.assertTrue(LOCK_FILE.is_file(), f"missing {LOCK_FILE}")
         doc = json.loads(LOCK_FILE.read_text(encoding="utf-8"))
-        self.assertEqual(set(doc), {"ninja", "cmake", "sccache", "cpython"})
+        # The four build tools of section 6, and the two NuGet packages the CMake build fetches (section 8), which
+        # scripts/check-sdk-pins.py owns and keeps on the versions src/app/Recto.vcxproj pins.
+        self.assertEqual(set(doc), {"ninja", "cmake", "sccache", "cpython", "cppwinrt", "sdk-buildtools"})
         for tool, item in doc.items():
             with self.subTest(tool=tool):
-                self.assertEqual(set(item), {"version", "url", "sha256", "executable"})
+                owned = tool in ("cppwinrt", "sdk-buildtools")
+                self.assertEqual(set(item), {"version", "url", "sha256", "executable"} | ({"owner"} if owned else set()))
+                if owned:
+                    self.assertEqual(item["owner"], "check-sdk-pins")
+                    self.assertTrue(item["url"].startswith("https://www.nuget.org/api/v2/package/"), item["url"])
                 self.assertRegex(item["version"], r"^\d+(?:\.\d+)+$")
                 self.assertTrue(item["url"].startswith("https://"), item["url"])
                 self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
@@ -221,6 +227,32 @@ class BootstrapToolsScriptTests(unittest.TestCase):
             self.assertFalse((tools_dir / "sccache").exists(), "corrupted download must leave no folder for that tool")
             self.assertEqual(list(tools_dir.glob(".download-*")), [])
             self.assertEqual(list(tools_dir.glob(".staging-*")), [])
+
+    def test_a_nuget_package_whose_hash_differs_is_refused_and_leaves_no_tool_folder(self):
+        # A .nupkg is a zip; the CMake build's C++/WinRT and SDK build tools packages go through the same check.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archives = base / "archives"
+            tools_dir = base / ".tools"
+            lock_path, doc = self._build_fixture_lock(archives)
+            nupkg = archives / "Microsoft.Windows.CppWinRT.3.0.260818.1.nupkg"
+            real = _write_zip(nupkg, {"bin/cppwinrt.exe": b"cppwinrt-bin"})
+            wrong = real[:-1] + ("0" if real[-1] != "0" else "1")
+            doc["cppwinrt"] = {"version": "3.0.260818.1", "url": nupkg.resolve().as_uri(), "sha256": wrong,
+                               "executable": "bin/cppwinrt.exe", "owner": "check-sdk-pins"}
+            lock_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            bad = self._run_bootstrap(lock_path, tools_dir)
+            self.assertNotEqual(bad.returncode, 0)
+            combined = bad.stdout + bad.stderr
+            self.assertIn("cppwinrt", combined)
+            self.assertIn(wrong, combined)
+            self.assertIn(real, combined)
+            self.assertFalse((tools_dir / "cppwinrt").exists())
+            doc["cppwinrt"]["sha256"] = real
+            lock_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+            good = self._run_bootstrap(lock_path, tools_dir)
+            self.assertEqual(good.returncode, 0, good.stdout + good.stderr)
+            self.assertTrue((tools_dir / "cppwinrt" / "3.0.260818.1" / "bin" / "cppwinrt.exe").is_file())
 
     def test_zip_slip_archive_is_refused_and_leaves_no_tool_folder(self):
         with tempfile.TemporaryDirectory() as tmp:

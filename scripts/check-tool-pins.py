@@ -34,6 +34,8 @@ import lib.pin_proposal as pin_proposal  # noqa: E402
 from lib.pin_sources import Unreadable, fetch_json, version_key  # noqa: E402
 
 LOCK_REL = "build/tools.lock.json"
+# Lock entries whose "owner" names another pin check, which verifies and updates them instead.
+OWNED_ELSEWHERE = frozenset({"check-sdk-pins"})
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CPYTHON_NAME_RE = re.compile(r"^Python (\d+\.\d+\.\d+)$")
 CPYTHON_RELEASES_URL = "https://www.python.org/api/v2/downloads/release/?is_published=true&pre_release=false"
@@ -104,7 +106,10 @@ def read_lock(root: Path = ROOT) -> dict[str, dict[str, str]]:
     if not isinstance(doc, dict):
         raise CannotCheck(f"{LOCK_REL} must hold a JSON object")
     missing = [name for name in TOOL_SPECS if name not in doc]
-    extra = [name for name in doc if name not in TOOL_SPECS]
+    # Entries another check owns (the two NuGet packages scripts/check-sdk-pins.py keeps in step with Recto.vcxproj,
+    # D00 T04 section 8) are that check's to verify and update.
+    extra = [name for name in doc if name not in TOOL_SPECS
+             and not (isinstance(doc[name], dict) and doc[name].get("owner") in OWNED_ELSEWHERE)]
     if missing:
         raise CannotCheck(f"{LOCK_REL} is missing required tool entries: {', '.join(missing)}")
     if extra:
