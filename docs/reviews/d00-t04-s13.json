@@ -1,0 +1,91 @@
+{
+  "ref": "D00 T04 \u00a713",
+  "title": "A red main reported from GitHub itself, with the workstation off",
+  "implementation_sha": "b1fa1ca1f8d663609dc2655687d6af55236d3c9a",
+  "date": "2026-11-16",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T04-s13.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_ci_red_issue tests.scripts.test_ci_status -> Ran 113 tests, OK (a second red comments and never opens a second issue; the issue state is the same whichever run finishes last; removing a watched workflow from the trigger or the token binding fails the test)",
+    ".\\build.cmd -> OK: 512 tests within debug time budget (max=15.952s); recto-tests Release|x64: 4 shards and the serial pass in 25 s, OK: 512 tests within release time budget (max=3.016s); Recto build complete."
+  ],
+  "completion": {
+    "report": "docs/reviews/00-workspace/D00-T04-s13.md",
+    "verdict": "reconciled",
+    "candidate": "b1fa1ca1f8d663609dc2655687d6af55236d3c9a",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/00-workspace/D00-T04-s13.md",
+    "candidate": "104759e72bc686816315fd76cefa248b55768552",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "104759e72bc686816315fd76cefa248b55768552",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 5,
+  "pass_cap": 33
+}

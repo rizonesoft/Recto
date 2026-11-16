@@ -59,7 +59,7 @@ track: M0
 | 10 | §10 | Slow tests fixed at their cause and held by a per-test time budget | -- | [x] |
 | 11 | §11 | The x64 test suite run in parallel shards within the memory bound | §3, §10 | [x] |
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
-| 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [ ] |
+| 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [x] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [ ] |
 | 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [ ] |
 
@@ -331,7 +331,7 @@ The owner asked on 2026-11-09 that CI never stay red longer than it has to. Toda
 - The scheduled task reports every red run in each workflow's last 10, not only the newest, and counts a run as reported only when `.conclave/automations/run.py` records that the email was sent (`"alert": "sent"` in `build/automations/recto-ci-watch/last.json`, for the run that raised it); until then each poll raises it again. On its first run only the standing red is news.
 - The watch reads every 10 seconds by default (it was 60) and prints what it expects and each change of state with the seconds since it began. Not taken: a 3-second read, since every watch and `gh` call on this machine shares GitHub's 5,000 requests an hour, and three watches at 10 seconds already use about 2,200.
 
-> **Deferred:** an alert that reaches the owner while this workstation is off -> XREF: §13
+> **Resolved:** an alert that reaches the owner while this workstation is off -> XREF: §13 (2026-11-16: closed by §13, whose `.github/workflows/ci-red.yml` keeps one `ci-red` issue per watched workflow open and assigned to the owner while main is red, proven live in 14 to 19 s)
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -499,9 +499,12 @@ Two defaults, each with its cost of changing: clangd comes from Visual Studio an
 - [x] Prove it on GitHub, timed from the watched run's end (`updated_at` of the completed run) to the issue's `created_at` or the comment's: dispatch `plan.yml` with `fail_on_purpose` (issue opened), dispatch `build.yml` and cancel it while queued or in progress (comment for the cancelled run), dispatch `plan.yml` without the input (issue closed). Done when: the findings file records each run URL, the issue number, each delay in seconds with every one at most 60 (a longer one fails the item and is fixed at its cause), and the issue closed.
 - [x] Read back that the owner is told: the owner's `gh api notifications` lists a thread for the issue with reason `assign`, and the delivery limit is stated (email follows the owner's GitHub notification settings, which no API reads). Done when: the findings file quotes the notification thread's reason and the issue it names, and the README states the limit.
 - [x] Document it in `.conclave/automations/README.md` beside `recto-ci-watch` and in `scripts/ci_status.py`'s module text. Done when: both say which alert leaves from GitHub and which from this machine, and that deliberate proof runs and historical rebuilds are left out of the local watch.
-- [ ] Commit: `ci: open one issue for a red main from GitHub itself, and close it when green`
+- [x] Commit: `ci: open one issue for a red main from GitHub itself, and close it when green`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_ci_red_issue tests.scripts.test_ci_status` passes; a second red adds a comment and never a second issue; the issue's state is the same whichever of two runs finishes last; and removing either watched workflow from `ci-red.yml`'s trigger, or its token binding, fails the test.
+
+> **Verified:** 2026-11-16 | §13 | b1fa1ca1f8d663609dc2655687d6af55236d3c9a
+> **Review:** `docs/reviews/d00-t04-s13.json`
 
 ## 14. Scheduled tasks that follow the clone when it moves, and say so when they do not
 
