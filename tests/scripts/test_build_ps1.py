@@ -1016,12 +1016,14 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                     rc, out = run_case(ps_args, "Sharded:0.100", 0, shards="2")
                     self.assertEqual(rc, 0, out)
                     self.assertIn("2 shard(s) (RECTO_TEST_SHARDS=2)", out)
-                    self.assertIn("OK: 1 listed tests each reported exactly once across 3 report(s)", out)
+                    # Two slots work through 2 x RectoTestChunksPerShard (4) gtest shards from a queue (D00 T04 section 15).
+                    chunks = 2 * 4
+                    self.assertIn(f"OK: 1 listed tests each reported exactly once across {chunks + 1} report(s)", out)
                     names = sorted(p.name for p in folder.iterdir())
-                    self.assertEqual(names, sorted([
-                        f"test-results-x64-{tag}-shard0.xml", f"test-results-x64-{tag}-shard1.xml",
-                        f"test-results-x64-{tag}-serial.xml", f"test-x64-{tag}-shard0.log", f"test-x64-{tag}-shard1.log",
-                        f"test-x64-{tag}-serial.log", f"test-list-x64-{tag}.txt"]), out)
+                    self.assertEqual(names, sorted(
+                        [f"test-results-x64-{tag}-shard{i}.xml" for i in range(chunks)]
+                        + [f"test-x64-{tag}-shard{i}.log" for i in range(chunks)]
+                        + [f"test-results-x64-{tag}-serial.xml", f"test-x64-{tag}-serial.log", f"test-list-x64-{tag}.txt"]), out)
 
     @unittest.skipUnless(os.name == "nt" and POWERSHELL, "needs Windows cmd.exe and PowerShell")
     def test_build_cmd_iteration_gate_forwards_debug_x64_and_strips_cmd_quotes_on_test_filter(self):
