@@ -603,7 +603,8 @@ class BuildCompileCommandsTests(unittest.TestCase):
                          "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
+                         "test-shards.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             shutil.copy2(SCRIPTS / "gen-compile-commands.py", ws / "scripts" / "gen-compile-commands.py")
             shutil.copy2(SCRIPTS / "build-compile-commands.py", ws / "scripts" / "build-compile-commands.py")
@@ -726,7 +727,8 @@ class BuildCompileCommandsTests(unittest.TestCase):
             for name in ("Directory.Build.props", "Directory.Build.targets", "vcpkg.json", "vcpkg-configuration.json"):
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
-                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd"):
+                         "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
+                         "test-shards.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             shutil.copy2(SCRIPTS / "gen-compile-commands.py", ws / "scripts" / "gen-compile-commands.py")
             shutil.copy2(SCRIPTS / "build-compile-commands.py", ws / "scripts" / "build-compile-commands.py")
