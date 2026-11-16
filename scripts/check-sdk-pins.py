@@ -159,7 +159,7 @@ def lock_faults(pins, lock_versions):
     compile against different releases. Not proposable (a person settles which is right)."""
     return [(package, lock_versions[package], None,
              f"{LOCK.name} pins {lock_versions[package]}, not the {pins[package]} {PROJECT.name} pins")
-            for package in TRACKED if lock_versions[package] != pins[package]]
+            for package in TRACKED if package in pins and lock_versions.get(package) != pins[package]]
 
 
 def fetch_package(package, version):
