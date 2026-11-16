@@ -307,7 +307,7 @@ jobs:
   cmake:
     name: CMake and Ninja build of x64 & ARM64 and recto-tests (parity with MSBuild, D00 T04 §8)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 80
     steps:
       # The same commit the build job tests (a manual run's sha is checked there).
       - name: Checkout repository
@@ -362,6 +362,11 @@ jobs:
       - name: CMake build of Release (x64 and ARM64) and Release|x64 recto-tests
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -CMake -Configuration Release -Platform x64,ARM64
+
+      # The ASan job runs Release; Debug under AddressSanitizer (no /RTC, no incremental link) runs here.
+      - name: CMake build of Debug|x64 with AddressSanitizer and its recto-tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -CMake -EnableASAN -Configuration Debug
 
       - name: Upload CMake build logs and test results on failure
         if: always()
