@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 61 | Checklist items: 364
+Sections: 61 | Checklist items: 366
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -39,7 +39,7 @@ Sections: 61 | Checklist items: 364
 | [x]    | D00 T04 §11 | The x64 test suite run in parallel shards within the memory bound                        | windows-host | 8     |
 | [x]    | D00 T04 §12 | clangd language server for Claude Code over a compile database from the MSBuild build    | windows-host | 11    |
 | [x]    | D00 T04 §8  | CMake and Ninja build with compile and link job pools                                    | windows-host | 11    |
-| [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 8     |
+| [ ]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 10    |
 | [ ]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 7     |
 | [ ]    | D00 T04 §15 | Budget-tight tests made fast enough to leave the serial pass                             | windows-host | 6     |
 | [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
@@ -954,4 +954,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 115/883 verified sections, 55 ready to run now.
 
-Checklist: 781/6529 items completed (includes Commit items).
+Checklist: 781/6531 items completed (includes Commit items).
