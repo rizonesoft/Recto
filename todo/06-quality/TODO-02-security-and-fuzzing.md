@@ -17,6 +17,7 @@ track: M6
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D12, D13), 3.1 (`recto-pdf` boundary), 3.2 (`fuzz/`), 4.11 (`fuzz_open`, `fuzz_filters`, `fuzz_render`, `fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`), 9 (security and untrusted-input posture), and 11 item 5 (broker process design).
 - -> XREF: D00 T04 §12 -- the compile database and the Visual Studio LLVM tools found there, which `§12` here runs clang-tidy over.
+- -> XREF: D00 T04 §17 -- unity builds, which wait for `§10` and `§12` here and keep the compile database to single source files so neither gate reads a unity unit.
 - -> XREF: D01 T01 §4 -- the 64-level recursive-descent parser and object-graph cycle bounds audited in `§1`.
 - -> XREF: D99 T01 §10 -- the operator runs the FIPS proof script of `§9` on a FIPS-enabled host and records the result in `docs/security-audit.md`.
 - -> XREF: D01 T01 §7 -- the 256 MB stream decompression-bomb ceiling and filter bounds audited in `§1`.

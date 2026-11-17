@@ -2,7 +2,7 @@
 schema_version: 1
 id: build-performance
 domain: 00-workspace
-status: done
+status: active
 title: "TODO-04 -- Build Performance, Repo-Scoped Tools and the Ninja Build"
 track: M0
 ---
@@ -22,7 +22,8 @@ track: M0
 - -> XREF: D00 T05 §2 -- ships portable C++23 and Python LSP/MCP servers (`scripts/clangd-lsp.py`, `scripts/python-lsp.py`, `scripts/lsp_mcp.py`, `.clangd`, `scripts/gen-compile-commands.py`) ahead of `§12`'s MSBuild item-evaluated compile database
 - -> XREF: D00 T05 §4 -- ships `build.cmd -Quick`, free-RAM MSBuild `/m:<N>` + `/nr:false`, `build/restore.stamp` and `scripts/run-tests.py --quick` / `--full` ahead of `§3` and `§5`
 - -> XREF: D00 T05 §5 -- hardens dual-runner unattended campaigns, sleep guard and moved-clone Desktop shortcuts beside `§9` and `§14`
-- -> XREF: D06 T02 §12 -- clang-tidy runs over the compile database `§12` here writes, with the clang-tidy beside the clangd that `build/clangd.cmd` finds
+- -> XREF: D06 T02 §12 -- clang-tidy runs over the compile database `§12` here writes, with the clang-tidy beside the clangd that `build/clangd.cmd` finds; `§17` here keeps that database to single source files under a unity build
+- -> XREF: D06 T02 §10 -- MSVC `/analyze` over every module, which `§17` here waits for so a unity build never hides what it reports
 
 ## Outcome
 
@@ -38,6 +39,8 @@ track: M0
 - No test takes longer than its budget: the slow tests are fixed at their cause, the run names its slowest tests, and a test over budget fails the run.
 - The x64 suite runs in parallel shards sized from free memory, every test run exactly once, with its wall time measured against the serial run.
 - Every x64 Debug build writes `build/compile_commands.json`, clangd reads every source with no error, and a session finds definitions, references and compile errors through it.
+- Release builds use link-time code generation (`/GL`, `/LTCG`) when measurement on this host and CI shows it pays, with the LTCG link budgeted in the memory pools; otherwise the measured reason it was not taken is recorded.
+- Unity builds serve the build kinds where measurement shows they are faster, never the compile database the analysis gates read, and a non-unity build still runs on every push.
 
 **Adjacency:** all=not-applicable (build tooling, scripts and CI for the developer and CI host; no user-facing surface, document or setting)
 
@@ -62,6 +65,8 @@ track: M0
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [x] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [x] |
 | 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [x] |
+| 16 | §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster | §8 | [ ] |
+| 17 | §17 | Unity builds measured per build kind and kept only where they are faster | §8, D06 T02 §10, D06 T02 §12 | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -580,10 +585,66 @@ Found on 2026-11-16 while building `§11`: seven tests use over half their per-t
 
 > **Verified:** 2026-11-17 | §15 | f1e67e7462e4ab2ef0cfb98de068f79e1440b931
 > **Review:** `docs/reviews/d00-t04-s15.json`
+
+## 16. Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster
+
+Filed 2026-11-17 (owner request). Recto's Release build compiles each translation unit alone and links with no cross-module optimisation: `recto_defaults` in `CMakeLists.txt:134` sets no `/GL`, the link options at `CMakeLists.txt:150` set `/DEBUG:FULL` and, outside Debug, `/INCREMENTAL:NO`, and the MSBuild parity path (`Directory.Build.props`, `Directory.Build.targets`) sets no `WholeProgramOptimization`. Link-time code generation lets the linker inline and drop code across files and across the `recto-pdf`, `recto-core` and `recto-services` static libraries. Its costs are known in kind but not measured here: an `/LTCG` link holds every module's intermediate code in memory (the pools budget 1,024 MB per link today, `cmake/RectoPools.cmake`), code generation moves from the parallel compiles to the link, and whether sccache caches `/GL` objects is unverified. So the section measures before and after and keeps LTO only where the numbers favour it. Debug and AddressSanitizer builds stay without `/GL`: they exist for iteration and for finding memory errors, not for speed. Findings go to `docs/reviews/00-workspace/D00-T04-s16.md`.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Measure today's Release build and binaries. Done when: the findings file has, for this host and the CI Release job, the clean build time, the largest link's peak memory, the warm rebuild time, the binary sizes, the Release suite total and `scripts/flate-bench.py` throughput.
+2. Build Release with `/GL` and `/LTCG` on both build paths. Done when: Release compiles under `/GL` and links with `/LTCG` through CMake and MSBuild, and no Debug or ASan command line changed.
+3. Budget the LTCG link in the memory pools. Done when: the memory gate refuses a Release build whose LTCG link would not fit, sized from the measured peak.
+4. Measure again and decide. Done when: the before and after tables sit side by side, and LTO is either kept in every Release build, CI included, or fully reverted with its numbers recorded as not taken.
+
+- [ ] Record the baseline: three clean `.\build.cmd -Platform x64 -Configuration Release` runs with `build/cmake-bin` removed before each, sampling the peak working set of every `link.exe` while it runs. Done when: `docs/reviews/00-workspace/D00-T04-s16.md` has each run's wall time, the largest link's peak memory, a warm sccache rebuild time, the sizes of `Recto.exe`, `recto-cli.exe` and `recto-tests.exe`, the Release suite total from `scripts/test-times.py report`, and `build\python.cmd scripts/flate-bench.py` output, plus the CI Release job's times from its log.
+- [ ] Check sccache against `/GL`: compile one `src/pdf` unit twice through sccache with `/GL` added. Done when: the findings file records whether the second compile is a cache hit (`sccache --show-stats`), and the after measurement counts a warm rebuild with whatever caching `/GL` allows.
+- [ ] Add `/GL` to Release compiles and `/LTCG` to Release links and archives in `CMakeLists.txt` (`recto_defaults` compile options under `$<AND:$<CONFIG:Release>,$<NOT:$<BOOL:${RECTO_ASAN}>>>`, the matching `target_link_options`, and `STATIC_LIBRARY_OPTIONS` for the module libraries). Done when: `build.ninja` for x64 Release shows `/GL` on every compile and `/LTCG` on every link and library step, and the x64 Debug and ASan `build.ninja` files show neither.
+- [ ] Mirror it on the MSBuild path: `WholeProgramOptimization` `true` and `LinkTimeCodeGeneration` `UseLinkTimeCodeGeneration` for Release without ASan in `Directory.Build.props`. Done when: the `.\build.cmd -MSBuild -SkipTests -Configuration Release` log shows `/GL` and `/LTCG`, and its Debug log shows neither.
+- [ ] Budget the LTCG link in `cmake/RectoPools.cmake`: a Release link budget from the measured LTCG peak plus a quarter, used by `cmake/memory-gate.cmake` for Release builds. Done when: a `tests/scripts/test_cmake_build.py` case sets `RECTO_ASSUME_FREE_MB` to a value that fits a plain link but not an LTCG link and the gate refuses the Release build, and that case fails with the LTCG budget removed.
+- [ ] Measure with LTO: repeat the baseline runs on the same host state and on CI. Done when: the findings file has the after table beside the before table, each figure from three runs.
+- [ ] Decide from the numbers: keep LTO when the Release suite total or `flate-bench.py` throughput improves by at least 3% beyond the spread of the three runs and the LTCG link fits the memory gate; otherwise revert every `/GL` and `/LTCG` edit. Done when: the decision and its numbers are in the findings file, and either CI's Release job builds with LTO green within its timeout or `Select-String -Path CMakeLists.txt,Directory.Build.props -Pattern '/GL|LTCG|WholeProgramOptimization'` finds nothing and the not-taken record names the numbers.
+- [ ] Describe the Release LTO behaviour (or its absence) in the `build/build.ps1` header comment. Done when: the header names which configurations use `/GL` and `/LTCG` and why.
+- [ ] Commit: `build: link-time code generation for Release, kept on measurement`
+
+**Test checkpoint:** `.\build.cmd -Platform x64 -Configuration Release` passes with every test within its Release budget; `build\python.cmd -m unittest tests.scripts.test_cmake_build` passes, including the LTCG link-budget refusal case; and `docs/reviews/00-workspace/D00-T04-s16.md` holds the before and after tables and the decision.
+
+## 17. Unity builds measured per build kind and kept only where they are faster
+
+Filed 2026-11-17 (owner request). CMake's `UNITY_BUILD` compiles several sources as one translation unit, which saves parsing the same headers again: with sccache on (`CMakeLists.txt:100`) `pch.h` is force-included and parsed by every unit rather than precompiled. The trade-offs here are specific. A unity batch is a coarser sccache key, so one edited file recompiles its whole batch and misses the cache. A batch raises one compiler's memory above the 1,536 MB per-compiler budget (`build/parallelism.ps1`) when large files such as `src/pdf/filters.cpp` (436 KB) join it. A batch also hides a missing include and lets file-local names (`static` functions, anonymous namespaces) collide or bind across files. Static analysis must see the real single-file units: `/analyze` (D06 T02 §10) and clang-tidy (D06 T02 §12) read one source at a time through the compile database, so this section waits for both and never feeds them unity units. Unity is measured per build kind (clean, one-file edit, no change; local and CI) and kept only where it is faster, and a non-unity build keeps running on every push so a missing include still fails. Findings go to `docs/reviews/00-workspace/D00-T04-s17.md`.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add an opt-in unity mode. Done when: `RECTO_UNITY=ON` builds every Recto module target from CMake unity sources and `OFF`, the default, builds none.
+2. Make every target unity-safe at the cause. Done when: x64 Debug and Release unity builds compile under `/W4 /WX`, each change being a renamed file-local name or an include added to the file that needed it, all listed.
+3. Keep the gates on single files. Done when: the compile database stays per source under unity, and a non-unity build runs on every push.
+4. Measure and set the defaults. Done when: each build kind uses the faster mode in the measured table, and the per-compiler memory budget holds the reserve in a unity build.
+
+- [ ] Add `option(RECTO_UNITY "..." OFF)` to `CMakeLists.txt` and set `UNITY_BUILD` and `UNITY_BUILD_BATCH_SIZE` on each target made by the module function at `CMakeLists.txt:153`, `tests/recto-tests` included and `fuzz` excluded. Done when: configuring with `-DRECTO_UNITY=ON` writes `unity_*_cxx.cxx` files under the build tree, and the default configure writes none.
+- [ ] Measure each large source's solo compile memory (`src/pdf/filters.cpp`, `document.cpp`, `interpreter.cpp`, `xref.cpp`) and mark those that would push a batch past the per-compiler budget with `SKIP_UNITY_BUILD_INCLUSION`. Done when: the findings file lists each file's peak compiler memory and each exclusion follows from those numbers.
+- [ ] Build x64 Debug and Release with `RECTO_UNITY=ON` and fix each collision at its cause: rename the colliding file-local name, or add the missing include to the file that needs it. Done when: both unity builds compile under `/W4 /WX`, the full suite passes in both, and the findings file lists every change with its reason.
+- [ ] Keep `build/compile_commands.json` to single source files under `RECTO_UNITY=ON` (`scripts/gen-compile-commands.py` or the CMake export, whichever writes it). Done when: a `tests/scripts/test_compile_commands.py` case finds no `unity_` entry in the database of a unity configure, and that case fails if unity sources leak into it.
+- [ ] Keep a non-unity build on every push in `.github/workflows/build.yml`. Done when: a `tests/scripts/test_cmake_build.py` case asserts a push-triggered job builds with `RECTO_UNITY` off, and that case fails with that job set to unity.
+- [ ] Budget unity compiles: if a batch's measured peak passes 1,536 MB, add a unity per-compiler budget to `cmake/RectoPools.cmake` and `build/parallelism.ps1` from that peak. Done when: a measured unity build keeps at least the 2,048 MB reserve free throughout (lowest free memory recorded in the findings file).
+- [ ] Measure clean, one-file-edit (`src/pdf/xref.cpp`) and no-change builds, unity on and off, sccache warm and cold, on this host and CI. Done when: the findings file has the table, each figure from three runs.
+- [ ] Set each build kind's default to the faster mode from the table in `build/build.ps1` and `.github/workflows/build.yml`, with `RECTO_UNITY` overriding. Done when: the defaults match the table, and the `build/build.ps1` header comment names them and the override.
+- [ ] Commit: `build: unity builds where measured faster, single-file units for analysis`
+
+**Test checkpoint:** `.\build.cmd -Platform x64` passes in its default mode; an x64 Debug and Release build configured with `-DRECTO_UNITY=ON` passes the full suite; `build\python.cmd -m unittest tests.scripts.test_cmake_build tests.scripts.test_compile_commands` passes, including the single-file database and non-unity CI cases; and `docs/reviews/00-workspace/D00-T04-s17.md` holds the measured table.
+
 ## Verification
 
 - A plain and an ASan build of x64 Debug, built one after the other, recompile nothing the second time each, and `.\build.cmd` builds x64 only while CI builds ARM64.
 - A clean build started with about 6 GB free keeps 2 GB free throughout, every project compiles through a precompiled header, and a warm sccache rebuild hits for every unit.
 - `build/bootstrap-tools.ps1` fills `.tools/` from verified pins, the scripts and hooks run on the pinned CPython, and the CMake and Ninja build passes the suite and the boundary checks in CI.
 - Every project's compile line shows `/MP`, no test runs past its budget (`python scripts/test-times.py check`), and the sharded suite reports every listed test exactly once.
+- Release builds carry `/GL` and `/LTCG` only if the measured tables in `D00-T04-s16.md` show the gain, and unity builds serve only the build kinds `D00-T04-s17.md` shows faster, with the compile database still single-file.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.
