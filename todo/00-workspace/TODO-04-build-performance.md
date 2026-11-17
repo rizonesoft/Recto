@@ -65,7 +65,7 @@ track: M0
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [x] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [x] |
 | 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [x] |
-| 16 | §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster | §8 | [ ] |
+| 16 | §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster | §8, D06 T02 §10, D06 T02 §12 | [ ] |
 | 17 | §17 | Unity builds measured per build kind and kept only where they are faster | §8, D06 T02 §10, D06 T02 §12 | [ ] |
 
 ## 1. ASan and plain builds in separate output folders
@@ -589,6 +589,8 @@ Found on 2026-11-16 while building `§11`: seven tests use over half their per-t
 ## 16. Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster
 
 Filed 2026-11-17 (owner request). Recto's Release build compiles each translation unit alone and links with no cross-module optimisation: `recto_defaults` in `CMakeLists.txt:134` sets no `/GL`, the link options at `CMakeLists.txt:150` set `/DEBUG:FULL` and, outside Debug, `/INCREMENTAL:NO`, and the MSBuild parity path (`Directory.Build.props`, `Directory.Build.targets`) sets no `WholeProgramOptimization`. Link-time code generation lets the linker inline and drop code across files and across the `recto-pdf`, `recto-core` and `recto-services` static libraries. Its costs are known in kind but not measured here: an `/LTCG` link holds every module's intermediate code in memory (the pools budget 1,024 MB per link today, `cmake/RectoPools.cmake`), code generation moves from the parallel compiles to the link, and whether sccache caches `/GL` objects is unverified. So the section measures before and after and keeps LTO only where the numbers favour it. Debug and AddressSanitizer builds stay without `/GL`: they exist for iteration and for finding memory errors, not for speed. Findings go to `docs/reviews/00-workspace/D00-T04-s16.md`.
+
+> **Priority (owner, 2026-11-17):** static analysis is the bigger quality gain, so this section waits for `/analyze` (D06 T02 §10) and clang-tidy (D06 T02 §12) to ship first. The edge is an owner priority, not a technical need; removing it reorders the plan and changes nothing else.
 
 **Phase:** 0
 **Needs:** windows-host

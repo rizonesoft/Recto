@@ -42,7 +42,6 @@ Sections: 63 | Checklist items: 387
 | [x]    | D00 T04 §13 | A red main reported from GitHub itself, with the workstation off                         | none         | 10    |
 | [x]    | D00 T04 §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not         | windows-host | 10    |
 | [x]    | D00 T04 §15 | Budget-tight tests made fast enough to leave the serial pass                             | windows-host | 6     |
-| [ ]    | D00 T04 §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster     | windows-host | 9     |
 | [ ]    | D00 T05 §1  | Conclave-SDK reviewer, TODO and unattended kit import with receipt parity                | none         | 5     |
 | [ ]    | D00 T05 §2  | Portable C++23 and Python LSP servers and MCP bridge across runners                      | windows-host | 4     |
 | [ ]    | D00 T05 §3  | Antigravity PreToolUse hook guards, Orchestrator alignment and mutation runner           | none         | 4     |
@@ -51,6 +50,7 @@ Sections: 63 | Checklist items: 387
 | [ ]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |
 | [ ]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
 | [ ]    | D06 T02 §12 | clang-tidy bug, CERT and concurrency checks over the compile database                    | windows-host | 8     |
+| [ ]    | D00 T04 §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster     | windows-host | 9     |
 | [ ]    | D00 T04 §17 | Unity builds measured per build kind and kept only where they are faster                 | windows-host | 9     |
 | [x]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
 | [x]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
@@ -955,6 +955,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 118/886 verified sections, 54 ready to run now.
+Progress: 118/886 verified sections, 53 ready to run now.
 
 Checklist: 807/6557 items completed (includes Commit items).
