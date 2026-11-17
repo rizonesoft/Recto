@@ -482,7 +482,9 @@ class ShardRun(unittest.TestCase):
         self.assertIn("CAUGHT: recto-tests: could not start shard 1 of 2", res.stdout)
         self.assertIn("every process already started was stopped", res.stdout)
         self.assertIn("ACTIVE=0", res.stdout)
-        started = [int(p.read_text()) for p in self.pids.iterdir()]
+        # Only the pid files: the fake also writes .start and .end times beside them. The shard may be killed before it
+        # writes one; the job's empty process count above is the proof, and any pid it did record must be gone.
+        started = self._pids()
         self.assertEqual(_wait_gone(started, 10), [], "the shard already started outlived the failed start")
 
     def test_killing_the_host_kills_every_process_of_the_set(self):
