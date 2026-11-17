@@ -226,6 +226,36 @@ TEST(PdfLexer, WhitespaceAndComments)
 	}
 }
 
+TEST(PdfLexer, ConsumedTokensAreReleasedByTheNextCall)
+{
+	// D00 T04 section 15 round 1: drop_front leaves a consumed token in its slot. Here the integers' reference lookahead
+	// puts the string in slot 2, the ring head returns to slot 0 once the array is consumed, and the next tokens reuse
+	// slot 0: the string's storage stayed until the Lexer was destroyed.
+	const std::string doc = "[1 2 (" + std::string(size_t{1} << 20u, 'a') + ")] /A 3 4";
+	const auto bytes = to_bytes(doc);
+	Lexer lexer(bytes);
+	const size_t baseline = detail::lexer_live_allocated_bytes();
+	{
+		Parser parser(lexer);
+		auto value = parser.parse_direct_object();
+		RECTO_ASSERT_OK(value);
+		ASSERT_TRUE(value.value().is_array());
+	}
+	auto name = lexer.next_token();
+	RECTO_ASSERT_OK(name);
+	EXPECT_EQ(name.value().kind, TokenKind::Name);
+	EXPECT_LT(detail::lexer_live_allocated_bytes() - baseline, size_t{64} << 10u) << "the consumed string is still held";
+
+	// A reset releases every slot too, whatever the ring head says.
+	lexer.seek(0);
+	{
+		Parser parser(lexer);
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+	}
+	lexer.seek(0);
+	EXPECT_EQ(detail::lexer_live_allocated_bytes(), baseline);
+}
+
 TEST(PdfLexer, Numbers)
 {
 	const auto valid_buf = to_bytes(

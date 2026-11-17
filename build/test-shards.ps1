@@ -19,6 +19,9 @@ $script:RectoTestShardMax = 6
 # it finishes: one fixed shard per slot ran 12 s to 40 s apart on 2026-11-16 (x64 Debug, five slots), because the
 # heavy tests fall where gtest's round robin puts them, and the run waits for the slowest (D00 T04 section 15).
 $script:RectoTestChunksPerShard = 4
+# The queue waits on its running processes in one WaitForMultipleObjects call, whose limit is MAXIMUM_WAIT_OBJECTS (64), so no
+# run starts more slots than that, whatever RECTO_TEST_SHARDS asks.
+$script:RectoTestShardWaitMax = 64
 $script:RectoTestTimeoutDefaultMinutes = 30.0
 
 if (-not ('Recto.TestShards.Job' -as [type])) {
@@ -382,7 +385,7 @@ namespace Recto.TestShards {
 '@
 }
 
-# How many shard processes a full run starts, and why. RECTO_TEST_SHARDS (1 to the core count) wins; otherwise the
+# How many shard processes a full run starts, and why. RECTO_TEST_SHARDS (1 to the core count, at most 64) wins; otherwise the
 # free memory read now, with section 3's formula (2,048 MB reserve) and the measured 1,024 MB per shard (a 6-shard Debug run peaked at 784 MB in one process), capped at one shard per physical core and at 6,
 # 4,096 MB per shard under AddressSanitizer, and 1 when memory is short or cannot be read.
 function Resolve-TestShardCount {
@@ -397,8 +400,10 @@ function Resolve-TestShardCount {
     if ($null -ne $ShardsEnv -and $ShardsEnv.Length -gt 0) {
         $parsed = 0
         $ok = [int]::TryParse($ShardsEnv.Trim(), [System.Globalization.NumberStyles]::None, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)
-        if (-not $ok -or $parsed -lt 1 -or $parsed -gt $Cores) {
-            throw "Invalid RECTO_TEST_SHARDS='$ShardsEnv': expected an integer between 1 and $Cores (logical processors on this machine)."
+        $most = [Math]::Min($Cores, $script:RectoTestShardWaitMax)
+        if (-not $ok -or $parsed -lt 1 -or $parsed -gt $most) {
+            $why = if ($most -lt $Cores) { 'the most processes one wait holds' } else { 'logical processors on this machine' }
+            throw "Invalid RECTO_TEST_SHARDS='$ShardsEnv': expected an integer between 1 and $most ($why)."
         }
         return [pscustomobject]@{ Count = $parsed; FreeMb = $null; Reason = "RECTO_TEST_SHARDS=$parsed" }
     }

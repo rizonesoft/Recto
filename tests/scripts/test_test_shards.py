@@ -193,6 +193,12 @@ class ShardCount(unittest.TestCase):
                 res = _ps(f". '{TEST_SHARDS_PS1}'; Resolve-TestShardCount -Cores 12 -ShardsEnv '{bad}' -AvailableMb 25000")
                 self.assertNotEqual(res.returncode, 0, res.stdout)
                 self.assertIn(f"Invalid RECTO_TEST_SHARDS='{bad}'", res.stdout + res.stderr)
+        # D00 T04 section 15 round 1: the queue waits on its running processes in one WaitForMultipleObjects call, which
+        # takes at most 64, so on a host with more logical processors an override above 64 is refused before any starts.
+        self.assertEqual(self._count("-Cores 128 -ShardsEnv '64' -AvailableMb 250000")["Count"], 64)
+        res = _ps(f". '{TEST_SHARDS_PS1}'; Resolve-TestShardCount -Cores 128 -ShardsEnv '65' -AvailableMb 250000")
+        self.assertNotEqual(res.returncode, 0, res.stdout)
+        self.assertIn("expected an integer between 1 and 64", " ".join((res.stdout + res.stderr).split()))
 
     def test_timeout_minutes_accepted_and_refused(self):
         for value, want in (("", 30.0), ("0.5", 0.5), ("45", 45.0)):

@@ -167,14 +167,12 @@ Lexer::Lexer(
 
 void Lexer::clear_lookahead() noexcept
 {
-	if (lookahead_buf_) {
-		lookahead_buf_.reset();
-	} else {
-		for (size_t i = 0; i < lookahead_count_; ++i) {
-			const size_t idx = (lookahead_head_ + i) % lookahead_capacity_;
-			inline_lookahead_[idx].token = Token{};
-		}
+	// Every slot, not only the live ones: a token drop_front consumed stays in its slot until released.
+	lookahead_buf_.reset();
+	for (LookaheadEntry& entry : inline_lookahead_) {
+		entry.token = Token{};
 	}
+	retired_count_ = 0;
 	lookahead_head_ = 0;
 	lookahead_count_ = 0;
 	lookahead_capacity_ = 0;
@@ -242,6 +240,7 @@ void Lexer::seek(size_t byte_offset) noexcept
 
 PdfResult<Token> Lexer::next_token() noexcept
 {
+	release_retired();
 	const size_t saved_cursor = cursor_;
 	try {
 		if (lookahead_count_ > 0) {
@@ -291,10 +290,26 @@ PdfResult<const Token*> Lexer::peek_token_ptr(size_t lookahead_index) noexcept
 	return out;
 }
 
+void Lexer::release_retired() noexcept
+{
+	if (retired_count_ == 0) {
+		return;
+	}
+	LookaheadEntry* slots = lookahead_slots();
+	for (size_t i = 0; i < retired_count_; ++i) {
+		slots[(retired_begin_ + i) % lookahead_capacity_].token = Token{};
+	}
+	retired_count_ = 0;
+}
+
 void Lexer::drop_front() noexcept
 {
-	// The token itself stays in its slot until a later peek reuses the slot (a move-assignment, which frees what it held)
-	// or the lookahead is cleared, so nothing is moved or freed on this path.
+	// The token itself stays in its slot, readable until the next call on this Lexer, which releases it
+	// (release_retired), so nothing is moved or freed on this path. Drops between two calls are consecutive from the head.
+	if (retired_count_ == 0) {
+		retired_begin_ = lookahead_head_;
+	}
+	++retired_count_;
 	LookaheadEntry* slots = lookahead_slots();
 	logical_cursor_ = slots[lookahead_head_].cursor_after;
 	lookahead_head_ = (lookahead_head_ + 1) % lookahead_capacity_;
@@ -306,6 +321,7 @@ void Lexer::drop_front() noexcept
 
 bool Lexer::peek_into(size_t lookahead_index, const Token*& out, PdfError& err) noexcept
 {
+	release_retired();
 	size_t saved_cursor = cursor_;
 	try {
 		while (lookahead_count_ <= lookahead_index) {

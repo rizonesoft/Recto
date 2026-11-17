@@ -897,7 +897,8 @@ public:
 	// The parser's hot path (D00 T04 section 15): peek_token_ptr without a PdfResult on success, the error in `err`
 	// and false on failure; and drop_front, which consumes the token a peek left at the front without moving it out.
 	// After drop_front the dropped token stays readable through the pointer peek_into gave until the next call on this
-	// Lexer, so a caller copies what it needs before it peeks or reads again. drop_front requires a peeked token.
+	// Lexer, so a caller copies what it needs before it peeks or reads again; that next peek, read or reset releases the
+// dropped tokens' storage. drop_front requires a peeked token.
 	[[nodiscard]] bool peek_into(size_t lookahead_index, const Token*& out, PdfError& err) noexcept;
 	void drop_front() noexcept;
 
@@ -962,6 +963,8 @@ private:
 	}
 
 	void clear_lookahead() noexcept;
+	// Frees the tokens drop_front left in their slots, whose readable lifetime ends at the next call on this Lexer.
+	void release_retired() noexcept;
 	[[nodiscard]] bool ensure_lookahead_slot();
 
 	[[nodiscard]] PdfResult<Token> read_raw_token();
@@ -983,6 +986,9 @@ private:
 	size_t lookahead_head_{0};
 	size_t lookahead_count_{0};
 	size_t lookahead_capacity_{0};
+	// The slots drop_front consumed since the last peek or read: retired_count_ of them from retired_begin_, in ring order.
+	size_t retired_begin_{0};
+	size_t retired_count_{0};
 };
 
 } // namespace recto::pdf
