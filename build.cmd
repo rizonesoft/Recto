@@ -10,7 +10,7 @@ setlocal
 set "_RECTO_PS=powershell.exe"
 where powershell.exe >nul 2>&1
 if errorlevel 1 if exist "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" set "_RECTO_PS=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-"%_RECTO_PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0build\bootstrap-tools.ps1"
+"%_RECTO_PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0build\bootstrap-tools.ps1" -MarkBuild
 if errorlevel 1 exit /b %ERRORLEVEL%
 endlocal & "%_RECTO_PS%" -NoProfile -ExecutionPolicy Bypass -File "%~dp0build\build.ps1" %*
 exit /b %ERRORLEVEL%

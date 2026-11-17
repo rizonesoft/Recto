@@ -2,7 +2,10 @@ param(
     [string]$LockFile = '',
     [string]$ToolsDir = '',
     [double]$DownloadTimeoutSec = 300,
-    [switch]$NoRun
+    [switch]$NoRun,
+    # build.cmd's own bootstrap: mark the build in flight from its first step (build\build-mark.ps1), so the run
+    # guard waits through a mutex wait or a tools download too. python.cmd never passes it.
+    [switch]$MarkBuild
 )
 $ErrorActionPreference = 'Stop'
 
@@ -384,6 +387,11 @@ if (-not (Test-Path -LiteralPath $LockFile)) {
     throw "Tools lock file not found: $LockFile"
 }
 
+$buildMark = $null
+if ($MarkBuild) {
+    . (Join-Path $PSScriptRoot 'build-mark.ps1')
+    $buildMark = Enter-RectoBuildMark -Root $repoRoot -Label 'bootstrap'
+}
 $mutexName = 'Local\RectoBootstrapTools-' + (Get-StringSha256 ($ToolsDir.ToLowerInvariant())).Substring(0, 24)
 $mutex = [System.Threading.Mutex]::new($false, $mutexName)
 $acquired = $false
@@ -522,4 +530,5 @@ try {
         $mutex.ReleaseMutex()
     }
     $mutex.Dispose()
+    if ($buildMark) { Remove-RectoBuildMark $buildMark }
 }

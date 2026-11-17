@@ -664,7 +664,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
                          "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
-                         "test-shards.ps1"):
+                         "test-shards.ps1", "build-mark.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             stub_wrapper = base / "wrapper" / "sccache-cl.exe"
             stub_wrapper.parent.mkdir(parents=True)
@@ -852,7 +852,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
                          "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
-                         "test-shards.ps1"):
+                         "test-shards.ps1", "build-mark.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             shutil.copy2(ROOT / "scripts" / "test-times.py", ws / "scripts" / "test-times.py")
             shutil.copy2(ROOT / "tests" / "recto-tests" / "time-budget.json",
@@ -1045,7 +1045,7 @@ $fromCim = Resolve-BuildParallelism -Cores 12 -JobsEnv '' -MaxCpuCount 0 -Counte
                 shutil.copy2(ROOT / name, ws / name)
             for name in ("build.ps1", "parallelism.ps1", "asan-runtime.ps1", "msbuild-log.ps1",
                          "sccache.ps1", "sccache-cl.cpp", "tools.lock.json", "bootstrap-tools.ps1", "python.cmd",
-                         "test-shards.ps1"):
+                         "test-shards.ps1", "build-mark.ps1"):
                 shutil.copy2(ROOT / "build" / name, ws / "build" / name)
             stub_wrapper = base / "wrapper" / "sccache-cl.exe"
             stub_wrapper.parent.mkdir(parents=True)

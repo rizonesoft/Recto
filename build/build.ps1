@@ -66,37 +66,10 @@ if ($EnableASAN -and ($Platform -contains 'ARM64')) {
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# While this build runs, build\build-in-flight\<pid>.json names it (pid, creation time, a 2-hour deadline), so the
-# campaign run guard (scripts\campaign_guard.py build_in_flight) lets the session end its turn and wait for the
-# build's notification instead of sleep-polling its output. A mark whose process has ended is never believed, so a
-# killed build cannot hold a run; the mark is removed on every exit this script controls.
-$buildMarkDir = Join-Path $root 'build\build-in-flight'
-$buildMark = Join-Path $buildMarkDir "$PID.json"
-function Remove-RectoBuildMark([string]$Path) {
-    # A mark left behind is harmless (its process has ended), so a failed removal warns and never masks the build's
-    # own result.
-    try {
-        if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
-    } catch {
-        Write-Warning "could not remove the build mark ${Path}: $_"
-    }
-}
-New-Item -ItemType Directory -Path $buildMarkDir -Force | Out-Null
-foreach ($old in @(Get-ChildItem -LiteralPath $buildMarkDir -Filter '*.json' -File)) {
-    $oldPid = 0
-    # Get-Process reports a missing pid as an error; here that is the answer (the build that wrote the mark is gone).
-    $oldAlive = [int]::TryParse($old.BaseName, [ref]$oldPid) -and $null -ne (Get-Process -Id $oldPid -ErrorAction Ignore)
-    if (-not $oldAlive) { Remove-RectoBuildMark $old.FullName }
-}
-$buildMarkDoc = [ordered]@{
-    pid      = $PID
-    started  = (Get-Process -Id $PID).StartTime.ToFileTimeUtc()
-    deadline = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 7200
-    args     = (@($PSBoundParameters.GetEnumerator() | ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' ')
-}
-$buildMarkTemp = "$buildMark.tmp"
-[System.IO.File]::WriteAllText($buildMarkTemp, ($buildMarkDoc | ConvertTo-Json -Compress))
-Move-Item -LiteralPath $buildMarkTemp -Destination $buildMark -Force
+# The run guard waits for this build while its mark names it (build\build-mark.ps1); removed on every exit this
+# script controls.
+. (Join-Path $PSScriptRoot 'build-mark.ps1')
+$buildMark = Enter-RectoBuildMark -Root $root -Label (@($PSBoundParameters.GetEnumerator() | ForEach-Object { "-$($_.Key) $($_.Value)" }) -join ' ')
 trap {
     Remove-RectoBuildMark $buildMark
     break

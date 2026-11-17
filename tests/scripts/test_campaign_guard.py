@@ -803,22 +803,77 @@ exit 7
 """
 
 
+def _powershell(script, *args):
+    return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), *args]
+
+
 @unittest.skipUnless(os.name == "nt", "build.ps1 is the Windows build")
 class BuildMark(unittest.TestCase):
+    def setUp(self):
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from scripts.lib.proc_group import spawn_managed_process
+        self.spawn = spawn_managed_process  # a job object: the whole tree is stopped on timeout and teardown
+
+    def run_tree(self, cmd, *, cwd, env, timeout):
+        managed = self.spawn(cmd, cwd=cwd, env=env, capture_output=True)
+        try:
+            out, err = managed.proc.communicate(timeout=timeout)
+            return managed.proc.returncode, (out or "") + (err or "")
+        finally:
+            managed.terminate_and_close()
+
+    def test_build_cmd_marks_its_own_bootstrap_and_python_cmd_does_not(self):
+        # Review round 1 P1: build.cmd bootstraps before build.ps1 starts, and that step can wait 15 minutes for the
+        # tools mutex or download tools, so it marks the build too; python.cmd's bootstrap (the hook's own) must not.
+        self.assertRegex((REPO / "build.cmd").read_text(encoding="utf-8"), r'bootstrap-tools\.ps1" -MarkBuild\r?\n')
+        self.assertNotIn("-MarkBuild", (REPO / "build" / "python.cmd").read_text(encoding="utf-8"))
+
+    def test_bootstrap_waiting_on_the_tools_mutex_holds_the_run_and_a_killed_one_does_not(self):
+        import ctypes
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build").mkdir()
+            for name in ("bootstrap-tools.ps1", "build-mark.ps1", "tools.lock.json"):
+                shutil.copy(REPO / "build" / name, root / "build" / name)
+            tools = str(root / "tools")
+            mutex_name = "Local\\RectoBootstrapTools-" + hashlib.sha256(tools.lower().encode("utf-8")).hexdigest()[:24]
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.CreateMutexW.restype = ctypes.c_void_p
+            kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p)
+            kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+            held = kernel32.CreateMutexW(None, True, mutex_name)  # owned here, so the bootstrap waits on it
+            self.assertTrue(held)
+            managed = self.spawn(_powershell(root / "build" / "bootstrap-tools.ps1", "-ToolsDir", tools, "-MarkBuild"),
+                                 cwd=root, env=dict(os.environ), capture_output=True)
+            try:
+                seen, until = None, time.monotonic() + 60
+                while seen is None and time.monotonic() < until and managed.proc.poll() is None:
+                    seen = guard.build_in_flight(str(root))
+                    time.sleep(0.2)
+                self.assertIsNotNone(seen, "a bootstrap waiting for the tools mutex holds the run")
+                self.assertIn("bootstrap", seen)
+            finally:
+                managed.terminate_and_close()
+                managed.proc.communicate()  # read the ended tree's pipes to their close
+                kernel32.CloseHandle(held)
+            self.assertIsNone(guard.build_in_flight(str(root)), "a killed bootstrap's leftover mark is not believed")
+
     def test_build_ps1_marks_itself_while_running_and_clears_the_mark_on_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "build" / "build-in-flight").mkdir(parents=True)
-            shutil.copy(REPO / "build" / "build.ps1", root / "build" / "build.ps1")
+            for name in ("build.ps1", "build-mark.ps1"):
+                shutil.copy(REPO / "build" / name, root / "build" / name)
             (root / "build" / "bootstrap-tools.ps1").write_text(FAKE_BOOTSTRAP, encoding="utf-8")
             gone = subprocess.Popen([sys.executable, "-c", "pass"])
             gone.wait()
             (root / "build" / "build-in-flight" / f"{gone.pid}.json").write_text("{}", encoding="utf-8")
             env = {**os.environ, "RECTO_TEST_PYTHON": sys.executable, "RECTO_TEST_GUARD": str(GUARD_PY)}
-            run = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-                                  str(root / "build" / "build.ps1"), "-Quick"], cwd=root, env=env,
-                                 capture_output=True, text=True, timeout=120,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
+            code, output = self.run_tree(_powershell(root / "build" / "build.ps1", "-Quick"), cwd=root, env=env,
+                                         timeout=120)
+            run = subprocess.CompletedProcess([], code, output, "")
             self.assertNotEqual(run.returncode, 0, "a failed bootstrap still fails the build")
             self.assertIn("bootstrap-tools.ps1 failed (exit 7)", run.stdout + run.stderr)
             marks = (root / "marks.txt").read_text(encoding="utf-8").split()
