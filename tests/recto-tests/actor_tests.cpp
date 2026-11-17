@@ -1259,15 +1259,31 @@ TEST(AtomicWrite, PublicationStates)
 		::CloseHandle(held);
 		EXPECT_EQ(recto::test::read_file_bytes(target), before);
 		EXPECT_EQ(temporaries(), 0u);
-		// Released during the retries: a scanner holding the file briefly costs nothing.
-		const HANDLE brief = ::CreateFileW(target.c_str(), GENERIC_READ, 0u, nullptr, OPEN_EXISTING, 0u, nullptr);
-		ASSERT_NE(brief, INVALID_HANDLE_VALUE);
-		std::thread releaser([brief] {
-			std::this_thread::sleep_for(std::chrono::milliseconds(20));
-			::CloseHandle(brief);
-		});
-		EXPECT_TRUE(atomic_write_file(target, after).has_value());
-		releaser.join();
+		// Released during the retries: a scanner holding the file briefly costs nothing. The handle closes when the save
+		// reaches its first retry, so the first attempt meets the hold whatever the host's load; a thread sleeping 20 ms
+		// first woke after all three attempts on a loaded host (D00 T04 section 15 stamp gate, 2026-11-17).
+		struct Brief {
+			HANDLE handle{INVALID_HANDLE_VALUE};
+			int retries{0};
+			static void hook(AtomicWriteStage stage, const std::filesystem::path&, void* context) noexcept
+			{
+				auto& self = *static_cast<Brief*>(context);
+				if (stage == AtomicWriteStage::Retry && ++self.retries == 1) {
+					::CloseHandle(self.handle);
+					self.handle = INVALID_HANDLE_VALUE;
+				}
+			}
+		} brief;
+		brief.handle = ::CreateFileW(target.c_str(), GENERIC_READ, 0u, nullptr, OPEN_EXISTING, 0u, nullptr);
+		ASSERT_NE(brief.handle, INVALID_HANDLE_VALUE);
+		{
+			const detail::ScopedAtomicWriteHookForTesting hook(&Brief::hook, &brief);
+			EXPECT_TRUE(atomic_write_file(target, after).has_value());
+		}
+		if (brief.handle != INVALID_HANDLE_VALUE) {
+			::CloseHandle(brief.handle);
+		}
+		EXPECT_EQ(brief.retries, 1) << "the first attempt did not meet the hold, or the release did not end it";
 		EXPECT_EQ(recto::test::read_file_bytes(target), after);
 		reset();
 	}
