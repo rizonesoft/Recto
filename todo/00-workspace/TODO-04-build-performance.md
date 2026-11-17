@@ -2,7 +2,7 @@
 schema_version: 1
 id: build-performance
 domain: 00-workspace
-status: active
+status: done
 title: "TODO-04 -- Build Performance, Repo-Scoped Tools and the Ninja Build"
 track: M0
 ---
@@ -61,7 +61,7 @@ track: M0
 | 12 | §12 | clangd language server for Claude Code over a compile database from the MSBuild build | -- | [x] |
 | 13 | §13 | A red main reported from GitHub itself, with the workstation off | §9 | [x] |
 | 14 | §14 | Scheduled tasks that follow the clone when it moves, and say so when they do not | -- | [x] |
-| 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [ ] |
+| 15 | §15 | Budget-tight tests made fast enough to leave the serial pass | §11 | [x] |
 
 ## 1. ASan and plain builds in separate output folders
 
@@ -574,9 +574,12 @@ Found on 2026-11-16 while building `§11`: seven tests use over half their per-t
 > **Corrected 2026-11-17 (measured):** the queue alone gave 77.5 s, 50.5%: the serial pass (45.4 s) set the floor at 48.7%. Its heaviest test, `PdfFilters.CancelWhileRunning` (12.0 s Debug, on the latency list and so staying serial), spent 10.7 s compressing 64 MiB of noise only to have a stream to decode; it now builds the stored blocks the compressor writes for that noise directly (1.7 s), and the findings file records its mutation.
 
 - [x] Measure the sharded x64 Debug and Release runs again on this host and on CI. Done when: the findings file records, for the final candidate's own binary on this host, a serial run (`RECTO_TEST_SHARDS=1`) and a sharded run, each with its shard count and its elapsed wall time including the serial tail, the sharded Debug run taking no more than 50% of the serial one; and CI's sharded Debug and Release runs pass `build/build.ps1`'s own budget check (`build\python.cmd scripts/test-times.py check <each run's XML reports> --budget tests/recto-tests/time-budget.json --mode <debug|release>`, which `build.ps1` runs after the shards).
-- [ ] Commit: `tests: cut the budget-tight tests at their cause and return them to the shards`
+- [x] Commit: `tests: cut the budget-tight tests at their cause and return them to the shards`
 
 **Test checkpoint:** `.\build.cmd -Platform x64` passes with the seven tests in the parallel shards and `build.ps1`'s budget check (`test-times.py check` over that run's reports) within budget; `build\python.cmd -m unittest tests.scripts.test_test_shards` passes; and CI's `build.yml` passes the sharded Debug, Release and ASan runs.
+
+> **Verified:** 2026-11-17 | §15 | f1e67e7462e4ab2ef0cfb98de068f79e1440b931
+> **Review:** `docs/reviews/d00-t04-s15.json`
 ## Verification
 
 - A plain and an ASan build of x64 Debug, built one after the other, recompile nothing the second time each, and `.\build.cmd` builds x64 only while CI builds ARM64.
