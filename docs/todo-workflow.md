@@ -17,7 +17,7 @@ For TODO work, use the skill in `.claude/skills/` (shared with Google Antigravit
 ## Rules for TODO work
 
 - **Tests prove claims:** a section's Test checkpoint must be able to fail, and is quoted, not paraphrased, in its stamp.
-- **Balanced local-vs-CI cadence:** keep local loops fast by building touched projects and running targeted test filters plus `build\python.cmd scripts/run-tests.py --quick`; push candidate commits to `main` and run `ci_status.py --wait` in parallel with review so GitHub Actions shoulders the full matrix (`build.yml` x64/ARM64/ASan and `plan.yml` `--full`), running `.\build.cmd` once on the final candidate tip that stamps, and healing any red CI immediately at the owning layer.
+- **Balanced local-vs-CI cadence:** keep local loops fast by building touched projects and running targeted test filters plus `build\python.cmd scripts/run-tests.py --quick`; push candidate commits to `main` and run `ci_status.py --wait` in parallel with review so GitHub Actions shoulders the full matrix (`build.yml` x64/ARM64/ASan and `plan.yml` `--full`), running `.\build.cmd` once on the final candidate tip that stamps, and healing any red CI immediately at the owning layer. Between those, no local Release, ARM64, full-suite or sharded run: that evidence comes from CI on the pushed commit, and long local jobs run in tracked background while the session ends its turn (`build/build-in-flight/` lets the run guard wait for a build).
 - **Commits:** trunk-based `main`, concise imperative messages, the section ref in the body. Commits follow logical steps within a section; review fix-loop commits append to the candidate range. Never amend a candidate under review, never bypass hooks, never force-push.
 
 ## Validation

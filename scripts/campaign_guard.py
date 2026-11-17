@@ -21,7 +21,8 @@ run, its runner (`claude` or `agy`), phase, run file, heartbeat job and run id; 
 this module, under an interprocess lock. The Stop hook (`stop-hook`, wired in `.claude/settings.json` and
 `.agents/hooks.json`) blocks that session's end of turn while the run is open and lets go when the run file carries
 this run's `## Closeout run=<id>` heading or column-0 `PARKED <UTC> run=<id>` line, when `build/review-in-flight/`
-names a live review dispatcher (the wait is the work, and never counts toward the breaker), when `query ready` has
+names a live review dispatcher, `build/ci-watch/` a live CI watch or `build/build-in-flight/` a live `build\build.ps1`
+(the wait is the work, and never counts toward the breaker), when `query ready` has
 nothing runnable, when Antigravity stops for a non-idle reason (`USER_CANCELED`, `ERROR`, `MAX_FORCED_INVOCATIONS`),
 or when the stall breaker trips after 3 blocks with no change to the tree. The heartbeat is a recurring job inside the
 session (`CronCreate` in Claude Code, `schedule` in Antigravity; `process-plan` holds its prompt) that resumes an idle
@@ -880,6 +881,54 @@ def ci_watch_in_flight(root: str) -> str | None:
     return None
 
 
+def _process_started(pid: int) -> int | None:
+    """The process's creation time as a Windows FILETIME (100 ns ticks, UTC), or None when it cannot be read."""
+    if os.name != "nt":
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = (ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD)
+    kernel32.GetProcessTimes.argtypes = (ctypes.wintypes.HANDLE,) + (ctypes.POINTER(ctypes.wintypes.FILETIME),) * 4
+    kernel32.CloseHandle.argtypes = (ctypes.wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return None
+    try:
+        times = [ctypes.wintypes.FILETIME() for _ in range(4)]
+        if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+            return None
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def build_in_flight(root: str) -> str | None:
+    """A `build\\build.ps1` running now, from the marks it writes under build/build-in-flight/, or None. A mark must name
+    a live process and a deadline not yet passed, and on Windows that process's creation time must match the mark's
+    `started` (within a second), so a reused pid never holds a run for a build that has already ended."""
+    folder = os.path.join(root, "build", "build-in-flight")
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return None
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8-sig") as fh:
+                doc = json.load(fh)
+            pid, deadline, started = int(doc["pid"]), float(doc["deadline"]), int(doc["started"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if pid <= 0 or time.time() > deadline or not _alive(pid):
+            continue
+        actual = _process_started(pid)
+        if os.name == "nt" and (actual is None or abs(actual - started) > 10_000_000):
+            continue
+        return f"build.ps1 {doc.get('args', '')}".rstrip() + f", pid {pid}"
+    return None
+
+
 def review_in_flight(root: str) -> str | None:
     """A reviewer scripts/review-dispatch.py is running now, from the marks under build/review-in-flight/, or None: a
     mark must name a live process and a deadline not yet passed (a crashed dispatcher's leftover never holds a run)."""
@@ -928,6 +977,12 @@ def stop_decision(root: str, session: str) -> dict | None:
         # Waiting on a live `ci_status.py --wait` (for `ci_status.py --gate` before claiming or stamping) is active
         # background work; let the turn end for reactive wakeup without advancing the stall breaker.
         print(f"campaign-stop: a CI watch is running ({watching_ci}); waiting for it, not stalled", file=sys.stderr)
+        return None
+    building = build_in_flight(root)
+    if building:
+        # A background build (and the tests it runs) is the same kind of wait: its notification resumes the row, so
+        # the session ends the turn instead of sleep-polling the build's output, and the breaker does not advance.
+        print(f"campaign-stop: a build is running ({building}); waiting for it, not stalled", file=sys.stderr)
         return None
     deadline = time.monotonic() + _env_int("CAMPAIGN_HOOK_BUDGET_SECONDS", int(HOOK_BUDGET_SECONDS))
     phase_only = guard.get("scope") == "phase"
@@ -997,6 +1052,9 @@ def heartbeat_still(root: str, session: str) -> str:
     watching_ci = ci_watch_in_flight(root)
     if watching_ci:
         return f"heartbeat-still: waiting on CI watch ({watching_ci})"
+    building = build_in_flight(root)
+    if building:
+        return f"heartbeat-still: waiting on build ({building})"
     run_rel = str(guard.get("run_file", ""))
     if not run_rel or os.path.isabs(run_rel) or ".." in run_rel.replace("\\", "/").split("/"):
         raise GuardError(f"run file {run_rel!r} is not a path inside the project")

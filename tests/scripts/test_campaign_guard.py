@@ -158,6 +158,40 @@ class StopHook(Workspace):
         self.in_flight(os.getpid(), time.time() + 600)
         self.assertIn("astra", reviewing().stdout)
 
+    def build_mark(self, pid, deadline, started=None):
+        if started is None:
+            started = guard._process_started(pid) or 0
+        self.write(f"build/build-in-flight/{pid}.json",
+                   json.dumps({"pid": pid, "started": started, "deadline": deadline, "args": "-Quick"}))
+
+    def test_a_live_build_lets_the_turn_end_without_tripping_the_breaker(self):
+        # The last campaign spent 18.6 of 30.8 hours sleep-polling background builds the hook did not recognise.
+        self.acquire()
+        self.build_mark(os.getpid(), time.time() + 600)
+        self.assertIn(f"pid {os.getpid()}", guard.build_in_flight(self.root))
+        self.assertIsNone(self.hook(), "waiting on a running build is not a stop to push past")
+        self.assertEqual(self.state().get("blocks", 0), 0, "and it never counts toward the stall breaker")
+        self.assertIn("waiting on build", guard.heartbeat_still(self.root, SESSION))
+
+    def test_a_dead_expired_reused_or_malformed_build_mark_does_not_hold_the_run(self):
+        self.acquire()
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait()
+        marks = [("dead pid", gone.pid, time.time() + 600, None), ("expired", os.getpid(), time.time() - 1, None),
+                 ("pid zero", 0, time.time() + 600, 0)]
+        if os.name == "nt":  # a reused pid: alive, but not the process that wrote the mark
+            marks.append(("reused pid", os.getpid(), time.time() + 600, (guard._process_started(os.getpid()) or 0)
+                          - 600 * 10_000_000))
+        for label, pid, deadline, started in marks:
+            with self.subTest(label):
+                shutil.rmtree(os.path.join(self.root, "build", "build-in-flight"), ignore_errors=True)
+                self.build_mark(pid, deadline, started)
+                self.assertIsNone(guard.build_in_flight(self.root))
+                if label == "dead pid":  # once: more blocks on an unchanged tree would trip the stall breaker
+                    self.assertEqual(self.hook()["decision"], "block")
+        self.write("build/build-in-flight/bad.json", "not json")
+        self.assertIsNone(guard.build_in_flight(self.root))
+
     def test_a_live_ci_watch_lets_the_turn_end_without_tripping_the_breaker(self):
         self.acquire()
         sha = "fa38b630e6ad16026736e522f478fb54347eb533"
@@ -755,6 +789,44 @@ class Lifecycle(Workspace):
         self.assertTrue(cli("whoami", "--session", SESSION).stdout.startswith("OWNER run="))
         self.assertEqual(cli("end", "--session", SESSION, "--reason", "nonsense").returncode, 1)
         self.assertEqual(cli("frobnicate").returncode, 2)
+
+
+# Stands in for build\bootstrap-tools.ps1, the first thing build.ps1 runs after writing its mark: it records which
+# marks exist and what the guard reads from them while the build is live, then fails so build.ps1 throws.
+FAKE_BOOTSTRAP = r"""
+$root = Split-Path -Parent $PSScriptRoot
+@(Get-ChildItem -LiteralPath (Join-Path $root 'build\build-in-flight') -Filter '*.json' -File).Name |
+    Set-Content -LiteralPath (Join-Path $root 'marks.txt')
+& $env:RECTO_TEST_PYTHON -c "import importlib.util, sys; s = importlib.util.spec_from_file_location('g', sys.argv[1]); g = importlib.util.module_from_spec(s); s.loader.exec_module(g); print(g.build_in_flight(sys.argv[2]))" $env:RECTO_TEST_GUARD $root |
+    Set-Content -LiteralPath (Join-Path $root 'guard.txt')
+exit 7
+"""
+
+
+@unittest.skipUnless(os.name == "nt", "build.ps1 is the Windows build")
+class BuildMark(unittest.TestCase):
+    def test_build_ps1_marks_itself_while_running_and_clears_the_mark_on_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "build" / "build-in-flight").mkdir(parents=True)
+            shutil.copy(REPO / "build" / "build.ps1", root / "build" / "build.ps1")
+            (root / "build" / "bootstrap-tools.ps1").write_text(FAKE_BOOTSTRAP, encoding="utf-8")
+            gone = subprocess.Popen([sys.executable, "-c", "pass"])
+            gone.wait()
+            (root / "build" / "build-in-flight" / f"{gone.pid}.json").write_text("{}", encoding="utf-8")
+            env = {**os.environ, "RECTO_TEST_PYTHON": sys.executable, "RECTO_TEST_GUARD": str(GUARD_PY)}
+            run = subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                                  str(root / "build" / "build.ps1"), "-Quick"], cwd=root, env=env,
+                                 capture_output=True, text=True, timeout=120,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+            self.assertNotEqual(run.returncode, 0, "a failed bootstrap still fails the build")
+            self.assertIn("bootstrap-tools.ps1 failed (exit 7)", run.stdout + run.stderr)
+            marks = (root / "marks.txt").read_text(encoding="utf-8").split()
+            self.assertEqual(len(marks), 1, f"the dead build's mark is swept and this build's written: {marks}")
+            self.assertIn("build.ps1 -Quick", (root / "guard.txt").read_text(encoding="utf-8"),
+                          "the guard believes the live build's mark (pid and creation time match)")
+            self.assertEqual(list((root / "build" / "build-in-flight").iterdir()), [],
+                             "the mark is removed when the build throws")
 
 
 if __name__ == "__main__":
