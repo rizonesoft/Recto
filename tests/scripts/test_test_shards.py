@@ -273,7 +273,7 @@ class ShardRun(unittest.TestCase):
 
     def tearDown(self):
         # Whatever a failing test left is killed here, by pid, before the folder goes.
-        leftovers = [int(p.read_text()) for p in self.pids.iterdir() if p.suffix in (".pid", ".child")]
+        leftovers = [int(t) for t in (p.read_text().strip() for p in self.pids.iterdir() if p.suffix in (".pid", ".child")) if t.isdigit()]
         for pid in leftovers:
             subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, creationflags=windowless())
         self._tmp.cleanup()
@@ -297,7 +297,8 @@ class ShardRun(unittest.TestCase):
         return env
 
     def _pids(self) -> list[int]:
-        return [int(p.read_text()) for p in self.pids.iterdir() if p.suffix == ".pid"]
+        # A file the fake has created but not yet written reads empty: it is skipped, as the process is still starting.
+        return [int(t) for t in (p.read_text().strip() for p in self.pids.iterdir() if p.suffix == ".pid") if t.isdigit()]
 
     def test_shards_and_serial_pass_cover_every_test_once(self):
         res = _ps(self._invoke_script(tag="Debug-asan"), env=self._env())
