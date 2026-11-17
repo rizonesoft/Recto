@@ -8571,6 +8571,45 @@ TEST(PdfFilters, CancelDuringDecode)
 }
 
 // The remaining input-sized loops, and a cancel that lands while each is running (D01 T02 section 7).
+// `data` as a zlib stream (RFC 1950) of stored deflate blocks (RFC 1951 3.2.4), 65,535 bytes each, with its Adler-32.
+std::vector<uint8_t> stored_zlib_stream(std::span<const uint8_t> data)
+{
+	std::vector<uint8_t> out;
+	out.reserve(data.size() + (data.size() / 65'535u + 1u) * 5u + 6u);
+	out.push_back(0x78u);
+	out.push_back(0x01u);
+	size_t at = 0;
+	do {
+		const size_t chunk = std::min<size_t>(data.size() - at, 65'535u);
+		const auto len = static_cast<uint16_t>(chunk);
+		const auto nlen = static_cast<uint16_t>(~len);
+		out.push_back(at + chunk == data.size() ? 0x01u : 0x00u);
+		out.push_back(static_cast<uint8_t>(len & 0xFFu));
+		out.push_back(static_cast<uint8_t>(len >> 8u));
+		out.push_back(static_cast<uint8_t>(nlen & 0xFFu));
+		out.push_back(static_cast<uint8_t>(nlen >> 8u));
+		out.insert(out.end(), data.begin() + static_cast<std::ptrdiff_t>(at), data.begin() + static_cast<std::ptrdiff_t>(at + chunk));
+		at += chunk;
+	} while (at < data.size());
+	// Adler-32, reduced every 5,552 bytes (the most that cannot overflow 32 bits, RFC 1950 9.2 sample code's NMAX).
+	uint32_t a = 1u;
+	uint32_t b = 0u;
+	for (size_t i = 0; i < data.size();) {
+		const size_t stop = std::min<size_t>(data.size(), i + 5'552u);
+		for (; i < stop; ++i) {
+			a += data[i];
+			b += a;
+		}
+		a %= 65'521u;
+		b %= 65'521u;
+	}
+	const uint32_t adler = (b << 16u) | a;
+	for (int shift = 24; shift >= 0; shift -= 8) {
+		out.push_back(static_cast<uint8_t>((adler >> shift) & 0xFFu));
+	}
+	return out;
+}
+
 TEST(PdfFilters, CancelWhileRunning)
 {
 	using detail::CancelSite;
@@ -8645,7 +8684,8 @@ TEST(PdfFilters, CancelWhileRunning)
 		(void)recto::test::expect_cancelled_while_running(CancelSite::FilterLoop, "LZWDecode", decodes(stream));
 	}
 	{
-		// Flate with random bytes, the costly case: many literal codes.
+		// Flate with random bytes: incompressible, so the compressor writes them as stored blocks, the longest inflate of
+		// 64 MiB of input.
 		std::vector<uint8_t> noise(64u << 20u);
 		uint8_t* dst = noise.data();
 		const size_t n = noise.size();
@@ -8654,9 +8694,15 @@ TEST(PdfFilters, CancelWhileRunning)
 			state = state * 1664525u + 1013904223u;
 			dst[i] = static_cast<uint8_t>(state >> 24u);
 		}
-		auto packed = flate_compress(noise);
-		ASSERT_TRUE(packed.has_value());
-		const PdfStream stream = stream_with("FlateDecode", *packed);
+		// The stream is built here as those stored blocks: compressing all 64 MiB to get them was 10.7 s of this test's
+		// 12.0 s in Debug (D00 T04 section 15). The compressor stores the first MiB of this same noise, every block.
+		FlateCompressStats sample{};
+		ASSERT_TRUE(flate_compress(std::span<const uint8_t>(noise).first(size_t{1} << 20u), FlateLevel::Default, &sample).has_value());
+		ASSERT_FALSE(sample.blocks.empty());
+		for (const FlateBlockStats& block : sample.blocks) {
+			ASSERT_EQ(block.type, FlateBlockType::Stored);
+		}
+		const PdfStream stream = stream_with("FlateDecode", stored_zlib_stream(noise));
 		(void)recto::test::expect_cancelled_while_running(CancelSite::Inflate, "FlateDecode", decodes(stream));
 		// The checksum at the end of it, reached by cancelling there: a cancel, not a mismatch.
 		(void)recto::test::expect_cancelled_at(CancelSite::FilterLoop, 3u, decodes(stream));
