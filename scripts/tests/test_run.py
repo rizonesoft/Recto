@@ -132,12 +132,12 @@ class CommandTest(unittest.TestCase):
 
     def test_the_codex_command_from_the_profile(self):
         run = load_run_module()
-        codex = {**PROFILE, "agent": "codex", "model": "gpt-6-astra", "effort": "xhigh"}
+        codex = {**PROFILE, "agent": "codex", "model": "gpt-6.2-astra", "effort": "xhigh"}
         for skip in (True, False):
             with self.subTest(skip_permissions=skip):
                 profile = {**codex, "skip_permissions": skip}
                 bypass = ["--dangerously-bypass-approvals-and-sandbox"] if skip else []
-                options = ["-m", "gpt-6-astra", "-c", 'model_reasoning_effort="xhigh"', *bypass]
+                options = ["-m", "gpt-6.2-astra", "-c", 'model_reasoning_effort="xhigh"', *bypass]
                 self.assertEqual(run.agent_command(self.root, profile, "tag-1", None), ["codex", *options, "--", PROMPT])
                 self.assertEqual(run.agent_command(self.root, profile, "tag-1", "thread-9"),
                                  ["codex", "resume", *options, "--", "thread-9", run.RESUME_PROMPT])
@@ -577,7 +577,7 @@ class RunTest(unittest.TestCase):
         self.assertIn("is not running", done.stderr)
 
     def use_codex(self):
-        self.write_profile(agent="codex", model="gpt-6-astra", effort="xhigh")
+        self.write_profile(agent="codex", model="gpt-6.2-astra", effort="xhigh")
         (self.root / ".codex").mkdir(exist_ok=True)
         shutil.copyfile(TODO / ".codex/hooks.json", self.root / ".codex/hooks.json")
         # Codex's approval of the hook goes through its app-server, which test_codex_hook.py drives against a stub

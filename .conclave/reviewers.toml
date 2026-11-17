@@ -1,7 +1,7 @@
 # Independent reviewers for Recto, read by scripts/review_pin.py for
 # scripts/review-dispatch.py and scripts/todo-graph.py stamp.
 #
-# Owner decisions 2026-10-28, 2026-11-10 and 2026-11-13: GPT-6 Astra through the
+# Owner decisions 2026-10-28, 2026-11-10 and 2026-11-13: GPT-6.2 Astra through the
 # Codex CLI in its read-only sandbox reviews all work written by Claude Code
 # (`claude`) and Google Antigravity (`agy` / `gemini`), with no fallback.
 # Earlier stamps (panel era 2026-10-28 and rotation era through 2026-11-12)
@@ -12,7 +12,7 @@ schema_version = 1
 
 [reviewers.astra]
 cli = "codex"
-model = "gpt-6-astra"
+model = "gpt-6.2-astra"
 effort = "high"
 
 [routes]
