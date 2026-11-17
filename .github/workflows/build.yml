@@ -30,10 +30,18 @@ on:
         description: A commit on main to build and record a test list for (D07 T03 §9); empty builds the branch tip.
         required: false
         default: ""
+      test_shards:
+        description: "RECTO_TEST_SHARDS for every test run: empty sizes the shards from memory, 1 runs each test alone in one process (D00 T04 §15)."
+        required: false
+        default: ""
 
 # Every job reads only; test-list-note alone is granted contents: write.
 permissions:
   contents: read
+
+# build/build.ps1 reads it; empty (every push and pull request) sizes the shards from free memory.
+env:
+  RECTO_TEST_SHARDS: ${{ inputs.test_shards }}
 
 # A pull request's newer push cancels its older run. Every build of a main commit gets its own group, so a queued
 # build is never replaced by a later one and every commit can record its test list.
