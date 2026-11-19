@@ -145,7 +145,7 @@ class Launcher(unittest.TestCase):
         run, seen = self.run_launcher("-Runner", "agy", inherited_token="inherited-token-abc")
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(seen["program"], "agy")
-        self.assertEqual(seen["args"], ["--model", "gemini-pro-orchestrator", "--dangerously-skip-permissions", "-i"])
+        self.assertEqual(seen["args"], ["--model", "gemini-4-neon-medium", "--effort", "medium", "--dangerously-skip-permissions", "-i"])
         self.assertTrue(seen["goal"].startswith("/goal "))
         self.assertNotIn("hydrogen", seen["goal"].lower())
         self.assertFalse(seen["token_set"])
@@ -177,7 +177,7 @@ class Launcher(unittest.TestCase):
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
         self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
         for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
-                                                  ("Google Antigravity on Orchestrator (Carbon)", "Claude Code")):
+                                                  ("Google Antigravity on Gemini 4 Neon (medium effort)", "Claude Code")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
             self.assertEqual(shortcut["arguments"],
                              f'-NoLogo -NoExit -NoProfile -ExecutionPolicy Bypass -File "{LAUNCHER}" -Runner {runner}')
