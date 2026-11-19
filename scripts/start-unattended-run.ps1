@@ -1,5 +1,5 @@
 # Starts Recto's unattended plan run in Claude Code or Google Antigravity. The Desktop shortcuts "Recto Claude
-# campaign" (-Runner claude, the default) and "Recto Carbon campaign" (-Runner agy, Antigravity on Gemini 4 Neon)
+# campaign" (-Runner claude, the default) and "Recto Gemini campaign" (-Runner agy, Antigravity on Gemini 4 Neon)
 # run this file. It prints the state of the machine and the tree, holds Windows awake while the session runs, and
 # starts an interactive session on the runner's writer model with permission prompts off and the session goal below.
 # Setting the goal starts the work: the goal's text is the first directive, beside the run guard of the process-plan
@@ -60,7 +60,7 @@ if ($InstallShortcut) {
     $shortcuts = @(
         @{ Runner = 'claude'; Name = 'Recto Claude campaign'; Icon = 'recto-campaign-claude.ico'
            Description = 'Start the unattended Recto campaign in Claude Code' },
-        @{ Runner = 'agy'; Name = 'Recto Carbon campaign'; Icon = 'recto-campaign-carbon.ico'
+        @{ Runner = 'agy'; Name = 'Recto Gemini campaign'; Icon = 'recto-campaign-carbon.ico'
            Description = 'Start the unattended Recto campaign in Google Antigravity on Gemini 4 Neon (medium effort)' }
     )
     foreach ($s in $shortcuts) {
@@ -98,7 +98,7 @@ if ($InstallShortcut) {
 $runnerName = @{ claude = 'Claude Code'; agy = 'Google Antigravity (Gemini 4 Neon)' }[$Runner]
 # One name for the window and, for Claude Code, the session: claude.exe overwrites the terminal title with its own
 # session topic unless it is given --name, so the title alone would not tell the operator which repo a window is.
-$windowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Carbon campaign' }[$Runner]
+$windowTitle = @{ claude = 'Recto Claude campaign'; agy = 'Recto Gemini campaign' }[$Runner]
 try { $Host.UI.RawUI.WindowTitle = $windowTitle } catch {}
 
 # One line, no double quotes: it is passed to claude.exe as a single argument. Claude Code allows a goal of 4,000

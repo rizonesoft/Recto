@@ -175,9 +175,9 @@ class Launcher(unittest.TestCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIsNone(seen)  # installing the shortcuts starts no session
         found = json.loads(next(ln for ln in run.stdout.splitlines() if ln.startswith("FOUND="))[len("FOUND="):])
-        self.assertEqual([s["name"] for s in found], ["Recto Carbon campaign.lnk", "Recto Claude campaign.lnk"])
-        for shortcut, runner, badge, where in zip(found, ("agy", "claude"), ("carbon", "claude"),
-                                                  ("Google Antigravity on Gemini 4 Neon (medium effort)", "Claude Code")):
+        self.assertEqual([s["name"] for s in found], ["Recto Claude campaign.lnk", "Recto Gemini campaign.lnk"])
+        for shortcut, runner, badge, where in zip(found, ("claude", "agy"), ("claude", "carbon"),
+                                                  ("Claude Code", "Google Antigravity on Gemini 4 Neon (medium effort)")):
             self.assertEqual(Path(shortcut["target"]).stem.lower(), "pwsh")
             self.assertEqual(shortcut["arguments"],
                              f'-NoLogo -NoExit -NoProfile -ExecutionPolicy Bypass -File "{LAUNCHER}" -Runner {runner}')
