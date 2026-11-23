@@ -50,7 +50,7 @@ Work the three questions across the diff and its blast radius. Fix what you find
 - An error path that throws, aborts or swallows instead of returning `PdfResult<T>` / `PdfError`, or a failure reported as success.
 - Work on the wrong thread, mutable state shared across threads, or unbounded recursion or allocation on hostile input.
 - A file write that is not temp-then-replace, or an original modified in place.
-- A hard-coded colour, size or glyph where design tokens, theme roles or `RectoIcons` own it, or a control without an accessible name and tooltip.
+- A hard-coded colour, size or glyph where design tokens, theme roles or `RectoIcons` own it, or a control without an accessible name and tooltip. The project's design contract rule (`.agents/rules/design-contract.md` or `.claude/rules/design-contract.md`, else `AGENTS.md`) names its contract, token source, static lint and rendered check: on a section that touched a surface, run both checks and confirm the commit body quotes both outputs.
 - A setting nothing reads, a command unreachable from `Ctrl+K`, or a link or attachment that opens without asking.
 - A test that passes without exercising the behavior.
 
@@ -59,7 +59,7 @@ Work the three questions across the diff and its blast radius. Fix what you find
 The passes run in this order for `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. Each pass is on a commit descending from the one before, the dispatcher refuses a pass out of order before a reviewer runs, and it refuses a second pass while one is running. Push the candidate to `main` and watch GitHub Actions (`build\python.cmd scripts/ci_status.py --wait <sha> --since <before>` in tracked background) so heavy full-matrix builds and suites run on GitHub in parallel with Astra's review.
 
 1. **Plan review**, before the build (`process-todo-section` step 3a): `--kind plan --candidate <commit holding the section>`.
-2. **The round**, after the build, its local gates and its commit. Fill the prompt into a scratch file from `docs/review-round-prompt.md` with `scripts/review-prompt.py`, then run `scripts/review-dispatch.py` in tracked background with `--surface` on a `Surface: yes` section (and `--paths <changed files>` when `[[schedule.conditional]]` applies):
+2. **The round**, after the build, its local gates and its commit. Fill the prompt into a scratch file from `docs/review-round-prompt.md` with `scripts/review-prompt.py` (passing `--fidelity` on `Surface: yes` sections, or letting `--ref` resolve it), then run `scripts/review-dispatch.py` in tracked background with `--surface` on a `Surface: yes` section. A section that changed a file under the pin's `[[schedule.conditional]]` design paths gets the `design` lens on its round and its reconciliations whatever its Surface says, and the stamp refuses a pass recorded without it:
 
 ```powershell
 build\python.cmd scripts/review-prompt.py --kind round --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-round-prompt.md>
