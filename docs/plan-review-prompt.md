@@ -1,6 +1,6 @@
 # Plan review prompt
 
-Fill this with `build\python.cmd scripts/review-prompt.py --kind plan --candidate <FULL_SHA> --ref "<DNN TNN §N>" --governing <file> --out <scratch file>` (`./scripts/run-python.sh` on Linux and WSL; `--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind plan --candidate <FULL_SHA of the commit that holds the section as it will be built> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section, after the section is validated and before any code is written, and is not counted as a round. The pin's `[schedule] plan` step sets its effort and appends the `plan` lens. Under a pin with `policy = "three-pass"` the section then keeps the pin committed at this candidate, so commit the pin first; the appended block asks for one `LENS <name>:` line per lens; and when the pin has `[[schedule.conditional]]` entries that name plan, add `--paths <file> ...` with the files the section will change.
+Fill this with `python scripts/review-prompt.py --kind plan --candidate <FULL_SHA> --ref "<DNN TNN §N>" [--fidelity <source>] --governing <file> --out <scratch file>` (`--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind plan --candidate <FULL_SHA of the commit that holds the section as it will be built> --writer <claude|codex|agy> --prompt <file> --record <receipts>/<NN-domain>/D<NN>-T<NN>-s<N>.md` (`<receipts>` being `layout.receipts` in `todo/plan.json`, `docs/reviews` by default). It runs once per section, after the section is validated and before any code is written, and is not counted as a round. The pin's `[schedule] plan` step sets its effort and appends the `plan` lens. Under a pin with `policy = "three-pass"` the section then keeps the pin committed at this candidate, so commit the pin first; the appended block asks for one `LENS <name>:` line per lens; and when the pin has `[[schedule.conditional]]` entries that name plan, add `--paths <file> ...` with the files the section will change.
 
 ---
 
@@ -9,7 +9,7 @@ You are an independent plan reviewer. Do not modify any file. The candidate belo
 ## Candidate
 
 - Commit: `<FULL_SHA>` (read the section at that commit).
-- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`, or `./scripts/run-python.sh` on Linux and WSL).
+- TODO section: `<DNN TNN §N>` (its contract: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>"`).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 - Governing documents: `AGENTS.md` and `<the spec or plan that applies>`.
@@ -22,8 +22,8 @@ You are an independent plan reviewer. Do not modify any file. The candidate belo
 - Order: every step must be buildable from the steps before it and the section's Needs. Name each step that depends on later work or on work no section owns.
 - Architecture: the governing plan's rules (for example thread ownership, typed errors, temp-file-then-replace writes, hostile input, module boundaries) as they apply to what the section builds.
 
-Proportionality: list only gaps that arise in this repository's real operation (real input the project accepts, a real user action, or a real operating-system, disk or hardware condition), not ones only a contrived scenario creates.
+Severity: grade every gap by the failure it would let ship, under the likelihood-weighted severity rubric that `scripts/review-dispatch.py` appends to this prompt (which grades and never filters).
 
 ## Reply format
 
-A numbered list of gaps, each tagged `P1` (the feature would ship incomplete, wrong or unproven), `P2` (a real gap with a narrower reach) or `P3` (wording, an unlikely edge case), with the section line it concerns and what the section must add or correct. Then a line naming the highest severity, `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or `HIGHEST: none`. Then `PLAN: complete` when the list is empty or `PLAN: gaps` when it is not. Then a final line: `OVERALL: approve` or `OVERALL: needs-attention`. If you could not read the candidate at all, say why in one line and end with `OVERALL: blocked` instead: that is not a review.
+A numbered list of gaps, each tagged `P1`, `P2` or `P3` under the appended severity rubric (graded by the failure it would let ship), with the section line it concerns and what the section must add or correct. Then a line naming the highest severity, `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or `HIGHEST: none`. Then `PLAN: complete` when the list is empty or `PLAN: gaps` when it is not. Then a final line: `OVERALL: approve` or `OVERALL: needs-attention`. If you could not read the candidate at all, say why in one line and end with `OVERALL: blocked` instead: that is not a review.

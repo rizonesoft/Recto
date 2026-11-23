@@ -14,8 +14,7 @@ import textwrap
 import unittest
 import unittest.mock
 
-# The scratch repository, the dispatcher and the fake reviewer CLIs.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The scratch repository, the dispatcher and the fake reviewer CLIs; unittest discovery puts this folder on sys.path.
 from test_review_dispatch import Harness
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -46,6 +45,7 @@ def install(root: Path, graph=None):
     (root / "scripts").mkdir(parents=True, exist_ok=True)
     (root / "docs").mkdir(exist_ok=True)
     shutil.copy(SCRIPTS / "review-prompt.py", root / "scripts" / "review-prompt.py")
+    shutil.copy(SCRIPTS / "review_layout.py", root / "scripts" / "review_layout.py")
     for name in TEMPLATES:
         shutil.copy(DOCS / name, root / "docs" / name)
     if graph is not None:
@@ -112,11 +112,31 @@ class FillEachKind(Filler):
                     self.assertIn(verdict, text)
                 self.assertTrue(text.endswith("\n") and not text.endswith("\n\n"))
 
+    def test_completion_and_reconciliation_prompts_say_the_stamp_ticks_the_commit_item(self):
+        # Without it a reviewer reads the open Commit item of an unstamped section as an undelivered promise.
+        # The opening clause is part of the rule: it says why the item is open (the stamp comes after the review).
+        rule = ("When the review is of a TODO section, that section is stamped after its review: "
+                "`python3 scripts/todo-graph.py stamp` ticks its `- [ ] Commit:` item and its Implementation Order row "
+                "(`todo/README.md`, Stamps and receipts), so on an unstamped section both are open by design and are "
+                "not a gap.")
+        closing = ("A gap that only reports that open item or row is closed by this rule: mark it `closed`, citing the "
+                   "rule as its evidence; it needs no checkbox edit and no `- Implemented:` line.")
+        for kind in ("completion", "reconciliation"):
+            with self.subTest(kind):
+                extra = ["--ref", REF] + (["--todo", TODO] if kind == "completion" else [])
+                self.ok(kind, *extra)
+                written = self.out.read_text(encoding="utf-8")  # the file the filler wrote, not its stdout
+                self.assertIn(rule, written)
+                if kind == "reconciliation":
+                    self.assertIn(closing, written)
+                else:
+                    self.assertNotIn(closing, written)
+
     def test_saved_file_is_the_prompt_and_values_appear(self):
         text = self.ok("completion", "--ref", REF, "--todo", TODO, "--fidelity", "design/main-window.png")
         self.assertEqual(self.out.read_text(encoding="utf-8"), text)
         self.assertIn(f"- Commit or range: `{CAND}` (inspect", text)
-        self.assertIn(f"- TODO section: `{REF}` (its contract: `build\\python.cmd scripts/todo-graph.py resolve \"{REF}\" --context`, or `./scripts/run-python.sh` on Linux and WSL)", text)
+        self.assertIn(f"- TODO section: `{REF}` (its contract: `python3 scripts/todo-graph.py resolve \"{REF}\"`)", text)
         self.assertIn(f"`{TODO}`", text)
         self.assertIn("- Fidelity: `design/main-window.png`.", text)
         self.assertNotIn("none (Surface: no)", text)
@@ -125,6 +145,19 @@ class FillEachKind(Filler):
 
     def test_fidelity_defaults_to_no_surface(self):
         self.assertIn("- Fidelity: `none (Surface: no)`.", self.ok("plan", "--ref", REF, "--todo", TODO))
+        self.assertIn("- Fidelity: `none (Surface: no)`.", self.ok("round", "--ref", REF))
+        self.assertIn("- Fidelity: `design/SPEC.md`.", self.ok("round", "--ref", REF, "--fidelity", "design/SPEC.md"))
+
+    def test_every_kind_takes_fidelity_and_names_it_on_its_candidate(self):
+        # The reconciliation prompt had no Fidelity line, so a repair of a surface was reviewed with no design source.
+        for kind in KINDS:
+            with self.subTest(kind):
+                extra = ["--ref", REF] + (["--todo", TODO] if kind in ("plan", "completion") else [])
+                text = self.ok(kind, *extra, "--fidelity", "docs/design/contract.md")
+                candidate = text.partition("## Candidate")[2].partition("\n## ")[0]
+                self.assertIn("- Fidelity: `docs/design/contract.md`.", candidate)
+                self.assertNotIn("none (Surface: no)", text)
+                self.assertIn("- Fidelity: `none (Surface: no)`.", self.ok(kind, *extra))
 
     def test_single_commit_versus_range(self):
         single = self.ok("round", "--ref", REF)
@@ -214,7 +247,7 @@ class Refusals(Filler):
         self.refused("plan", "no place for --purpose", "--purpose", "x")
         self.refused("plan", "no place for --base", "--base", BASE)
         self.refused("round", "no place for --gates", "--gates", str(self.gates))
-        self.refused("reconciliation", "no place for --fidelity", "--ref", REF, "--fidelity", "x")
+        self.refused("reconciliation", "no place for --purpose", "--ref", REF, "--purpose", "x")
 
     def test_missing_template(self):
         (self.root / "docs" / "review-round-prompt.md").unlink()
@@ -353,7 +386,8 @@ class TodoLookup(Filler):
     graph = textwrap.dedent('''\
         import json, sys
         if sys.argv[1:] == ["resolve", "D00 T01 §7"]:
-            print(json.dumps({"ref": "D00 T01 §7", "path": "todo/00-x/TODO-01-y.md", "exit": 3}))
+            print(json.dumps({"ref": "D00 T01 §7", "path": "todo/00-x/TODO-01-y.md",
+                              "body": "## 7. Example\\n\\n**Surface:** no\\n", "exit": 3}))
             sys.exit(3)
         print(json.dumps({"error": "no such section"}))
         sys.exit(1)
@@ -367,9 +401,414 @@ class TodoLookup(Filler):
     def test_explicit_todo_wins(self):
         self.assertIn("`other/TODO.md`", self.ok("plan", "--ref", REF, "--todo", "other/TODO.md"))
 
+    def reconcile(self, *extra):
+        return ["--failed", FAILED, "--gates", str(self.gates), "--governing", "docs/plan.md", "--ref", REF, *extra]
+
+    def test_ref_without_findings_names_the_section_file_in_the_configured_folder(self):
+        # D03 T01 §4: the findings folder is todo/plan.json's layout.receipts, docs/reviews without it.
+        (self.root / "todo/00-x").mkdir(parents=True)
+        self.assertIn("`docs/reviews/00-x/D00-T01-s7.md`", self.ok("reconciliation", *self.reconcile(), common=False))
+        (self.root / "todo/plan.json").write_text('{"layout": {"receipts": "reviews"}}', encoding="utf-8")
+        text = self.ok("reconciliation", *self.reconcile(), common=False)
+        self.assertIn("`reviews/00-x/D00-T01-s7.md`", text)
+        self.assertNotIn("docs/reviews/00-x", text)
+        (self.root / "todo/plan.json").write_text('{"layout": {"receipts": "reviews", "plan": "docs/plan.md"}}',
+                                                  encoding="utf-8")  # D03 T01 §7: the todo kit's plan key passes
+        self.assertIn("`reviews/00-x/D00-T01-s7.md`", self.ok("reconciliation", *self.reconcile(), common=False))
+        self.assertIn("`other/f.md`", self.ok("reconciliation", *self.reconcile("--findings", "other/f.md"),
+                                              common=False), "an explicit --findings still wins")
+
+    def test_a_layout_that_cannot_be_read_is_refused(self):
+        (self.root / "todo/00-x").mkdir(parents=True)
+        (self.root / "todo/plan.json").write_text('{"layout": {"receipts": "../out"}}', encoding="utf-8")
+        self.refused("reconciliation", "todo/plan.json: layout receipts must be a folder inside the repository",
+                     *self.reconcile(), common=False)
+
     def test_unresolvable_section_asks_for_todo(self):
         message = self.refused("plan", "--todo is needed", "--ref", "D09 T09 §9")
         self.assertIn("named no file", message)
+
+
+class FidelityLookup(Filler):
+    """`--ref` without `--fidelity` reads the section's own Surface and Fidelity through todo-graph.py resolve."""
+    graph = textwrap.dedent('''\
+        import json, sys
+        BODIES = {
+            "D00 T01 §7": "## 7. A surface\\n\\n**Surface:** yes\\n**Fidelity:** `docs/design/contract.md` section 4\\n",
+            "D00 T01 §8": "## 8. No surface\\n\\n**Surface:** no\\n",
+            "D00 T01 §9": "## 9. A surface with no source\\n\\n**Surface:** yes\\n**Job:** Open a file.\\n",
+            "D00 T02 §1": "## 1. Quoted fields\\n\\n> **Surface:** yes\\n> **Fidelity:** docs/design/mockup.md\\n",
+            "D00 T02 §2": "## 2. Missing surface\\n\\n**Job:** No surface field.\\n",
+            "D00 T02 §3": "## 3. Ambiguous surface\\n\\n**Surface:** yes\\n**Surface:** no\\n",
+            "D00 T02 §4": "## 4. Empty duplicate surface\\n\\n**Surface:**\\n**Surface:** no\\n",
+            "D00 T02 §5": "## 5. Empty duplicate fidelity\\n\\n**Surface:** yes\\n**Fidelity:**\\n**Fidelity:** docs/x.md\\n",
+        }
+        ref = sys.argv[2] if sys.argv[1:2] == ["resolve"] and len(sys.argv) == 3 else None
+        if ref == "D00 T03 §1":
+            print(json.dumps({"ref": ref, "path": "todo/00-x/TODO-03-z.md", "exit": 0}))
+            sys.exit(0)
+        if ref not in BODIES:
+            print("TODO refused: no such section: " + str(ref), file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps({"ref": ref, "path": "todo/00-x/TODO-01-y.md", "body": BODIES[ref], "exit": 3}))
+        sys.exit(3)
+        ''')
+
+    def extra(self, kind, ref):
+        return ["--ref", ref] + (["--findings", "f.md"] if kind == "reconciliation" else [])
+
+    def test_a_surface_sections_fidelity_is_read_on_every_kind(self):
+        for kind in KINDS:
+            with self.subTest(kind):
+                text = self.ok(kind, *self.extra(kind, REF))
+                self.assertIn("- Fidelity: `docs/design/contract.md` section 4.", text)
+                self.assertNotIn("none (Surface: no)", text)
+                self.assertEqual(PLACEHOLDER.findall(text), [])
+                quoted = self.ok(kind, *self.extra(kind, "D00 T02 §1"))
+                self.assertIn("- Fidelity: `docs/design/mockup.md`.", quoted)
+
+    def test_a_section_without_a_surface_keeps_the_default(self):
+        for kind in KINDS:
+            with self.subTest(kind):
+                self.assertIn("- Fidelity: `none (Surface: no)`.", self.ok(kind, *self.extra(kind, "D00 T01 §8")))
+
+    def test_a_surface_section_without_a_fidelity_is_refused_never_sent_as_no_surface(self):
+        for kind in KINDS:
+            with self.subTest(kind):
+                message = self.refused(kind, "--fidelity is needed", *self.extra(kind, "D00 T01 §9"))
+                self.assertIn("Surface: yes", message)
+                self.assertIn("D00 T01 §9", message)
+
+    def test_an_explicit_fidelity_wins_and_needs_no_lookup(self):
+        for ref in (REF, "D00 T01 §9"):
+            with self.subTest(ref):
+                text = self.ok("round", "--ref", ref, "--fidelity", "design/other.md")
+                self.assertIn("- Fidelity: `design/other.md`.", text)
+
+    def test_a_section_the_graph_cannot_resolve_is_refused(self):
+        message = self.refused("round", "--fidelity is needed", "--ref", "D09 T09 §9")
+        self.assertIn("looking up D09 T09 §9 failed", message)
+
+    def test_a_graph_that_prints_no_body_is_refused(self):
+        message = self.refused("round", "--fidelity is needed", "--ref", "D00 T03 §1")
+        self.assertIn("printed no section body", message)
+
+    def test_blank_fidelity_override_is_refused(self):
+        for blank in ("", "   "):
+            with self.subTest(blank=blank):
+                message = self.refused("round", "--fidelity must not be blank", "--ref", REF, "--fidelity", blank)
+                self.assertIn("--fidelity must not be blank", message)
+
+    def test_missing_or_ambiguous_surface_field_is_refused(self):
+        for ref in ("D00 T02 §2", "D00 T02 §3", "D00 T02 §4"):
+            with self.subTest(ref=ref):
+                message = self.refused("round", "--fidelity is needed", "--ref", ref)
+                self.assertIn("unambiguous Surface", message)
+        # Empty duplicate Fidelity on Surface: yes is also refused (Round 1 finding 4).
+        message = self.refused("round", "--fidelity is needed", "--ref", "D00 T02 §5")
+        self.assertIn("names no one Fidelity", message)
+
+    def test_candidate_commit_fidelity_wins_over_working_tree(self):
+        import subprocess
+        git = lambda *args: subprocess.run(
+            ["git", "-C", str(self.root), *args], check=True, capture_output=True, text=True
+        )
+        git("init", "-q")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test")
+        todo_file = self.root / "todo/00-x/TODO-01-y.md"
+        todo_file.parent.mkdir(parents=True, exist_ok=True)
+        todo_file.write_text(
+            "## 7. A surface\n\n**Surface:** yes\n**Fidelity:** `docs/design/v1.md` section 1\n"
+            "##\tAppendix\n**Surface:** no\n",
+            encoding="utf-8",
+        )
+        git("add", "todo/00-x/TODO-01-y.md")
+        git("commit", "-q", "-m", "v1 fidelity")
+        cand = git("rev-parse", "HEAD").stdout.strip()
+        # Mutate working tree to a different Fidelity (and stub graph returns contract.md section 4).
+        todo_file.write_text(
+            "## 7. A surface\n\n**Surface:** no\n**Fidelity:** `docs/design/v2.md` section 2\n",
+            encoding="utf-8",
+        )
+        out = self.root / "cand-prompt.md"
+        done = self.run_filler([
+            "--kind", "round", "--candidate", cand, "--ref", REF,
+            "--purpose", "Verify candidate Fidelity.", "--governing", "docs/plan.md", "--out", str(out),
+        ])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("- Fidelity: `docs/design/v1.md` section 1.", text)
+        self.assertNotIn("docs/design/v2.md", text)
+        self.assertNotIn("docs/design/contract.md", text)
+
+        # Round 1 finding 1: unavailable full SHA inside a git repo refuses instead of falling back to checkout.
+        missing_sha = "f" * 40
+        bad = self.run_filler([
+            "--kind", "round", "--candidate", missing_sha, "--ref", REF,
+            "--purpose", "Verify unavailable SHA refusal.", "--governing", "docs/plan.md", "--out", str(out),
+        ])
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("not an available commit", bad.stderr)
+
+        # Round 1 finding 3: missing graph body still refuses even on a real git candidate commit.
+        todo3 = self.root / "todo/00-x/TODO-03-z.md"
+        todo3.write_text("## 1. No body\n\n**Surface:** no\n", encoding="utf-8")
+        git("add", "todo/00-x/TODO-03-z.md")
+        git("commit", "-q", "-m", "add todo3")
+        cand3 = git("rev-parse", "HEAD").stdout.strip()
+        no_body = self.run_filler([
+            "--kind", "round", "--candidate", cand3, "--ref", "D00 T03 §1",
+            "--purpose", "Verify missing body refusal on real commit.", "--governing", "docs/plan.md", "--out", str(out),
+        ])
+        self.assertEqual(no_body.returncode, 2)
+        self.assertIn("printed no section body", no_body.stderr)
+
+        # Round 1 finding 2: renaming the TODO file after candidate still resolves candidate's file via DNN TNN.
+        renamed = self.root / "todo/00-x/TODO-01-renamed.md"
+        todo_file.rename(renamed)
+        (self.root / "scripts/todo-graph.py").write_text(
+            self.graph.replace("todo/00-x/TODO-01-y.md", "todo/00-x/TODO-01-renamed.md"),
+            encoding="utf-8",
+        )
+        done_renamed = self.run_filler([
+            "--kind", "round", "--candidate", cand, "--ref", REF,
+            "--purpose", "Verify renamed TODO lookup.", "--governing", "docs/plan.md", "--out", str(out),
+        ])
+        self.assertEqual(done_renamed.returncode, 0, done_renamed.stderr)
+        self.assertIn("- Fidelity: `docs/design/v1.md` section 1.", out.read_text(encoding="utf-8"))
+
+        # Round 1 finding 5: ##<tab> heading ends section 7 so Surface in Appendix is not consumed.
+        todo_tab = self.root / "todo/00-x/TODO-01-y.md"
+        todo_tab.write_text("## 7. Heading only\n##\tAppendix\n**Surface:** no\n", encoding="utf-8")
+        git("add", "todo/00-x/TODO-01-y.md")
+        git("commit", "-q", "-m", "tab heading boundary")
+        cand_tab = git("rev-parse", "HEAD").stdout.strip()
+        tab_res = self.run_filler([
+            "--kind", "round", "--candidate", cand_tab, "--ref", REF,
+            "--purpose", "Verify tab heading stop.", "--governing", "docs/plan.md", "--out", str(out),
+        ])
+        self.assertEqual(tab_res.returncode, 2)
+        self.assertIn("unambiguous Surface", tab_res.stderr)
+
+    def test_plan_prompt_calls_todo_graph_resolve_only_once(self):
+        # Round 1 finding 8: reusing resolve_section() avoids running todo-graph.py resolve twice per prompt.
+        counter = self.root / "resolve-calls.txt"
+        logged_graph = (
+            f"from pathlib import Path\n"
+            f"with open({str(counter)!r}, 'a', encoding='utf-8') as f: f.write('1\\n')\n"
+            + self.graph
+        )
+        (self.root / "scripts/todo-graph.py").write_text(logged_graph, encoding="utf-8")
+        text = self.ok("plan", "--ref", REF)
+        self.assertIn("`todo/00-x/TODO-01-y.md`", text)
+        self.assertIn("- Fidelity: `docs/design/contract.md` section 4.", text)
+        self.assertEqual(len(counter.read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_git_repository_access_error_refuses_instead_of_checkout_fallback(self):
+        # Completion review Gap 1: exit-128 repository-access failure (e.g. dubious ownership) must refuse rather than
+        # falling back to working-tree Fidelity, while non-git directories still work.
+        import importlib.util
+        import unittest.mock
+        spec = importlib.util.spec_from_file_location("review_prompt_under_test", self.root / "scripts/review-prompt.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        fake_128 = subprocess.CompletedProcess(
+            ["git"], 128, stdout="", stderr="fatal: detected dubious ownership in repository at '/repo'\n"
+        )
+        with unittest.mock.patch.object(mod.subprocess, "run", return_value=fake_128):
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(self.root, CAND, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+        self.assertIn("dubious ownership", str(ctx.exception))
+        # Outside a git repo ("not a git repository (or any ...)" with no GIT_DIR and no ancestor .git), standalone
+        # fixtures still return None, and the git probe runs with C-locale env vars (Reconciliation 1 finding 3).
+        fake_not_git = subprocess.CompletedProcess(
+            ["git"], 128, stdout="", stderr="fatal: not a git repository (or any of the parent directories): .git\n"
+        )
+        seen_env = {}
+        def capture_run(*args, **kwargs):
+            seen_env.update(kwargs.get("env") or {})
+            return fake_not_git
+        with unittest.mock.patch.dict(os.environ, {"LC_ALL": "fr_FR.UTF-8"}, clear=False), \
+                unittest.mock.patch.object(mod.subprocess, "run", side_effect=capture_run):
+            if "GIT_DIR" in os.environ:
+                os.environ.pop("GIT_DIR")
+            self.assertIsNone(mod._section_body_at_commit(self.root, CAND, "todo/00-x/TODO-01-y.md", REF))
+        self.assertEqual(seen_env.get("LC_ALL"), "C")
+        self.assertEqual(seen_env.get("LANG"), "C")
+        self.assertEqual(seen_env.get("LANGUAGE"), "C")
+
+        # Standalone non-git directory with GIT_INDEX_FILE still works (Reconciliation 4 finding 6).
+        with unittest.mock.patch.dict(os.environ, {"GIT_INDEX_FILE": "alternate-index"}, clear=False):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            self.assertIsNone(mod._section_body_at_commit(self.root, CAND, "todo/00-x/TODO-01-y.md", REF))
+
+        # Real git checkout: GIT_WORK_TREE pointing elsewhere still reads candidate commit (Reconciliation 4 finding 1);
+        # stale GIT_OBJECT_DIRECTORY and stale GIT_DIR refuse; corrupt .git refuses; GIT_CEILING_DIRECTORIES allows
+        # standalone nested dir without crossing Git's discovery boundary (Reconciliation 4 finding 7).
+        outer = Path(self._tmp.name) / "outer-repo"
+        nested = outer / "standalone-sub"
+        nested.mkdir(parents=True)
+        other_wt = Path(self._tmp.name) / "elsewhere-wt"
+        other_wt.mkdir()
+        git = lambda *args: subprocess.run(
+            ["git", "-C", str(outer), *args], check=True, capture_output=True, text=True
+        )
+        git("init", "-q")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "Test")
+        todo_outer = outer / "todo/00-x/TODO-01-y.md"
+        todo_outer.parent.mkdir(parents=True, exist_ok=True)
+        todo_outer.write_text("## 7. A surface\n\n**Surface:** yes\n**Fidelity:** `docs/design/wt.md`\n",
+                              encoding="utf-8")
+        git("add", "todo/00-x/TODO-01-y.md")
+        git("commit", "-q", "-m", "outer commit")
+        outer_cand = git("rev-parse", "HEAD").stdout.strip()
+
+        with unittest.mock.patch.dict(os.environ, {"GIT_WORK_TREE": str(other_wt)}, clear=False):
+            body = mod._section_body_at_commit(outer, outer_cand, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIsNotNone(body)
+        self.assertIn("docs/design/wt.md", body)
+
+        with unittest.mock.patch.dict(os.environ, {"GIT_OBJECT_DIRECTORY": str(outer / "missing-objects")},
+                                      clear=False):
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(outer, outer_cand, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+
+        with unittest.mock.patch.dict(os.environ, {"GIT_DIR": str(outer / "missing-git-dir")}, clear=False):
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(outer, outer_cand, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+
+        corrupt = Path(self._tmp.name) / "corrupt-repo"
+        corrupt.mkdir()
+        (corrupt / ".git").write_text("gitdir: missing\n", encoding="utf-8")
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(corrupt, CAND, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+
+        with unittest.mock.patch.dict(os.environ, {"GIT_CEILING_DIRECTORIES": str(outer)}, clear=False):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            self.assertIsNone(mod._section_body_at_commit(nested, CAND, "todo/00-x/TODO-01-y.md", REF))
+
+        # Reconciliation 5 finding 1: existing repo whose .git/objects is inaccessible causes Git to emit the
+        # discovery-only diagnostic; _has_git_marker_within_discovery_boundary catches it and refuses.
+        with unittest.mock.patch.dict(os.environ, {}, clear=False), \
+                unittest.mock.patch.object(mod.subprocess, "run", return_value=fake_not_git):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(outer, outer_cand, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+
+        # Filesystem mount boundary stops the marker scan unless GIT_DISCOVERY_ACROSS_FILESYSTEM is set.
+        real_stat = os.stat
+        outer_real = os.path.normcase(os.path.realpath(outer))
+
+        class _FakeStat:
+            def __init__(self, dev):
+                self.st_dev = dev
+
+        def mount_boundary_stat(p, *a, **kw):
+            st = real_stat(p, *a, **kw)
+            if os.path.normcase(os.path.realpath(p)) == outer_real:
+                return _FakeStat(st.st_dev + 1)
+            return st
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=False), \
+                unittest.mock.patch.object(mod.os, "stat", side_effect=mount_boundary_stat), \
+                unittest.mock.patch.object(mod.subprocess, "run", return_value=fake_not_git):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            os.environ.pop("GIT_DISCOVERY_ACROSS_FILESYSTEM", None)
+            self.assertIsNone(mod._section_body_at_commit(nested, CAND, "todo/00-x/TODO-01-y.md", REF))
+
+        # Reconciliation 6/7 finding 9: Git's own bool parser handles '2', '01', and '1k' as truthy.
+        real_run = subprocess.run
+        def fake_rev_parse_real_config(cmd, *a, **kw):
+            if len(cmd) >= 2 and cmd[1] == "-c":
+                return real_run(cmd, *a, **kw)
+            return fake_not_git
+
+        for truthy in ("2", "01", "1k"):
+            with self.subTest(across_fs=truthy):
+                with unittest.mock.patch.dict(os.environ, {"GIT_DISCOVERY_ACROSS_FILESYSTEM": truthy}, clear=False), \
+                        unittest.mock.patch.object(mod.os, "stat", side_effect=mount_boundary_stat), \
+                        unittest.mock.patch.object(mod.subprocess, "run", side_effect=fake_rev_parse_real_config):
+                    for var in mod._GIT_STORE_ENV_VARS:
+                        os.environ.pop(var, None)
+                    with self.assertRaises(mod.Refused) as ctx:
+                        mod._section_body_at_commit(nested, CAND, "todo/00-x/TODO-01-y.md", REF)
+                self.assertIn("git repository check failed", str(ctx.exception))
+
+        # D00 T03 §2 (filed P3 from D00 T03 §1 Rec 8): inherited GIT_CONFIG, GIT_CONFIG_PARAMETERS, and
+        # GIT_CONFIG_COUNT must not disrupt _git_across_fs()'s Git --type=bool parse. Use independently
+        # disruptive values so removing any one key from _git_across_fs()'s filter makes git config fail.
+        for label, extra_env in (
+            ("GIT_CONFIG", {"GIT_CONFIG": os.devnull}),
+            ("GIT_CONFIG_PARAMETERS", {"GIT_CONFIG_PARAMETERS": "malformed"}),
+            ("GIT_CONFIG_COUNT", {"GIT_CONFIG_COUNT": "1"}),
+        ):
+            with self.subTest(config_override=label):
+                test_env = {**os.environ, "GIT_DISCOVERY_ACROSS_FILESYSTEM": "1", **extra_env}
+                test_env.pop("GIT_CONFIG_KEY_0", None)
+                c_env = {**test_env, "LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"}
+                self.assertTrue(mod._git_across_fs(test_env, c_env))
+                with unittest.mock.patch.dict(os.environ, {"GIT_DISCOVERY_ACROSS_FILESYSTEM": "1", **extra_env},
+                                              clear=False), \
+                        unittest.mock.patch.object(mod.os, "stat", side_effect=mount_boundary_stat), \
+                        unittest.mock.patch.object(mod.subprocess, "run", side_effect=fake_rev_parse_real_config):
+                    os.environ.pop("GIT_CONFIG_KEY_0", None)
+                    for var in mod._GIT_STORE_ENV_VARS:
+                        os.environ.pop(var, None)
+                    with self.assertRaises(mod.Refused) as ctx:
+                        mod._section_body_at_commit(nested, CAND, "todo/00-x/TODO-01-y.md", REF)
+                self.assertIn("git repository check failed", str(ctx.exception))
+
+        # Reconciliation 7 finding 1: EIO/EACCES on lstat(".git") must refuse instead of returning False via lexists().
+        import errno
+        real_lstat = os.lstat
+        def fail_git_lstat(p, *a, **kw):
+            if Path(p).name == ".git":
+                raise OSError(errno.EIO, "simulated I/O error on .git")
+            return real_lstat(p, *a, **kw)
+
+        with unittest.mock.patch.dict(os.environ, {}, clear=False), \
+                unittest.mock.patch.object(mod.os, "lstat", side_effect=fail_git_lstat), \
+                unittest.mock.patch.object(mod.subprocess, "run", return_value=fake_not_git):
+            for var in mod._GIT_STORE_ENV_VARS:
+                os.environ.pop(var, None)
+            with self.assertRaises(mod.Refused) as ctx:
+                mod._section_body_at_commit(self.root, CAND, "todo/00-x/TODO-01-y.md", REF)
+        self.assertIn("git repository check failed", str(ctx.exception))
+
+        # Reconciliation 6 finding 1: dangling .git symlink refuses instead of returning None via Path.exists().
+        dangling = Path(self._tmp.name) / "dangling-repo"
+        dangling.mkdir()
+        dangling_git = dangling / ".git"
+        try:
+            os.symlink(dangling / "offline-volume-target", dangling_git)
+            dangling_made = True
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                dangling_made = False
+            else:
+                raise
+        if dangling_made:
+            with unittest.mock.patch.dict(os.environ, {}, clear=False), \
+                    unittest.mock.patch.object(mod.subprocess, "run", return_value=fake_not_git):
+                for var in mod._GIT_STORE_ENV_VARS:
+                    os.environ.pop(var, None)
+                with self.assertRaises(mod.Refused) as ctx:
+                    mod._section_body_at_commit(dangling, CAND, "todo/00-x/TODO-01-y.md", REF)
+            self.assertIn("git repository check failed", str(ctx.exception))
 
 
 class NoGraph(Filler):
@@ -379,6 +818,26 @@ class NoGraph(Filler):
 
     def test_round_needs_no_lookup(self):
         self.assertIn(f"`{REF}`", self.ok("round", "--ref", REF))
+
+    def test_all_four_prompts_point_at_appended_rubric_with_no_inline_definitions_or_suppression(self):
+        inline_def = re.compile(r"P[123]`?\s*\(")
+        for kind in KINDS:
+            extra = ["--ref", REF]
+            if kind in ("plan", "completion"):
+                extra += ["--todo", "todo/00-x/TODO-01-y.md"]
+            if kind == "reconciliation":
+                extra += ["--findings", "docs/reviews/00-x/D00-T01-s7.md"]
+            text = self.ok(kind, *extra)
+            with self.subTest(kind=kind):
+                self.assertIsNone(inline_def.search(text), f"{kind} still defines P1/P2/P3 inline")
+                for forbidden in ("list only", "report only", "Do not list a need", "Proportionality:"):
+                    self.assertNotIn(forbidden, text, f"{kind} still contains suppression phrase {forbidden!r}")
+                self.assertIn("likelihood-weighted severity rubric", text)
+                self.assertIn("scripts/review-dispatch.py", text)
+                if kind == "reconciliation":
+                    self.assertIn("## Writer note:", text)
+                    self.assertIn("contests on its grade", text)
+                    self.assertIn("revised grade contributes to `HIGHEST:`", text)
 
 
 class ThroughTheDispatcher(Harness):
@@ -394,7 +853,7 @@ class ThroughTheDispatcher(Harness):
         self.assertIsNotNone(summary)
         sent = self.calls()[-1]["stdin"]
         self.assertIn(CAND, sent)
-        self.assertEqual(sent, filled.read_text(encoding="utf-8"))
+        self.assertEqual(sent, filled.read_text(encoding="utf-8").rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
         self.assertEqual(PLACEHOLDER.findall(sent), [])
 
 

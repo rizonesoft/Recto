@@ -417,15 +417,24 @@ LENSES = {
                      "partial, stubbed or quietly narrowed?",
     "adversarial": "How does this fail on hostile input, races, aborts, cancellation, automation or links?",
     "integration": "Do callers and consumers still hold, with every contract (threads, ownership, errors) kept?",
-    "source-defect": "Is the upstream specification or design/SPEC.md read accurately, with deviations noted?",
+    "source-defect": "Is the upstream specification, or the design contract the candidate's Fidelity names, read "
+                     "accurately, with deviations noted?",
     "consistency": "Does it match the module rules, naming, shared components, settings and sibling code?",
     "quality": "Is the code clear, minimal and maintainable: dead code, duplication, misleading names or comments, "
                "tests that pass without exercising the behaviour?",
-    "design": "Does the rendered UI match design/SPEC.md and its tokens: roles, radii, icons, states, accessibility?",
+    "design": "Does the rendered UI match the design contract and token source the candidate's Fidelity names (the "
+              "repository's own design contract when it names none): roles, radii, icons, states, accessibility, "
+              "with no raw color, size, radius or spacing literal where a token exists?",
+    "design-plan": "Does the plan name the design contract and token source it builds against, cover every control, "
+                   "state, icon and accessibility role of the surface it touches, and give a Test checkpoint that "
+                   "runs the static token check and a real rendered check?",
     "optimization": "Where does it waste time, memory, allocations, I/O or redraws on the paths users hit, and what "
                     "measured target does it miss?",
     "record": "Does the evidence match what ran, with owned deferrals and an earned flip of every item?",
 }
+# The lenses a pass has only for a section with a surface (`lenses_for`), so the pass does not always have them and a
+# conditional entry may give them to it by path as well.
+SURFACE_GATED = {"round": ("design",)}
 STEP_KEYS = {"effort", "lenses"}
 ROTATION_KEYS = {"plan", "completion", "rounds", "rotation", "escalation", "severity_stop_after"}
 THREE_PASS_KEYS = {"policy", "plan", "completion", "rounds", "reconciliation"}
@@ -663,12 +672,16 @@ def check_conditional_overlap(n, entry, schedule, owners):
     where = f"[[schedule.conditional]] entry {n}"
     for kind in entry["passes"]:
         always = schedule["rounds"][0] if kind == "round" else schedule[kind]
-        repeated = [name for name in entry["lenses"] if name in always.get("lenses", [])]
+        # A surface-gated lens is not one the pass always has: the entry gives it by path to a section without a
+        # surface, and `lenses_for` never lists it twice for one with.
+        gated = SURFACE_GATED.get(kind, ())
+        repeated = [name for name in entry["lenses"] if name in always.get("lenses", []) and name not in gated]
         if repeated:
             raise Refused(f"{where} repeats the lens {repeated[0]}, which the {kind} pass always has")
         # The one-owner rule holds for conditional lenses too: a lens plan, the round or completion always has
         # cannot be handed to another of them by path. Reconciliation may repeat lenses, here as in its own list.
-        taken = [name for name in entry["lenses"] if kind != "reconciliation" and name in owners]
+        taken = [name for name in entry["lenses"]
+                 if kind != "reconciliation" and name in owners and owners[name] != kind]
         if taken:
             raise Refused(f"{where} gives the {kind} pass the lens {taken[0]}, which belongs to {owners[taken[0]]}; "
                           f"a lens belongs to one of plan, the round and completion")
@@ -894,10 +907,15 @@ def main(argv=None):
     parser.add_argument("--paths", nargs="*", default=[], metavar="FILE",
                         help="With --lenses: the section's changed files, repository-relative with forward slashes, "
                              "so the conditional lenses that apply to them are listed too")
+    parser.add_argument("--no-surface", action="store_true",
+                        help="With --lenses: the section has Surface: no, so a surface-gated lens (the round's "
+                             "design) is listed only when a conditional entry gives it for the files in --paths")
     parser.add_argument("--pin", default=str(PIN), help="The pin to read (default .conclave/reviewers.toml)")
     args = parser.parse_args(argv)
     if args.all and not args.check:
         parser.error("--all goes with --check")
+    if args.no_surface and not args.lenses:
+        parser.error("--no-surface goes with --lenses")
     if args.all:
         found = faults(args.pin)
         for message in found:
@@ -914,7 +932,7 @@ def main(argv=None):
             print("ok")
         elif args.lenses:
             table = lens_table(schedule)
-            for name in lenses_for(schedule, args.lenses, args.paths):
+            for name in lenses_for(schedule, args.lenses, args.paths, not args.no_surface):
                 print(f"{name}: {table[name]}")
         else:
             print(f"pass_cap {pass_cap(schedule)}")
