@@ -1,26 +1,25 @@
 ---
 name: authoring-skills
-description: Use when creating, moving, reviewing, or documenting project skills, skill references, Claude Code skill folders (.claude/skills), agent rules (.claude/rules) or subagent definitions (.claude/agents).
+description: Use when creating, moving, reviewing, or documenting project skills, skill references, or always-on rules in .agents/skills and .agents/rules.
 ---
 
 # Authoring Skills
 
-Follow `docs/agent-skills-and-rules-structure.md` before creating or moving skills or rules. Claude Code is the only agent kit: Fable 5.2 is the sole writer in this repository (owner decision 2026-11-10), and the reviewer (GPT-6.2 Astra through the Codex CLI) reads `AGENTS.md` and needs no kit (owner decision 2026-10-23).
+Follow `docs/agent-skills-and-rules-structure.md` before creating or moving skills or rules. Both Claude Code (`.claude/`) and Google Antigravity (`.agents/`) are writers in this repository, and the reviewer (GPT-6.2 Astra through the Codex CLI) reads `AGENTS.md` directly.
 
 ## Required Pattern
 
-1. Put skill content under `.agents/skills/<skill-name>/`.
+1. Put Antigravity skill content under `.agents/skills/<skill-name>/` (and mirror to `.claude/skills/<skill-name>/` with Claude-specific commands when updating shared skills).
 2. Put required instructions in `SKILL.md`.
 3. Name skills for the capability, not the project namespace. Prefer gerunds or clear noun phrases such as `authoring-skills` or `local-tool-safety`; keep project-specific scope in the description and instructions.
 4. Put long checklists, conventions, and detailed docs in `references/`.
 5. Put helper scripts in `scripts/` and templates/resources in `assets/`.
 6. Keep `.agents/skills/<skill-name>/` as real files and directories, never symlinks.
-7. Use `.claude/rules/` for agent-scoped rules and `.claude/agents/` for subagents. A subagent that writes code, tests, plan or docs pins `model: claude-fable-5-2`; Sonnet and Haiku subagents are read-only.
+7. Put Antigravity always-on rules in `.agents/rules/` (and mirror shared rules to `.claude/rules/` where `.claude/rules/` exists).
 
 ## Validation
 
 - Confirm `SKILL.md` exists in `.agents/skills/<skill-name>/`.
 - Confirm the skill `name` frontmatter matches its directory.
-- Confirm no symlinks exist under `.claude/skills`.
-- Run `node scripts/verify-agent-tiers.mjs` after changing a subagent definition.
+- Confirm no symlinks exist under `.agents/skills/`.
 - Update `AGENTS.md` or `docs` when adding behavior that future agents must follow.

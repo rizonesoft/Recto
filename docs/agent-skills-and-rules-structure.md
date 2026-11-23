@@ -1,13 +1,14 @@
 # Agent Skills and Rules Structure
 
-Claude Code (`claude`) and Google Antigravity on Orchestrator (Carbon) (`agy`, `gemini-pro-orchestrator`) are the writers in this repository (owner directions 2026-11-10, 2026-11-12, 2026-11-13 and 2026-11-14). There is a single canonical skill tree under `.claude/skills/`: `.agents/skills.json` points Antigravity directly at `.claude/skills`, and `.agents/hooks.json` wires Antigravity's `SessionStart`, `PreToolUse` and `Stop` hooks to the same `scripts/` modules as `.claude/settings.json`, so zero skill files are ever duplicated under `.agents/skills/`. The `.codex/` writer kit removed on 2026-10-23 stays removed: Codex runs only as the read-only reviewer CLI invoked by `scripts/review-dispatch.py`, reading `AGENTS.md` directly.
+Claude Code (`claude`) and Google Antigravity (`agy`) are the writers in this repository. Claude Code loads its skills from `.claude/skills/` and rules from `.claude/rules/`; Antigravity loads its native skills from `.agents/skills/` and always-on rules from `.agents/rules/`, with `.agents/hooks.json` wiring Antigravity's `SessionStart`, `PreToolUse` and `Stop` hooks to the same `scripts/` modules as `.claude/settings.json`. The `.codex/` writer kit removed on 2026-10-23 stays removed: Codex runs only as the read-only reviewer CLI invoked by `scripts/review-dispatch.py`, reading `AGENTS.md` directly.
 
 ## Skill location
 
-Skills live under:
+Skills live under `.claude/skills/<skill-name>/` (Claude Code) and `.agents/skills/<skill-name>/` (Antigravity):
 
 ```text
-.claude/skills/<skill-name>/
+.claude/skills/<skill-name>/   # Claude Code
+.agents/skills/<skill-name>/   # Google Antigravity
   SKILL.md
   references/
   scripts/

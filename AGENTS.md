@@ -40,7 +40,7 @@ The writer decides and acts, in attended sessions as in unattended runs (owner d
 
 ## Who writes and who reviews
 
-Claude Code (`claude`) and Antigravity (`agy`) are the only authorised writers, one session at a time. Claude's agents use Fable 5.2 (`claude-fable-5-2`, checked by `scripts/verify-agent-tiers.mjs`); its unattended launcher uses `opus`. Antigravity uses Orchestrator (Carbon), `gemini-pro-orchestrator`, pairing Carbon planning/review with Hydrogen execution and no custom subagent definitions. Both share `.claude/skills/` (Antigravity via `.agents/skills.json`) and lifecycle hooks. Codex is a read-only reviewer, never a writer.
+Claude Code (`claude`) and Antigravity (`agy`) are the only authorised writers, one session at a time. Claude's agents use Fable 5.2 (`claude-fable-5-2`, checked by `scripts/verify-agent-tiers.mjs`); its unattended launcher uses `opus`. Claude Code loads its skills from `.claude/skills/` and rules from `.claude/rules/`; Antigravity loads its native skills from `.agents/skills/` and always-on rules from `.agents/rules/`, with `.agents/hooks.json` wiring its lifecycle hooks. Codex is a read-only reviewer, never a writer.
 
 `.conclave/reviewers.toml` owns independent review routing: both writers use GPT-6.2 Astra through Codex's read-only sandbox, with no fallback. Pass `--writer claude` or `--writer agy` to `scripts/review-dispatch.py`. Reviewers never edit. Astra uses medium for plan, initial round and completion, low for follow-up rounds and reconciliation.
 
