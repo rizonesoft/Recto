@@ -19,7 +19,7 @@ Pass `--writer` the agent that wrote the work. The pin refuses any other writer,
 
 1. Review your own change first and fix what you find.
 2. Write the review prompt to a scratch file, not the repository, from `docs/review-round-prompt.md` (or fill it with `build\python.cmd scripts/review-prompt.py --kind round`): name the candidate commit or range, the governing documents, and the touched paths (`--paths <file> ...` when conditional lenses apply).
-3. Run the round in the background (`run_in_background` in Claude Code; `run_command` with `WaitMsBeforeAsync: 500` and `IsDaemon: false` in Antigravity), passing `--writer agy` or `--writer agy`:
+3. Run the round in the background (`run_in_background` in Claude Code; `run_command` with `WaitMsBeforeAsync: 500` and `IsDaemon: false` in Antigravity), passing `--writer agy`:
 
    ```powershell
    build\python.cmd scripts/review-dispatch.py --writer <claude|agy> [--paths <changed files>] --prompt <scratch>/review-prompt.md --record docs/reviews/<topic>.md
