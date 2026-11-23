@@ -138,3 +138,7 @@ Tell the user plainly: what was built, what the checkpoint proved (quoted), what
 - Do not claim a checkpoint passed without running it: quote the output.
 - Do not build a UI surface the SPEC does not describe. The SPEC change ships first.
 - Do not end with the plan unsynced.
+
+## Surface sections and design contract
+
+On a `Surface: yes` section or any section that changed a file under the pin's `[[schedule.conditional]]` design paths, read `.agents/rules/design-contract.md` (or `.claude/rules/design-contract.md`, else `AGENTS.md`) for the design contract, token source, static lint and rendered check, run both checks before committing, and quote both outputs in the commit body.

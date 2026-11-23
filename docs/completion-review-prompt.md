@@ -1,6 +1,6 @@
 # Completion and excellence review prompt
 
-Fill this with `build\python.cmd scripts/review-prompt.py --kind completion --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] [--fidelity <source>] --purpose "<text>" --governing <file> --out <scratch file>` (`./scripts/run-python.sh` on Linux and WSL; `--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind completion --candidate <FULL_SHA> --writer <claude|codex|agy> --prompt <file> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. It runs once per section and is not counted as a round. Under a pin with `policy = "three-pass"` it is the last of the three passes: it reviews the final candidate, after the one round's findings are fixed and the gates rerun, and when it ends `COMPLETION: gaps` the gaps are repaired and checked by a reconciliation review (`docs/reconciliation-review-prompt.md`). Under a rotation pin it runs after the section is built and before the regular review rounds (`docs/review-round-prompt.md`).
+Fill this with `python scripts/review-prompt.py --kind completion --candidate <FULL_SHA> [--base <BASE_SHA>] [--ref "<DNN TNN §N>"] [--fidelity <source>] --purpose "<text>" --governing <file> --out <scratch file>` (`--help` lists every option, and it refuses a placeholder it has no value for), or by hand: copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --kind completion --candidate <FULL_SHA> --writer <claude|codex|agy> --prompt <file> --record <receipts>/<NN-domain>/D<NN>-T<NN>-s<N>.md` (`<receipts>` being `layout.receipts` in `todo/plan.json`, `docs/reviews` by default). It runs once per section and is not counted as a round. Under a pin with `policy = "three-pass"` it is the last of the three passes: it reviews the final candidate, after the one round's findings are fixed and the gates rerun, and when it ends `COMPLETION: gaps` the gaps are repaired and checked by a reconciliation review (`docs/reconciliation-review-prompt.md`). Under a rotation pin it runs after the section is built and before the regular review rounds (`docs/review-round-prompt.md`).
 
 ---
 
@@ -9,7 +9,7 @@ You are an independent product reviewer. Do not modify any file. The candidate b
 ## Candidate
 
 - Commit or range: `<FULL_SHA>` or `<BASE_SHA>..<TIP_SHA>` (inspect it with `git show` or `git diff`).
-- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`, or `./scripts/run-python.sh` on Linux and WSL).
+- TODO section: `<DNN TNN §N>` (its contract: `python3 scripts/todo-graph.py resolve "<DNN TNN §N>"`).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 - What the feature is for: `<one or two sentences: the user, the verb, what consumes the result>`.
@@ -30,7 +30,9 @@ List every piece the feature needs to be complete for a user, then mark each one
 
 Mark each item `present` (name the `file:line` or test that shows it), `missing-in-scope` (the section's contract, its Fidelity surface or its Goal covers it, so the section must build it) or `missing-out-of-scope` (a real need the section's contract does not cover, so it is filed as a new section; say which domain owns it).
 
-Proportionality: list only needs that arise in this repository's real operation: real input the project accepts (a file, request or message from outside is hostile, so a crafted one a user receives is real), a real user action, or a real operating-system, disk or hardware condition. Do not list a need that only a contrived scenario creates (an attacker who already controls the machine, the clock, the repository, the build or the tools, or a precondition no real file, user or system produces).
+Severity: grade every gap by the failure it would let ship, under the likelihood-weighted severity rubric that `scripts/review-dispatch.py` appends to this prompt (which grades and never filters).
+
+When the review is of a TODO section, that section is stamped after its review: `python3 scripts/todo-graph.py stamp` ticks its `- [ ] Commit:` item and its Implementation Order row (`todo/README.md`, Stamps and receipts), so on an unstamped section both are open by design and are not a gap.
 
 ## Part 2: excellence
 
@@ -47,4 +49,4 @@ Give each shortfall a measurable target where you can (a time, a step count, a g
 
 ## Reply format
 
-Part 1 as a numbered list of every item with its mark and evidence. Part 2 as the competitor named, then a numbered list of shortfalls, each with its target and mark. Then a numbered gap list that repeats every `missing-in-scope`, `missing-out-of-scope`, `in-scope` and `out-of-scope` item in one place, one line each, with its mark and a severity: `P1` (the feature ships incomplete, wrong or unproven in real operation), `P2` (a real gap with a narrower reach) or `P3` (polish, an unlikely edge case). Then a line naming the highest severity in that list: `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or `HIGHEST: none`. Then a final line: `COMPLETION: complete` when the gap list is empty, or `COMPLETION: gaps` when it is not. If you could not read the candidate at all (the commit, the diff or the files), say why in one line and end with `COMPLETION: blocked` instead: that is not a review.
+Part 1 as a numbered list of every item with its mark and evidence. Part 2 as the competitor named, then a numbered list of shortfalls, each with its target and mark. Then a numbered gap list that repeats every `missing-in-scope`, `missing-out-of-scope`, `in-scope` and `out-of-scope` item in one place, one line each, with its mark and a severity (`P1`, `P2` or `P3` under the appended severity rubric, graded by the failure it would let ship). Then a line naming the highest severity in that list: `HIGHEST: P1`, `HIGHEST: P2`, `HIGHEST: P3` or `HIGHEST: none`. Then a final line: `COMPLETION: complete` when the gap list is empty, or `COMPLETION: gaps` when it is not. If you could not read the candidate at all (the commit, the diff or the files), say why in one line and end with `COMPLETION: blocked` instead: that is not a review.
