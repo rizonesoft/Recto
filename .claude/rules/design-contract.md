@@ -16,7 +16,7 @@ trigger: always_on
 - Never change a designed surface without a `design/SPEC.md` update first.
 
 ## Static lint
-- No `scripts/design-lint.py` is installed yet (planned in Conclave-SDK `D00 T03 §7`, which will update this rule and `AGENTS.md` on install).
+- No static design-lint script is installed yet (planned in Conclave-SDK `D00 T03 §7`, which will update this rule and `AGENTS.md` on install).
 
 ## Rendered check
 - No built `recto-ui` window render command exists today; each surface section must build or name its own rendered check.
