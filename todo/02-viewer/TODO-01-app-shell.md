@@ -95,6 +95,7 @@ track: M2
 | 20 | §20 | Classic status bar: current page, page size, PDF version and zoom slider | §4, §9, D02 T02 §6, D02 T02 §7, D02 T03 §11, D02 T04 §3, D10 T02 §6, D10 T02 §8, D10 T01 §20, D01 T02 §21 | [ ] |
 | 21 | §21 | Window placement: remember bounds and recover from a missing display | §1, §13, D02 T04 §1, D10 T01 §4 | [ ] |
 | 22 | §22 | Cold-launch path: Home interactive within the 400 ms budget | §14, §21, D02 T03 §2, D02 T04 §2, D10 T01 §3 | [ ] |
+| 23 | §23 | Built-app rendered check command for `recto-ui` | §1 | [ ] |
 
 ## 1. App project, unpackaged/MSIX manifest, assets, tokens and minimum window size
 
@@ -744,6 +745,27 @@ A desktop reader that reopens on the wrong monitor, off screen or at the default
 - [ ] Commit: `app: order startup so Home is interactive within the cold-launch budget`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.StartupOrdering:Shell.StartupNoEagerWork:Shell.ColdLaunchBudget` passes on the display-session host; moving a deferred task (cover decoding) onto the critical path fails `Shell.StartupOrdering`, and starting a `DocumentActor` pool at launch fails `Shell.StartupNoEagerWork`.
+
+## 23. Built-app rendered check command for `recto-ui`
+
+No command currently renders the built `recto-ui` window surfaces to PNG for visual verification against `design/SPEC.md` and `design/screenshots/`. This section adds a repeatable built-app render command so every surface section checks the real application.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Add `scripts/render-window.ps1` to launch built `recto-ui` in an isolated test profile and save PNG captures of Home and Viewer states in light and dark themes to `build/renders/` without synthetic mouse or keyboard input. Done when: `pwsh scripts/render-window.ps1` exits 0 and writes PNGs under `build/renders/`.
+2. Fail closed on missing binary or occluded window and terminate only the launched process tree on exit. Done when: invoking with a missing binary path exits non-zero.
+3. Update `.agents/rules/design-contract.md` and `.claude/rules/design-contract.md` to cite `pwsh scripts/render-window.ps1`. Done when: both files are byte-equal and under 40 lines.
+
+- [ ] Add `scripts/render-window.ps1` to capture built `recto-ui` window states in light and dark themes into `build/renders/` without sending mouse or keyboard input. Done when: `pwsh scripts/render-window.ps1` exits 0 and writes PNGs under `build/renders/`. Cheaper substitute: capturing `design/mockups/html/` pages instead of the built `recto-ui` binary.
+- [ ] Fail `scripts/render-window.ps1` on missing binary or occluded window and stop its launched process tree on exit. Done when: invoking it with an invalid binary path exits non-zero.
+- [ ] Update `.agents/rules/design-contract.md` and `.claude/rules/design-contract.md` Rendered check section to cite `pwsh scripts/render-window.ps1`. Done when: both files are byte-equal and under 40 lines.
+- [ ] Commit: `design: built-app rendered check command for recto-ui (D02 T01 §23)`
+
+**Test checkpoint:** `pwsh scripts/render-window.ps1` exits 0 with built-app PNGs under `build/renders/`, and exits non-zero on a missing binary path.
 
 ## Verification
 

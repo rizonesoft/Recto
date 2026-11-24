@@ -9,7 +9,7 @@ Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document c
 | Path | Purpose |
 | ---- | ------- |
 | `docs/plans/2026-10-13-recto-foundation.md` | Decisions D1-D17, architecture, milestones & targets. |
-| `design/SPEC.md` | Interface source of truth (`screenshots/`, `tokens/`). |
+| `design/SPEC.md` | Interface source of truth (`design/screenshots/`, `design/tokens/colors.json`). |
 | `resources/` | Generated icons/graphics (`build_resources.py`). |
 | `todo/` | Live execution plan (`README.md`, generated plan). |
 | `scripts/` | TODO graph, review dispatch, LSP/MCP, test runner, run guard, pin checks; stdlib Python. |
@@ -140,3 +140,5 @@ Report only commands actually run, and distinguish static evidence, test output 
 ## Codex reviewer only (owner, 2026-11-14)
 
 The owner restored the two-writer workflow: only Claude Code and Antigravity write code, tests, plans and docs. Codex only reviews and never runs a writer campaign. This supersedes the earlier Codex writer authorisation. The launcher accepts only `claude` and `agy`; installing shortcuts removes the retired Codex campaign shortcut. See `docs/codex-campaign.md`.
+
+- **Design contract rule:** always read `.agents/rules/design-contract.md` (mirrored at `.claude/rules/design-contract.md`) before UI edits; static design lint is planned and tracked until installed.

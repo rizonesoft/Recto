@@ -196,7 +196,7 @@ Sections: 111 | Checklist items: 747
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1318
+Sections: 149 | Checklist items: 1322
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -225,6 +225,7 @@ Sections: 148 | Checklist items: 1318
 | [ ]    | D10 T04 §3  | Neutral token role schema, generic generator and Recto theme mapping with `--check`      | windows-host                  | 9     |
 | [ ]    | D10 T01 §8  | Token role schema and `ThemeManager`                                                     | windows-host                  | 11    |
 | [ ]    | D02 T01 §1  | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size            | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §23 | Built-app rendered check command for `recto-ui`                                          | windows-host, display-session | 4     |
 | [ ]    | D10 T01 §9  | Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows          | windows-host                  | 9     |
 | [ ]    | D10 T01 §10 | Text: DirectWrite type ramp, `TextBlock`, trimming and highlighted ranges                | windows-host                  | 9     |
 | [ ]    | D10 T01 §13 | Focus manager: tab order, focus scopes, arrow groups and the Fluent focus visual         | windows-host                  | 9     |
@@ -955,6 +956,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 118/886 verified sections, 53 ready to run now.
+Progress: 118/887 verified sections, 53 ready to run now.
 
-Checklist: 807/6557 items completed (includes Commit items).
+Checklist: 807/6561 items completed (includes Commit items).
