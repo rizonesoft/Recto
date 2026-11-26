@@ -149,8 +149,26 @@ class AgentFrontmatter(unittest.TestCase):
                     for val in writer_vals:
                         if val not in allowed_writers:
                             errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
-                    dispatch_lines = [ln for ln in text.splitlines()
-                                      if "scripts/review-dispatch.py" in ln and "--prompt" in ln]
+                    # Check every executable review-dispatch.py command inside fenced code blocks (no flag filter
+                    # that an abbreviation like `--prom` could bypass), plus any inline backtick span that passes
+                    # a writer flag to review-dispatch.py.
+                    dispatch_lines: list[str] = []
+                    in_fence = False
+                    for ln in text.splitlines():
+                        stripped = ln.strip()
+                        if stripped.startswith("```"):
+                            in_fence = not in_fence
+                            continue
+                        if in_fence and "scripts/review-dispatch.py" in ln:
+                            dispatch_lines.append(ln)
+                        elif not in_fence and "scripts/review-dispatch.py" in ln:
+                            for span in re.findall(r"`([^`\n]*scripts/review-dispatch\.py[^`\n]*)`", ln):
+                                parsed_inline = AgentFrontmatter._parse_dispatch_writer(span)
+                                if parsed_inline is not None and parsed_inline not in allowed_writers:
+                                    errors.append(
+                                        f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
+                                        f"not in {sorted(allowed_writers)}"
+                                    )
                     if not dispatch_lines:
                         errors.append(f"{rel}: missing executable review-dispatch.py command example")
                     for ln in dispatch_lines:
@@ -219,6 +237,13 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("--writer <claude|agy>", "--writ=claude")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_abbrev_writer))
+        wrong_abbrev_prompt = dict(texts)
+        wrong_abbrev_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            wrong_abbrev_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("--kind completion --candidate <full tip SHA> --writer <claude|agy> --prompt",
+                     "--kind completion --candidate <full tip SHA> --writ=claude --prom")
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_abbrev_prompt))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
