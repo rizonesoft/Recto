@@ -335,17 +335,13 @@ class HookCheckTest(Fixture):
         pre.check_hook(self.root, {**PROFILE, "agent": agent}, report)
         return report
 
-    def without_trust(self):
-        return unittest.mock.patch.object(pre, "check_codex_trust", lambda root, report: None)
-
     def test_a_seeded_install_passes_for_each_agent(self):
         for agent, hook_file in pre.AGENT_HOOK_FILE.items():
-            if not (TODO / hook_file).is_file():
+            if agent == "codex" or not (TODO / hook_file).is_file():
                 continue
             with self.subTest(agent=agent):
                 self.seed(hook_file)
-                with self.without_trust():
-                    report = self.check(agent)
+                report = self.check(agent)
                 self.assertEqual(self.fails(report), [], self.lines(report))
                 self.assertIn(f"PASS stop-hook: {hook_file} runs the campaign Stop hook", self.lines(report))
                 self.assertTrue(any(line.startswith("PASS guard-self-test: exit 0") for line in self.lines(report)))
@@ -391,19 +387,6 @@ class HookCheckTest(Fixture):
     def test_no_todo_kit_fails(self):
         self.assertEqual(self.fails(self.check("claude")),
                          ["FAIL stop-hook: scripts/campaign_guard.py is missing: install the todo kit"])
-
-    def test_codex_runs_the_trust_script_and_reports_it(self):
-        self.seed(".codex/hooks.json")
-        fake = self.root / "scripts" / "codex-hook-trust.py"
-        for exit_code, said, ok in ((0, "codex-hook-trust: approved: hooks.json:stop:0:0", True),
-                                    (2, "codex-hook-trust: codex app-server did not start", False)):
-            with self.subTest(exit_code=exit_code):
-                stream = "stdout" if exit_code == 0 else "stderr"
-                fake.write_text(f"import sys\nprint({said!r}, file=sys.{stream})\nsys.exit({exit_code})\n",
-                                encoding="utf-8")
-                report = self.check("codex")
-                line = [x for x in self.lines(report) if "codex-hook-trust" in x.split(":")[0]]
-                self.assertEqual(line, [f"{'PASS' if ok else 'FAIL'} codex-hook-trust: exit {exit_code}: {said}"])
 
 
 class HeadroomCheckTest(Fixture):

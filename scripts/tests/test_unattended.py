@@ -193,10 +193,26 @@ class LoadProfileTest(unittest.TestCase):
             (dst / ".conclave" / "unattended.json").write_bytes(shipped_profile.read_bytes())
             (dst / "docs" / "unattended-prompt.md").write_bytes(shipped_prompt.read_bytes())
             loaded = unattended.load_profile(dst)
-            self.assertIn(loaded["agent"], ("claude", "agy"))
+            self.assertEqual(loaded["agent"], "claude")
             self.assertIn("codex", loaded["tools"])
             self.assertEqual(loaded["prompt_file"], "docs/unattended-prompt.md")
             self.assertTrue((dst / loaded["prompt_file"]).is_file())
+            agy_prof = unattended.runner(loaded, "agy")
+            self.assertEqual((agy_prof["agent"], agy_prof["model"], agy_prof["effort"]),
+                             ("agy", "gemini-pro-orchestrator", None))
+            with self.assertRaises(unattended.ProfileError):
+                unattended.runner(loaded, "codex")
+
+    def test_orchestrator_requires_null_effort_and_runners_reject_codex(self):
+        self.write(self.with_(agent="agy", model="gemini-pro-orchestrator", effort=None))
+        loaded = unattended.load_profile(self.root)
+        self.assertIsNone(loaded["effort"])
+        self.assertIn("rejects --effort", self.refused("effort", self.with_(
+            agent="agy", model="gemini-pro-orchestrator", effort="medium")))
+        self.assertIn("is not an agent", self.refused("runners.codex", self.with_(
+            runners={"codex": {"model": "gpt-6.2-astra", "effort": "high"}})))
+        self.assertIn("rejects --effort", self.refused("runners.agy.effort", self.with_(
+            runners={"agy": {"model": "gemini-pro-orchestrator", "effort": "medium"}})))
 
     def test_a_preflight_command_must_start_with_a_program(self):
         good = {"name": "suite", "command": ["python3"], "timeout_seconds": 60}

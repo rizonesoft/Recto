@@ -101,8 +101,10 @@ class AgentFrontmatter(unittest.TestCase):
         writer identity, pass order and runner-specific background review invocation."""
         errors: list[str] = []
         skills = ("process-todo-section", "review-todo-section", "independent-review", "process-phase", "process-plan")
-        for tree, bg_tokens in ((".claude/skills", ("run_in_background",)),
-                                (".agents/skills", ("WaitMsBeforeAsync: 500", "IsDaemon: false"))):
+        for tree, bg_tokens, allowed_writers in (
+            (".claude/skills", ("run_in_background",), {"claude", "<claude|agy>"}),
+            (".agents/skills", ("WaitMsBeforeAsync: 500", "IsDaemon: false"), {"agy", "<claude|agy>"}),
+        ):
             for skill in skills:
                 rel = f"{tree}/{skill}/SKILL.md"
                 text = texts.get(rel)
@@ -116,19 +118,18 @@ class AgentFrontmatter(unittest.TestCase):
                     writer_vals = re.findall(r"--writer\s+([^\s`\]]+)", text)
                     if not writer_vals:
                         errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
-                    allowed_writers = {"claude", "agy", "<claude|agy>"}
                     for val in writer_vals:
                         if val not in allowed_writers:
-                            errors.append(f"{rel}: unsupported --writer value {val!r}")
+                            errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
-                if skill == "review-todo-section":
-                    for pass_name in ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation"):
+                if skill in ("review-todo-section", "process-phase"):
+                    passes = ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation")
+                    for pass_name in passes:
                         if pass_name not in text:
                             errors.append(f"{rel}: missing pass {pass_name!r}")
-                    idx = [text.index(p) for p in ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation")
-                           if p in text]
+                    idx = [text.index(p) for p in passes if p in text]
                     if len(idx) == 4 and idx != sorted(idx):
                         errors.append(f"{rel}: three-pass order drifted")
                 if skill == "process-plan":
@@ -164,6 +165,20 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("--writer <claude|agy>", "--writer codex")
         )
         self.assertTrue(self._check_ten_writer_skills(drifted_writer))
+        wrong_tree_writer = dict(texts)
+        wrong_tree_writer[".agents/skills/independent-review/SKILL.md"] = (
+            wrong_tree_writer[".agents/skills/independent-review/SKILL.md"]
+            .replace("--writer agy", "--writer claude")
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_tree_writer))
+        scrambled_phase = dict(texts)
+        scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
+            scrambled_phase[".agents/skills/process-phase/SKILL.md"]
+            .replace("--kind plan", "__ROUND__")
+            .replace("--kind round", "--kind plan")
+            .replace("__ROUND__", "--kind round")
+        )
+        self.assertTrue(self._check_ten_writer_skills(scrambled_phase))
 
 
 if __name__ == "__main__":

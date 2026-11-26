@@ -196,7 +196,15 @@ def agent_command(root: Path, profile: dict, tag: str, resume_id: str | None) ->
         return argv + ["--", prompt]
     if agent == "agy":
         # Antigravity's flags take `--name=value`; --prompt-interactive runs the prompt and keeps the session open.
-        argv = ["agy", f"--model={model}", f"--effort={effort}"]
+        # Orchestrator models manage reasoning effort across phases internally and reject --effort.
+        if lib.is_agy_orchestrator(model):
+            if effort is not None:
+                raise RunError(f"model {model!r} manages its own effort and rejects --effort")
+            argv = ["agy", f"--model={model}"]
+        else:
+            if not isinstance(effort, str) or not effort.strip():
+                raise RunError(f"model {model!r} on 'agy' requires a non-empty effort")
+            argv = ["agy", f"--model={model}", f"--effort={effort}"]
         if resume_id:
             argv.append(f"--conversation={resume_id}")
         if skip:
@@ -208,7 +216,7 @@ def agent_command(root: Path, profile: dict, tag: str, resume_id: str | None) ->
 def run_preflight(root: Path, resume_session: str | None, profile: dict) -> tuple[int, str]:
     """Run the preflight in its own process group, given as long as its profile checks may take plus its own checks,
     and end the whole group when it overruns or the launcher is interrupted."""
-    args = [sys.executable, str(HERE / "unattended-preflight.py"), "--root", str(root)]
+    args = [sys.executable, str(HERE / "unattended-preflight.py"), "--root", str(root), "--agent", profile["agent"]]
     if resume_session:
         args += ["--resume-session", resume_session]
     limit = PREFLIGHT_SLACK_SECONDS + sum(check["timeout_seconds"] for check in profile["preflight"])
@@ -346,12 +354,17 @@ def _launch(root: Path, run_session: str, argv: list[str], session: str) -> int:
         raise
 
 
-def start(root: Path, out=None, supervise: bool = True, ships: int | None = None) -> int:
+def start(root: Path, out=None, supervise: bool = True, ships: int | None = None,
+          agent: str | None = None) -> int:
     """Start the run, as the operator asked. `supervise` launches the heartbeat in its own tmux session when it is not
     running. `ships` bounds a fresh run to that many sections shipped; a resume keeps the run's own bound. Nothing
     calls this but the operator: no heartbeat, unit or task restarts a run."""
     out = out or sys.stdout
-    profile = lib.load_profile(root)
+    base = lib.load_profile(root)
+    try:
+        profile = lib.runner(base, agent)
+    except lib.ProfileError as exc:
+        raise UsageError(str(exc)) from None
     run_session, heartbeat = names(profile)
     with lib.launch_lock(root):
         marker, problem = read_marker(root)
@@ -994,6 +1007,8 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     start_parser = sub.add_parser("start")
     start_parser.add_argument("--no-heartbeat", action="store_true", help="start the run without its heartbeat")
+    start_parser.add_argument("--agent", choices=lib.AGENTS,
+                              help="start the run on this agent: the profile's own, or one of its runners")
     start_parser.add_argument("--ships", type=_ship_limit, metavar="N",
                               help="end the run once it has shipped N sections (the heartbeat enforces it)")
     sub.add_parser("status")
@@ -1009,7 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     try:
         if args.command == "start":
-            return start(root, supervise=not args.no_heartbeat, ships=args.ships)
+            return start(root, supervise=not args.no_heartbeat, ships=args.ships, agent=args.agent)
         if args.command == "status":
             return status(root)
         if args.command == "attach":

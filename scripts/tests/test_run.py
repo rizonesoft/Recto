@@ -38,6 +38,10 @@ NAME = os.path.basename(sys.argv[0])
 if sys.argv[1:] == ["--version"]:
     print(os.environ.get("STUB_VERSION") or {"claude": "2.1.322 (Claude Code)", "codex": "codex-cli 0.166.0", "agy": "1.5.5"}[NAME])
     sys.exit(0)
+if NAME == "agy" and any(a == "--model=gemini-pro-orchestrator" or a.startswith("--model=gemini-pro-orchestrator-")
+                         for a in sys.argv[1:]) and any(a == "--effort" or a.startswith("--effort=") for a in sys.argv[1:]):
+    print("agy: error: orchestrator models reject --effort", file=sys.stderr, flush=True)
+    sys.exit(2)
 with open(os.environ["STUB_LOG"], "a") as log:
     log.write(json.dumps({"cli": NAME, "argv": sys.argv[1:], "inside": os.environ.get("CONCLAVE_UNATTENDED_RUN"),
                           "tag": os.environ.get("CONCLAVE_UNATTENDED_TAG")}) + "\\n")
@@ -152,6 +156,16 @@ class CommandTest(unittest.TestCase):
                                   f"--prompt-interactive={run.RESUME_PROMPT}"])
                 argv = run.agent_command(self.root, profile, "tag-1", None)
                 self.assertFalse([a for a in argv if a in ("--session-id", "--resume", "--disallowedTools")], argv)
+
+    def test_antigravity_orchestrator_omits_effort_on_start_and_resume(self):
+        run = load_run_module()
+        orch = {**PROFILE, "agent": "agy", "model": "gemini-pro-orchestrator", "effort": None}
+        for resume_id in (None, "conv-9"):
+            argv = run.agent_command(self.root, orch, "tag-1", resume_id)
+            self.assertEqual(argv[:2], ["agy", "--model=gemini-pro-orchestrator"])
+            self.assertFalse(any(a.startswith("--effort") for a in argv), argv)
+        with self.assertRaises(run.RunError):
+            run.agent_command(self.root, {**orch, "effort": "medium"}, "tag-1", None)
 
 
 @needs_tmux
@@ -570,11 +584,33 @@ class RunTest(unittest.TestCase):
         self.assertIn("is not running", done.stderr)
 
     def use_agy(self):
-        self.write_profile(agent="agy", model="gemini-pro-orchestrator", effort="medium")
+        self.write_profile(agent="agy", model="gemini-pro-orchestrator", effort=None)
         (self.root / ".agents").mkdir(exist_ok=True)
         shutil.copyfile(TODO / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "an agy run")
+
+    def test_start_agent_switches_runner_without_editing_profile(self):
+        self.write_profile(runners={"agy": {"model": "gemini-pro-orchestrator", "effort": None}})
+        (self.root / ".agents").mkdir(exist_ok=True)
+        shutil.copyfile(TODO / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "add agy runner")
+        before = (self.root / ".conclave" / "unattended.json").read_bytes()
+        done = self.launcher("start", "--agent", "agy")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        call = self.calls(1)[0]
+        self.assertEqual(call["cli"], "agy")
+        self.assertIn("--model=gemini-pro-orchestrator", call["argv"])
+        self.assertFalse(any(a.startswith("--effort") for a in call["argv"]), call["argv"])
+        self.assertEqual((self.root / ".conclave" / "unattended.json").read_bytes(), before)
+        self.assertEqual(self.launcher("stop").returncode, 0)
+        done_default = self.launcher("start")
+        self.assertEqual(done_default.returncode, 0, done_default.stdout + done_default.stderr)
+        self.assertEqual(self.calls(2)[-1]["cli"], "claude")
+        self.assertEqual(self.launcher("stop").returncode, 0)
+        refused = self.launcher("start", "--agent", "codex")
+        self.assertNotEqual(refused.returncode, 0)
 
     def test_a_codex_writer_profile_is_refused_before_launch(self):
         self.write_profile(agent="codex", model="gpt-6.2-astra", effort="high")

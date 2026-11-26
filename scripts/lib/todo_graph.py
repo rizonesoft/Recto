@@ -247,10 +247,33 @@ _BLOB_BYTES_CACHE: dict[tuple[str, str, str], bytes] = {}
 _BATCH_READERS: dict[str, subprocess.Popen] = {}
 _BATCH_ACTIVE: dict[str, int] = {}
 _BATCH_READ_TIMEOUT: float = 60.0
+_ROOT_KEY_CACHE: dict[str, str] = {}
+_FINDINGS_CACHE: dict[tuple[str, int, int], dict | None] = {}
+
+
+def _root_key(root) -> str:
+    raw = str(root)
+    key = _ROOT_KEY_CACHE.get(raw)
+    if key is None:
+        key = str(Path(root).resolve())
+        _ROOT_KEY_CACHE[raw] = key
+    return key
+
+
+def _findings_cached(root, report: str):
+    """Parse a findings file once per (path, size, mtime_ns) across plan, round, completion and reconciliation checks."""
+    path = Path(root) / report
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key in _FINDINGS_CACHE:
+        return _FINDINGS_CACHE[key]
+    found = review_dispatch().read_findings(path.read_bytes().decode("utf-8"))
+    _FINDINGS_CACHE[key] = found
+    return found
 
 
 def _close_batch_readers(root=None):
-    keys = [str(Path(root).resolve())] if root is not None else list(_BATCH_READERS.keys())
+    keys = [_root_key(root)] if root is not None else list(_BATCH_READERS.keys())
     for key in keys:
         proc = _BATCH_READERS.pop(key, None)
         if proc is None:
@@ -273,7 +296,7 @@ atexit.register(_close_batch_readers)
 @contextlib.contextmanager
 def _batch_session(root):
     """Keep one `git cat-file --batch` reader alive for `root` during a `graph()` call, then close it cleanly."""
-    key = str(Path(root).resolve())
+    key = _root_key(root)
     _BATCH_ACTIVE[key] = _BATCH_ACTIVE.get(key, 0) + 1
     try:
         yield
@@ -288,7 +311,7 @@ def _batch_session(root):
 
 def _batch_read_blob(root, sha, rel):
     """Read `<sha>:<rel>` through a persistent `git cat-file --batch` reader when inside `_batch_session`, else one-shot."""
-    root_key = str(Path(root).resolve())
+    root_key = _root_key(root)
     cacheable = bool(re.fullmatch(r"[0-9a-f]{40}", str(sha)))
     blob_key = (root_key, str(sha), rel)
     if cacheable and blob_key in _BLOB_BYTES_CACHE:
@@ -359,7 +382,7 @@ def _git(root, *args):
 
 
 def _pin_bytes(root, sha):
-    key = (str(Path(root).resolve()), sha)
+    key = (_root_key(root), sha)
     cached = _PIN_BYTES_CACHE.get(key)
     if cached is not None:
         return 0, cached
@@ -377,7 +400,7 @@ def _prefetch_pins(root):
     reviews_dir = Path(root) / "docs" / "reviews"
     if not reviews_dir.is_dir():
         return
-    root_key = str(Path(root).resolve())
+    root_key = _root_key(root)
     shas = []
     seen = set()
     for p in sorted(reviews_dir.glob("*.json")):
@@ -424,7 +447,7 @@ def _prefetch_pins(root):
 
 def _commit_parents(root, refresh=False):
     """Map commit SHA -> parent SHAs for all reachable commits in `root` in one `git rev-list` call."""
-    key = str(Path(root).resolve())
+    key = _root_key(root)
     if not refresh and key in _COMMIT_PARENTS_CACHE:
         return _COMMIT_PARENTS_CACHE[key]
     shown = _git(root, "rev-list", "--all", "--parents")
@@ -466,7 +489,7 @@ def changed_paths(root, base, candidate, ref):
     """The files that differ between two commits, repository-relative with forward slashes: what the dispatcher gave
     a three-pass pass's conditional lenses."""
     cacheable = re.fullmatch(r"[0-9a-f]{40}", str(base)) and re.fullmatch(r"[0-9a-f]{40}", str(candidate))
-    key = (str(Path(root).resolve()), str(base), str(candidate))
+    key = (_root_key(root), str(base), str(candidate))
     if cacheable and key in _CHANGED_PATHS_CACHE:
         return list(_CHANGED_PATHS_CACHE[key])
     shown = _git(root, "-c", "core.quotepath=false", "diff", "--name-only", "--no-renames", "-z", base, candidate)
@@ -542,7 +565,8 @@ def completion_record(root, completion, ref, stamp_sha, commits=None):
             f"--completion verdict must be one of {', '.join(COMPLETION_VERDICTS)}, not {verdict!r}: {ref}")
     path = report_ok(root, report, ref)
     dispatch = review_dispatch()
-    found = dispatch.read_completions(path.read_bytes().decode("utf-8"))
+    found_all = _findings_cached(root, report)
+    found = found_all["completions"] if found_all is not None else None
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Completion review; run review-dispatch.py --kind completion: {ref}")
     returned = [e for e in found if dispatch.returned_one_pass(e, "completion")]
@@ -681,7 +705,8 @@ def plan_record(root, report, ref, commits=None, start=None):
             f"--plan must be the section's own findings file {expected}, not {report}: {ref}")
     path = report_ok(root, report, ref)
     dispatch = review_dispatch()
-    found = dispatch.read_plans(path.read_bytes().decode("utf-8"))
+    found_all = _findings_cached(root, report)
+    found = found_all["plans"] if found_all is not None else None
     require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
     require(bool(found), f"{report} holds no ## Plan review; run review-dispatch.py --kind plan: {ref}")
 
@@ -839,7 +864,8 @@ def schedule_ok(root, data, ref, surface):
     plan_report = data["plan"]["report"]
     plan_optional = [name for entry in schedule.get("conditional", []) if "plan" in entry["passes"]
                      for name in entry["lenses"]] if three_pass else []
-    for entry in dispatch.read_plans((Path(root) / plan_report).read_bytes().decode("utf-8")):
+    plan_all = _findings_cached(root, plan_report)
+    for entry in (plan_all["plans"] if plan_all is not None else []):
         attempt, optional = schedule, plan_optional
         if three_pass and entry["candidate"] != base:
             # An attempt that returned no review, on another candidate than the plan review that did: the dispatcher
@@ -858,7 +884,7 @@ def schedule_ok(root, data, ref, surface):
         check(f"the plan review in {plan_report}", entry,
               dispatch.scheduled(attempt, "plan", [], surface, reviewer=reviewer_of(entry)), optional)
     completion = data["completion"]["report"]
-    found = dispatch.read_findings((Path(root) / completion).read_bytes().decode("utf-8"))
+    found = _findings_cached(root, completion)
     final_kind = "reconciliation" if any(dispatch.returned_one_pass(e, "reconciliation")
                                          for e in found["reconciliations"]) else "completion"
     final = [e for e in found[final_kind + "s"] if dispatch.returned_one_pass(e, final_kind)]
@@ -877,15 +903,15 @@ def schedule_ok(root, data, ref, surface):
         require(not found["reconciliations"],
                 f"{completion} holds a reconciliation review, which only the three-pass policy takes: {ref}")
     for report in dict.fromkeys(r["report"] for r in data["reviews"]):
-        text = (Path(root) / report).read_bytes().decode("utf-8")
+        rep_all = _findings_cached(root, report)
         if not three_pass and report not in (plan_report, completion):
-            for entry in dispatch.read_plans(text):
+            for entry in (rep_all["plans"] if rep_all is not None else []):
                 check(f"the plan review in {report}", entry,
                       dispatch.scheduled(schedule, "plan", [], surface, reviewer=reviewer_of(entry)))
-            for entry in dispatch.read_completions(text):
+            for entry in (rep_all["completions"] if rep_all is not None else []):
                 check(f"the completion review in {report}", entry,
                       dispatch.scheduled(schedule, "completion", [], surface, reviewer=reviewer_of(entry)))
-        recorded = dispatch.read_rounds(text)
+        recorded = rep_all["rounds"] if rep_all is not None else None
         for i, entry in enumerate(recorded):
             check(f"{report} round {entry['number']}", entry,
                   dispatch.scheduled(schedule, "round", recorded[:i], surface, changed(entry),
@@ -1055,7 +1081,8 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=Non
             # empty or blocked reply. Reports are read as the dispatcher wrote them, "\r" bytes and all.
             dispatch = review_dispatch()
             for report in dict.fromkeys(r["report"] for r in rounds):
-                recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
+                rep_all = _findings_cached(root, report)
+                recorded = rep_all["rounds"] if rep_all is not None else None
                 require(recorded is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
                 # The dispatcher numbers rounds 1, 2, 3 in order; a repeated or reordered number would let one round
                 # stand in for others when they are keyed by number below.

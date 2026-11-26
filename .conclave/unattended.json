@@ -4,6 +4,12 @@
   "agent": "claude",
   "model": "opus",
   "effort": "medium",
+  "runners": {
+    "agy": {
+      "model": "gemini-pro-orchestrator",
+      "effort": null
+    }
+  },
   "prompt_file": "docs/unattended-prompt.md",
   "branch": "main",
   "skip_permissions": true,

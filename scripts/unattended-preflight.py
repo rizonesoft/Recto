@@ -225,28 +225,6 @@ def check_hook(root: Path, profile: dict, report: Report, self_test_seconds: int
         report.line(False, "guard-self-test", f"ran past {self_test_seconds}s")
     except (OSError, subprocess.SubprocessError) as exc:
         report.line(False, "guard-self-test", f"could not run ({exc})")
-    if profile["agent"] == "codex":
-        check_codex_trust(root, report)
-
-
-def check_codex_trust(root: Path, report: Report) -> None:
-    """Codex runs a project hook only once it is approved; the todo kit's trust script approves it through Codex's
-    own app-server when it is not (the same step `forge.py` takes at install), and this reports what it did."""
-    script = root / "scripts" / "codex-hook-trust.py"
-    if not script.is_file():
-        report.line(False, "codex-hook-trust", "scripts/codex-hook-trust.py is missing: install the todo kit")
-        return
-    try:
-        done = subprocess.run([sys.executable, str(script)], cwd=root, capture_output=True, text=True,
-                              timeout=TRUST_SECONDS, creationflags=windowless())
-    except subprocess.TimeoutExpired:
-        report.line(False, "codex-hook-trust", f"ran past {TRUST_SECONDS}s")
-        return
-    except (OSError, subprocess.SubprocessError) as exc:
-        report.line(False, "codex-hook-trust", f"could not run ({exc})")
-        return
-    said = _last_line(done.stdout) if done.returncode == 0 else (_last_line(done.stderr) or _last_line(done.stdout))
-    report.line(done.returncode == 0, "codex-hook-trust", f"exit {done.returncode}: {said or 'no output'}")
 
 
 def disk_free_gb(root: Path) -> float:
@@ -330,14 +308,15 @@ def check_profile_commands(root: Path, profile: dict, report: Report) -> None:
         report.line(code == 0, f"check {check['name']}", f"{detail}: {last or 'no output'}")
 
 
-def preflight(root: Path, out=None, system: str | None = None, resume_session: str | None = None) -> int:
+def preflight(root: Path, out=None, system: str | None = None, resume_session: str | None = None,
+              agent: str | None = None) -> int:
     report = Report(out)
     if (system or os.name) == "nt":
         report.line(False, "system", "the unattended run needs tmux, which runs on Linux and in WSL: run it in WSL")
         return 1
     try:
         unattended = _load("unattended_lib", HERE / "lib" / "unattended.py")
-        profile = unattended.load_profile(root)
+        profile = unattended.runner(unattended.load_profile(root), agent)
     except Exception as exc:  # a ProfileError, or the module itself missing or broken: every check needs the profile
         report.line(False, "profile", str(exc) or type(exc).__name__)
         return 1
@@ -362,8 +341,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Refuse an unattended run that cannot work.")
     parser.add_argument("--root", default=str(HERE.parent), help="the repository (default: this script's)")
     parser.add_argument("--resume-session", help="the session of the run being resumed, whose guard is allowed")
+    parser.add_argument("--agent", help="check the profile as run on this agent (default: the profile's own)")
     args = parser.parse_args(argv)
-    return preflight(Path(args.root).resolve(), resume_session=args.resume_session)
+    return preflight(Path(args.root).resolve(), resume_session=args.resume_session, agent=args.agent)
 
 
 if __name__ == "__main__":
