@@ -171,7 +171,11 @@ class AgentFrontmatter(unittest.TestCase):
                         role = m.group(1).lower()
                         script = f"review-{role}.py"
                         seg_end = matches[i + 1].start() if i + 1 < len(matches) else len(chunk)
-                        seg = re.split(r"(?:;|&&|\|\|)", chunk[m.start():seg_end], maxsplit=1)[0]
+                        after = chunk[m.end():seg_end]
+                        if after and after[0] in ("'", '"'):
+                            after = after[1:]
+                        after = re.split(r"(?:;|&&|\|\|)", after, maxsplit=1)[0]
+                        seg = f"{script}{after}"
                         is_exec, parsed_writer, _, _ = AgentFrontmatter._parse_dispatch_command(seg, script)
                         if from_code_block or is_exec:
                             ordered_cmds.append((role, seg))
@@ -181,10 +185,28 @@ class AgentFrontmatter(unittest.TestCase):
                                     f"not in {sorted(allowed_writers)}"
                                 )
 
+                def _strip_shell_comment(line: str) -> str:
+                    in_s = False
+                    in_d = False
+                    for i, ch in enumerate(line):
+                        if ch == "'" and not in_d:
+                            in_s = not in_s
+                        elif ch == '"' and not in_s:
+                            in_d = not in_d
+                        elif ch == "#" and not in_s and not in_d and (i == 0 or line[i - 1].isspace()):
+                            return line[:i]
+                    return line
+
                 def _emit_code_block(block_lines: list[str]) -> None:
+                    cleaned_block = re.sub(r"<#.*?#>", "", "\n".join(block_lines), flags=re.DOTALL)
                     pending = ""
-                    for raw_ln in block_lines:
-                        s = raw_ln.strip()
+                    for raw_ln in cleaned_block.splitlines():
+                        s = _strip_shell_comment(raw_ln).strip()
+                        if not s:
+                            if pending:
+                                _extract_commands(pending, from_code_block=True)
+                                pending = ""
+                            continue
                         if pending:
                             pending = f"{pending} {s}"
                         elif "review-dispatch.py" in s.lower() or "review-prompt.py" in s.lower():
@@ -476,6 +498,18 @@ class AgentFrontmatter(unittest.TestCase):
             texts[".agents/skills/review-todo-section/SKILL.md"],
         )
         self.assertTrue(self._check_ten_writer_skills(semicolon_reversed_inline))
+        commented_prompt = dict(texts)
+        commented_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            commented_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(p_line, f"# {p_line}")
+        )
+        self.assertTrue(self._check_ten_writer_skills(commented_prompt))
+        quoted_script_path = dict(texts)
+        quoted_script_path[".agents/skills/review-todo-section/SKILL.md"] = (
+            quoted_script_path[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("scripts/review-prompt.py --kind completion", '"scripts/review-prompt.py" --kind completion')
+        )
+        self.assertEqual(self._check_ten_writer_skills(quoted_script_path), [])
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
