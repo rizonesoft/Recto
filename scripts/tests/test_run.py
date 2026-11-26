@@ -612,6 +612,25 @@ class RunTest(unittest.TestCase):
         refused = self.launcher("start", "--agent", "codex")
         self.assertNotEqual(refused.returncode, 0)
 
+    def test_ordinary_start_resumes_crashed_overridden_runner(self):
+        self.write_profile(runners={"agy": {"model": "gemini-pro-orchestrator", "effort": None}})
+        (self.root / ".agents").mkdir(exist_ok=True)
+        shutil.copyfile(TODO / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "add agy runner for crash recovery")
+        self.assertEqual(self.launcher("start", "--agent", "agy").returncode, 0)
+        marker = self.marker()
+        self.calls(1)
+        self.acquire("agy-conv-recover", tag=marker["session"])
+        subprocess.run(["tmux", "kill-session", "-t", "=demo-run"], timeout=30, creationflags=windowless())
+        done = self.launcher("start")  # ordinary restart without --agent must resume agy, not discard to claude
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        resumed = self.calls(2)[-1]
+        self.assertEqual(resumed["cli"], "agy")
+        self.assertIn("--conversation=agy-conv-recover", resumed["argv"])
+        self.assertFalse(any(a.startswith("--effort") for a in resumed["argv"]), resumed["argv"])
+        self.assertEqual(self.launcher("stop").returncode, 0)
+
     def test_a_codex_writer_profile_is_refused_before_launch(self):
         self.write_profile(agent="codex", model="gpt-6.2-astra", effort="high")
         git(self.root, "add", "-A")

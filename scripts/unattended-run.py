@@ -372,6 +372,10 @@ def start(root: Path, out=None, supervise: bool = True, ships: int | None = None
             raise RunError(f"{problem}: stop the run (or remove {MARKER}) before starting another")
         if marker:
             run_session, heartbeat = marker["tmux_session"], marker["heartbeat_session"]
+            # An ordinary restart (`start` with no `--agent`) resumes the crashed run's own runner when that runner
+            # is still configured in the profile, so a crash after `start --agent agy` never discards its session.
+            if agent is None and marker["agent"] != profile["agent"] and marker["agent"] in base.get("runners", {}):
+                profile = lib.runner(base, marker["agent"])
         live = _alive(run_session)
         if live is None:
             raise RunError(f"whether tmux session {run_session} is running cannot be told: tmux could not be asked")

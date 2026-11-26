@@ -115,7 +115,7 @@ class AgentFrontmatter(unittest.TestCase):
                     if "three-pass" not in text:
                         errors.append(f"{rel}: missing three-pass schedule reference")
                 if skill in ("process-todo-section", "review-todo-section", "independent-review"):
-                    writer_vals = re.findall(r"--writer\s+([^\s`\]]+)", text)
+                    writer_vals = re.findall(r"--writer(?:=|\s+)([^\s`\]]+)", text)
                     if not writer_vals:
                         errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
                     for val in writer_vals:
@@ -171,6 +171,12 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("--writer agy", "--writer claude")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_tree_writer))
+        wrong_eq_writer = dict(texts)
+        wrong_eq_writer[".agents/skills/independent-review/SKILL.md"] = (
+            wrong_eq_writer[".agents/skills/independent-review/SKILL.md"]
+            .replace("--writer <claude|agy>", "--writer=claude")
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_eq_writer))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]

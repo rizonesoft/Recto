@@ -36,7 +36,6 @@ AGENT_CLI = {"claude": "claude", "codex": "codex", "agy": "agy"}
 AGENT_HOOK_FILE = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json", "agy": ".agents/hooks.json"}
 GUARD = "build/claude-campaign-guard.json"
 SELF_TEST_SECONDS = 300
-TRUST_SECONDS = 120
 TAIL_BYTES = 4096  # what a profile check's output costs at most: its last 4 KiB, held in memory only
 MEMINFO = Path("/proc/meminfo")
 
