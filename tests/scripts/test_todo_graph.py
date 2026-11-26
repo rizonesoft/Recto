@@ -2196,24 +2196,120 @@ class Repository(unittest.TestCase):
             self.assertEqual(paths_a_repeat, paths_a)
             self.assertEqual(len(git_calls), 2, f"expected 2 diff calls (1 per unique pair), got {len(git_calls)}")
 
-            # Verify conditional schedule requires the lens for cand_a and not for cand_b.
+            # Verify schedule_ok() directly: cand_a requires conditional lens "security", cand_b does not,
+            # omitting "security" on cand_a raises tg.Refused, and repeated schedule_ok calls reuse the diff cache.
             dispatch = tg.review_dispatch()
-            cond_schedule = {
-                "policy": dispatch.THREE_PASS,
-                "pass_cap": 12,
-                "blocking": ["P1", "P2"],
-                "plan": {"lenses": ["plan"]},
-                "rounds": [{"lenses": ["adversarial"]}],
-                "completion": {"lenses": ["plan-delivery"]},
-                "reconciliation": {"lenses": ["adversarial"]},
-                "conditional": [{"paths": ["src/pdf/"], "passes": ["round"], "lenses": ["security"]}],
-                "efforts": {"astra": {"plan": "medium", "rounds": ["medium"], "completion": "medium", "reconciliation": "low"}},
-            }
-            step_a = dispatch.scheduled(cond_schedule, "round", [], False, paths_a, reviewer="astra")
-            step_b = dispatch.scheduled(cond_schedule, "round", [], False, paths_b, reviewer="astra")
-            self.assertEqual(step_a["lenses"], ["adversarial", "security"])
-            self.assertEqual(step_b["lenses"], ["adversarial"])
-            self.assertNotEqual(step_a["lenses"], ["adversarial"])
+            cond_pin = (
+                'schema_version = 1\n'
+                '[reviewers.astra]\ncli = "codex"\nmodel = "gpt-6.2-astra"\n\n'
+                '[routes]\nclaude = ["astra"]\nagy = ["astra"]\n\n'
+                '[schedule]\npolicy = "three-pass"\npass_cap = 12\nblocking = ["P1", "P2"]\n'
+                '[schedule.plan]\nlenses = ["plan"]\n'
+                '[[schedule.rounds]]\nlenses = ["adversarial"]\n'
+                '[schedule.completion]\nlenses = ["plan-delivery"]\n'
+                '[schedule.reconciliation]\nlenses = ["adversarial"]\n'
+                '[schedule.lenses]\nsecurity = "Check bounds and hostile input."\n'
+                '[[schedule.conditional]]\npaths = ["src/pdf/"]\npasses = ["round"]\nlenses = ["security"]\n'
+                '[schedule.efforts.astra]\nplan = "medium"\nrounds = ["medium", "low"]\ncompletion = "medium"\nreconciliation = "low"\n'
+            )
+            (repo / ".conclave").mkdir(exist_ok=True)
+            (repo / ".conclave" / "reviewers.toml").write_text(cond_pin, encoding="utf-8")
+            (repo / "todo" / "00-workspace").mkdir(parents=True, exist_ok=True)
+            (repo / "todo" / "00-workspace" / "TODO-05-test.md").write_text(
+                "## 1. Test\n\n- [ ] Item\n", encoding="utf-8"
+            )
+            git("add", ".conclave/reviewers.toml", "todo/00-workspace/TODO-05-test.md")
+            git("commit", "-qm", "add conditional pin")
+            pin_base = git("rev-parse", "HEAD")
+
+            (repo / "src" / "pdf" / "a.cpp").write_text("int a = 3;\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "touch cpp after pin")
+            cond_a = git("rev-parse", "HEAD")
+
+            git("checkout", "-q", pin_base)
+            (repo / "docs" / "note.md").write_text("hello 3\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "touch doc after pin")
+            cond_b = git("rev-parse", "HEAD")
+
+            cond_schedule = dispatch.load_pin(repo / ".conclave" / "reviewers.toml")["schedule"]
+            report_rel = "docs/reviews/00-workspace/D00-T05-s1.md"
+            (repo / "docs" / "reviews" / "00-workspace").mkdir(parents=True, exist_ok=True)
+
+            def write_findings(cand, round_lenses):
+                lens_lines = "\n".join(f"LENS {name}: clean" for name in round_lenses)
+                plan_body = "LENS plan: clean\nHIGHEST: none\nPLAN: complete\nOVERALL: approve"
+                round_body = f"{lens_lines}\nHIGHEST: none\nOVERALL: approve"
+                comp_body = "LENS plan-delivery: clean\nHIGHEST: none\nCOMPLETION: complete"
+                text = (
+                    f"## Plan review: astra (`gpt-6.2-astra` via `codex`)\n\n"
+                    f"- Writer: agy\n- Run: 2026-11-26T00:00:00Z\n- Candidate: {pin_base}\n"
+                    f"- Effort: medium\n- Lenses: plan\n- Lines: {len(plan_body.splitlines())}\n"
+                    f"- Digest: {dispatch.digest(plan_body.splitlines())}\n\n{plan_body}\n\n"
+                    f"## Round 1: astra (`gpt-6.2-astra` via `codex`)\n\n"
+                    f"- Writer: agy\n- Run: 2026-11-26T00:01:00Z\n- Candidate: {cand}\n"
+                    f"- Effort: medium\n- Lenses: {', '.join(round_lenses)}\n- Lines: {len(round_body.splitlines())}\n"
+                    f"- Digest: {dispatch.digest(round_body.splitlines())}\n\n{round_body}\n\n"
+                    f"## Completion review: astra (`gpt-6.2-astra` via `codex`)\n\n"
+                    f"- Writer: agy\n- Run: 2026-11-26T00:02:00Z\n- Candidate: {cand}\n"
+                    f"- Effort: medium\n- Lenses: plan-delivery\n- Lines: {len(comp_body.splitlines())}\n"
+                    f"- Digest: {dispatch.digest(comp_body.splitlines())}\n\n{comp_body}\n"
+                )
+                (repo / report_rel).write_text(text, encoding="utf-8")
+                return {
+                    "implementation_sha": cand,
+                    "schedule_sha": pin_base,
+                    "schedule": cond_schedule,
+                    "plan": {"report": report_rel, "candidate": pin_base, "reviewer": "astra"},
+                    "completion": {"report": report_rel, "candidate": cand, "reviewer": "astra", "verdict": "complete"},
+                    "reviews": [{"round": 1, "report": report_rel, "verdict": "clean"}],
+                    "passes_spent": 3,
+                    "pass_cap": 12,
+                }
+
+            # 1. Valid receipt for cond_a (includes required conditional lens "security") passes.
+            data_a_ok = write_findings(cond_a, ["adversarial", "security"])
+            tg.schedule_ok(repo, data_a_ok, "D00 T05 §1", surface=False)
+            # 2. Receipt for cond_a omitting required conditional lens "security" is refused.
+            data_a_missing = write_findings(cond_a, ["adversarial"])
+            with self.assertRaises(tg.Refused):
+                tg.schedule_ok(repo, data_a_missing, "D00 T05 §1", surface=False)
+            # 3. Valid receipt for cond_b (docs/note.md only, no "security") passes.
+            data_b_ok = write_findings(cond_b, ["adversarial"])
+            tg.schedule_ok(repo, data_b_ok, "D00 T05 §1", surface=False)
+            # 4. Repeating schedule_ok for cond_a reuses cached changed_paths without spawning git diff.
+            replay_diffs = []
+            tg._git = lambda r, *a: (replay_diffs.append(a) if "diff" in a else None, orig_git(r, *a))[1]
+            try:
+                tg.schedule_ok(repo, write_findings(cond_a, ["adversarial", "security"]), "D00 T05 §1", surface=False)
+            finally:
+                tg._git = orig_git
+            self.assertEqual(replay_diffs, [], f"expected cached changed_paths on replay, saw {replay_diffs}")
+
+    def test_batch_read_blob_enforces_timeout_on_stalled_reader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            stalled_code = "import sys, time\nsys.stdin.readline()\ntime.sleep(30)\n"
+            proc = subprocess.Popen(
+                [sys.executable, "-c", stalled_code],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            root_key = str(repo.resolve())
+            orig_timeout = tg._BATCH_READ_TIMEOUT
+            tg._BATCH_READ_TIMEOUT = 0.25
+            tg._BATCH_READERS[root_key] = proc
+            try:
+                with tg._batch_session(repo):
+                    result = tg._batch_read_blob(repo, "0" * 40, "README.md")
+                self.assertIsNone(result)
+                self.assertNotIn(root_key, tg._BATCH_READERS)
+                self.assertIsNotNone(proc.poll())
+            finally:
+                tg._BATCH_READ_TIMEOUT = orig_timeout
+                tg._close_batch_readers(repo)
 
     def test_the_repository_graph_validates_and_its_plan_is_current(self):
         r = subprocess.run([sys.executable, str(REPO / "scripts/todo-graph.py"), "plan", "--check"],

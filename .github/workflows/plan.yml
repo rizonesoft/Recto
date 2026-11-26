@@ -130,3 +130,13 @@ jobs:
       - name: Run full Recto and Conclave kit Python test suites in parallel
         shell: pwsh
         run: .\build\python.cmd scripts/run-tests.py --full
+  unattended-posix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install tmux for POSIX unattended launcher integration tests
+        run: sudo apt-get update && sudo apt-get install -y tmux
+      - name: Run POSIX unattended launcher, preflight and profile tests
+        run: python3 -m unittest scripts.tests.test_run scripts.tests.test_unattended scripts.tests.test_preflight

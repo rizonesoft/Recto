@@ -1,6 +1,7 @@
 """scripts/verify-agent-tiers.mjs: agent frontmatter it accepts is frontmatter a YAML loader can read."""
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -112,8 +113,13 @@ class AgentFrontmatter(unittest.TestCase):
                     if "three-pass" not in text:
                         errors.append(f"{rel}: missing three-pass schedule reference")
                 if skill in ("process-todo-section", "review-todo-section", "independent-review"):
-                    if "--writer" not in text:
+                    writer_vals = re.findall(r"--writer\s+([^\s`\]]+)", text)
+                    if not writer_vals:
                         errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
+                    allowed_writers = {"claude", "agy", "<claude|agy>"}
+                    for val in writer_vals:
+                        if val not in allowed_writers:
+                            errors.append(f"{rel}: unsupported --writer value {val!r}")
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
@@ -151,6 +157,13 @@ class AgentFrontmatter(unittest.TestCase):
             drifted_claude[".claude/skills/review-todo-section/SKILL.md"].replace("--kind reconciliation", "--kind other")
         )
         self.assertTrue(self._check_ten_writer_skills(drifted_claude))
+        drifted_writer = dict(texts)
+        drifted_writer[".agents/skills/independent-review/SKILL.md"] = (
+            drifted_writer[".agents/skills/independent-review/SKILL.md"]
+            .replace("--writer agy", "--writer codex")
+            .replace("--writer <claude|agy>", "--writer codex")
+        )
+        self.assertTrue(self._check_ten_writer_skills(drifted_writer))
 
 
 if __name__ == "__main__":

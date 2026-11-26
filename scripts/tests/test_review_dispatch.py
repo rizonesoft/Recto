@@ -1399,11 +1399,18 @@ class RepositoryPin(unittest.TestCase):
                 self.assertIn("--ephemeral", argv)
                 self.assertIn("gpt-6.2-astra", argv)
                 self.assertIn(f"model_reasoning_effort={expected_effort}", argv)
-        for bad_writer in ("codex", "muse", "unknown"):
-            with self.subTest(bad_writer=bad_writer):
-                self.assertNotIn(bad_writer, pin["routes"])
-                with self.assertRaises(module.Refused):
-                    module.load_pin(REPO_PIN, data=REPO_PIN.read_bytes().replace(b'agy = ["astra"]', b'codex = ["astra"]'))
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt_file = Path(tmp) / "p.md"
+            prompt_file.write_text("Review.\n", encoding="utf-8")
+            for bad_writer in ("codex", "muse", "unknown"):
+                with self.subTest(bad_writer=bad_writer):
+                    self.assertNotIn(bad_writer, pin["routes"])
+                    done = subprocess.run(
+                        [sys.executable, "-B", str(SCRIPTS / "review-dispatch.py"),
+                         "--writer", bad_writer, "--prompt", str(prompt_file)],
+                        capture_output=True, text=True, cwd=SCRIPTS.parent, timeout=30,
+                    )
+                    self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
 
     def test_the_pins_severity_stop_is_the_stamps_cutoff(self):
         # The dispatcher reports severity_stop from the pin and `stamp` re-checks it against SEVERITY_CUTOFF_ROUND: the

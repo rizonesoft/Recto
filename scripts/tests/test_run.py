@@ -182,10 +182,12 @@ class RunTest(unittest.TestCase):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(TEMPLATES / rel, self.root / rel)
         for rel in ("scripts/campaign_guard.py", "scripts/codex-campaign-hook.py", "scripts/codex-hook-trust.py",
-                    "scripts/lib/todo_graph.py", ".claude/settings.json"):
+                    "scripts/lib/todo_graph.py", "scripts/run-python.sh", ".claude/settings.json"):
             if (TODO / rel).is_file():
                 (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(TODO / rel, self.root / rel)
+                if rel.endswith(".sh"):
+                    os.chmod(self.root / rel, 0o755)
         (self.root / ".conclave").mkdir()
         self.write_profile()
         (self.root / "docs").mkdir()
@@ -570,7 +572,7 @@ class RunTest(unittest.TestCase):
     def use_agy(self):
         self.write_profile(agent="agy", model="gemini-pro-orchestrator", effort="medium")
         (self.root / ".agents").mkdir(exist_ok=True)
-        shutil.copyfile(ROOT / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
+        shutil.copyfile(TODO / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "an agy run")
 
@@ -651,20 +653,20 @@ class RunTest(unittest.TestCase):
         self.assertEqual(marker["session"], first, "the failed recovery lost the run")
         self.assertFalse(run.run_finished(self.root, marker), "a failed recovery reads as a run that ended")
     def test_a_run_whose_profile_changed_agent_starts_that_agent_fresh(self):
-        # Round 1 of D02 T02 §6: a crashed Claude Code run was resumed as `codex resume <Claude's session id>`.
+        # A crashed Claude Code run must not resume under another writer agent; switching to Antigravity starts fresh.
         self.assertEqual(self.launcher("start").returncode, 0)
         first = self.marker()["session"]
         self.calls(1)
         self.acquire(first)
         subprocess.run(["tmux", "kill-session", "-t", "=demo-run"], timeout=30, creationflags=windowless())
-        self.use_codex()
+        self.use_agy()
         done = self.launcher("start")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-        self.assertIn("the profile now names codex", done.stdout)
+        self.assertIn("the profile now names agy", done.stdout)
         self.assertIn("the crashed run's guard ended", done.stdout)
         call = self.calls(2)[-1]
-        self.assertEqual(call["cli"], "codex")
-        self.assertNotIn("resume", call["argv"])
+        self.assertEqual(call["cli"], "agy")
+        self.assertFalse(any(a.startswith("--conversation=") for a in call["argv"]), call["argv"])
         self.assertNotIn(first, call["argv"])
         self.assertIsNone(self.guard())
     def test_an_antigravity_run_starts_with_its_prompt(self):

@@ -382,7 +382,7 @@ def start(root: Path, out=None, supervise: bool = True, ships: int | None = None
             left = end_run_processes(marker["session"], marker["pgid"], grace=2)
             if left:
                 raise RunError(f"the previous run's processes {describe(left)} are still running after SIGKILL")
-        # The agent session to resume: Claude Code's is the tag; Codex's and Antigravity's is what the run's guard
+        # The agent session to resume: Claude Code's is the tag; Antigravity's is what the run's guard
         # records, and without one (the agent died before it took the guard) the run starts fresh.
         guard = owned_guard(root, old)
         resume = (old["agent_session"] or (str(guard["session_id"]) if guard else None)) if old else None

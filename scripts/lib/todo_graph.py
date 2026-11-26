@@ -17,6 +17,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import threading
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = "todo/implementation-plan.md"
@@ -245,6 +246,7 @@ _CHANGED_PATHS_CACHE: dict[tuple[str, str, str], tuple[str, ...]] = {}
 _BLOB_BYTES_CACHE: dict[tuple[str, str, str], bytes] = {}
 _BATCH_READERS: dict[str, subprocess.Popen] = {}
 _BATCH_ACTIVE: dict[str, int] = {}
+_BATCH_READ_TIMEOUT: float = 60.0
 
 
 def _close_batch_readers(root=None):
@@ -311,16 +313,35 @@ def _batch_read_blob(root, sha, rel):
         except OSError:
             return None
         _BATCH_READERS[root_key] = proc
+    timed_out = False
+
+    def _on_timeout():
+        nonlocal timed_out
+        timed_out = True
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+    timer = threading.Timer(_BATCH_READ_TIMEOUT, _on_timeout)
+    timer.daemon = True
+    timer.start()
     try:
         assert proc.stdin is not None and proc.stdout is not None
         proc.stdin.write(f"{sha}:{rel}\n".encode("utf-8"))
         proc.stdin.flush()
         header = proc.stdout.readline().decode("ascii", errors="replace").strip()
+        if timed_out:
+            _close_batch_readers(root)
+            return None
         parts = header.split()
         if len(parts) >= 3 and parts[1] == "blob" and parts[2].isdigit():
             size = int(parts[2])
             data = proc.stdout.read(size)
             proc.stdout.read(1)  # trailing LF
+            if timed_out:
+                _close_batch_readers(root)
+                return None
             if len(data) == size:
                 if cacheable:
                     _BLOB_BYTES_CACHE[blob_key] = data
@@ -329,6 +350,8 @@ def _batch_read_blob(root, sha, rel):
     except OSError:
         _close_batch_readers(root)
         return None
+    finally:
+        timer.cancel()
 
 
 def _git(root, *args):
