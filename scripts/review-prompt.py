@@ -537,7 +537,7 @@ def run(args: argparse.Namespace) -> Path:
     return out
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--kind", required=True, choices=sorted(TEMPLATES))
     parser.add_argument("--candidate", required=True,
@@ -555,7 +555,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--findings", help="the findings file of the section (reconciliation)")
     parser.add_argument("--failed", help="the failed completion's candidate SHA (reconciliation)")
     parser.add_argument("--last", help="the last reviewed candidate SHA (reconciliation; default --failed)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         print(run(args))
     except Refused as error:

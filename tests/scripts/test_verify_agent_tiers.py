@@ -1,5 +1,8 @@
 """scripts/verify-agent-tiers.mjs: agent frontmatter it accepts is frontmatter a YAML loader can read."""
 import argparse
+import contextlib
+import importlib.util
+import io
 import json
 from pathlib import Path
 import re
@@ -173,11 +176,24 @@ class AgentFrontmatter(unittest.TestCase):
                 return pos
         return None
 
+    _SCRIPT_PARSERS: dict[str, argparse.ArgumentParser] = {}
+
+    @classmethod
+    def _script_parser(cls, script_name: str) -> argparse.ArgumentParser:
+        if script_name not in cls._SCRIPT_PARSERS:
+            script_path = ROOT / "scripts" / script_name
+            spec = importlib.util.spec_from_file_location(f"_recto_{script_name.replace('-', '_').replace('.', '_')}", script_path)
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            cls._SCRIPT_PARSERS[script_name] = mod.build_parser()
+        return cls._SCRIPT_PARSERS[script_name]
+
     @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
-        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement strictly against that
-        script's real CLI flags (requiring the command head to be a Python launcher or the script itself, and
-        rejecting `--help`, `-h`, unknown flags, or diagnostic-only flags). Returns
+        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement using that script's own
+        `build_parser()` (zero duplicated CLI contract: rejects `--help`, `-h`, invalid `--timeout`, unknown
+        flags, missing required args, or diagnostic-only flags). Returns
         `(is_executable_invocation, writer, kind, prompt_file)`."""
         cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
         cleaned = re.sub(r"<[^>]+>", lambda m: m.group(0).replace(" ", "_").replace("'", ""), cleaned)
@@ -189,27 +205,41 @@ class AgentFrontmatter(unittest.TestCase):
         idx = AgentFrontmatter._find_script_token(tokens, target)
         if idx is None:
             return (False, None, None, None)
-        parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
+        argv = tokens[idx + 1:]
         if target == "review-prompt.py":
-            for flag in ("--kind", "--candidate", "--out", "--base", "--ref", "--todo", "--fidelity",
-                         "--purpose", "--governing", "--gates", "--findings", "--failed", "--last"):
-                parser.add_argument(flag)
+            if not any(t.startswith(("--cand", "--out", "--gov", "--purp", "--fail", "--find", "--gat",
+                                     "--ref", "--todo", "--fid", "--base", "--last", "--help", "-h")) for t in argv):
+                return (False, None, None, None)
         else:
-            for flag in ("--writer", "--prompt", "--record", "--kind", "--candidate", "--timeout", "--pin", "--records"):
-                parser.add_argument(flag)
-            parser.add_argument("--paths", nargs="*")
-            for flag in ("--surface", "--check-pin", "--list-rounds", "--json"):
-                parser.add_argument(flag, action="store_true")
+            if not any(t.startswith(("--w", "--p", "--r", "--c", "--t", "--s", "--l", "--j", "--help", "-h")) for t in argv):
+                return (False, None, None, None)
+        placeholder_writer = False
+        parse_argv: list[str] = []
+        i = 0
+        while i < len(argv):
+            tok = argv[i]
+            if target == "review-dispatch.py" and tok.startswith("--w") and "=" in tok:
+                k, v = tok.split("=", 1)
+                if v == "<claude|agy>":
+                    placeholder_writer = True
+                    parse_argv.append(f"{k}=claude")
+                    i += 1
+                    continue
+            if target == "review-dispatch.py" and tok.startswith("--w") and "=" not in tok and i + 1 < len(argv) and argv[i + 1] == "<claude|agy>":
+                placeholder_writer = True
+                parse_argv.extend([tok, "claude"])
+                i += 2
+                continue
+            parse_argv.append(tok)
+            i += 1
+        parser = AgentFrontmatter._script_parser(target)
+        buf = io.StringIO()
         try:
-            ns = parser.parse_args(tokens[idx + 1:])
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                ns = parser.parse_args(parse_argv)
         except (SystemExit, argparse.ArgumentError):
             return (True, None, None, None)
         if target == "review-prompt.py":
-            is_exec = any(v is not None for v in (ns.candidate, ns.out, ns.governing, ns.purpose, ns.failed, ns.findings, ns.gates))
-            if not is_exec:
-                return (False, None, ns.kind, None)
-            if not (ns.kind and ns.candidate and ns.out):
-                return (True, None, None, None)
             per_kind_req = {
                 "plan": (ns.governing,),
                 "round": (ns.purpose, ns.governing),
@@ -221,12 +251,12 @@ class AgentFrontmatter(unittest.TestCase):
             return (True, None, ns.kind, ns.out)
         if ns.check_pin or ns.list_rounds:
             return (True, None, None, None)
-        is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record))
-        if not is_exec:
-            return (False, None, ns.kind, None)
-        if not (ns.writer and ns.prompt and ns.record) or (ns.kind is not None and not ns.candidate):
+        has_kind = any(t.startswith("--k") for t in argv)
+        kind = ns.kind if has_kind else None
+        writer = "<claude|agy>" if placeholder_writer else ns.writer
+        if not (writer and ns.prompt and ns.record) or (kind is not None and not ns.candidate):
             return (True, None, None, None)
-        return (True, ns.writer, ns.kind, ns.prompt)
+        return (True, writer, kind, ns.prompt)
 
     @staticmethod
     def _parse_dispatch_writer(line: str) -> str | None:
@@ -648,6 +678,12 @@ class AgentFrontmatter(unittest.TestCase):
                      "review-prompt.py --kind completion ")
         )
         self.assertTrue(self._check_ten_writer_skills(missing_prompt_candidate))
+        bad_timeout_dispatch = dict(texts)
+        bad_timeout_dispatch[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_timeout_dispatch[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("review-dispatch.py --kind completion ", "review-dispatch.py --kind completion --timeout 30s ")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_timeout_dispatch))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]

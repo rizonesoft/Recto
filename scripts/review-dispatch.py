@@ -1396,7 +1396,7 @@ def list_rounds(records_dir):
     return {"records": records, **({"unreadable": unreadable} if unreadable else {})}
 
 
-def main(argv=None):
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--writer", choices=WRITERS, help="The agent whose work is under review")
     parser.add_argument("--prompt", help="File holding the review prompt")
@@ -1428,6 +1428,11 @@ def main(argv=None):
     parser.add_argument("--json", action="store_true", help="With --list-rounds, print the listing as JSON")
     parser.add_argument("--records", default=str(ROOT / "docs" / "reviews"),
                         help="With --list-rounds, the folder of findings files (default docs/reviews)")
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
     args = parser.parse_args(argv)
     if args.check_pin:
         # load_pin stays the only place the rules live: this reports its verdict and runs nothing.
