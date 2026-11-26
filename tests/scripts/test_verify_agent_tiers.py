@@ -197,6 +197,35 @@ class AgentFrontmatter(unittest.TestCase):
         return None
 
     _SCRIPT_MODS: dict[str, object] = {}
+    _PWSH_SYNTAX_CACHE: dict[str, bool] = {}
+
+    @classmethod
+    def _pwsh_parses_as_command(cls, stmt: str) -> bool:
+        """Verify with PowerShell's real parser (`ParseInput`) that `stmt` parses with zero syntax errors
+        and yields at least one `CommandAst` (rejecting quoted launchers without `&`, unclosed quotes,
+        or other PowerShell parser errors). Falls back to True only when `pwsh` is not installed."""
+        cached = cls._PWSH_SYNTAX_CACHE.get(stmt)
+        if cached is not None:
+            return cached
+        pwsh = shutil.which("pwsh")
+        if not pwsh:
+            cls._PWSH_SYNTAX_CACHE[stmt] = True
+            return True
+        ps_code = (
+            "$errs = $null; "
+            "$ast = [System.Management.Automation.Language.Parser]::ParseInput($env:RECTO_PWSH_STMT, [ref]$null, [ref]$errs); "
+            "$cmds = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)); "
+            "if ($errs.Count -eq 0 -and $cmds.Count -gt 0) { exit 0 } else { exit 1 }"
+        )
+        import os
+        env = dict(os.environ, RECTO_PWSH_STMT=stmt)
+        proc = subprocess.run(
+            [pwsh, "-NoProfile", "-NonInteractive", "-Command", ps_code],
+            capture_output=True, text=True, env=env, timeout=15,
+        )
+        ok = proc.returncode == 0
+        cls._PWSH_SYNTAX_CACHE[stmt] = ok
+        return ok
 
     @classmethod
     def _script_module(cls, script_name: str):
@@ -211,16 +240,19 @@ class AgentFrontmatter(unittest.TestCase):
 
     @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
-        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement using that script's own
-        `build_parser()` (zero duplicated CLI contract: rejects `--help`, `-h`, invalid `--timeout`, unknown
-        flags, missing required args, or diagnostic-only flags). Returns
+        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement using PowerShell's
+        parser (when `pwsh` is available) plus that script's own `build_parser()` (zero duplicated CLI
+        contract: rejects quoted launchers without `&`, unclosed quotes, `--help`, `-h`, invalid
+        `--timeout`, unknown flags, missing required args, or diagnostic-only flags). Returns
         `(is_executable_invocation, writer, kind, prompt_file)`."""
-        cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
-        cleaned = re.sub(r"<[^>]+>", lambda m: m.group(0).replace(" ", "_").replace("'", ""), cleaned)
+        raw = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`")
+        if not raw or raw.startswith(('"', "'")):
+            return (False, None, None, None)
+        cleaned = re.sub(r"<[^>]+>", lambda m: m.group(0).replace(" ", "_").replace("'", ""), raw.replace("\\", "/"))
         try:
             tokens = shlex.split(cleaned, posix=True)
         except ValueError:
-            tokens = cleaned.split()
+            return (False, None, None, None)
         target = script_name.lower()
         idx = AgentFrontmatter._find_script_token(tokens, target)
         if idx is None:
@@ -233,6 +265,9 @@ class AgentFrontmatter(unittest.TestCase):
         else:
             if not any(t.startswith(("--w", "--p", "--r", "--c", "--t", "--s", "--l", "--j", "--help", "-h")) for t in argv):
                 return (False, None, None, None)
+        pwsh_stmt = re.sub(r"<[^>]+>", "PLACEHOLDER", raw)
+        if not AgentFrontmatter._pwsh_parses_as_command(pwsh_stmt):
+            return (False, None, None, None)
         def _subst_writer(raw_argv: list[str], repl: str) -> list[str]:
             out_argv: list[str] = []
             i = 0
@@ -770,6 +805,20 @@ class AgentFrontmatter(unittest.TestCase):
                      "buil\\python.cmd scripts/review-prompt.py --kind completion")
         )
         self.assertTrue(self._check_ten_writer_skills(bad_launcher_dir))
+        quoted_launcher_no_amp = dict(texts)
+        quoted_launcher_no_amp[".agents/skills/review-todo-section/SKILL.md"] = (
+            quoted_launcher_no_amp[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     '"build\\python.cmd" scripts/review-prompt.py --kind completion')
+        )
+        self.assertTrue(self._check_ten_writer_skills(quoted_launcher_no_amp))
+        quoted_launcher_with_amp = dict(texts)
+        quoted_launcher_with_amp[".agents/skills/review-todo-section/SKILL.md"] = (
+            quoted_launcher_with_amp[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     '& "build\\python.cmd" scripts/review-prompt.py --kind completion')
+        )
+        self.assertEqual([], self._check_ten_writer_skills(quoted_launcher_with_amp))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
