@@ -349,10 +349,12 @@ class AgentFrontmatter(unittest.TestCase):
 
     @staticmethod
     def _is_negated_or_historical(text: str, pos: int) -> bool:
-        """Return True when the occurrence at `pos` appears inside a prohibition or historical note
-        (e.g. `Never use IsDaemon: true`, `not IsDaemon: true`, `formerly WaitMsBeforeAsync: 500`)."""
+        """Return True when the occurrence at `pos` appears inside a prohibition or historical clause
+        (e.g. `Never use IsDaemon: true`, `not IsDaemon: true`, `formerly WaitMsBeforeAsync: 500`),
+        stopping at clause boundaries (punctuation or `but`/`however`/`now`) so an earlier negation or
+        historical note does not mask a following active setting."""
         prefix = text[max(0, pos - 64):pos]
-        clause = re.split(r"[\n.;]", prefix)[-1]
+        clause = re.split(r"[\n.;,()]|\b(?:but|however|now)\b", prefix, flags=re.IGNORECASE)[-1]
         return bool(re.search(
             r"\b(?:never|not|don'?t|do\s+not|avoid|forbid(?:s|den)?|refuse(?:s|d)?|reject(?:s|ed)?|"
             r"disallow(?:s|ed)?|instead\s+of|rather\s+than|formerly|previously|old|legacy|deprecated)\b",
@@ -904,6 +906,18 @@ class AgentFrontmatter(unittest.TestCase):
             + "\nNever use `IsDaemon: true` for reviews.\n"
         )
         self.assertEqual([], self._check_ten_writer_skills(never_use_is_daemon_true))
+        negated_then_active_wait_60000 = dict(texts)
+        negated_then_active_wait_60000[".agents/skills/review-todo-section/SKILL.md"] = (
+            negated_then_active_wait_60000[".agents/skills/review-todo-section/SKILL.md"]
+            + "\nFor completion do not use the round timeout, use WaitMsBeforeAsync: 60000.\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(negated_then_active_wait_60000))
+        formerly_then_now_use_500 = dict(texts)
+        formerly_then_now_use_500[".agents/skills/review-todo-section/SKILL.md"] = (
+            formerly_then_now_use_500[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("WaitMsBeforeAsync: 500", "formerly 1000 ms, now use WaitMsBeforeAsync: 500", 1)
+        )
+        self.assertEqual([], self._check_ten_writer_skills(formerly_then_now_use_500))
         bg_false_with_true = dict(texts)
         bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"] = (
             bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"]
