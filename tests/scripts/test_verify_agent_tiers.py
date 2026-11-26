@@ -205,12 +205,28 @@ class AgentFrontmatter(unittest.TestCase):
         except (SystemExit, argparse.ArgumentError):
             return (True, None, None, None)
         if target == "review-prompt.py":
-            is_exec = any(v is not None for v in (ns.candidate, ns.out))
-            return (is_exec, None, ns.kind, ns.out)
+            is_exec = any(v is not None for v in (ns.candidate, ns.out, ns.governing, ns.purpose, ns.failed, ns.findings, ns.gates))
+            if not is_exec:
+                return (False, None, ns.kind, None)
+            if not (ns.kind and ns.candidate and ns.out):
+                return (True, None, None, None)
+            per_kind_req = {
+                "plan": (ns.governing,),
+                "round": (ns.purpose, ns.governing),
+                "completion": (ns.purpose, ns.governing),
+                "reconciliation": (ns.failed, ns.findings, ns.gates, ns.governing),
+            }
+            if ns.kind not in per_kind_req or not all(per_kind_req[ns.kind]):
+                return (True, None, None, None)
+            return (True, None, ns.kind, ns.out)
         if ns.check_pin or ns.list_rounds:
             return (True, None, None, None)
         is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record))
-        return (is_exec, ns.writer, ns.kind, ns.prompt)
+        if not is_exec:
+            return (False, None, ns.kind, None)
+        if not (ns.writer and ns.prompt and ns.record) or (ns.kind is not None and not ns.candidate):
+            return (True, None, None, None)
+        return (True, ns.writer, ns.kind, ns.prompt)
 
     @staticmethod
     def _parse_dispatch_writer(line: str) -> str | None:
@@ -625,6 +641,13 @@ class AgentFrontmatter(unittest.TestCase):
                      "build\\python.cmd -Xutf8 scripts/review-prompt.py --kind completion")
         )
         self.assertEqual(self._check_ten_writer_skills(xutf8_prompt), [])
+        missing_prompt_candidate = dict(texts)
+        missing_prompt_candidate[".agents/skills/review-todo-section/SKILL.md"] = (
+            missing_prompt_candidate[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("review-prompt.py --kind completion --candidate <full tip SHA> ",
+                     "review-prompt.py --kind completion ")
+        )
+        self.assertTrue(self._check_ten_writer_skills(missing_prompt_candidate))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
