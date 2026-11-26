@@ -203,20 +203,27 @@ class AgentFrontmatter(unittest.TestCase):
                                 ordered_cmds.append((pending_target, pending_cmd))
                                 pending_cmd = ""
                                 pending_target = ""
-                    elif "review-dispatch.py" in ln.lower():
+                    elif "review-dispatch.py" in ln.lower() or "review-prompt.py" in ln.lower():
                         if pending_cmd:
                             ordered_cmds.append((pending_target, pending_cmd))
                             pending_cmd = ""
                             pending_target = ""
                         spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
-                                 if "review-dispatch.py" in m.group(2).lower()]
+                                 if "review-dispatch.py" in m.group(2).lower()
+                                 or "review-prompt.py" in m.group(2).lower()]
                         for candidate in spans or [ln]:
-                            is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(candidate)
-                            if is_exec and parsed_inline not in allowed_writers:
-                                errors.append(
-                                    f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
-                                    f"not in {sorted(allowed_writers)}"
-                                )
+                            cand_low = candidate.lower()
+                            for role, script in (("prompt", "review-prompt.py"), ("dispatch", "review-dispatch.py")):
+                                if script not in cand_low:
+                                    continue
+                                is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(candidate, script)
+                                if is_exec:
+                                    ordered_cmds.append((role, candidate))
+                                    if role == "dispatch" and parsed_inline not in allowed_writers:
+                                        errors.append(
+                                            f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
+                                            f"not in {sorted(allowed_writers)}"
+                                        )
                 if pending_cmd:
                     ordered_cmds.append((pending_target, pending_cmd))
                 dispatch_lines = [cmd for role, cmd in ordered_cmds if role == "dispatch"]
@@ -259,11 +266,12 @@ class AgentFrontmatter(unittest.TestCase):
                         ("prompt", "round"), ("dispatch", "round"),
                         ("prompt", "completion"), ("dispatch", "completion"),
                         ("prompt", "reconciliation"), ("dispatch", "reconciliation"),
+                        ("dispatch", None),
                     ]
                     if ordered_kinds != expected:
                         errors.append(f"{rel}: review-todo-section command order {ordered_kinds!r} != {expected!r}")
                     else:
-                        for i in range(0, len(parsed_sequence), 2):
+                        for i in range(0, 6, 2):
                             p_file, d_file = parsed_sequence[i][2], parsed_sequence[i + 1][2]
                             if not p_file or p_file != d_file:
                                 errors.append(f"{rel}: review-todo-section pair {i // 2} prompt --out {p_file!r} != dispatch --prompt {d_file!r}")
@@ -399,6 +407,19 @@ class AgentFrontmatter(unittest.TestCase):
             texts[".agents/skills/review-todo-section/SKILL.md"],
         )
         self.assertTrue(self._check_ten_writer_skills(transposed_completion))
+        inline_early_dispatch = dict(texts)
+        inline_early_dispatch[".agents/skills/review-todo-section/SKILL.md"] = (
+            inline_early_dispatch[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(
+                "3. **The completion and excellence review**",
+                f"Run `{d_line}` first.\n3. **The completion and excellence review**",
+            )
+        )
+        self.assertNotEqual(
+            inline_early_dispatch[".agents/skills/review-todo-section/SKILL.md"],
+            texts[".agents/skills/review-todo-section/SKILL.md"],
+        )
+        self.assertTrue(self._check_ten_writer_skills(inline_early_dispatch))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
