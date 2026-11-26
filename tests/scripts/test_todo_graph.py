@@ -1,5 +1,6 @@
 """Tests for scripts/lib/todo_graph.py and scripts/todo-graph.py: the graph refuses malformed work and stamps only real evidence."""
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -2273,10 +2274,13 @@ class Repository(unittest.TestCase):
             tg.schedule_ok(repo, data_a_ok, "D00 T05 §1", surface=False)
             # 2. Receipt for cond_a omitting required conditional lens "security" is refused.
             data_a_missing = write_findings(cond_a, ["adversarial"])
+            st_before = (repo / report_rel).stat()
             with self.assertRaises(tg.Refused):
                 tg.schedule_ok(repo, data_a_missing, "D00 T05 §1", surface=False)
-            # 3. Valid receipt for cond_b (docs/note.md only, no "security") passes.
+            # 3. Valid receipt for cond_b (same byte length and forced identical mtime_ns as data_a_missing) passes,
+            # proving _findings_cached never serves stale data on coarse-mtime filesystems.
             data_b_ok = write_findings(cond_b, ["adversarial"])
+            os.utime(repo / report_rel, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
             tg.schedule_ok(repo, data_b_ok, "D00 T05 §1", surface=False)
             # 4. Repeating schedule_ok for cond_a reuses cached changed_paths without spawning git diff.
             replay_diffs = []

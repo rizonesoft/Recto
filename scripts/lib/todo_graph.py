@@ -248,7 +248,7 @@ _BATCH_READERS: dict[str, subprocess.Popen] = {}
 _BATCH_ACTIVE: dict[str, int] = {}
 _BATCH_READ_TIMEOUT: float = 60.0
 _ROOT_KEY_CACHE: dict[str, str] = {}
-_FINDINGS_CACHE: dict[tuple[str, int, int], dict | None] = {}
+_FINDINGS_CACHE: dict[bytes, dict | None] = {}
 
 
 def _root_key(root) -> str:
@@ -261,14 +261,16 @@ def _root_key(root) -> str:
 
 
 def _findings_cached(root, report: str):
-    """Parse a findings file once per (path, size, mtime_ns) across plan, round, completion and reconciliation checks."""
-    path = Path(root) / report
-    st = path.stat()
-    key = (str(path), st.st_size, st.st_mtime_ns)
-    if key in _FINDINGS_CACHE:
-        return _FINDINGS_CACHE[key]
-    found = review_dispatch().read_findings(path.read_bytes().decode("utf-8"))
-    _FINDINGS_CACHE[key] = found
+    """Parse a findings file once per exact byte content across plan, round, completion and reconciliation checks.
+    Keying by content bytes avoids stale hits on coarse-mtime filesystems (e.g. Windows 15.6 ms NTFS ticks) when a
+    file is overwritten with the same byte length."""
+    raw = (Path(root) / report).read_bytes()
+    if raw in _FINDINGS_CACHE:
+        return _FINDINGS_CACHE[raw]
+    found = review_dispatch().read_findings(raw.decode("utf-8"))
+    if len(_FINDINGS_CACHE) > 512:
+        _FINDINGS_CACHE.clear()
+    _FINDINGS_CACHE[raw] = found
     return found
 
 
