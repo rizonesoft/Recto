@@ -9,7 +9,7 @@ You are an independent plan reviewer. Do not modify any file. The candidate belo
 ## Candidate
 
 - Commit: `<FULL_SHA>` (read the section at that commit).
-- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>"`).
+- TODO section: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`).
 - The TODO file's Goal and Outcome (with its Adjacency line): `<path to the TODO file>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 - Governing documents: `AGENTS.md` and `<the spec or plan that applies>`.

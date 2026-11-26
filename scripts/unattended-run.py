@@ -194,15 +194,6 @@ def agent_command(root: Path, profile: dict, tag: str, resume_id: str | None) ->
         if skip:
             argv.append("--dangerously-skip-permissions")
         return argv + ["--", prompt]
-    if agent == "codex":
-        # Codex has no --effort: -c overrides config.toml's model_reasoning_effort (a TOML string). It chooses its own
-        # session id, so a fresh start names none; `codex resume [SESSION_ID] [PROMPT]` continues one.
-        options = ["-m", model, "-c", f'model_reasoning_effort="{effort}"']
-        if skip:
-            options.append("--dangerously-bypass-approvals-and-sandbox")
-        if resume_id:
-            return ["codex", "resume", *options, "--", resume_id, prompt]
-        return ["codex", *options, "--", prompt]
     if agent == "agy":
         # Antigravity's flags take `--name=value`; --prompt-interactive runs the prompt and keeps the session open.
         argv = ["agy", f"--model={model}", f"--effort={effort}"]

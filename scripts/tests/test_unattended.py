@@ -109,10 +109,10 @@ class LoadProfileTest(unittest.TestCase):
                 self.refused("schema_version", self.with_(schema_version=bad))
 
     def test_an_unknown_agent_is_refused(self):
-        for bad in ("gemini", "Claude", "", None, 1):
+        for bad in ("codex", "gemini", "Claude", "", None, 1):
             with self.subTest(bad=bad):
                 self.refused("agent", self.with_(agent=bad))
-        for good in ("claude", "codex", "agy"):
+        for good in ("claude", "agy"):
             self.write(self.with_(agent=good))
             self.assertEqual(unattended.load_profile(self.root)["agent"], good)
 
@@ -169,18 +169,34 @@ class LoadProfileTest(unittest.TestCase):
     def test_an_edited_profile_is_read_back_on_reload(self):
         self.write(self.profile)
         self.assertEqual(unattended.load_profile(self.root)["idle_minutes"], self.profile["idle_minutes"])
-        self.write(self.with_(idle_minutes=self.profile["idle_minutes"] + 45, branch="trunk", agent="codex", effort="xhigh"))
+        self.write(self.with_(idle_minutes=self.profile["idle_minutes"] + 45, branch="trunk", agent="agy", effort="xhigh"))
         loaded = unattended.load_profile(self.root)
         self.assertEqual((loaded["idle_minutes"], loaded["branch"], loaded["agent"], loaded["effort"]),
-                         (self.profile["idle_minutes"] + 45, "trunk", "codex", "xhigh"))
+                         (self.profile["idle_minutes"] + 45, "trunk", "agy", "xhigh"))
 
     def test_the_effort_must_be_one_the_agent_takes(self):
         self.assertIn("for claude", self.refused("effort", self.with_(effort="minimal")))
-        self.refused("effort", self.with_(agent="codex", effort="max"))
+        self.refused("agent", self.with_(agent="codex", effort="high"))
         self.refused("effort", self.with_(agent="agy", effort="minimal"))  # agy --help: low|medium|high|xhigh|max
-        for agent, effort in (("claude", "max"), ("codex", "minimal"), ("agy", "xhigh")):
+        for agent, effort in (("claude", "max"), ("agy", "xhigh")):
             self.write(self.with_(agent=agent, effort=effort))
             self.assertEqual(unattended.load_profile(self.root)["effort"], effort)
+
+    def test_shipped_profile_and_prompt_work_in_relocated_checkout(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        shipped_profile = repo_root / ".conclave" / "unattended.json"
+        shipped_prompt = repo_root / "docs" / "unattended-prompt.md"
+        with tempfile.TemporaryDirectory() as relocated:
+            dst = Path(relocated) / "moved-recto-clone"
+            (dst / ".conclave").mkdir(parents=True)
+            (dst / "docs").mkdir(parents=True)
+            (dst / ".conclave" / "unattended.json").write_bytes(shipped_profile.read_bytes())
+            (dst / "docs" / "unattended-prompt.md").write_bytes(shipped_prompt.read_bytes())
+            loaded = unattended.load_profile(dst)
+            self.assertIn(loaded["agent"], ("claude", "agy"))
+            self.assertIn("codex", loaded["tools"])
+            self.assertEqual(loaded["prompt_file"], "docs/unattended-prompt.md")
+            self.assertTrue((dst / loaded["prompt_file"]).is_file())
 
     def test_a_preflight_command_must_start_with_a_program(self):
         good = {"name": "suite", "command": ["python3"], "timeout_seconds": 60}

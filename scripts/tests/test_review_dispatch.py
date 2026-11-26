@@ -1373,6 +1373,38 @@ class RepositoryPin(unittest.TestCase):
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
+    def test_shipped_pin_routes_both_writers_to_astra_and_refuses_unsupported(self):
+        spec = importlib.util.spec_from_file_location("dispatch_shipped_pin", SCRIPTS / "review-dispatch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        pin = module.load_pin(REPO_PIN)
+        self.assertEqual(set(pin["routes"]), {"claude", "agy"})
+        self.assertNotIn("codex", pin["routes"])
+        self.assertNotIn("muse", pin["routes"])
+        schedule = pin["schedule"]
+        self.assertEqual(schedule.get("policy"), module.THREE_PASS)
+        for writer in ("claude", "agy"):
+            route = pin["routes"][writer]
+            self.assertEqual(route, ["astra"])
+            reviewer = pin["reviewers"][route[0]]
+            self.assertEqual((reviewer["cli"], reviewer["model"]), ("codex", "gpt-6.2-astra"))
+            for kind, expected_effort in (("plan", "medium"), ("round", "medium"),
+                                          ("completion", "medium"), ("reconciliation", "low")):
+                step = module.scheduled(schedule, kind, [], surface=False, reviewer="astra")
+                self.assertEqual(step["effort"], expected_effort, (writer, kind))
+                argv, _ = module.command(reviewer, "/usr/bin/codex", "prompt", Path("/p.md"),
+                                         Path("/out.txt"), 60, step["effort"])
+                self.assertIn("--sandbox", argv)
+                self.assertIn("read-only", argv)
+                self.assertIn("--ephemeral", argv)
+                self.assertIn("gpt-6.2-astra", argv)
+                self.assertIn(f"model_reasoning_effort={expected_effort}", argv)
+        for bad_writer in ("codex", "muse", "unknown"):
+            with self.subTest(bad_writer=bad_writer):
+                self.assertNotIn(bad_writer, pin["routes"])
+                with self.assertRaises(module.Refused):
+                    module.load_pin(REPO_PIN, data=REPO_PIN.read_bytes().replace(b'agy = ["astra"]', b'codex = ["astra"]'))
+
     def test_the_pins_severity_stop_is_the_stamps_cutoff(self):
         # The dispatcher reports severity_stop from the pin and `stamp` re-checks it against SEVERITY_CUTOFF_ROUND: the
         # two numbers must agree, or the dispatcher would stop a loop the stamp then refuses. todo_graph ships in the

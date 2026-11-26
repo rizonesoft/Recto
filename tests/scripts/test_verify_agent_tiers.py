@@ -94,6 +94,64 @@ class AgentFrontmatter(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    @staticmethod
+    def _check_ten_writer_skills(texts: dict[str, str]) -> list[str]:
+        """Verify all ten Claude Code and Antigravity workflow skill files stay aligned on three-pass,
+        writer identity, pass order and runner-specific background review invocation."""
+        errors: list[str] = []
+        skills = ("process-todo-section", "review-todo-section", "independent-review", "process-phase", "process-plan")
+        for tree, bg_tokens in ((".claude/skills", ("run_in_background",)),
+                                (".agents/skills", ("WaitMsBeforeAsync: 500", "IsDaemon: false"))):
+            for skill in skills:
+                rel = f"{tree}/{skill}/SKILL.md"
+                text = texts.get(rel)
+                if text is None:
+                    errors.append(f"missing skill file: {rel}")
+                    continue
+                if skill in ("process-todo-section", "review-todo-section", "process-phase"):
+                    if "three-pass" not in text:
+                        errors.append(f"{rel}: missing three-pass schedule reference")
+                if skill in ("process-todo-section", "review-todo-section", "independent-review"):
+                    if "--writer" not in text:
+                        errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
+                    for tok in bg_tokens:
+                        if tok not in text:
+                            errors.append(f"{rel}: missing runner background token {tok!r}")
+                if skill == "review-todo-section":
+                    for pass_name in ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation"):
+                        if pass_name not in text:
+                            errors.append(f"{rel}: missing pass {pass_name!r}")
+                    idx = [text.index(p) for p in ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation")
+                           if p in text]
+                    if len(idx) == 4 and idx != sorted(idx):
+                        errors.append(f"{rel}: three-pass order drifted")
+                if skill == "process-plan":
+                    if "process-phase" not in text:
+                        errors.append(f"{rel}: missing process-phase handoff")
+        return errors
+
+    def test_ten_writer_skill_files_parity(self):
+        skills = ("process-todo-section", "review-todo-section", "independent-review", "process-phase", "process-plan")
+        texts: dict[str, str] = {}
+        for tree in (".claude/skills", ".agents/skills"):
+            for skill in skills:
+                rel = f"{tree}/{skill}/SKILL.md"
+                path = ROOT / rel
+                self.assertTrue(path.is_file(), f"missing {rel}")
+                texts[rel] = path.read_text(encoding="utf-8")
+        self.assertEqual(self._check_ten_writer_skills(texts), [])
+        # Negative checks: drift on either runner side must fail.
+        drifted_agy = dict(texts)
+        drifted_agy[".agents/skills/review-todo-section/SKILL.md"] = (
+            drifted_agy[".agents/skills/review-todo-section/SKILL.md"].replace("WaitMsBeforeAsync: 500", "foreground")
+        )
+        self.assertTrue(self._check_ten_writer_skills(drifted_agy))
+        drifted_claude = dict(texts)
+        drifted_claude[".claude/skills/review-todo-section/SKILL.md"] = (
+            drifted_claude[".claude/skills/review-todo-section/SKILL.md"].replace("--kind reconciliation", "--kind other")
+        )
+        self.assertTrue(self._check_ten_writer_skills(drifted_claude))
+
 
 if __name__ == "__main__":
     unittest.main()

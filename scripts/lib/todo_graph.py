@@ -6,6 +6,8 @@ Stamping loads the reviewer kit's scripts/review-dispatch.py. Rules: todo/README
 """
 from __future__ import annotations
 
+import atexit
+import contextlib
 from dataclasses import asdict, dataclass
 import copy
 import hashlib
@@ -238,6 +240,95 @@ def review_dispatch():
 _WINDOWLESS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _PIN_BYTES_CACHE: dict[tuple[str, str], bytes] = {}
 _HIST_PIN_CACHE: dict[bytes, dict] = {}
+_COMMIT_PARENTS_CACHE: dict[str, dict[str, tuple[str, ...]]] = {}
+_CHANGED_PATHS_CACHE: dict[tuple[str, str, str], tuple[str, ...]] = {}
+_BLOB_BYTES_CACHE: dict[tuple[str, str, str], bytes] = {}
+_BATCH_READERS: dict[str, subprocess.Popen] = {}
+_BATCH_ACTIVE: dict[str, int] = {}
+
+
+def _close_batch_readers(root=None):
+    keys = [str(Path(root).resolve())] if root is not None else list(_BATCH_READERS.keys())
+    for key in keys:
+        proc = _BATCH_READERS.pop(key, None)
+        if proc is None:
+            continue
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+atexit.register(_close_batch_readers)
+
+
+@contextlib.contextmanager
+def _batch_session(root):
+    """Keep one `git cat-file --batch` reader alive for `root` during a `graph()` call, then close it cleanly."""
+    key = str(Path(root).resolve())
+    _BATCH_ACTIVE[key] = _BATCH_ACTIVE.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        left = _BATCH_ACTIVE.get(key, 1) - 1
+        if left <= 0:
+            _BATCH_ACTIVE.pop(key, None)
+            _close_batch_readers(root)
+        else:
+            _BATCH_ACTIVE[key] = left
+
+
+def _batch_read_blob(root, sha, rel):
+    """Read `<sha>:<rel>` through a persistent `git cat-file --batch` reader when inside `_batch_session`, else one-shot."""
+    root_key = str(Path(root).resolve())
+    cacheable = bool(re.fullmatch(r"[0-9a-f]{40}", str(sha)))
+    blob_key = (root_key, str(sha), rel)
+    if cacheable and blob_key in _BLOB_BYTES_CACHE:
+        return _BLOB_BYTES_CACHE[blob_key]
+    if _BATCH_ACTIVE.get(root_key, 0) <= 0:
+        shown = _git(root, "show", f"{sha}:{rel}")
+        if shown.returncode == 0:
+            if cacheable:
+                _BLOB_BYTES_CACHE[blob_key] = shown.stdout
+            return shown.stdout
+        return None
+    proc = _BATCH_READERS.get(root_key)
+    if proc is None or proc.poll() is not None:
+        try:
+            proc = subprocess.Popen(
+                ["git", "-C", str(root), "cat-file", "--batch"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=_WINDOWLESS,
+            )
+        except OSError:
+            return None
+        _BATCH_READERS[root_key] = proc
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(f"{sha}:{rel}\n".encode("utf-8"))
+        proc.stdin.flush()
+        header = proc.stdout.readline().decode("ascii", errors="replace").strip()
+        parts = header.split()
+        if len(parts) >= 3 and parts[1] == "blob" and parts[2].isdigit():
+            size = int(parts[2])
+            data = proc.stdout.read(size)
+            proc.stdout.read(1)  # trailing LF
+            if len(data) == size:
+                if cacheable:
+                    _BLOB_BYTES_CACHE[blob_key] = data
+                return data
+        return None
+    except OSError:
+        _close_batch_readers(root)
+        return None
 
 
 def _git(root, *args):
@@ -249,10 +340,12 @@ def _pin_bytes(root, sha):
     cached = _PIN_BYTES_CACHE.get(key)
     if cached is not None:
         return 0, cached
-    shown = _git(root, "show", f"{sha}:{PIN}")
-    if shown.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", str(sha)):
-        _PIN_BYTES_CACHE[key] = shown.stdout
-    return shown.returncode, shown.stdout
+    raw = _batch_read_blob(root, sha, PIN)
+    if raw is not None:
+        if re.fullmatch(r"[0-9a-f]{40}", str(sha)):
+            _PIN_BYTES_CACHE[key] = raw
+        return 0, raw
+    return 1, b""
 
 
 def _prefetch_pins(root):
@@ -306,17 +399,59 @@ def _prefetch_pins(root):
                 break
 
 
+def _commit_parents(root, refresh=False):
+    """Map commit SHA -> parent SHAs for all reachable commits in `root` in one `git rev-list` call."""
+    key = str(Path(root).resolve())
+    if not refresh and key in _COMMIT_PARENTS_CACHE:
+        return _COMMIT_PARENTS_CACHE[key]
+    shown = _git(root, "rev-list", "--all", "--parents")
+    if shown.returncode != 0:
+        return {}
+    parents: dict[str, tuple[str, ...]] = {}
+    for line in shown.stdout.decode("ascii", errors="replace").splitlines():
+        parts = line.split()
+        if parts:
+            parents[parts[0]] = tuple(parts[1:])
+    _COMMIT_PARENTS_CACHE[key] = parents
+    return parents
+
+
 def is_ancestor(root, older, newer):
     """True when commit `older` is `newer` or an ancestor of it."""
+    if re.fullmatch(r"[0-9a-f]{40}", str(older)) and re.fullmatch(r"[0-9a-f]{40}", str(newer)):
+        parents = _commit_parents(root)
+        if older not in parents or newer not in parents:
+            parents = _commit_parents(root, refresh=True)
+        if older in parents and newer in parents:
+            if older == newer:
+                return True
+            seen = {newer}
+            stack = [newer]
+            while stack:
+                cur = stack.pop()
+                for parent in parents.get(cur, ()):
+                    if parent == older:
+                        return True
+                    if parent not in seen:
+                        seen.add(parent)
+                        stack.append(parent)
+            return False
     return _git(root, "merge-base", "--is-ancestor", older, newer).returncode == 0
 
 
 def changed_paths(root, base, candidate, ref):
     """The files that differ between two commits, repository-relative with forward slashes: what the dispatcher gave
     a three-pass pass's conditional lenses."""
+    cacheable = re.fullmatch(r"[0-9a-f]{40}", str(base)) and re.fullmatch(r"[0-9a-f]{40}", str(candidate))
+    key = (str(Path(root).resolve()), str(base), str(candidate))
+    if cacheable and key in _CHANGED_PATHS_CACHE:
+        return list(_CHANGED_PATHS_CACHE[key])
     shown = _git(root, "-c", "core.quotepath=false", "diff", "--name-only", "--no-renames", "-z", base, candidate)
     require(shown.returncode == 0, f"cannot list the files changed between {base} and {candidate}: {ref}")
-    return [name for name in shown.stdout.decode("utf-8", errors="replace").split("\0") if name]
+    paths = tuple(name for name in shown.stdout.decode("utf-8", errors="replace").split("\0") if name)
+    if cacheable:
+        _CHANGED_PATHS_CACHE[key] = paths
+    return list(paths)
 
 
 def receipt_digest(data):
@@ -659,8 +794,11 @@ def schedule_ok(root, data, ref, surface):
     three_pass = schedule.get("policy") == dispatch.THREE_PASS
     base = data["plan"]["candidate"]
 
+    has_conditional = bool(schedule.get("conditional"))
+
     def changed(entry):
-        return changed_paths(root, base, entry["candidate"], ref) if three_pass and entry.get("candidate") else []
+        return (changed_paths(root, base, entry["candidate"], ref)
+                if three_pass and has_conditional and entry.get("candidate") else [])
 
     def check(where, recorded, expected, optional=()):
         lenses = list(recorded["lenses"] or [])
@@ -684,9 +822,9 @@ def schedule_ok(root, data, ref, surface):
             # An attempt that returned no review, on another candidate than the plan review that did: the dispatcher
             # ran it under the three-pass pin at its own candidate, so that is the schedule it is held to. One whose
             # candidate holds no such pin ran under a working tree's, which is not on record.
-            shown = _git(root, "show", f"{entry['candidate']}:{PIN}")
+            rc, raw = _pin_bytes(root, entry["candidate"])
             try:
-                own = dispatch.load_pin(PIN, data=shown.stdout) if shown.returncode == 0 else None
+                own = dispatch.load_pin(PIN, data=raw) if rc == 0 else None
             except dispatch.Refused:
                 own = None
             if own is None or own.get("schedule", {}).get("policy") != dispatch.THREE_PASS:
@@ -743,9 +881,9 @@ def section_contract(root, sha, ref):
     paths = sorted((Path(root) / "todo").glob(f"{m[1]}-*/TODO-{m[2]}-*.md"))
     require(len(paths) == 1, f"no single TODO file for: {ref}")
     rel = paths[0].relative_to(root).as_posix()
-    shown = _git(root, "show", f"{sha}:{rel}")
-    require(shown.returncode == 0, f"{rel} is not in {sha}: {ref}")
-    body = section_text(shown.stdout.decode("utf-8").replace("\r\n", "\n"), int(m[3]))
+    raw = _batch_read_blob(root, sha, rel)
+    require(raw is not None, f"{rel} is not in {sha}: {ref}")
+    body = section_text(raw.decode("utf-8").replace("\r\n", "\n"), int(m[3]))
     require(body is not None, f"the section is not in {rel} at {sha}: {ref}")
     body = re.sub(r"^(\s*- )\[[xX ]\](?= )", r"\1[ ]", body, flags=re.M)
     body = re.sub(r"^> \*\*(?:Verified|Review|Started|Duration|Deferred|Resolved):\*\*[^\n]*(?:\n|$)", "", body,
@@ -1069,6 +1207,11 @@ def xrefs_of(body, domain, todo):
 
 def graph(root=ROOT):
     """Parse every TODO file strictly; a malformed row or section refuses, it is never read as empty."""
+    with _batch_session(root):
+        return _graph_impl(root)
+
+
+def _graph_impl(root=ROOT):
     root = Path(root)
     plan_config(root)
     legacy_receipts(root)  # a malformed freeze list refuses even before any old receipt is read against it

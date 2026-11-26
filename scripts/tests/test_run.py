@@ -130,21 +130,12 @@ class CommandTest(unittest.TestCase):
 
     CLAUDE_ONLY = ("--session-id", "--resume", "--disallowedTools", "--effort", "--dangerously-skip-permissions")
 
-    def test_the_codex_command_from_the_profile(self):
+    def test_codex_writer_is_refused_by_agent_command(self):
         run = load_run_module()
-        codex = {**PROFILE, "agent": "codex", "model": "gpt-6.2-astra", "effort": "xhigh"}
-        for skip in (True, False):
-            with self.subTest(skip_permissions=skip):
-                profile = {**codex, "skip_permissions": skip}
-                bypass = ["--dangerously-bypass-approvals-and-sandbox"] if skip else []
-                options = ["-m", "gpt-6.2-astra", "-c", 'model_reasoning_effort="xhigh"', *bypass]
-                self.assertEqual(run.agent_command(self.root, profile, "tag-1", None), ["codex", *options, "--", PROMPT])
-                self.assertEqual(run.agent_command(self.root, profile, "tag-1", "thread-9"),
-                                 ["codex", "resume", *options, "--", "thread-9", run.RESUME_PROMPT])
-                for argv in (run.agent_command(self.root, profile, "tag-1", None),
-                             run.agent_command(self.root, profile, "tag-1", "thread-9")):
-                    self.assertFalse([a for a in argv if a in self.CLAUDE_ONLY], argv)
-                    self.assertNotIn("tag-1", argv, "Codex chooses its own session id")
+        codex = {**PROFILE, "agent": "codex", "model": "gpt-6.2-astra", "effort": "high"}
+        for resume_id in (None, "thread-9"):
+            with self.subTest(resume_id=resume_id), self.assertRaises(run.RunError):
+                run.agent_command(self.root, codex, "tag-1", resume_id)
 
     def test_the_antigravity_command_from_the_profile(self):
         run = load_run_module()
@@ -308,10 +299,10 @@ class RunTest(unittest.TestCase):
 
     def test_an_agent_cli_older_than_the_recorded_flags_starts_nothing(self):
         # Completion review of D02 T02 §6: the version refusal was tested in the preflight alone.
-        self.use_codex()
-        done = self.launcher("start", env={**self.env, "STUB_VERSION": "codex-cli 0.150.1"})
+        self.use_agy()
+        done = self.launcher("start", env={**self.env, "STUB_VERSION": "1.4.0"})
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
-        self.assertIn("FAIL version codex: 0.150.1, older than 0.166.0", done.stdout)
+        self.assertIn("FAIL version agy: 1.4.0, older than 1.5.5", done.stdout)
         self.assertIn("nothing was started", done.stdout)
         self.assertFalse(self.log.exists(), "the agent was started")
         self.assertFalse(self.tmux_has("demo-run"))
@@ -576,41 +567,46 @@ class RunTest(unittest.TestCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("is not running", done.stderr)
 
-    def use_codex(self):
-        self.write_profile(agent="codex", model="gpt-6.2-astra", effort="xhigh")
-        (self.root / ".codex").mkdir(exist_ok=True)
-        shutil.copyfile(TODO / ".codex/hooks.json", self.root / ".codex/hooks.json")
-        # Codex's approval of the hook goes through its app-server, which test_codex_hook.py drives against a stub
-        # server; here the trust script reports the hook trusted, as it does once Codex has approved it.
-        (self.root / "scripts" / "codex-hook-trust.py").write_text(
-            "print('codex-hook-trust: trusted: .codex/hooks.json:stop:0:0')\n", encoding="utf-8")
+    def use_agy(self):
+        self.write_profile(agent="agy", model="gemini-pro-orchestrator", effort="medium")
+        (self.root / ".agents").mkdir(exist_ok=True)
+        shutil.copyfile(ROOT / ".agents" / "hooks.json", self.root / ".agents" / "hooks.json")
         git(self.root, "add", "-A")
-        git(self.root, "commit", "-qm", "a codex run")
+        git(self.root, "commit", "-qm", "an agy run")
 
-    def test_a_codex_run_is_tagged_resumed_by_its_guards_session_and_stopped(self):
-        # D02 T02 §6: Codex chooses its own session id; the guard it acquires carries the run's tag.
-        self.use_codex()
+    def test_a_codex_writer_profile_is_refused_before_launch(self):
+        self.write_profile(agent="codex", model="gpt-6.2-astra", effort="high")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "a codex writer profile")
+        done = self.launcher("start")
+        self.assertNotEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("agent", done.stdout + done.stderr)
+        self.assertFalse(self.log.exists(), "codex writer was started")
+        self.assertFalse(self.tmux_has("demo-run"))
+
+    def test_an_agy_run_is_tagged_resumed_by_its_guards_session_and_stopped(self):
+        # Antigravity chooses its own conversation id; the guard it acquires carries the run's tag.
+        self.use_agy()
         self.assertEqual(self.launcher("start").returncode, 0)
         marker = self.marker()
         self.assertIsNone(marker["agent_session"])
         first = self.calls(1)[0]
-        self.assertEqual((first["cli"], first["tag"]), ("codex", marker["session"]))
-        self.acquire("codex-thread-1", tag=marker["session"])  # the hook inside the run, with Codex's own id
+        self.assertEqual((first["cli"], first["tag"]), ("agy", marker["session"]))
+        self.acquire("agy-conv-1", tag=marker["session"])
         subprocess.run(["tmux", "kill-session", "-t", "=demo-run"], timeout=30, creationflags=windowless())
         done = self.launcher("start")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         resumed = self.calls(2)[-1]["argv"]
-        self.assertEqual(resumed[:2], ["resume", "-m"])
-        self.assertEqual(resumed[resumed.index("--") + 1], "codex-thread-1")
+        self.assertIn("--conversation=agy-conv-1", resumed)
         self.assertEqual((self.marker()["session"], self.marker()["agent_session"]), (marker["session"],
-                                                                                       "codex-thread-1"))
+                                                                                       "agy-conv-1"))
         done = self.launcher("stop")
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn("guard ended", done.stdout)
         self.assertIsNone(self.guard())
 
-    def test_a_codex_run_without_a_guard_starts_fresh_and_leaves_another_runs_guard(self):
-        self.use_codex()
+    def test_an_agy_run_without_a_guard_starts_fresh_and_leaves_another_runs_guard(self):
+        self.use_agy()
         self.assertEqual(self.launcher("start").returncode, 0)
         tag = self.marker()["session"]
         self.calls(1)
@@ -618,7 +614,7 @@ class RunTest(unittest.TestCase):
         done = self.launcher("start")  # the agent died before it took a guard: nothing to resume
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         fresh = self.calls(2)[-1]["argv"]
-        self.assertNotEqual(fresh[0], "resume")
+        self.assertFalse(any(a.startswith("--conversation=") for a in fresh), fresh)
         self.assertNotEqual(self.marker()["session"], tag)
         self.acquire("someone-else", tag="another-run")
         done = self.launcher("stop")

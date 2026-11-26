@@ -17,10 +17,10 @@ import tempfile
 
 SCHEMA_VERSION = 1
 PROFILE = ".conclave/unattended.json"
-AGENTS = ("claude", "codex", "agy")
-# Each agent's own effort values: Claude Code `--effort`, Codex `model_reasoning_effort`, Antigravity `--effort`
-# (`agy --help`, 1.5.5: low|medium|high|xhigh|max; D02 T02 §6).
-EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"), "codex": ("minimal", "low", "medium", "high", "xhigh"),
+# Owner decision 2026-11-14: only Claude Code and Antigravity are authorised writers; Codex reviews only.
+AGENTS = ("claude", "agy")
+# Each agent's own effort values: Claude Code `--effort`, Antigravity `--effort` (`agy --help`, 1.5.5: low|medium|high|xhigh|max).
+EFFORTS = {"claude": ("low", "medium", "high", "xhigh", "max"),
            "agy": ("low", "medium", "high", "xhigh", "max")}
 NAME = re.compile(r"[a-z0-9][a-z0-9-]{1,40}")
 WHOLE = ("min_disk_gb", "min_ram_gb", "tick_seconds", "idle_minutes", "stall_hours")

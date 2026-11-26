@@ -10,7 +10,7 @@ You are an independent, adversarial code reviewer. Do not modify any file. Revie
 
 - Commit or range: `<FULL_SHA>` or `<BASE_SHA>..<TIP_SHA>` (inspect it with `git show` or `git diff`).
 - What it is meant to do: `<one or two sentences>`.
-- TODO section, when there is one: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>"`).
+- TODO section, when there is one: `<DNN TNN §N>` (its contract: `build\python.cmd scripts/todo-graph.py resolve "<DNN TNN §N>" --context`).
 - Governing documents: `AGENTS.md` and `<the spec, plan or design file that applies>`.
 - Fidelity: `<the design source the section names>`, or `none (Surface: no)`.
 

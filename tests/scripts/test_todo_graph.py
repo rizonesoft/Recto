@@ -2033,15 +2033,14 @@ class Repository(unittest.TestCase):
                 self.assertIn("--context", (tg.ROOT / relative).read_text(encoding="utf-8"))
 
     def test_the_authoring_template_copy_is_identical(self):
-        # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copy as the same file.
-        # .claude/skills is the single skill tree; .agents/skills.json points Antigravity there with zero duplicated
-        # skill files, and .agents/hooks.json wires Antigravity's hooks to the same scripts/ modules.
+        # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copies as the same file.
+        # Claude Code loads .claude/skills/ and Antigravity loads native .agents/skills/ (legacy .agents/skills.json
+        # removed in 7d3a215); .agents/hooks.json wires Antigravity's hooks to the same scripts/ modules.
         canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
         self.assertEqual((tg.ROOT / ".claude/skills/create-todo/todo-template.md").read_bytes(), canonical)
-        for duplicate in (".codex/skills/create-todo", ".agents/skills", ".agents/agents"):
-            self.assertFalse((tg.ROOT / duplicate).exists(), f"the removed {duplicate} writer kit is back")
-        skills_cfg = json.loads((tg.ROOT / ".agents/skills.json").read_text(encoding="utf-8"))
-        self.assertEqual(skills_cfg, {"entries": [{"path": ".claude/skills"}]})
+        self.assertEqual((tg.ROOT / ".agents/skills/create-todo/todo-template.md").read_bytes(), canonical)
+        for retired in (".codex/skills/create-todo", ".agents/agents", ".agents/skills.json"):
+            self.assertFalse((tg.ROOT / retired).exists(), f"the removed {retired} artifact is back")
         hooks_cfg = json.loads((tg.ROOT / ".agents/hooks.json").read_text(encoding="utf-8"))
         campaign = hooks_cfg["recto-campaign"]
         self.assertEqual(set(campaign), {"SessionStart", "PreToolUse", "Stop"})
@@ -2144,6 +2143,77 @@ class Repository(unittest.TestCase):
         for bad in ("docs/reviews/x.md", "docs/reviews/x.md:", ":complete"):
             with self.subTest(bad=bad), self.assertRaises(tg.Refused):
                 cli.completion_review(bad)
+
+    def test_batched_ancestry_and_conditional_changed_paths_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = pathlib.Path(tmp)
+            def git(*args):
+                r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True)
+                return r.stdout.strip()
+            git("init", "-q")
+            git("config", "user.email", "test@recto.invalid")
+            git("config", "user.name", "Recto Test")
+            (repo / "src" / "pdf").mkdir(parents=True)
+            (repo / "docs").mkdir(parents=True)
+            (repo / "src" / "pdf" / "a.cpp").write_text("int a = 1;\n", encoding="utf-8")
+            (repo / "docs" / "note.md").write_text("hello\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+
+            (repo / "src" / "pdf" / "a.cpp").write_text("int a = 2;\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "touch cpp")
+            cand_a = git("rev-parse", "HEAD")
+
+            git("checkout", "-q", base)
+            (repo / "docs" / "note.md").write_text("hello 2\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-qm", "touch doc")
+            cand_b = git("rev-parse", "HEAD")
+
+            # Batched ancestry accepts valid chain and refuses reversed/diverged commits.
+            self.assertTrue(tg.is_ancestor(repo, base, cand_a))
+            self.assertTrue(tg.is_ancestor(repo, base, cand_b))
+            self.assertFalse(tg.is_ancestor(repo, cand_a, base))
+            self.assertFalse(tg.is_ancestor(repo, cand_a, cand_b))
+
+            # Conditional changed_paths separates two candidates sharing the same base and caches repeats.
+            git_calls = []
+            orig_git = tg._git
+            def counting_git(root, *args):
+                git_calls.append(args)
+                return orig_git(root, *args)
+            tg._git = counting_git
+            try:
+                paths_a = tg.changed_paths(repo, base, cand_a, "D00 T05 §1")
+                paths_b = tg.changed_paths(repo, base, cand_b, "D00 T05 §1")
+                paths_a_repeat = tg.changed_paths(repo, base, cand_a, "D00 T05 §1")
+            finally:
+                tg._git = orig_git
+            self.assertEqual(paths_a, ["src/pdf/a.cpp"])
+            self.assertEqual(paths_b, ["docs/note.md"])
+            self.assertEqual(paths_a_repeat, paths_a)
+            self.assertEqual(len(git_calls), 2, f"expected 2 diff calls (1 per unique pair), got {len(git_calls)}")
+
+            # Verify conditional schedule requires the lens for cand_a and not for cand_b.
+            dispatch = tg.review_dispatch()
+            cond_schedule = {
+                "policy": dispatch.THREE_PASS,
+                "pass_cap": 12,
+                "blocking": ["P1", "P2"],
+                "plan": {"lenses": ["plan"]},
+                "rounds": [{"lenses": ["adversarial"]}],
+                "completion": {"lenses": ["plan-delivery"]},
+                "reconciliation": {"lenses": ["adversarial"]},
+                "conditional": [{"paths": ["src/pdf/"], "passes": ["round"], "lenses": ["security"]}],
+                "efforts": {"astra": {"plan": "medium", "rounds": ["medium"], "completion": "medium", "reconciliation": "low"}},
+            }
+            step_a = dispatch.scheduled(cond_schedule, "round", [], False, paths_a, reviewer="astra")
+            step_b = dispatch.scheduled(cond_schedule, "round", [], False, paths_b, reviewer="astra")
+            self.assertEqual(step_a["lenses"], ["adversarial", "security"])
+            self.assertEqual(step_b["lenses"], ["adversarial"])
+            self.assertNotEqual(step_a["lenses"], ["adversarial"])
 
     def test_the_repository_graph_validates_and_its_plan_is_current(self):
         r = subprocess.run([sys.executable, str(REPO / "scripts/todo-graph.py"), "plan", "--check"],

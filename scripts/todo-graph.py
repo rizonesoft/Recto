@@ -106,11 +106,12 @@ def main():
                         cap_outcome=args.cap_outcome, completion=args.completion, plan=args.plan)
         print(f"stamped {args.ref}; receipt {receipt}; plan synchronized")
         return 0
-    rows = graph()
     if args.command == "plan":
         projections(sync=args.sync)
         print("plan synchronized" if args.sync else "plan current")
-    elif args.command == "resolve":
+        return 0
+    rows = graph()
+    if args.command == "resolve":
         ref, code = extract_ref(args.ref, rows)
         if code == 2:
             print("TODO refused: no section reference in input: " + args.ref, file=sys.stderr)
