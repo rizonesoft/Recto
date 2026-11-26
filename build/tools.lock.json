@@ -6,16 +6,16 @@
     "executable": "ninja.exe"
   },
   "cmake": {
-    "version": "4.5.0",
-    "url": "https://github.com/Kitware/CMake/releases/download/v4.5.0/cmake-4.5.0-windows-x86_64.zip",
-    "sha256": "301b1728317ccd84e984b02e366a8293735bc5ac618757d3d8f58b578f062411",
-    "executable": "cmake-4.5.0-windows-x86_64/bin/cmake.exe"
+    "version": "4.5.1",
+    "url": "https://github.com/Kitware/CMake/releases/download/v4.5.1/cmake-4.5.1-windows-x86_64.zip",
+    "sha256": "bfe6eadb245dc8213e0d3feea316b520cb2aae92f5667ffd76059ba6b05c430c",
+    "executable": "cmake-4.5.1-windows-x86_64/bin/cmake.exe"
   },
   "sccache": {
-    "version": "0.19.0",
-    "url": "https://github.com/mozilla/sccache/releases/download/v0.19.0/sccache-v0.19.0-x86_64-pc-windows-msvc.zip",
-    "sha256": "28be8c61f6b2c89b9eb2869f6af7f78e6f992e78a8abae0ce855fcc129cbeac1",
-    "executable": "sccache-v0.19.0-x86_64-pc-windows-msvc/sccache.exe"
+    "version": "0.20.1",
+    "url": "https://github.com/mozilla/sccache/releases/download/v0.20.1/sccache-v0.20.1-x86_64-pc-windows-msvc.zip",
+    "sha256": "ca500a01139e9af8d5f5a5e69b6a0dd941ed79ed3399a91cc35bba484fe732fa",
+    "executable": "sccache-v0.20.1-x86_64-pc-windows-msvc/sccache.exe"
   },
   "cpython": {
     "version": "3.15.2",
