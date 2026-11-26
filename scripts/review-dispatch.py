@@ -603,7 +603,9 @@ def review(pin, writer, prompt_path, timeout, plan=None, kind="round", settled=(
         prompt = prompt.rstrip("\n") + lens_block(plan, schedule)
     if settled:
         prompt = prompt.rstrip("\n") + settled_block(list(settled))
-    appended = has_lenses or bool(settled)
+    # Every dispatched pass receives the single likelihood-weighted severity rubric once, outside the schedule gate.
+    prompt = prompt.rstrip("\n") + review_pin.SEVERITY_RUBRIC
+    appended = True
     scheduled_fields = {"effort": effort, "lenses": lenses} if plan else {}
     seconds = None
 

@@ -887,6 +887,31 @@ def lens_block(plan, schedule=None):
 
 LENS_LINE = re.compile(r"^`?LENS ([a-z0-9][a-z0-9-]*): (clean|findings)`?$")
 
+SEVERITY_RUBRIC = (
+    "\n\n## Severity rubric (appended by scripts/review-dispatch.py)\n\n"
+    "Grade every finding by impact times likelihood. This rubric grades and never filters: report every finding "
+    "at every lens, whatever its grade, and when unsure between two grades on a named real path, take the higher.\n\n"
+    "- `P1`: a severe failure (wrong result, data loss, a check that passes what it must refuse, or a safety or "
+    "security gap) on a path real operation takes: input the project receives or writes in normal use, a supported "
+    "user action, a user-edited configuration file, or a common operating-system or disk condition (including "
+    "crashes, partial writes, full disks, and file locks or sharing violations). Hostile input from outside the "
+    "project (an external file, request, URL, or message the project accepts) is always a real path.\n"
+    "- `P2`: a severe failure on a real but uncommon path, or a moderate failure on a common path (including a crash "
+    "or unhandled error on a malformed user-edited configuration file, or a missing required test or hollow test that "
+    "passes when the guarded behaviour breaks, graded by the failure it lets ship).\n"
+    "- `P3`: everything else, whatever its impact: a precondition reached only through synthetic or hand-edited "
+    "malformations of an internal state file written only by the tool itself that neither the tool nor a crash or "
+    "OS/disk condition produces (not a user-edited configuration file, and not truncation, disk-full, or file-lock "
+    "recovery), a byte sequence no real producer writes, two unlikely conditions together, or an unexposed internal "
+    "helper invariant no caller can violate, as well as wording, style, or optional extra test coverage beyond the "
+    "section's required tests.\n\n"
+    "Every `P1` and `P2` finding must name both:\n"
+    "- `Path:` who or what produces the precondition in real use.\n"
+    "- `Evidence:` `ran` (with the command and observed output, preferred whenever executable) or `traced` (citing "
+    "exact `file:line` and concrete call or data path; may block on a named real path such as a plan review before "
+    "code exists or a static contract trace). A `traced` finding without a named real `Path:` grades `P3`.\n"
+)
+
 
 def missing_lens_verdicts(lenses, review):
     """The scheduled lenses a reply gave no `LENS <name>: clean` or `LENS <name>: findings` line for, in schedule

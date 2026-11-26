@@ -14,8 +14,11 @@ import textwrap
 import unittest
 import unittest.mock
 
-# The scratch repository, the dispatcher and the fake reviewer CLIs; unittest discovery puts this folder on sys.path.
-from test_review_dispatch import Harness
+# The scratch repository, the dispatcher and the fake reviewer CLIs; support both package and discover imports.
+try:
+    from scripts.tests.test_review_dispatch import Harness
+except ModuleNotFoundError:
+    from test_review_dispatch import Harness
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 DOCS = SCRIPTS.parent / "docs"
@@ -116,7 +119,7 @@ class FillEachKind(Filler):
         # Without it a reviewer reads the open Commit item of an unstamped section as an undelivered promise.
         # The opening clause is part of the rule: it says why the item is open (the stamp comes after the review).
         rule = ("When the review is of a TODO section, that section is stamped after its review: "
-                "`python3 scripts/todo-graph.py stamp` ticks its `- [ ] Commit:` item and its Implementation Order row "
+                "`build\\python.cmd scripts/todo-graph.py stamp` ticks its `- [ ] Commit:` item and its Implementation Order row "
                 "(`todo/README.md`, Stamps and receipts), so on an unstamped section both are open by design and are "
                 "not a gap.")
         closing = ("A gap that only reports that open item or row is closed by this rule: mark it `closed`, citing the "
@@ -136,7 +139,7 @@ class FillEachKind(Filler):
         text = self.ok("completion", "--ref", REF, "--todo", TODO, "--fidelity", "design/main-window.png")
         self.assertEqual(self.out.read_text(encoding="utf-8"), text)
         self.assertIn(f"- Commit or range: `{CAND}` (inspect", text)
-        self.assertIn(f"- TODO section: `{REF}` (its contract: `python3 scripts/todo-graph.py resolve \"{REF}\"`)", text)
+        self.assertIn(f"- TODO section: `{REF}` (its contract: `build\\python.cmd scripts/todo-graph.py resolve \"{REF}\"`)", text)
         self.assertIn(f"`{TODO}`", text)
         self.assertIn("- Fidelity: `design/main-window.png`.", text)
         self.assertNotIn("none (Surface: no)", text)

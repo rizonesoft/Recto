@@ -243,7 +243,7 @@ class Dispatch(Harness):
         for flag in ("--sandbox", "read-only", "--ephemeral", "model_reasoning_effort=xhigh"):
             self.assertIn(flag, call["argv"])
         self.assertEqual(call["argv"][-1], "-", "the prompt goes on stdin, never on the command line")
-        self.assertEqual(call["stdin"], self.prompt.read_text())
+        self.assertEqual(call["stdin"], self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
         self.assertEqual(Path(call["cwd"]).resolve(), self.repo.resolve())
 
     def test_one_reviewer_and_no_fallback(self):
@@ -1232,13 +1232,13 @@ class Schedule(Harness):
         (call,) = self.calls()
         self.assertEqual(self.effort_of(call), "medium")
         self.assertNotIn("## Lenses for this pass", call["stdin"])
-        self.assertEqual(call["stdin"], self.prompt.read_text())
+        self.assertEqual(call["stdin"], self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
 
     def test_a_pin_without_a_schedule_keeps_the_reviewers_effort_and_prompt(self):
         (self.repo / ".conclave/reviewers.toml").write_text(FIXTURE_PIN, encoding="utf-8")
         summary, (call,) = self.round()
         self.assertEqual(self.effort_of(call), "xhigh")
-        self.assertEqual(call["stdin"], self.prompt.read_text())
+        self.assertEqual(call["stdin"], self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
         self.assertNotIn("position", summary)
 
     def test_check_pin_reports_the_schedule(self):
@@ -1314,9 +1314,9 @@ class MultiCli(Harness):
         if os.name == "nt":
             # The fake is a .cmd shim on Windows, so the prompt must arrive by file, never as argument text.
             self.assertTrue(call["argv"][-1].startswith("-p=Follow the review instructions in the file "))
-            self.assertEqual(call["from_file"], self.prompt.read_text())
+            self.assertEqual(call["from_file"], self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
         else:
-            self.assertEqual(call["argv"][-1], "-p=" + self.prompt.read_text())
+            self.assertEqual(call["argv"][-1], "-p=" + self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
 
     def test_sonnet_reviews_gemini_work_in_plan_mode(self):
         result, summary = self.dispatch("--writer", "gemini", "--prompt", str(self.prompt))
@@ -1327,14 +1327,14 @@ class MultiCli(Harness):
         self.assertEqual(call["argv"][call["argv"].index("--permission-mode") + 1], "plan")
         self.assertEqual(call["argv"][call["argv"].index("--model") + 1], "claude-sonnet-5-5")
         self.assertEqual(call["argv"][call["argv"].index("--effort") + 1], "high")
-        self.assertEqual(call["stdin"], self.prompt.read_text())
+        self.assertEqual(call["stdin"], self.prompt.read_text().rstrip("\n") + self.module().review_pin.SEVERITY_RUBRIC)
 
     def test_a_large_prompt_reaches_gemini_by_file(self):
         self.prompt.write_text("x" * 150_000, encoding="utf-8")
         self.dispatch("--writer", "codex", "--prompt", str(self.prompt))
         (call,) = self.calls()
         self.assertTrue(call["argv"][-1].startswith("-p=Follow the review instructions in the file "))
-        self.assertEqual(call["from_file"], "x" * 150_000)
+        self.assertEqual(call["from_file"], "x" * 150_000 + self.module().review_pin.SEVERITY_RUBRIC)
 
     def test_a_windows_shim_never_gets_prompt_text_in_its_arguments(self):
         reviewer = {"cli": "agy", "model": "gemini-4-argon-high"}
