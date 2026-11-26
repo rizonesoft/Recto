@@ -146,18 +146,38 @@ class AgentFrontmatter(unittest.TestCase):
 
     @staticmethod
     def _is_python_runner(tok: str) -> bool:
-        base = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        return base in ("python", "python3", "python.exe", "python3.exe", "py", "py.exe", "python.cmd", "run-python.sh")
+        norm = tok.replace("\\", "/")
+        base = norm.rsplit("/", 1)[-1].lower()
+        path_launchers = {"python", "python3", "python.exe", "python3.exe", "py", "py.exe"}
+        if "/" not in norm:
+            return base in path_launchers
+        try:
+            resolved = (ROOT / norm).resolve()
+        except OSError:
+            return False
+        if resolved in ((ROOT / "build" / "python.cmd").resolve(), (ROOT / "scripts" / "run-python.sh").resolve()):
+            return True
+        return base in (path_launchers | {"python.cmd", "run-python.sh"}) and resolved.is_file()
+
+    @staticmethod
+    def _matches_script_path(tok: str, target: str) -> bool:
+        """Return True only when `tok` resolves to the real `ROOT / 'scripts' / target` file."""
+        norm = tok.replace("\\", "/")
+        try:
+            candidate = ROOT / norm
+            return candidate.is_file() and candidate.resolve() == (ROOT / "scripts" / target).resolve()
+        except OSError:
+            return False
 
     @staticmethod
     def _find_script_token(tokens: list[str], target: str) -> int | None:
-        """Return the index of `target` in `tokens` when the statement actually invokes it (directly or through
-        a Python launcher with valid non-exiting CPython options, optionally prefixed by PowerShell's `&` call
-        operator)."""
+        """Return the index of `target` in `tokens` when the statement actually invokes the real
+        `scripts/<target>` file (directly or through a valid Python launcher with non-exiting CPython
+        options, optionally prefixed by PowerShell's `&` call operator)."""
         start = 1 if tokens and tokens[0] == "&" else 0
         if start >= len(tokens):
             return None
-        if tokens[start].lower().endswith(target):
+        if AgentFrontmatter._matches_script_path(tokens[start], target):
             return start
         if AgentFrontmatter._is_python_runner(tokens[start]):
             pos = start + 1
@@ -172,7 +192,7 @@ class AgentFrontmatter(unittest.TestCase):
                     pos += 1
                 else:
                     break
-            if pos < len(tokens) and tokens[pos].lower().endswith(target):
+            if pos < len(tokens) and AgentFrontmatter._matches_script_path(tokens[pos], target):
                 return pos
         return None
 
@@ -737,6 +757,19 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("--writer <claude|agy> --prompt", "--writer <claude|agy> --writ=claude --prompt")
         )
         self.assertTrue(self._check_ten_writer_skills(overridden_writer_placeholder))
+        bad_script_dir = dict(texts)
+        bad_script_dir[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_script_dir[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("scripts/review-prompt.py --kind completion", "script/review-prompt.py --kind completion")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_script_dir))
+        bad_launcher_dir = dict(texts)
+        bad_launcher_dir[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_launcher_dir[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     "buil\\python.cmd scripts/review-prompt.py --kind completion")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_launcher_dir))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
