@@ -147,6 +147,25 @@ class AgentFrontmatter(unittest.TestCase):
         return base in ("python", "python3", "python.exe", "python3.exe", "py", "py.exe", "python.cmd", "run-python.sh")
 
     @staticmethod
+    def _find_script_token(tokens: list[str], target: str) -> int | None:
+        """Return the index of `target` in `tokens` when the statement actually invokes it (directly or through
+        a Python launcher with an explicit allowlist of non-exiting flags, optionally prefixed by PowerShell's
+        `&` call operator)."""
+        start = 1 if tokens and tokens[0] == "&" else 0
+        if start >= len(tokens):
+            return None
+        if tokens[start].lower().endswith(target):
+            return start
+        if AgentFrontmatter._is_python_runner(tokens[start]):
+            pos = start + 1
+            allowed_py_flags = {"-B", "-u", "-s", "-S", "-E", "-I", "-O", "-OO", "-P", "-b", "-bb", "-q", "-v"}
+            while pos < len(tokens) and tokens[pos] in allowed_py_flags:
+                pos += 1
+            if pos < len(tokens) and tokens[pos].lower().endswith(target):
+                return pos
+        return None
+
+    @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
         """Parse a single `review-dispatch.py` or `review-prompt.py` command statement (requiring the command head
         to be a Python launcher or the script itself, never a wrapper like `Write-Output` or `echo`), using
@@ -157,20 +176,8 @@ class AgentFrontmatter(unittest.TestCase):
             tokens = shlex.split(cleaned, posix=True)
         except ValueError:
             tokens = cleaned.split()
-        if not tokens:
-            return (False, None, None, None)
         target = script_name.lower()
-        # The statement must actually invoke the script: either token 0 IS the script, or token 0 is a Python
-        # launcher followed (after optional single-letter interpreter flags) by the script.
-        idx: int | None = None
-        if tokens[0].lower().endswith(target):
-            idx = 0
-        elif AgentFrontmatter._is_python_runner(tokens[0]):
-            pos = 1
-            while pos < len(tokens) and tokens[pos].startswith("-") and tokens[pos] not in ("--", "-m", "-c"):
-                pos += 1
-            if pos < len(tokens) and tokens[pos].lower().endswith(target):
-                idx = pos
+        idx = AgentFrontmatter._find_script_token(tokens, target)
         if idx is None:
             return (False, None, None, None)
         parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
@@ -241,13 +248,7 @@ class AgentFrontmatter(unittest.TestCase):
                                 toks = shlex.split(cleaned, posix=True)
                             except ValueError:
                                 toks = cleaned.split()
-                            head_invokes = bool(toks) and (
-                                toks[0].lower().endswith(script)
-                                or (AgentFrontmatter._is_python_runner(toks[0])
-                                    and len(toks) > 1
-                                    and any(t.lower().endswith(script) for t in toks[1:3]))
-                            )
-                            if not head_invokes:
+                            if AgentFrontmatter._find_script_token(toks, script) is None:
                                 continue
                             if from_code_block or is_exec:
                                 ordered_cmds.append((role, stmt))
@@ -582,6 +583,20 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("scripts/review-prompt.py --kind completion", '"scripts/review-prompt.py" --kind completion')
         )
         self.assertEqual(self._check_ten_writer_skills(quoted_script_path), [])
+        version_flag_prompt = dict(texts)
+        version_flag_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            version_flag_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     "build\\python.cmd -V scripts/review-prompt.py --kind completion")
+        )
+        self.assertTrue(self._check_ten_writer_skills(version_flag_prompt))
+        call_op_prompt = dict(texts)
+        call_op_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            call_op_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     "& build\\python.cmd scripts/review-prompt.py --kind completion")
+        )
+        self.assertEqual(self._check_ten_writer_skills(call_op_prompt), [])
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
