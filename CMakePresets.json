@@ -11,7 +11,7 @@
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/cmake/${presetName}",
-      "cmakeExecutable": "${sourceDir}/.tools/cmake/4.5.0/cmake-4.5.0-windows-x86_64/bin/cmake.exe",
+      "cmakeExecutable": "${sourceDir}/.tools/cmake/4.5.1/cmake-4.5.1-windows-x86_64/bin/cmake.exe",
       "toolset": {
         "value": "host=x64",
         "strategy": "external"
