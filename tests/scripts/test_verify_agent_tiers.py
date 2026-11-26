@@ -348,6 +348,71 @@ class AgentFrontmatter(unittest.TestCase):
         return AgentFrontmatter._parse_dispatch_command(line)[1]
 
     @staticmethod
+    def _is_negated_or_historical(text: str, pos: int) -> bool:
+        """Return True when the occurrence at `pos` appears inside a prohibition or historical note
+        (e.g. `Never use IsDaemon: true`, `not IsDaemon: true`, `formerly WaitMsBeforeAsync: 500`)."""
+        prefix = text[max(0, pos - 64):pos]
+        clause = re.split(r"[\n.;]", prefix)[-1]
+        return bool(re.search(
+            r"\b(?:never|not|don'?t|do\s+not|avoid|forbid(?:s|den)?|refuse(?:s|d)?|reject(?:s|ed)?|"
+            r"disallow(?:s|ed)?|instead\s+of|rather\s+than|formerly|previously|old|legacy|deprecated)\b",
+            clause, re.IGNORECASE,
+        ))
+
+    @classmethod
+    def _check_background_guidance(cls, rel: str, text: str, bg_tokens: tuple[str, ...]) -> list[str]:
+        """Verify tracked-background guidance matches `scripts/dispatch_hook.py`'s actual verdict while
+        ignoring negated prohibitions (e.g. `Never use IsDaemon: true`) and historical migration notes
+        (e.g. `formerly WaitMsBeforeAsync: 500`)."""
+        errors: list[str] = []
+        hook = cls._script_module("dispatch_hook.py")
+        dummy_cmd = "build\\python.cmd scripts/review-dispatch.py --prompt p.md"
+        if any(t.startswith("WaitMsBeforeAsync") for t in bg_tokens):
+            active_waits: list[int] = []
+            for m in re.finditer(r"\bWaitMsBeforeAsync\s*[:=]\s*(-?\d+)\b", text, re.IGNORECASE):
+                if cls._is_negated_or_historical(text, m.start()):
+                    continue
+                val = int(m.group(1))
+                active_waits.append(val)
+                err = hook.agy_verdict({
+                    "toolCall": {"name": "run_command", "args": {
+                        "CommandLine": dummy_cmd, "WaitMsBeforeAsync": val, "IsDaemon": False,
+                    }}
+                })
+                if err is not None:
+                    errors.append(f"{rel}: active WaitMsBeforeAsync: {val} refused by dispatch_hook ({err})")
+            if not active_waits:
+                errors.append(f"{rel}: missing active WaitMsBeforeAsync setting accepted by dispatch_hook")
+            active_daemons: list[bool] = []
+            for m in re.finditer(r"\bIsDaemon\s*[:=]\s*(true|false)\b", text, re.IGNORECASE):
+                if cls._is_negated_or_historical(text, m.start()):
+                    continue
+                val = m.group(1).lower() == "true"
+                active_daemons.append(val)
+                err = hook.agy_verdict({
+                    "toolCall": {"name": "run_command", "args": {
+                        "CommandLine": dummy_cmd, "WaitMsBeforeAsync": 500, "IsDaemon": val,
+                    }}
+                })
+                if err is not None:
+                    errors.append(f"{rel}: active IsDaemon: {str(val).lower()} refused by dispatch_hook ({err})")
+            if not active_daemons:
+                errors.append(f"{rel}: missing active IsDaemon: false setting accepted by dispatch_hook")
+        if any(t.startswith("run_in_background") for t in bg_tokens):
+            active_bg = False
+            for m in re.finditer(r"\brun_in_background(?:\s*[:=]\s*(true|false))?\b", text, re.IGNORECASE):
+                if cls._is_negated_or_historical(text, m.start()):
+                    continue
+                val = (m.group(1) or "true").lower()
+                if val == "false":
+                    errors.append(f"{rel}: active run_in_background: false refused by dispatch_hook")
+                else:
+                    active_bg = True
+            if not active_bg:
+                errors.append(f"{rel}: missing active run_in_background setting")
+        return errors
+
+    @staticmethod
     def _check_ten_writer_skills(texts: dict[str, str]) -> list[str]:
         """Verify all ten Claude Code and Antigravity workflow skill files stay aligned on three-pass,
         writer identity, pass order and runner-specific background review invocation."""
@@ -488,15 +553,7 @@ class AgentFrontmatter(unittest.TestCase):
                 if skill in ("process-todo-section", "review-todo-section", "independent-review"):
                     if not dispatch_lines:
                         errors.append(f"{rel}: missing executable review-dispatch.py command example")
-                    for tok in bg_tokens:
-                        if tok not in text:
-                            errors.append(f"{rel}: missing runner background token {tok!r}")
-                    if re.search(r"\bIsDaemon\s*[:=]\s*true\b", text, re.IGNORECASE):
-                        errors.append(f"{rel}: forbids IsDaemon: true for tracked background invocations")
-                    if re.search(r"\brun_in_background\s*[:=]\s*false\b", text, re.IGNORECASE):
-                        errors.append(f"{rel}: forbids run_in_background: false for tracked background invocations")
-                    if re.search(r"\bWaitMsBeforeAsync\s*[:=]\s*0\b", text, re.IGNORECASE):
-                        errors.append(f"{rel}: forbids WaitMsBeforeAsync: 0 for tracked background invocations")
+                    errors.extend(AgentFrontmatter._check_background_guidance(rel, text, bg_tokens))
                 parsed_sequence: list[tuple[str, str | None, str | None]] = []
                 for role, cmd in ordered_cmds:
                     script = "review-prompt.py" if role == "prompt" else "review-dispatch.py"
@@ -835,6 +892,18 @@ class AgentFrontmatter(unittest.TestCase):
             + "\nCurrent setting: `IsDaemon: true` (previously `IsDaemon: false`).\n"
         )
         self.assertTrue(self._check_ten_writer_skills(daemon_true_with_false))
+        wait_60000_with_formerly_500 = dict(texts)
+        wait_60000_with_formerly_500[".agents/skills/review-todo-section/SKILL.md"] = (
+            wait_60000_with_formerly_500[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("WaitMsBeforeAsync: 500", "WaitMsBeforeAsync: 60000 (formerly WaitMsBeforeAsync: 500)", 1)
+        )
+        self.assertTrue(self._check_ten_writer_skills(wait_60000_with_formerly_500))
+        never_use_is_daemon_true = dict(texts)
+        never_use_is_daemon_true[".agents/skills/review-todo-section/SKILL.md"] = (
+            never_use_is_daemon_true[".agents/skills/review-todo-section/SKILL.md"]
+            + "\nNever use `IsDaemon: true` for reviews.\n"
+        )
+        self.assertEqual([], self._check_ten_writer_skills(never_use_is_daemon_true))
         bg_false_with_true = dict(texts)
         bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"] = (
             bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"]
