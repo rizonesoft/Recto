@@ -1431,6 +1431,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Validate post-parse review invocation arguments (writer, prompt, and 40-char hex candidate SHA)."""
+    if not args.writer or not args.prompt:
+        parser.error("--writer and --prompt are required unless --check-pin or --list-rounds is given")
+    one_pass = args.kind in PASSES
+    if one_pass and not (args.candidate and CANDIDATE.fullmatch(args.candidate)):
+        parser.error(f"--kind {args.kind} needs --candidate, the full 40-character commit under review")
+    if args.kind == "round" and args.candidate and not CANDIDATE.fullmatch(args.candidate):
+        parser.error("--candidate must be the full 40-character commit under review")
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1467,13 +1478,8 @@ def main(argv=None):
             for path in listing.get("unreadable", []):
                 print(f"{path}  unreadable: a round heading or line is not in the record format")
         return 0
-    if not args.writer or not args.prompt:
-        parser.error("--writer and --prompt are required unless --check-pin or --list-rounds is given")
+    validate_args(parser, args)
     one_pass = args.kind in PASSES
-    if one_pass and not (args.candidate and CANDIDATE.fullmatch(args.candidate)):
-        parser.error(f"--kind {args.kind} needs --candidate, the full 40-character commit under review")
-    if args.kind == "round" and args.candidate and not CANDIDATE.fullmatch(args.candidate):
-        parser.error("--candidate must be the full 40-character commit under review")
     try:
         # A section keeps the pin its plan review read, schedule and route both.
         pin = section_pin(args.pin, args.record, args.kind, args.candidate)

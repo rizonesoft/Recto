@@ -176,18 +176,18 @@ class AgentFrontmatter(unittest.TestCase):
                 return pos
         return None
 
-    _SCRIPT_PARSERS: dict[str, argparse.ArgumentParser] = {}
+    _SCRIPT_MODS: dict[str, object] = {}
 
     @classmethod
-    def _script_parser(cls, script_name: str) -> argparse.ArgumentParser:
-        if script_name not in cls._SCRIPT_PARSERS:
+    def _script_module(cls, script_name: str):
+        if script_name not in cls._SCRIPT_MODS:
             script_path = ROOT / "scripts" / script_name
             spec = importlib.util.spec_from_file_location(f"_recto_{script_name.replace('-', '_').replace('.', '_')}", script_path)
             assert spec is not None and spec.loader is not None
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            cls._SCRIPT_PARSERS[script_name] = mod.build_parser()
-        return cls._SCRIPT_PARSERS[script_name]
+            cls._SCRIPT_MODS[script_name] = mod
+        return cls._SCRIPT_MODS[script_name]
 
     @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
@@ -232,7 +232,8 @@ class AgentFrontmatter(unittest.TestCase):
                 continue
             parse_argv.append(tok)
             i += 1
-        parser = AgentFrontmatter._script_parser(target)
+        mod = AgentFrontmatter._script_module(target)
+        parser = mod.build_parser()
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
@@ -251,10 +252,20 @@ class AgentFrontmatter(unittest.TestCase):
             return (True, None, ns.kind, ns.out)
         if ns.check_pin or ns.list_rounds:
             return (True, None, None, None)
+        # Validate candidate/writer/prompt using review-dispatch.py's own validate_args(), substituting only
+        # angle-bracket documentation placeholders like `<full_tip_SHA>` with a 40-char hex SHA so literal
+        # invalid values like `HEAD` or `abc1234` are refused identically to review-dispatch.py.
+        if ns.candidate and ns.candidate.startswith("<") and ns.candidate.endswith(">"):
+            ns.candidate = "0" * 40
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                mod.validate_args(parser, ns)
+        except (SystemExit, argparse.ArgumentError):
+            return (True, None, None, None)
         has_kind = any(t.startswith("--k") for t in argv)
         kind = ns.kind if has_kind else None
         writer = "<claude|agy>" if placeholder_writer else ns.writer
-        if not (writer and ns.prompt and ns.record) or (kind is not None and not ns.candidate):
+        if not ns.record or (kind is not None and not ns.candidate):
             return (True, None, None, None)
         return (True, writer, kind, ns.prompt)
 
@@ -684,6 +695,13 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("review-dispatch.py --kind completion ", "review-dispatch.py --kind completion --timeout 30s ")
         )
         self.assertTrue(self._check_ten_writer_skills(bad_timeout_dispatch))
+        bad_head_candidate = dict(texts)
+        bad_head_candidate[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_head_candidate[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("review-dispatch.py --kind completion --candidate <full tip SHA>",
+                     "review-dispatch.py --kind completion --candidate HEAD")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_head_candidate))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
