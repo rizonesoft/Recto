@@ -350,16 +350,29 @@ class AgentFrontmatter(unittest.TestCase):
     @staticmethod
     def _is_negated_or_historical(text: str, pos: int) -> bool:
         """Return True when the occurrence at `pos` appears inside a prohibition or historical clause
-        (e.g. `Never use IsDaemon: true`, `not IsDaemon: true`, `formerly WaitMsBeforeAsync: 500`),
-        stopping at clause boundaries (punctuation or `but`/`however`/`now`) so an earlier negation or
-        historical note does not mask a following active setting."""
+        (e.g. `Never use IsDaemon: true`, `Never enable daemon mode (IsDaemon: true)`,
+        `formerly WaitMsBeforeAsync: 500`), stopping at clause boundaries (punctuation `,`, `;`, `.`, `)`,
+        `\n`, contrastive `but`/`however`/`now`, or `by using`/`by setting`/`by passing`) and rejecting
+        negation scope when an object intervenes before a new affirmative verb (`avoid timeouts use ...`)."""
         prefix = text[max(0, pos - 64):pos]
-        clause = re.split(r"[\n.;,()]|\b(?:but|however|now)\b", prefix, flags=re.IGNORECASE)[-1]
-        return bool(re.search(
+        clause = re.split(
+            r"[\n.;,)]|\b(?:but|however|now)\b|\bby\s+(?:using|setting|passing|enabling|specifying)\b",
+            prefix, flags=re.IGNORECASE,
+        )[-1]
+        m_neg = re.search(
             r"\b(?:never|not|don'?t|do\s+not|avoid|forbid(?:s|den)?|refuse(?:s|d)?|reject(?:s|ed)?|"
             r"disallow(?:s|ed)?|instead\s+of|rather\s+than|formerly|previously|old|legacy|deprecated)\b",
             clause, re.IGNORECASE,
-        ))
+        )
+        if not m_neg:
+            return False
+        after = clause[m_neg.end():]
+        m_verb = re.search(r"\b(?:use|using|set|setting|pass|passing)\b", after, re.IGNORECASE)
+        if m_verb:
+            between = re.sub(r"[`'\"()]", "", after[:m_verb.start()]).strip().lower()
+            if between and between not in ("to", "ever", "always", "or", "and"):
+                return False
+        return True
 
     @classmethod
     def _check_background_guidance(cls, rel: str, text: str, bg_tokens: tuple[str, ...]) -> list[str]:
@@ -918,6 +931,18 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("WaitMsBeforeAsync: 500", "formerly 1000 ms, now use WaitMsBeforeAsync: 500", 1)
         )
         self.assertEqual([], self._check_ten_writer_skills(formerly_then_now_use_500))
+        avoid_goal_then_active_wait_60000 = dict(texts)
+        avoid_goal_then_active_wait_60000[".agents/skills/review-todo-section/SKILL.md"] = (
+            avoid_goal_then_active_wait_60000[".agents/skills/review-todo-section/SKILL.md"]
+            + "\nFor completion avoid timing out by using WaitMsBeforeAsync: 60000.\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(avoid_goal_then_active_wait_60000))
+        never_enable_daemon_paren = dict(texts)
+        never_enable_daemon_paren[".agents/skills/review-todo-section/SKILL.md"] = (
+            never_enable_daemon_paren[".agents/skills/review-todo-section/SKILL.md"]
+            + "\nNever enable daemon mode (IsDaemon: true).\n"
+        )
+        self.assertEqual([], self._check_ten_writer_skills(never_enable_daemon_paren))
         bg_false_with_true = dict(texts)
         bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"] = (
             bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"]
