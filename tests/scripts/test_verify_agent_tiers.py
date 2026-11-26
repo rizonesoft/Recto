@@ -98,10 +98,10 @@ class AgentFrontmatter(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @staticmethod
-    def _parse_dispatch_writer(line: str) -> str | None:
+    def _parse_dispatch_command(line: str) -> tuple[bool, str | None]:
         """Parse a `review-dispatch.py` command line (with either `/` or `\\` path separators) using argparse
-        (with default abbreviation matching) so any abbreviated flag like `--writ=claude` resolves identically
-        to `scripts/review-dispatch.py`."""
+        (with default abbreviation matching) so any abbreviated flag like `--writ=claude` or `--prom` resolves
+        identically to `scripts/review-dispatch.py`. Returns `(is_executable_invocation, writer)`."""
         cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
         try:
             tokens = shlex.split(cleaned, posix=True)
@@ -109,7 +109,7 @@ class AgentFrontmatter(unittest.TestCase):
             tokens = cleaned.split()
         idx = next((i for i, tok in enumerate(tokens) if tok.lower().endswith("review-dispatch.py")), None)
         if idx is None:
-            return None
+            return (False, None)
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--writer")
         parser.add_argument("--kind")
@@ -121,8 +121,13 @@ class AgentFrontmatter(unittest.TestCase):
         try:
             ns, _ = parser.parse_known_args(tokens[idx + 1:])
         except SystemExit:
-            return None
-        return ns.writer
+            return (False, None)
+        is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record))
+        return (is_exec, ns.writer)
+
+    @staticmethod
+    def _parse_dispatch_writer(line: str) -> str | None:
+        return AgentFrontmatter._parse_dispatch_command(line)[1]
 
     @staticmethod
     def _check_ten_writer_skills(texts: dict[str, str]) -> list[str]:
@@ -193,8 +198,8 @@ class AgentFrontmatter(unittest.TestCase):
                         spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
                                  if "review-dispatch.py" in m.group(2).lower()]
                         for candidate in spans or [ln]:
-                            parsed_inline = AgentFrontmatter._parse_dispatch_writer(candidate)
-                            if parsed_inline is not None and parsed_inline not in allowed_writers:
+                            is_exec, parsed_inline = AgentFrontmatter._parse_dispatch_command(candidate)
+                            if is_exec and parsed_inline not in allowed_writers:
                                 errors.append(
                                     f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
                                     f"not in {sorted(allowed_writers)}"
@@ -309,6 +314,12 @@ class AgentFrontmatter(unittest.TestCase):
             + "\n```powershell\nbuild\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --writ=claude --prompt p.md --record r.md\n```\n"
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_plan_writer))
+        missing_inline_writer = dict(texts)
+        missing_inline_writer[".agents/skills/process-phase/SKILL.md"] = (
+            missing_inline_writer[".agents/skills/process-phase/SKILL.md"]
+            + "\nRun `build\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --prompt p.md --record r.md`.\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(missing_inline_writer))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
