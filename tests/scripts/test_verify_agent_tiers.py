@@ -159,82 +159,61 @@ class AgentFrontmatter(unittest.TestCase):
                 for val in writer_vals:
                     if val not in allowed_writers:
                         errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
-                # Extract every executable review-prompt.py and review-dispatch.py command in exact document order
-                # across CommonMark backtick/tilde fences, indented code blocks, multi-line continuations,
-                # single-line and multi-line wrapped inline code spans, and bare prose paragraphs.
+                # Extract every executable review-prompt.py and review-dispatch.py command in exact character-offset
+                # document order across CommonMark backtick/tilde fences, indented code blocks, multi-line
+                # continuations, single-line and multi-line wrapped inline code spans, semicolon/chained commands,
+                # and bare prose paragraphs.
                 ordered_cmds: list[tuple[str, str]] = []
+
+                def _extract_commands(chunk: str, from_code_block: bool) -> None:
+                    matches = list(re.finditer(r"review-(prompt|dispatch)\.py", chunk, flags=re.IGNORECASE))
+                    for i, m in enumerate(matches):
+                        role = m.group(1).lower()
+                        script = f"review-{role}.py"
+                        seg_end = matches[i + 1].start() if i + 1 < len(matches) else len(chunk)
+                        seg = re.split(r"(?:;|&&|\|\|)", chunk[m.start():seg_end], maxsplit=1)[0]
+                        is_exec, parsed_writer, _, _ = AgentFrontmatter._parse_dispatch_command(seg, script)
+                        if from_code_block or is_exec:
+                            ordered_cmds.append((role, seg))
+                            if role == "dispatch" and parsed_writer not in allowed_writers:
+                                errors.append(
+                                    f"{rel}: dispatch command resolves writer {parsed_writer!r}, "
+                                    f"not in {sorted(allowed_writers)}"
+                                )
 
                 def _emit_code_block(block_lines: list[str]) -> None:
                     pending = ""
-                    target = ""
                     for raw_ln in block_lines:
                         s = raw_ln.strip()
                         if pending:
                             pending = f"{pending} {s}"
-                        elif "review-dispatch.py" in s.lower():
-                            pending, target = s, "dispatch"
-                        elif "review-prompt.py" in s.lower():
-                            pending, target = s, "prompt"
+                        elif "review-dispatch.py" in s.lower() or "review-prompt.py" in s.lower():
+                            pending = s
                         if pending:
                             if pending.endswith(("\\", "`")):
                                 pending = pending[:-1].rstrip()
                             else:
-                                ordered_cmds.append((target, pending))
-                                pending, target = "", ""
+                                _extract_commands(pending, from_code_block=True)
+                                pending = ""
                     if pending:
-                        ordered_cmds.append((target, pending))
+                        _extract_commands(pending, from_code_block=True)
 
                 def _emit_prose(prose_lines: list[str]) -> None:
                     prose = "\n".join(prose_lines)
                     if "review-dispatch.py" not in prose.lower() and "review-prompt.py" not in prose.lower():
                         return
-                    # Walk inline code spans (including multi-line wrapped spans) and bare non-span segments in order.
                     pos = 0
                     for m in re.finditer(r"(`+)(.+?)\1", prose, flags=re.DOTALL):
                         gap = prose[pos:m.start()]
                         pos = m.end()
                         if "review-dispatch.py" in gap.lower() or "review-prompt.py" in gap.lower():
                             for para in re.split(r"\r?\n[ \t]*\r?\n", gap):
-                                flat = " ".join(para.split())
-                                for role, script in (("prompt", "review-prompt.py"), ("dispatch", "review-dispatch.py")):
-                                    if script not in flat.lower():
-                                        continue
-                                    is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(flat, script)
-                                    if is_exec:
-                                        ordered_cmds.append((role, flat))
-                                        if role == "dispatch" and parsed_inline not in allowed_writers:
-                                            errors.append(
-                                                f"{rel}: bare dispatch text resolves writer {parsed_inline!r}, "
-                                                f"not in {sorted(allowed_writers)}"
-                                            )
-                        span_flat = " ".join(m.group(2).split())
-                        span_low = span_flat.lower()
-                        for role, script in (("prompt", "review-prompt.py"), ("dispatch", "review-dispatch.py")):
-                            if script not in span_low:
-                                continue
-                            is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(span_flat, script)
-                            if is_exec:
-                                ordered_cmds.append((role, span_flat))
-                                if role == "dispatch" and parsed_inline not in allowed_writers:
-                                    errors.append(
-                                        f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
-                                        f"not in {sorted(allowed_writers)}"
-                                    )
+                                _extract_commands(" ".join(para.split()), from_code_block=False)
+                        _extract_commands(" ".join(m.group(2).split()), from_code_block=False)
                     tail = prose[pos:]
                     if "review-dispatch.py" in tail.lower() or "review-prompt.py" in tail.lower():
                         for para in re.split(r"\r?\n[ \t]*\r?\n", tail):
-                            flat = " ".join(para.split())
-                            for role, script in (("prompt", "review-prompt.py"), ("dispatch", "review-dispatch.py")):
-                                if script not in flat.lower():
-                                    continue
-                                is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(flat, script)
-                                if is_exec:
-                                    ordered_cmds.append((role, flat))
-                                    if role == "dispatch" and parsed_inline not in allowed_writers:
-                                        errors.append(
-                                            f"{rel}: bare dispatch text resolves writer {parsed_inline!r}, "
-                                            f"not in {sorted(allowed_writers)}"
-                                        )
+                            _extract_commands(" ".join(para.split()), from_code_block=False)
 
                 fence_char = ""
                 fence_len = 0
@@ -484,6 +463,19 @@ class AgentFrontmatter(unittest.TestCase):
             texts[".agents/skills/review-todo-section/SKILL.md"],
         )
         self.assertTrue(self._check_ten_writer_skills(wrapped_inline_dispatch))
+        semicolon_reversed_inline = dict(texts)
+        semicolon_reversed_inline[".agents/skills/review-todo-section/SKILL.md"] = (
+            semicolon_reversed_inline[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(
+                f"```powershell\n{p_line}\n{d_line}\n```",
+                f"`{d_line}; {p_line}`",
+            )
+        )
+        self.assertNotEqual(
+            semicolon_reversed_inline[".agents/skills/review-todo-section/SKILL.md"],
+            texts[".agents/skills/review-todo-section/SKILL.md"],
+        )
+        self.assertTrue(self._check_ten_writer_skills(semicolon_reversed_inline))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
