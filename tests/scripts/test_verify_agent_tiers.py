@@ -212,6 +212,7 @@ class AgentFrontmatter(unittest.TestCase):
             cls._PWSH_SYNTAX_CACHE[stmt] = True
             return True
         ps_code = (
+            "if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') { exit 2 }; "
             "$errs = $null; "
             "$ast = [System.Management.Automation.Language.Parser]::ParseInput($env:RECTO_PWSH_STMT, [ref]$null, [ref]$errs); "
             "$cmds = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)); "
@@ -223,7 +224,10 @@ class AgentFrontmatter(unittest.TestCase):
             [pwsh, "-NoProfile", "-NonInteractive", "-Command", ps_code],
             capture_output=True, text=True, env=env, timeout=15,
         )
-        ok = proc.returncode == 0
+        if proc.returncode == 2 or "ConstrainedLanguage" in (proc.stderr or "") or "Cannot create type" in (proc.stderr or ""):
+            ok = True
+        else:
+            ok = proc.returncode == 0
         cls._PWSH_SYNTAX_CACHE[stmt] = ok
         return ok
 
@@ -487,6 +491,12 @@ class AgentFrontmatter(unittest.TestCase):
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
+                    if re.search(r"\bIsDaemon\s*[:=]\s*true\b", text, re.IGNORECASE):
+                        errors.append(f"{rel}: forbids IsDaemon: true for tracked background invocations")
+                    if re.search(r"\brun_in_background\s*[:=]\s*false\b", text, re.IGNORECASE):
+                        errors.append(f"{rel}: forbids run_in_background: false for tracked background invocations")
+                    if re.search(r"\bWaitMsBeforeAsync\s*[:=]\s*0\b", text, re.IGNORECASE):
+                        errors.append(f"{rel}: forbids WaitMsBeforeAsync: 0 for tracked background invocations")
                 parsed_sequence: list[tuple[str, str | None, str | None]] = []
                 for role, cmd in ordered_cmds:
                     script = "review-prompt.py" if role == "prompt" else "review-dispatch.py"
@@ -819,6 +829,36 @@ class AgentFrontmatter(unittest.TestCase):
                      '& "build\\python.cmd" scripts/review-prompt.py --kind completion')
         )
         self.assertEqual([], self._check_ten_writer_skills(quoted_launcher_with_amp))
+        daemon_true_with_false = dict(texts)
+        daemon_true_with_false[".agents/skills/review-todo-section/SKILL.md"] = (
+            daemon_true_with_false[".agents/skills/review-todo-section/SKILL.md"]
+            + "\nCurrent setting: `IsDaemon: true` (previously `IsDaemon: false`).\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(daemon_true_with_false))
+        bg_false_with_true = dict(texts)
+        bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"] = (
+            bg_false_with_true[".claude/skills/review-todo-section/SKILL.md"]
+            + "\nCurrent setting: `run_in_background: false`.\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(bg_false_with_true))
+        from unittest import mock
+        saved_cache = dict(self._PWSH_SYNTAX_CACHE)
+        try:
+            self._PWSH_SYNTAX_CACHE.clear()
+            constrained = subprocess.CompletedProcess(
+                ["pwsh"], 2, "", "InvalidOperation: Cannot create type. Only core types are supported in this language mode."
+            )
+            real_run = subprocess.run
+            def _fake_run(cmd, *a, **kw):
+                if cmd and "pwsh" in str(cmd[0]).lower():
+                    return constrained
+                return real_run(cmd, *a, **kw)
+            with mock.patch("subprocess.run", side_effect=_fake_run):
+                self.assertEqual([], self._check_ten_writer_skills(texts))
+                self.assertTrue(self._check_ten_writer_skills(quoted_launcher_no_amp))
+        finally:
+            self._PWSH_SYNTAX_CACHE.clear()
+            self._PWSH_SYNTAX_CACHE.update(saved_cache)
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
