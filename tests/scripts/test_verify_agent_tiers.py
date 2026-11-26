@@ -98,17 +98,79 @@ class AgentFrontmatter(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @staticmethod
+    def _strip_shell_comment(line: str) -> str:
+        """Strip an unquoted `#` comment (at line start or after whitespace / shell separators `;`, `(`, `{`, `|`, `&`)."""
+        in_s = False
+        in_d = False
+        for i, ch in enumerate(line):
+            if ch == "'" and not in_d:
+                in_s = not in_s
+            elif ch == '"' and not in_s:
+                in_d = not in_d
+            elif ch == "#" and not in_s and not in_d and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";({|&"):
+                return line[:i]
+        return line
+
+    @staticmethod
+    def _split_shell_statements(chunk: str) -> list[str]:
+        """Split `chunk` on unquoted `;`, `&&`, or `||` separators in exact left-to-right order."""
+        out: list[str] = []
+        buf: list[str] = []
+        in_s = False
+        in_d = False
+        i = 0
+        n = len(chunk)
+        while i < n:
+            ch = chunk[i]
+            if ch == "'" and not in_d:
+                in_s = not in_s
+                buf.append(ch)
+            elif ch == '"' and not in_s:
+                in_d = not in_d
+                buf.append(ch)
+            elif not in_s and not in_d and ch == ";":
+                out.append("".join(buf))
+                buf = []
+            elif not in_s and not in_d and chunk[i:i + 2] in ("&&", "||"):
+                out.append("".join(buf))
+                buf = []
+                i += 1
+            else:
+                buf.append(ch)
+            i += 1
+        out.append("".join(buf))
+        return [s.strip() for s in out if s.strip()]
+
+    @staticmethod
+    def _is_python_runner(tok: str) -> bool:
+        base = tok.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        return base in ("python", "python3", "python.exe", "python3.exe", "py", "py.exe", "python.cmd", "run-python.sh")
+
+    @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
-        """Parse a `review-dispatch.py` or `review-prompt.py` command line (with either `/` or `\\` path separators)
-        using argparse (with default abbreviation matching) so any abbreviated flag like `--writ=claude`, `--prom`
-        or `--kin=round` resolves identically to the script. Returns `(is_executable_invocation, writer, kind, prompt_file)`."""
+        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement (requiring the command head
+        to be a Python launcher or the script itself, never a wrapper like `Write-Output` or `echo`), using
+        argparse (with default abbreviation matching) so abbreviated flags like `--writ=claude`, `--prom` or
+        `--kin=round` resolve identically to the script. Returns `(is_executable_invocation, writer, kind, prompt_file)`."""
         cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
         try:
             tokens = shlex.split(cleaned, posix=True)
         except ValueError:
             tokens = cleaned.split()
+        if not tokens:
+            return (False, None, None, None)
         target = script_name.lower()
-        idx = next((i for i, tok in enumerate(tokens) if tok.lower().endswith(target)), None)
+        # The statement must actually invoke the script: either token 0 IS the script, or token 0 is a Python
+        # launcher followed (after optional single-letter interpreter flags) by the script.
+        idx: int | None = None
+        if tokens[0].lower().endswith(target):
+            idx = 0
+        elif AgentFrontmatter._is_python_runner(tokens[0]):
+            pos = 1
+            while pos < len(tokens) and tokens[pos].startswith("-") and tokens[pos] not in ("--", "-m", "-c"):
+                pos += 1
+            if pos < len(tokens) and tokens[pos].lower().endswith(target):
+                idx = pos
         if idx is None:
             return (False, None, None, None)
         parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
@@ -166,42 +228,40 @@ class AgentFrontmatter(unittest.TestCase):
                 ordered_cmds: list[tuple[str, str]] = []
 
                 def _extract_commands(chunk: str, from_code_block: bool) -> None:
-                    matches = list(re.finditer(r"review-(prompt|dispatch)\.py", chunk, flags=re.IGNORECASE))
-                    for i, m in enumerate(matches):
-                        role = m.group(1).lower()
-                        script = f"review-{role}.py"
-                        seg_end = matches[i + 1].start() if i + 1 < len(matches) else len(chunk)
-                        after = chunk[m.end():seg_end]
-                        if after and after[0] in ("'", '"'):
-                            after = after[1:]
-                        after = re.split(r"(?:;|&&|\|\|)", after, maxsplit=1)[0]
-                        seg = f"{script}{after}"
-                        is_exec, parsed_writer, _, _ = AgentFrontmatter._parse_dispatch_command(seg, script)
-                        if from_code_block or is_exec:
-                            ordered_cmds.append((role, seg))
-                            if role == "dispatch" and parsed_writer not in allowed_writers:
-                                errors.append(
-                                    f"{rel}: dispatch command resolves writer {parsed_writer!r}, "
-                                    f"not in {sorted(allowed_writers)}"
-                                )
-
-                def _strip_shell_comment(line: str) -> str:
-                    in_s = False
-                    in_d = False
-                    for i, ch in enumerate(line):
-                        if ch == "'" and not in_d:
-                            in_s = not in_s
-                        elif ch == '"' and not in_s:
-                            in_d = not in_d
-                        elif ch == "#" and not in_s and not in_d and (i == 0 or line[i - 1].isspace()):
-                            return line[:i]
-                    return line
+                    for stmt in AgentFrontmatter._split_shell_statements(chunk):
+                        stmt_low = stmt.lower()
+                        for role, script in (("prompt", "review-prompt.py"), ("dispatch", "review-dispatch.py")):
+                            if script not in stmt_low:
+                                continue
+                            is_exec, parsed_writer, _, _ = AgentFrontmatter._parse_dispatch_command(stmt, script)
+                            # In code blocks, also catch a bare invocation whose command head matches even if all
+                            # flags were omitted; ignore non-invoking wrappers like `Write-Output` or `echo`.
+                            cleaned = re.sub(r"\[[^\]]*\]", "", stmt).strip().strip("`").replace("\\", "/")
+                            try:
+                                toks = shlex.split(cleaned, posix=True)
+                            except ValueError:
+                                toks = cleaned.split()
+                            head_invokes = bool(toks) and (
+                                toks[0].lower().endswith(script)
+                                or (AgentFrontmatter._is_python_runner(toks[0])
+                                    and len(toks) > 1
+                                    and any(t.lower().endswith(script) for t in toks[1:3]))
+                            )
+                            if not head_invokes:
+                                continue
+                            if from_code_block or is_exec:
+                                ordered_cmds.append((role, stmt))
+                                if role == "dispatch" and parsed_writer not in allowed_writers:
+                                    errors.append(
+                                        f"{rel}: dispatch command resolves writer {parsed_writer!r}, "
+                                        f"not in {sorted(allowed_writers)}"
+                                    )
 
                 def _emit_code_block(block_lines: list[str]) -> None:
                     cleaned_block = re.sub(r"<#.*?#>", "", "\n".join(block_lines), flags=re.DOTALL)
                     pending = ""
                     for raw_ln in cleaned_block.splitlines():
-                        s = _strip_shell_comment(raw_ln).strip()
+                        s = AgentFrontmatter._strip_shell_comment(raw_ln).strip()
                         if not s:
                             if pending:
                                 _extract_commands(pending, from_code_block=True)
@@ -504,6 +564,18 @@ class AgentFrontmatter(unittest.TestCase):
             .replace(p_line, f"# {p_line}")
         )
         self.assertTrue(self._check_ten_writer_skills(commented_prompt))
+        semicolon_comment_prompt = dict(texts)
+        semicolon_comment_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            semicolon_comment_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(p_line, f"Write-Verbose 'completion';# {p_line}")
+        )
+        self.assertTrue(self._check_ten_writer_skills(semicolon_comment_prompt))
+        write_output_prompt = dict(texts)
+        write_output_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            write_output_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(p_line, f"Write-Output {p_line}")
+        )
+        self.assertTrue(self._check_ten_writer_skills(write_output_prompt))
         quoted_script_path = dict(texts)
         quoted_script_path[".agents/skills/review-todo-section/SKILL.md"] = (
             quoted_script_path[".agents/skills/review-todo-section/SKILL.md"]
