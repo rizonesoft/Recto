@@ -150,26 +150,56 @@ class AgentFrontmatter(unittest.TestCase):
                     for val in writer_vals:
                         if val not in allowed_writers:
                             errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
-                    # Check every executable review-dispatch.py command inside fenced code blocks (no flag filter
-                    # that an abbreviation like `--prom` could bypass), plus any inline backtick span that passes
-                    # a writer flag to review-dispatch.py.
+                    # Check every executable review-dispatch.py command across CommonMark backtick/tilde fences,
+                    # indented code blocks, multi-line continuations, inline code spans, and bare prose lines.
                     dispatch_lines: list[str] = []
-                    in_fence = False
+                    fence_char = ""
+                    fence_len = 0
+                    pending_cmd = ""
                     for ln in text.splitlines():
                         stripped = ln.strip()
-                        if stripped.startswith("```"):
-                            in_fence = not in_fence
-                            continue
-                        if in_fence and "review-dispatch.py" in ln.lower():
-                            dispatch_lines.append(ln)
-                        elif not in_fence and "review-dispatch.py" in ln.lower():
-                            for span in re.findall(r"`([^`\n]*review-dispatch\.py[^`\n]*)`", ln, flags=re.IGNORECASE):
-                                parsed_inline = AgentFrontmatter._parse_dispatch_writer(span)
+                        if not fence_char:
+                            m_open = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", ln)
+                            if m_open:
+                                fence_char = m_open.group(1)[0]
+                                fence_len = len(m_open.group(1))
+                                pending_cmd = ""
+                                continue
+                        else:
+                            if re.match(rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", ln):
+                                if pending_cmd:
+                                    dispatch_lines.append(pending_cmd)
+                                    pending_cmd = ""
+                                fence_char = ""
+                                fence_len = 0
+                                continue
+                        is_code = bool(fence_char) or ln.startswith(("    ", "\t"))
+                        if is_code:
+                            if pending_cmd:
+                                pending_cmd = f"{pending_cmd} {stripped}"
+                            elif "review-dispatch.py" in ln.lower():
+                                pending_cmd = stripped
+                            if pending_cmd:
+                                if pending_cmd.endswith(("\\", "`")):
+                                    pending_cmd = pending_cmd[:-1].rstrip()
+                                else:
+                                    dispatch_lines.append(pending_cmd)
+                                    pending_cmd = ""
+                        elif "review-dispatch.py" in ln.lower():
+                            if pending_cmd:
+                                dispatch_lines.append(pending_cmd)
+                                pending_cmd = ""
+                            spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
+                                     if "review-dispatch.py" in m.group(2).lower()]
+                            for candidate in spans or [ln]:
+                                parsed_inline = AgentFrontmatter._parse_dispatch_writer(candidate)
                                 if parsed_inline is not None and parsed_inline not in allowed_writers:
                                     errors.append(
                                         f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
                                         f"not in {sorted(allowed_writers)}"
                                     )
+                    if pending_cmd:
+                        dispatch_lines.append(pending_cmd)
                     if not dispatch_lines:
                         errors.append(f"{rel}: missing executable review-dispatch.py command example")
                     for ln in dispatch_lines:
@@ -252,6 +282,19 @@ class AgentFrontmatter(unittest.TestCase):
                      r"scripts\review-dispatch.py --kind completion --candidate <full tip SHA> --writ=claude")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_backslash_dispatch))
+        wrong_tilde_fence = dict(texts)
+        wrong_tilde_fence[".agents/skills/review-todo-section/SKILL.md"] = (
+            wrong_tilde_fence[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(
+                '```powershell\nbuild\\python.cmd scripts/review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" [--fidelity <design source>] --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-completion-prompt.md>\nbuild\\python.cmd scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writer <claude|agy> --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md\n```',
+                '~~~powershell\nbuild\\python.cmd scripts/review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" [--fidelity <design source>] --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-completion-prompt.md>\nbuild\\python.cmd scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writ=claude --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md\n~~~',
+            )
+        )
+        self.assertNotEqual(
+            wrong_tilde_fence[".agents/skills/review-todo-section/SKILL.md"],
+            texts[".agents/skills/review-todo-section/SKILL.md"],
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_tilde_fence))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
