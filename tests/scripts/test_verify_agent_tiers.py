@@ -241,13 +241,19 @@ class AgentFrontmatter(unittest.TestCase):
         except (SystemExit, argparse.ArgumentError):
             return (True, None, None, None)
         if target == "review-prompt.py":
-            per_kind_req = {
-                "plan": (ns.governing,),
-                "round": (ns.purpose, ns.governing),
-                "completion": (ns.purpose, ns.governing),
-                "reconciliation": (ns.failed, ns.findings, ns.gates, ns.governing),
-            }
-            if ns.kind not in per_kind_req or not all(per_kind_req[ns.kind]):
+            # Substitute only documentation angle-bracket placeholders before invoking review-prompt.py's own
+            # validate_template_args(), so literal invalid values like `--ref D00-T05-s1` or unsupported flags
+            # for a kind are refused identically to scripts/review-prompt.py.
+            check_ns = argparse.Namespace(**vars(ns))
+            if check_ns.ref == "D<NN> T<NN> §<N>":
+                check_ns.ref = "D00 T01 §1"
+            for sha_field in ("candidate", "base", "failed", "last"):
+                val = getattr(check_ns, sha_field, None)
+                if val and val.startswith("<") and val.endswith(">"):
+                    setattr(check_ns, sha_field, "0" * 40)
+            try:
+                mod.validate_template_args(check_ns)
+            except mod.Refused:
                 return (True, None, None, None)
             return (True, None, ns.kind, ns.out)
         if ns.check_pin or ns.list_rounds:
@@ -702,6 +708,13 @@ class AgentFrontmatter(unittest.TestCase):
                      "review-dispatch.py --kind completion --candidate HEAD")
         )
         self.assertTrue(self._check_ten_writer_skills(bad_head_candidate))
+        bad_prompt_ref = dict(texts)
+        bad_prompt_ref[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_prompt_ref[".agents/skills/review-todo-section/SKILL.md"]
+            .replace('review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>"',
+                     "review-prompt.py --kind completion --candidate <full tip SHA> --ref D00-T05-s1")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_prompt_ref))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]

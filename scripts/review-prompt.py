@@ -483,6 +483,36 @@ def resolve_commit(name: str, value: str) -> str:
     return resolved
 
 
+def validate_template_args(args: argparse.Namespace) -> None:
+    """Validate post-parse arguments against the template contract without touching git or writing --out."""
+    if args.ref is not None and not REF.fullmatch(args.ref):
+        raise Refused(f"--ref must look like 'D00 T01 §7', got {args.ref!r}")
+    if args.fidelity is not None and not one_line(args.fidelity):
+        raise Refused("--fidelity must not be blank (omit it to let --ref read the section's Surface and Fidelity)")
+    body = read_template(args.kind)
+    given_last = args.last
+    effective = argparse.Namespace(**vars(args))
+    if effective.kind == "reconciliation" and effective.failed and not effective.last:
+        effective.last = effective.failed
+    todo = one_line(effective.todo)
+    if not todo and effective.ref and TODO_FILE in body:
+        todo = "todo/00-workspace/TODO-01.md"
+    if not effective.findings and effective.ref and "`<docs/reviews/" in body:
+        effective.findings = section_findings(effective.ref)
+    if effective.fidelity is None and effective.ref and FIDELITY_SPAN in body:
+        effective.fidelity = DEFAULT_FIDELITY
+    gates = "ok" if effective.gates is not None else None
+    _, used, unresolved = fill(body, effective, todo, gates)
+    if unresolved:
+        raise Refused("no value for " + "; ".join(unresolved))
+    given = {"--base": args.base, "--ref": args.ref, "--todo": args.todo, "--fidelity": args.fidelity,
+             "--purpose": args.purpose, "--governing": args.governing, "--gates": args.gates,
+             "--findings": args.findings, "--failed": args.failed, "--last": given_last}
+    extra = sorted(flag for flag, value in given.items() if value is not None and flag not in used)
+    if extra:
+        raise Refused(f"the {args.kind} prompt has no place for {', '.join(extra)}")
+
+
 def run(args: argparse.Namespace) -> Path:
     for name in ("candidate", "base", "failed", "last"):
         value = getattr(args, name)
