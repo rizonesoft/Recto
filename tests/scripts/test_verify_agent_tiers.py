@@ -110,7 +110,7 @@ class AgentFrontmatter(unittest.TestCase):
         idx = next((i for i, tok in enumerate(tokens) if tok.lower().endswith("review-dispatch.py")), None)
         if idx is None:
             return (False, None)
-        parser = argparse.ArgumentParser(add_help=False)
+        parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
         parser.add_argument("--writer")
         parser.add_argument("--kind")
         parser.add_argument("--candidate")
@@ -120,8 +120,8 @@ class AgentFrontmatter(unittest.TestCase):
         parser.add_argument("--paths", nargs="*")
         try:
             ns, _ = parser.parse_known_args(tokens[idx + 1:])
-        except SystemExit:
-            return (False, None)
+        except (SystemExit, argparse.ArgumentError):
+            return (True, None)
         is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record))
         return (is_exec, ns.writer)
 
@@ -320,6 +320,12 @@ class AgentFrontmatter(unittest.TestCase):
             + "\nRun `build\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --prompt p.md --record r.md`.\n"
         )
         self.assertTrue(self._check_ten_writer_skills(missing_inline_writer))
+        dangling_inline_writer = dict(texts)
+        dangling_inline_writer[".agents/skills/process-phase/SKILL.md"] = (
+            dangling_inline_writer[".agents/skills/process-phase/SKILL.md"]
+            + "\nRun `build\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --prompt p.md --record r.md --writer`.\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(dangling_inline_writer))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
