@@ -1,7 +1,9 @@
 """scripts/verify-agent-tiers.mjs: agent frontmatter it accepts is frontmatter a YAML loader can read."""
+import argparse
 import json
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -96,6 +98,32 @@ class AgentFrontmatter(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @staticmethod
+    def _parse_dispatch_writer(line: str) -> str | None:
+        """Parse a `scripts/review-dispatch.py` command line using argparse (with default abbreviation matching)
+        so any abbreviated flag like `--writ=claude` resolves identically to `scripts/review-dispatch.py`."""
+        cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`")
+        try:
+            tokens = shlex.split(cleaned, posix=True)
+        except ValueError:
+            tokens = cleaned.split()
+        idx = next((i for i, tok in enumerate(tokens) if tok.endswith("review-dispatch.py")), None)
+        if idx is None:
+            return None
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--writer")
+        parser.add_argument("--kind")
+        parser.add_argument("--candidate")
+        parser.add_argument("--prompt")
+        parser.add_argument("--record")
+        parser.add_argument("--surface", action="store_true")
+        parser.add_argument("--paths", nargs="*")
+        try:
+            ns, _ = parser.parse_known_args(tokens[idx + 1:])
+        except SystemExit:
+            return None
+        return ns.writer
+
+    @staticmethod
     def _check_ten_writer_skills(texts: dict[str, str]) -> list[str]:
         """Verify all ten Claude Code and Antigravity workflow skill files stay aligned on three-pass,
         writer identity, pass order and runner-specific background review invocation."""
@@ -121,6 +149,14 @@ class AgentFrontmatter(unittest.TestCase):
                     for val in writer_vals:
                         if val not in allowed_writers:
                             errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
+                    dispatch_lines = [ln for ln in text.splitlines()
+                                      if "scripts/review-dispatch.py" in ln and "--prompt" in ln]
+                    if not dispatch_lines:
+                        errors.append(f"{rel}: missing executable review-dispatch.py command example")
+                    for ln in dispatch_lines:
+                        parsed = AgentFrontmatter._parse_dispatch_writer(ln)
+                        if parsed not in allowed_writers:
+                            errors.append(f"{rel}: dispatch command resolves writer {parsed!r}, not in {sorted(allowed_writers)}")
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
@@ -177,6 +213,12 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("--writer <claude|agy>", "--writer=claude")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_eq_writer))
+        wrong_abbrev_writer = dict(texts)
+        wrong_abbrev_writer[".agents/skills/independent-review/SKILL.md"] = (
+            wrong_abbrev_writer[".agents/skills/independent-review/SKILL.md"]
+            .replace("--writer <claude|agy>", "--writ=claude")
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_abbrev_writer))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
