@@ -99,14 +99,15 @@ class AgentFrontmatter(unittest.TestCase):
 
     @staticmethod
     def _parse_dispatch_writer(line: str) -> str | None:
-        """Parse a `scripts/review-dispatch.py` command line using argparse (with default abbreviation matching)
-        so any abbreviated flag like `--writ=claude` resolves identically to `scripts/review-dispatch.py`."""
-        cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`")
+        """Parse a `review-dispatch.py` command line (with either `/` or `\\` path separators) using argparse
+        (with default abbreviation matching) so any abbreviated flag like `--writ=claude` resolves identically
+        to `scripts/review-dispatch.py`."""
+        cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
         try:
             tokens = shlex.split(cleaned, posix=True)
         except ValueError:
             tokens = cleaned.split()
-        idx = next((i for i, tok in enumerate(tokens) if tok.endswith("review-dispatch.py")), None)
+        idx = next((i for i, tok in enumerate(tokens) if tok.lower().endswith("review-dispatch.py")), None)
         if idx is None:
             return None
         parser = argparse.ArgumentParser(add_help=False)
@@ -159,10 +160,10 @@ class AgentFrontmatter(unittest.TestCase):
                         if stripped.startswith("```"):
                             in_fence = not in_fence
                             continue
-                        if in_fence and "scripts/review-dispatch.py" in ln:
+                        if in_fence and "review-dispatch.py" in ln.lower():
                             dispatch_lines.append(ln)
-                        elif not in_fence and "scripts/review-dispatch.py" in ln:
-                            for span in re.findall(r"`([^`\n]*scripts/review-dispatch\.py[^`\n]*)`", ln):
+                        elif not in_fence and "review-dispatch.py" in ln.lower():
+                            for span in re.findall(r"`([^`\n]*review-dispatch\.py[^`\n]*)`", ln, flags=re.IGNORECASE):
                                 parsed_inline = AgentFrontmatter._parse_dispatch_writer(span)
                                 if parsed_inline is not None and parsed_inline not in allowed_writers:
                                     errors.append(
@@ -244,6 +245,13 @@ class AgentFrontmatter(unittest.TestCase):
                      "--kind completion --candidate <full tip SHA> --writ=claude --prom")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_abbrev_prompt))
+        wrong_backslash_dispatch = dict(texts)
+        wrong_backslash_dispatch[".agents/skills/review-todo-section/SKILL.md"] = (
+            wrong_backslash_dispatch[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writer <claude|agy>",
+                     r"scripts\review-dispatch.py --kind completion --candidate <full tip SHA> --writ=claude")
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_backslash_dispatch))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
