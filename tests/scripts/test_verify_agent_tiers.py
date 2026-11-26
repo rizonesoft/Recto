@@ -250,7 +250,7 @@ class AgentFrontmatter(unittest.TestCase):
             for sha_field in ("candidate", "base", "failed", "last"):
                 val = getattr(check_ns, sha_field, None)
                 if val and val.startswith("<") and val.endswith(">"):
-                    setattr(check_ns, sha_field, "0" * 40)
+                    setattr(check_ns, sha_field, "HEAD")
             try:
                 mod.validate_template_args(check_ns)
             except mod.Refused:
@@ -715,6 +715,13 @@ class AgentFrontmatter(unittest.TestCase):
                      "review-prompt.py --kind completion --candidate <full tip SHA> --ref D00-T05-s1")
         )
         self.assertTrue(self._check_ten_writer_skills(bad_prompt_ref))
+        bad_prompt_candidate = dict(texts)
+        bad_prompt_candidate[".agents/skills/review-todo-section/SKILL.md"] = (
+            bad_prompt_candidate[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("review-prompt.py --kind completion --candidate <full tip SHA>",
+                     "review-prompt.py --kind completion --candidate HEDA")
+        )
+        self.assertTrue(self._check_ten_writer_skills(bad_prompt_candidate))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]

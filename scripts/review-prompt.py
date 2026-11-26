@@ -484,14 +484,19 @@ def resolve_commit(name: str, value: str) -> str:
 
 
 def validate_template_args(args: argparse.Namespace) -> None:
-    """Validate post-parse arguments against the template contract without touching git or writing --out."""
-    if args.ref is not None and not REF.fullmatch(args.ref):
-        raise Refused(f"--ref must look like 'D00 T01 §7', got {args.ref!r}")
-    if args.fidelity is not None and not one_line(args.fidelity):
-        raise Refused("--fidelity must not be blank (omit it to let --ref read the section's Surface and Fidelity)")
-    body = read_template(args.kind)
-    given_last = args.last
+    """Validate post-parse arguments (including git commit resolution, --ref format, --fidelity and template
+    placeholder/extra-flag checks) without writing --out."""
     effective = argparse.Namespace(**vars(args))
+    for name in ("candidate", "base", "failed", "last"):
+        value = getattr(effective, name)
+        if value is not None:
+            setattr(effective, name, resolve_commit(name, value))
+    if effective.ref is not None and not REF.fullmatch(effective.ref):
+        raise Refused(f"--ref must look like 'D00 T01 §7', got {effective.ref!r}")
+    if effective.fidelity is not None and not one_line(effective.fidelity):
+        raise Refused("--fidelity must not be blank (omit it to let --ref read the section's Surface and Fidelity)")
+    body = read_template(effective.kind)
+    given_last = effective.last
     if effective.kind == "reconciliation" and effective.failed and not effective.last:
         effective.last = effective.failed
     todo = one_line(effective.todo)
