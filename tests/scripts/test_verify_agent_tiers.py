@@ -149,8 +149,8 @@ class AgentFrontmatter(unittest.TestCase):
     @staticmethod
     def _find_script_token(tokens: list[str], target: str) -> int | None:
         """Return the index of `target` in `tokens` when the statement actually invokes it (directly or through
-        a Python launcher with an explicit allowlist of non-exiting flags, optionally prefixed by PowerShell's
-        `&` call operator)."""
+        a Python launcher with valid non-exiting CPython options, optionally prefixed by PowerShell's `&` call
+        operator)."""
         start = 1 if tokens and tokens[0] == "&" else 0
         if start >= len(tokens):
             return None
@@ -158,20 +158,29 @@ class AgentFrontmatter(unittest.TestCase):
             return start
         if AgentFrontmatter._is_python_runner(tokens[start]):
             pos = start + 1
-            allowed_py_flags = {"-B", "-u", "-s", "-S", "-E", "-I", "-O", "-OO", "-P", "-b", "-bb", "-q", "-v"}
-            while pos < len(tokens) and tokens[pos] in allowed_py_flags:
-                pos += 1
+            allowed_single = {"-B", "-u", "-s", "-S", "-E", "-I", "-O", "-OO", "-P", "-b", "-bb", "-q", "-v", "-d", "-i", "-x"}
+            while pos < len(tokens):
+                tok = tokens[pos]
+                if tok in allowed_single:
+                    pos += 1
+                elif tok in ("-X", "-W") and pos + 1 < len(tokens):
+                    pos += 2
+                elif (tok.startswith("-X") and len(tok) > 2) or (tok.startswith("-W") and len(tok) > 2):
+                    pos += 1
+                else:
+                    break
             if pos < len(tokens) and tokens[pos].lower().endswith(target):
                 return pos
         return None
 
     @staticmethod
     def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
-        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement (requiring the command head
-        to be a Python launcher or the script itself, never a wrapper like `Write-Output` or `echo`), using
-        argparse (with default abbreviation matching) so abbreviated flags like `--writ=claude`, `--prom` or
-        `--kin=round` resolve identically to the script. Returns `(is_executable_invocation, writer, kind, prompt_file)`."""
+        """Parse a single `review-dispatch.py` or `review-prompt.py` command statement strictly against that
+        script's real CLI flags (requiring the command head to be a Python launcher or the script itself, and
+        rejecting `--help`, `-h`, unknown flags, or diagnostic-only flags). Returns
+        `(is_executable_invocation, writer, kind, prompt_file)`."""
         cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
+        cleaned = re.sub(r"<[^>]+>", lambda m: m.group(0).replace(" ", "_").replace("'", ""), cleaned)
         try:
             tokens = shlex.split(cleaned, posix=True)
         except ValueError:
@@ -181,21 +190,27 @@ class AgentFrontmatter(unittest.TestCase):
         if idx is None:
             return (False, None, None, None)
         parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
-        parser.add_argument("--writer")
-        parser.add_argument("--kind")
-        parser.add_argument("--candidate")
-        parser.add_argument("--prompt")
-        parser.add_argument("--record")
-        parser.add_argument("--out")
-        parser.add_argument("--surface", action="store_true")
-        parser.add_argument("--paths", nargs="*")
+        if target == "review-prompt.py":
+            for flag in ("--kind", "--candidate", "--out", "--base", "--ref", "--todo", "--fidelity",
+                         "--purpose", "--governing", "--gates", "--findings", "--failed", "--last"):
+                parser.add_argument(flag)
+        else:
+            for flag in ("--writer", "--prompt", "--record", "--kind", "--candidate", "--timeout", "--pin", "--records"):
+                parser.add_argument(flag)
+            parser.add_argument("--paths", nargs="*")
+            for flag in ("--surface", "--check-pin", "--list-rounds", "--json"):
+                parser.add_argument(flag, action="store_true")
         try:
-            ns, _ = parser.parse_known_args(tokens[idx + 1:])
+            ns = parser.parse_args(tokens[idx + 1:])
         except (SystemExit, argparse.ArgumentError):
             return (True, None, None, None)
-        is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record, ns.out))
-        prompt_file = ns.out if target == "review-prompt.py" else ns.prompt
-        return (is_exec, ns.writer, ns.kind, prompt_file)
+        if target == "review-prompt.py":
+            is_exec = any(v is not None for v in (ns.candidate, ns.out))
+            return (is_exec, None, ns.kind, ns.out)
+        if ns.check_pin or ns.list_rounds:
+            return (True, None, None, None)
+        is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record))
+        return (is_exec, ns.writer, ns.kind, ns.prompt)
 
     @staticmethod
     def _parse_dispatch_writer(line: str) -> str | None:
@@ -597,6 +612,19 @@ class AgentFrontmatter(unittest.TestCase):
                      "& build\\python.cmd scripts/review-prompt.py --kind completion")
         )
         self.assertEqual(self._check_ten_writer_skills(call_op_prompt), [])
+        help_flag_prompt = dict(texts)
+        help_flag_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            help_flag_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("review-prompt.py --kind completion", "review-prompt.py --help --kind completion")
+        )
+        self.assertTrue(self._check_ten_writer_skills(help_flag_prompt))
+        xutf8_prompt = dict(texts)
+        xutf8_prompt[".agents/skills/review-todo-section/SKILL.md"] = (
+            xutf8_prompt[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("build\\python.cmd scripts/review-prompt.py --kind completion",
+                     "build\\python.cmd -Xutf8 scripts/review-prompt.py --kind completion")
+        )
+        self.assertEqual(self._check_ten_writer_skills(xutf8_prompt), [])
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
