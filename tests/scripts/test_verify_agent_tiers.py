@@ -98,10 +98,10 @@ class AgentFrontmatter(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     @staticmethod
-    def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None]:
+    def _parse_dispatch_command(line: str, script_name: str = "review-dispatch.py") -> tuple[bool, str | None, str | None, str | None]:
         """Parse a `review-dispatch.py` or `review-prompt.py` command line (with either `/` or `\\` path separators)
         using argparse (with default abbreviation matching) so any abbreviated flag like `--writ=claude`, `--prom`
-        or `--kin=round` resolves identically to the script. Returns `(is_executable_invocation, writer, kind)`."""
+        or `--kin=round` resolves identically to the script. Returns `(is_executable_invocation, writer, kind, prompt_file)`."""
         cleaned = re.sub(r"\[[^\]]*\]", "", line).strip().strip("`").replace("\\", "/")
         try:
             tokens = shlex.split(cleaned, posix=True)
@@ -110,7 +110,7 @@ class AgentFrontmatter(unittest.TestCase):
         target = script_name.lower()
         idx = next((i for i, tok in enumerate(tokens) if tok.lower().endswith(target)), None)
         if idx is None:
-            return (False, None, None)
+            return (False, None, None, None)
         parser = argparse.ArgumentParser(add_help=False, exit_on_error=False)
         parser.add_argument("--writer")
         parser.add_argument("--kind")
@@ -123,9 +123,10 @@ class AgentFrontmatter(unittest.TestCase):
         try:
             ns, _ = parser.parse_known_args(tokens[idx + 1:])
         except (SystemExit, argparse.ArgumentError):
-            return (True, None, None)
+            return (True, None, None, None)
         is_exec = any(v is not None for v in (ns.writer, ns.candidate, ns.prompt, ns.record, ns.out))
-        return (is_exec, ns.writer, ns.kind)
+        prompt_file = ns.out if target == "review-prompt.py" else ns.prompt
+        return (is_exec, ns.writer, ns.kind, prompt_file)
 
     @staticmethod
     def _parse_dispatch_writer(line: str) -> str | None:
@@ -158,11 +159,10 @@ class AgentFrontmatter(unittest.TestCase):
                 for val in writer_vals:
                     if val not in allowed_writers:
                         errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
-                # Check every executable review-dispatch.py and review-prompt.py command across CommonMark
-                # backtick/tilde fences, indented code blocks, multi-line continuations, inline code spans,
-                # and bare prose lines.
-                dispatch_lines: list[str] = []
-                prompt_lines: list[str] = []
+                # Check every executable review-dispatch.py and review-prompt.py command in document order across
+                # CommonMark backtick/tilde fences, indented code blocks, multi-line continuations, inline code
+                # spans, and bare prose lines.
+                ordered_cmds: list[tuple[str, str]] = []
                 fence_char = ""
                 fence_len = 0
                 pending_cmd = ""
@@ -180,7 +180,7 @@ class AgentFrontmatter(unittest.TestCase):
                     else:
                         if re.match(rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", ln):
                             if pending_cmd:
-                                (dispatch_lines if pending_target == "dispatch" else prompt_lines).append(pending_cmd)
+                                ordered_cmds.append((pending_target, pending_cmd))
                                 pending_cmd = ""
                                 pending_target = ""
                             fence_char = ""
@@ -200,46 +200,48 @@ class AgentFrontmatter(unittest.TestCase):
                             if pending_cmd.endswith(("\\", "`")):
                                 pending_cmd = pending_cmd[:-1].rstrip()
                             else:
-                                (dispatch_lines if pending_target == "dispatch" else prompt_lines).append(pending_cmd)
+                                ordered_cmds.append((pending_target, pending_cmd))
                                 pending_cmd = ""
                                 pending_target = ""
                     elif "review-dispatch.py" in ln.lower():
                         if pending_cmd:
-                            (dispatch_lines if pending_target == "dispatch" else prompt_lines).append(pending_cmd)
+                            ordered_cmds.append((pending_target, pending_cmd))
                             pending_cmd = ""
                             pending_target = ""
                         spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
                                  if "review-dispatch.py" in m.group(2).lower()]
                         for candidate in spans or [ln]:
-                            is_exec, parsed_inline, _ = AgentFrontmatter._parse_dispatch_command(candidate)
+                            is_exec, parsed_inline, _, _ = AgentFrontmatter._parse_dispatch_command(candidate)
                             if is_exec and parsed_inline not in allowed_writers:
                                 errors.append(
                                     f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
                                     f"not in {sorted(allowed_writers)}"
                                 )
                 if pending_cmd:
-                    (dispatch_lines if pending_target == "dispatch" else prompt_lines).append(pending_cmd)
+                    ordered_cmds.append((pending_target, pending_cmd))
+                dispatch_lines = [cmd for role, cmd in ordered_cmds if role == "dispatch"]
                 if skill in ("process-todo-section", "review-todo-section", "independent-review"):
                     if not dispatch_lines:
                         errors.append(f"{rel}: missing executable review-dispatch.py command example")
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
-                dispatch_kinds: list[str | None] = []
-                for ln in dispatch_lines:
-                    _, parsed, kind = AgentFrontmatter._parse_dispatch_command(ln)
-                    dispatch_kinds.append(kind)
-                    if parsed not in allowed_writers:
-                        errors.append(f"{rel}: dispatch command resolves writer {parsed!r}, not in {sorted(allowed_writers)}")
-                prompt_kinds = [
-                    AgentFrontmatter._parse_dispatch_command(ln, "review-prompt.py")[2]
-                    for ln in prompt_lines
-                ]
+                parsed_sequence: list[tuple[str, str | None, str | None]] = []
+                for role, cmd in ordered_cmds:
+                    script = "review-prompt.py" if role == "prompt" else "review-dispatch.py"
+                    _, parsed_writer, kind, prompt_file = AgentFrontmatter._parse_dispatch_command(cmd, script)
+                    parsed_sequence.append((role, kind, prompt_file))
+                    if role == "dispatch" and parsed_writer not in allowed_writers:
+                        errors.append(
+                            f"{rel}: dispatch command resolves writer {parsed_writer!r}, not in {sorted(allowed_writers)}"
+                        )
+                ordered_kinds = [(role, kind) for role, kind, _ in parsed_sequence]
                 if skill == "process-todo-section":
-                    if dispatch_kinds != ["plan"]:
-                        errors.append(f"{rel}: process-todo-section dispatch kinds {dispatch_kinds!r} != ['plan']")
-                    if prompt_kinds != ["plan"]:
-                        errors.append(f"{rel}: process-todo-section prompt kinds {prompt_kinds!r} != ['plan']")
+                    expected = [("prompt", "plan"), ("dispatch", "plan")]
+                    if ordered_kinds != expected:
+                        errors.append(f"{rel}: process-todo-section command order {ordered_kinds!r} != {expected!r}")
+                    elif not parsed_sequence[0][2] or parsed_sequence[0][2] != parsed_sequence[1][2]:
+                        errors.append(f"{rel}: process-todo-section prompt --out != dispatch --prompt")
                 if skill in ("review-todo-section", "process-phase"):
                     passes = ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation")
                     for pass_name in passes:
@@ -248,12 +250,23 @@ class AgentFrontmatter(unittest.TestCase):
                     idx = [text.index(p) for p in passes if p in text]
                     if len(idx) == 4 and idx != sorted(idx):
                         errors.append(f"{rel}: three-pass order drifted")
+                if skill == "process-phase":
+                    phase_kinds = re.findall(r"--kind(?:=|\s+)([a-zA-Z0-9_-]+)", text)
+                    if phase_kinds != ["plan", "round", "completion", "reconciliation"]:
+                        errors.append(f"{rel}: process-phase --kind sequence {phase_kinds!r} drifted")
                 if skill == "review-todo-section":
-                    expected_kinds = ["round", "completion", "reconciliation"]
-                    if dispatch_kinds != expected_kinds:
-                        errors.append(f"{rel}: review-todo-section dispatch kinds {dispatch_kinds!r} != {expected_kinds!r}")
-                    if prompt_kinds != expected_kinds:
-                        errors.append(f"{rel}: review-todo-section prompt kinds {prompt_kinds!r} != {expected_kinds!r}")
+                    expected = [
+                        ("prompt", "round"), ("dispatch", "round"),
+                        ("prompt", "completion"), ("dispatch", "completion"),
+                        ("prompt", "reconciliation"), ("dispatch", "reconciliation"),
+                    ]
+                    if ordered_kinds != expected:
+                        errors.append(f"{rel}: review-todo-section command order {ordered_kinds!r} != {expected!r}")
+                    else:
+                        for i in range(0, len(parsed_sequence), 2):
+                            p_file, d_file = parsed_sequence[i][2], parsed_sequence[i + 1][2]
+                            if not p_file or p_file != d_file:
+                                errors.append(f"{rel}: review-todo-section pair {i // 2} prompt --out {p_file!r} != dispatch --prompt {d_file!r}")
                 if skill == "process-plan":
                     if "process-phase" not in text:
                         errors.append(f"{rel}: missing process-phase handoff")
@@ -374,6 +387,18 @@ class AgentFrontmatter(unittest.TestCase):
             .replace("review-dispatch.py --kind plan", "review-dispatch.py --kind round")
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_plan_dispatch_kind))
+        transposed_completion = dict(texts)
+        p_line = 'build\\python.cmd scripts/review-prompt.py --kind completion --candidate <full tip SHA> --ref "D<NN> T<NN> §<N>" [--fidelity <design source>] --purpose "<one or two sentences>" --governing <the spec or plan> --out <scratch-completion-prompt.md>'
+        d_line = 'build\\python.cmd scripts/review-dispatch.py --kind completion --candidate <full tip SHA> --writer <claude|agy> --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md'
+        transposed_completion[".agents/skills/review-todo-section/SKILL.md"] = (
+            transposed_completion[".agents/skills/review-todo-section/SKILL.md"]
+            .replace(f"{p_line}\n{d_line}", f"{d_line}\n{p_line}")
+        )
+        self.assertNotEqual(
+            transposed_completion[".agents/skills/review-todo-section/SKILL.md"],
+            texts[".agents/skills/review-todo-section/SKILL.md"],
+        )
+        self.assertTrue(self._check_ten_writer_skills(transposed_completion))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
