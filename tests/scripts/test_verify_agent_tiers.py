@@ -143,72 +143,74 @@ class AgentFrontmatter(unittest.TestCase):
                 if skill in ("process-todo-section", "review-todo-section", "process-phase"):
                     if "three-pass" not in text:
                         errors.append(f"{rel}: missing three-pass schedule reference")
-                if skill in ("process-todo-section", "review-todo-section", "independent-review"):
-                    writer_vals = re.findall(r"--writer(?:=|\s+)([^\s`\]]+)", text)
-                    if not writer_vals:
-                        errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
-                    for val in writer_vals:
-                        if val not in allowed_writers:
-                            errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
-                    # Check every executable review-dispatch.py command across CommonMark backtick/tilde fences,
-                    # indented code blocks, multi-line continuations, inline code spans, and bare prose lines.
-                    dispatch_lines: list[str] = []
-                    fence_char = ""
-                    fence_len = 0
-                    pending_cmd = ""
-                    for ln in text.splitlines():
-                        stripped = ln.strip()
-                        if not fence_char:
-                            m_open = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", ln)
-                            if m_open:
-                                fence_char = m_open.group(1)[0]
-                                fence_len = len(m_open.group(1))
-                                pending_cmd = ""
-                                continue
-                        else:
-                            if re.match(rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", ln):
-                                if pending_cmd:
-                                    dispatch_lines.append(pending_cmd)
-                                    pending_cmd = ""
-                                fence_char = ""
-                                fence_len = 0
-                                continue
-                        is_code = bool(fence_char) or ln.startswith(("    ", "\t"))
-                        if is_code:
-                            if pending_cmd:
-                                pending_cmd = f"{pending_cmd} {stripped}"
-                            elif "review-dispatch.py" in ln.lower():
-                                pending_cmd = stripped
-                            if pending_cmd:
-                                if pending_cmd.endswith(("\\", "`")):
-                                    pending_cmd = pending_cmd[:-1].rstrip()
-                                else:
-                                    dispatch_lines.append(pending_cmd)
-                                    pending_cmd = ""
-                        elif "review-dispatch.py" in ln.lower():
+                # Validate --writer values and every executable review-dispatch.py command across ALL five skills
+                # in both trees (requiring presence on the three dispatch-owning skills).
+                writer_vals = re.findall(r"--writer(?:=|\s+)([^\s`\]]+)", text)
+                if skill in ("process-todo-section", "review-todo-section", "independent-review") and not writer_vals:
+                    errors.append(f"{rel}: missing --writer flag for review-dispatch.py")
+                for val in writer_vals:
+                    if val not in allowed_writers:
+                        errors.append(f"{rel}: unsupported --writer value {val!r} for {tree}")
+                # Check every executable review-dispatch.py command across CommonMark backtick/tilde fences,
+                # indented code blocks, multi-line continuations, inline code spans, and bare prose lines.
+                dispatch_lines: list[str] = []
+                fence_char = ""
+                fence_len = 0
+                pending_cmd = ""
+                for ln in text.splitlines():
+                    stripped = ln.strip()
+                    if not fence_char:
+                        m_open = re.match(r"^[ ]{0,3}(`{3,}|~{3,})", ln)
+                        if m_open:
+                            fence_char = m_open.group(1)[0]
+                            fence_len = len(m_open.group(1))
+                            pending_cmd = ""
+                            continue
+                    else:
+                        if re.match(rf"^[ ]{{0,3}}{re.escape(fence_char)}{{{fence_len},}}\s*$", ln):
                             if pending_cmd:
                                 dispatch_lines.append(pending_cmd)
                                 pending_cmd = ""
-                            spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
-                                     if "review-dispatch.py" in m.group(2).lower()]
-                            for candidate in spans or [ln]:
-                                parsed_inline = AgentFrontmatter._parse_dispatch_writer(candidate)
-                                if parsed_inline is not None and parsed_inline not in allowed_writers:
-                                    errors.append(
-                                        f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
-                                        f"not in {sorted(allowed_writers)}"
-                                    )
-                    if pending_cmd:
-                        dispatch_lines.append(pending_cmd)
+                            fence_char = ""
+                            fence_len = 0
+                            continue
+                    is_code = bool(fence_char) or ln.startswith(("    ", "\t"))
+                    if is_code:
+                        if pending_cmd:
+                            pending_cmd = f"{pending_cmd} {stripped}"
+                        elif "review-dispatch.py" in ln.lower():
+                            pending_cmd = stripped
+                        if pending_cmd:
+                            if pending_cmd.endswith(("\\", "`")):
+                                pending_cmd = pending_cmd[:-1].rstrip()
+                            else:
+                                dispatch_lines.append(pending_cmd)
+                                pending_cmd = ""
+                    elif "review-dispatch.py" in ln.lower():
+                        if pending_cmd:
+                            dispatch_lines.append(pending_cmd)
+                            pending_cmd = ""
+                        spans = [m.group(2) for m in re.finditer(r"(`+)(.*?)\1", ln)
+                                 if "review-dispatch.py" in m.group(2).lower()]
+                        for candidate in spans or [ln]:
+                            parsed_inline = AgentFrontmatter._parse_dispatch_writer(candidate)
+                            if parsed_inline is not None and parsed_inline not in allowed_writers:
+                                errors.append(
+                                    f"{rel}: inline dispatch span resolves writer {parsed_inline!r}, "
+                                    f"not in {sorted(allowed_writers)}"
+                                )
+                if pending_cmd:
+                    dispatch_lines.append(pending_cmd)
+                if skill in ("process-todo-section", "review-todo-section", "independent-review"):
                     if not dispatch_lines:
                         errors.append(f"{rel}: missing executable review-dispatch.py command example")
-                    for ln in dispatch_lines:
-                        parsed = AgentFrontmatter._parse_dispatch_writer(ln)
-                        if parsed not in allowed_writers:
-                            errors.append(f"{rel}: dispatch command resolves writer {parsed!r}, not in {sorted(allowed_writers)}")
                     for tok in bg_tokens:
                         if tok not in text:
                             errors.append(f"{rel}: missing runner background token {tok!r}")
+                for ln in dispatch_lines:
+                    parsed = AgentFrontmatter._parse_dispatch_writer(ln)
+                    if parsed not in allowed_writers:
+                        errors.append(f"{rel}: dispatch command resolves writer {parsed!r}, not in {sorted(allowed_writers)}")
                 if skill in ("review-todo-section", "process-phase"):
                     passes = ("--kind plan", "--kind round", "--kind completion", "--kind reconciliation")
                     for pass_name in passes:
@@ -295,6 +297,18 @@ class AgentFrontmatter(unittest.TestCase):
             texts[".agents/skills/review-todo-section/SKILL.md"],
         )
         self.assertTrue(self._check_ten_writer_skills(wrong_tilde_fence))
+        wrong_phase_writer = dict(texts)
+        wrong_phase_writer[".agents/skills/process-phase/SKILL.md"] = (
+            wrong_phase_writer[".agents/skills/process-phase/SKILL.md"]
+            + "\n```powershell\nbuild\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --writer claude --prompt p.md --record r.md\n```\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_phase_writer))
+        wrong_plan_writer = dict(texts)
+        wrong_plan_writer[".agents/skills/process-plan/SKILL.md"] = (
+            wrong_plan_writer[".agents/skills/process-plan/SKILL.md"]
+            + "\n```powershell\nbuild\\python.cmd scripts/review-dispatch.py --kind round --candidate abc --writ=claude --prompt p.md --record r.md\n```\n"
+        )
+        self.assertTrue(self._check_ten_writer_skills(wrong_plan_writer))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
