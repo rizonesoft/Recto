@@ -213,31 +213,32 @@ class AgentFrontmatter(unittest.TestCase):
         else:
             if not any(t.startswith(("--w", "--p", "--r", "--c", "--t", "--s", "--l", "--j", "--help", "-h")) for t in argv):
                 return (False, None, None, None)
-        placeholder_writer = False
-        parse_argv: list[str] = []
-        i = 0
-        while i < len(argv):
-            tok = argv[i]
-            if target == "review-dispatch.py" and tok.startswith("--w") and "=" in tok:
-                k, v = tok.split("=", 1)
-                if v == "<claude|agy>":
-                    placeholder_writer = True
-                    parse_argv.append(f"{k}=claude")
-                    i += 1
+        def _subst_writer(raw_argv: list[str], repl: str) -> list[str]:
+            out_argv: list[str] = []
+            i = 0
+            while i < len(raw_argv):
+                tok = raw_argv[i]
+                if target == "review-dispatch.py" and tok.startswith("--w") and "=" in tok:
+                    k, v = tok.split("=", 1)
+                    if v == "<claude|agy>":
+                        out_argv.append(f"{k}={repl}")
+                        i += 1
+                        continue
+                if (target == "review-dispatch.py" and tok.startswith("--w") and "=" not in tok
+                        and i + 1 < len(raw_argv) and raw_argv[i + 1] == "<claude|agy>"):
+                    out_argv.extend([tok, repl])
+                    i += 2
                     continue
-            if target == "review-dispatch.py" and tok.startswith("--w") and "=" not in tok and i + 1 < len(argv) and argv[i + 1] == "<claude|agy>":
-                placeholder_writer = True
-                parse_argv.extend([tok, "claude"])
-                i += 2
-                continue
-            parse_argv.append(tok)
-            i += 1
+                out_argv.append(tok)
+                i += 1
+            return out_argv
+
         mod = AgentFrontmatter._script_module(target)
         parser = mod.build_parser()
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                ns = parser.parse_args(parse_argv)
+                ns = parser.parse_args(_subst_writer(argv, "claude"))
         except (SystemExit, argparse.ArgumentError):
             return (True, None, None, None)
         if target == "review-prompt.py":
@@ -258,6 +259,14 @@ class AgentFrontmatter(unittest.TestCase):
             return (True, None, ns.kind, ns.out)
         if ns.check_pin or ns.list_rounds:
             return (True, None, None, None)
+        # Parse a second time substituting `<claude|agy>` with `agy`: only when the final effective writer
+        # varies with the substitution (`claude` vs `agy`) did the placeholder actually determine `--writer`
+        # (so `--writer <claude|agy> --writ=claude` resolves to `claude`, never `<claude|agy>`).
+        try:
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                ns_alt = parser.parse_args(_subst_writer(argv, "agy"))
+        except (SystemExit, argparse.ArgumentError):
+            return (True, None, None, None)
         # Validate candidate/writer/prompt using review-dispatch.py's own validate_args(), substituting only
         # angle-bracket documentation placeholders like `<full_tip_SHA>` with a 40-char hex SHA so literal
         # invalid values like `HEAD` or `abc1234` are refused identically to review-dispatch.py.
@@ -270,7 +279,7 @@ class AgentFrontmatter(unittest.TestCase):
             return (True, None, None, None)
         has_kind = any(t.startswith("--k") for t in argv)
         kind = ns.kind if has_kind else None
-        writer = "<claude|agy>" if placeholder_writer else ns.writer
+        writer = "<claude|agy>" if (ns.writer == "claude" and ns_alt.writer == "agy") else ns.writer
         if not ns.record or (kind is not None and not ns.candidate):
             return (True, None, None, None)
         return (True, writer, kind, ns.prompt)
@@ -722,6 +731,12 @@ class AgentFrontmatter(unittest.TestCase):
                      "review-prompt.py --kind completion --candidate HEDA")
         )
         self.assertTrue(self._check_ten_writer_skills(bad_prompt_candidate))
+        overridden_writer_placeholder = dict(texts)
+        overridden_writer_placeholder[".agents/skills/review-todo-section/SKILL.md"] = (
+            overridden_writer_placeholder[".agents/skills/review-todo-section/SKILL.md"]
+            .replace("--writer <claude|agy> --prompt", "--writer <claude|agy> --writ=claude --prompt")
+        )
+        self.assertTrue(self._check_ten_writer_skills(overridden_writer_placeholder))
         scrambled_phase = dict(texts)
         scrambled_phase[".agents/skills/process-phase/SKILL.md"] = (
             scrambled_phase[".agents/skills/process-phase/SKILL.md"]
