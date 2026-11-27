@@ -1627,6 +1627,11 @@ RECTO_UI_TEST(Project, HarnessCopyGuardsNullAndShortBuffer)
 	EXPECT_THROW(
 		{ const auto r = recto::ui::test::copy_locked_bgra_rows(valid.data(), 31, 16, 4, 2); (void)r; },
 		std::runtime_error);
+	EXPECT_THROW(
+		{ const auto r = recto::ui::test::copy_locked_bgra_rows(valid.data(), 32, 16, 4, 2, size_t{1} << 30); (void)r; },
+		std::runtime_error);
+	const auto empty = recto::ui::test::copy_locked_bgra_rows(valid.data(), 0, 0, 0, 2);
+	EXPECT_TRUE(empty.bytes.empty());
 	const auto copied = recto::ui::test::copy_locked_bgra_rows(valid.data(), valid.size(), 16, 4, 2, 24);
 	EXPECT_EQ(copied.width, 4u);
 	EXPECT_EQ(copied.height, 2u);

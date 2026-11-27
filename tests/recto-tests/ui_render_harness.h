@@ -73,6 +73,11 @@ struct RenderOptions {
 // Throws std::runtime_error, reading nothing, when the stride is narrower
 // than a row or wider than 16 MiB, or the buffer is shorter than the rows it
 // claims; an empty bitmap gives an empty vector.
+[[nodiscard]] std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap);
+
+// Copies locked BGRA rows from a source buffer into a Bitmap, guarding against
+// null pointers, narrow or oversized strides, and buffers shorter than the
+// requested dimensions. Throws std::runtime_error on invalid inputs.
 [[nodiscard]] Bitmap copy_locked_bgra_rows(
 	const uint8_t* data,
 	size_t data_size,
@@ -80,7 +85,5 @@ struct RenderOptions {
 	uint32_t width_px,
 	uint32_t height_px,
 	size_t min_stride = 0);
-
-[[nodiscard]] std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap);
 
 } // namespace recto::ui::test

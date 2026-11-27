@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -193,13 +194,18 @@ Bitmap copy_locked_bgra_rows(
 	uint32_t height_px,
 	size_t min_stride)
 {
+	if (width_px > kMaxDimension || height_px > kMaxDimension || source_stride > kMaxStride || min_stride > kMaxStride) {
+		throw std::runtime_error("render_to_bitmap: bitmap dimensions or stride exceed harness limits");
+	}
+	if (width_px == 0 || height_px == 0) {
+		return Bitmap{width_px, height_px, 0, {}};
+	}
 	const size_t row_bytes = static_cast<size_t>(width_px) * 4;
 	if (data == nullptr || source_stride < row_bytes) {
 		throw std::runtime_error("render_to_bitmap: WIC stride is narrower than a pixel row or data is null");
 	}
-	if (height_px > 0 &&
-		(data_size < row_bytes ||
-			static_cast<size_t>(height_px - 1) > (data_size - row_bytes) / source_stride)) {
+	if (data_size < row_bytes ||
+		static_cast<size_t>(height_px - 1) > (data_size - row_bytes) / source_stride) {
 		throw std::runtime_error("render_to_bitmap: WIC buffer is smaller than the bitmap");
 	}
 
@@ -207,6 +213,9 @@ Bitmap copy_locked_bgra_rows(
 	out.width = width_px;
 	out.height = height_px;
 	out.stride = std::max<size_t>(source_stride, min_stride);
+	if (out.stride > std::numeric_limits<size_t>::max() / static_cast<size_t>(height_px)) {
+		throw std::runtime_error("render_to_bitmap: destination buffer size overflows");
+	}
 	out.bytes.assign(out.stride * height_px, kPaddingSentinel);
 	for (uint32_t y = 0; y < height_px; ++y) {
 		std::memcpy(out.bytes.data() + static_cast<size_t>(y) * out.stride,

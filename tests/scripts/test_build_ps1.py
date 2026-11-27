@@ -2259,8 +2259,21 @@ Write-Output ("PORT=" + $info.ServerPort)
                 self._stop_server(sccache_exe, stride_port)
 
 
+def _strip_yaml_comment(text: str) -> str:
+    quote: str | None = None
+    for idx, ch in enumerate(text):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "#" and (idx == 0 or text[idx - 1] in (" ", "\t")):
+            return text[:idx].rstrip()
+    return text.rstrip()
+
+
 def _parse_yaml_scalar(token: str) -> str:
-    val = token.strip()
+    val = _strip_yaml_comment(token).strip()
     if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
         return val[1:-1]
     return val
@@ -2306,23 +2319,37 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
             branches_match = re.search(r"(?m)^    branches:[ \t]*(.*)$", push_body)
             branch_items: list[str] = []
             if branches_match:
-                inline = re.sub(r"\s+#.*$", "", branches_match.group(1)).strip()
+                inline = _strip_yaml_comment(branches_match.group(1)).strip()
                 if inline.startswith("[") and inline.endswith("]"):
                     branch_items = _parse_yaml_flow_sequence(inline[1:-1])
                 elif not inline:
+                    pending_dash_indent: int | None = None
                     for raw_line in push_body[branches_match.end():].splitlines():
-                        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+                        cleaned = _strip_yaml_comment(raw_line)
+                        if not cleaned.strip():
                             continue
-                        indent = len(raw_line) - len(raw_line.lstrip(" "))
+                        indent = len(cleaned) - len(cleaned.lstrip(" "))
+                        stripped = cleaned.lstrip(" ")
+                        if pending_dash_indent is not None:
+                            if indent > pending_dash_indent:
+                                branch_items.append(_parse_yaml_scalar(stripped))
+                                pending_dash_indent = None
+                                continue
+                            # Bare dash with no following value is an empty/null item.
+                            branch_items.append("")
+                            pending_dash_indent = None
                         if indent < 4:
                             break
-                        stripped = raw_line.lstrip(" ")
-                        if stripped.startswith("- ") or stripped.startswith("-\t"):
-                            item_text = re.sub(r"\s+#.*$", "", stripped[1:]).strip()
-                            if item_text:
-                                branch_items.append(_parse_yaml_scalar(item_text))
-                        else:
+                        if indent == 4 and not (stripped == "-" or stripped.startswith("- ") or stripped.startswith("-\t")):
                             break
+                        if stripped == "-":
+                            pending_dash_indent = indent
+                        elif stripped.startswith("- ") or stripped.startswith("-\t"):
+                            branch_items.append(_parse_yaml_scalar(stripped[1:]))
+                        else:
+                            branch_items.append("<unparsed>")
+                    if pending_dash_indent is not None:
+                        branch_items.append("")
             if branch_items == ["main"]:
                 push_targets_main = True
             ignore_match = re.search(r"(?m)^    branches-ignore:[ \t]*(.*)$", push_body)
@@ -2637,6 +2664,10 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertEqual(_validate_analyze_workflow(with_block_list_main), [])
         with_aligned_block_list_main = workflow.replace("branches: [main]", "branches:\n    - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_aligned_block_list_main), [])
+        with_comment_block_list_main = workflow.replace("branches: [main]", "branches: # release policy\n      - main", 1)
+        self.assertEqual(_validate_analyze_workflow(with_comment_block_list_main), [])
+        with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
