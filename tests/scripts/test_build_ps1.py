@@ -2320,9 +2320,21 @@ def _flow_bracket_delta(text: str) -> int:
     return delta
 
 
-def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[str, list[str]]]:
-    """Parse a YAML mapping at exact `map_indent`, stopping each entry before the next key at <= map_indent."""
-    entries: dict[str, tuple[str, list[str]]] = {}
+def _first_yaml_indent(lines: list[str]) -> int | None:
+    for raw_line in lines:
+        cleaned = _strip_yaml_comment(raw_line)
+        if cleaned.strip():
+            return len(cleaned) - len(cleaned.lstrip(" "))
+    return None
+
+
+def _split_yaml_mapping(lines: list[str], map_indent: int | None = None) -> dict[str, tuple[str, list[str], int]]:
+    """Parse a YAML mapping at `map_indent` (or the first non-blank line's indent)."""
+    if map_indent is None:
+        map_indent = _first_yaml_indent(lines)
+        if map_indent is None:
+            return {}
+    entries: dict[str, tuple[str, list[str], int]] = {}
     key_re = re.compile(r"""^(?:'([^']+)'|"([^"]+)"|([A-Za-z0-9_.-]+))[ \t]*:(?:[ \t]+(.*)|[ \t]*)$""")
     idx = 0
     while idx < len(lines):
@@ -2362,9 +2374,9 @@ def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[st
                         break
                     child_lines.append(lines[idx])
                     idx += 1
-                entries[key] = (inline, child_lines)
+                entries[key] = (inline, child_lines, map_indent)
                 continue
-            entries["__unparsed__"] = (cleaned[indent:], [])
+            entries["__unparsed__"] = (cleaned[indent:], [], map_indent)
         idx += 1
     return entries
 
@@ -2428,22 +2440,26 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     if "on" not in top_map:
         errors.append("workflow missing top-level 'on:' block")
     else:
-        _, on_lines = top_map["on"]
-        on_map = _split_yaml_mapping(on_lines, 2)
+        _, on_lines, _ = top_map["on"]
+        on_map = _split_yaml_mapping(on_lines)
         push_targets_main = False
         if "push" in on_map:
-            _, push_lines = on_map["push"]
-            push_map = _split_yaml_mapping(push_lines, 4)
+            _, push_lines, _ = on_map["push"]
+            push_map = _split_yaml_mapping(push_lines)
             branches_entry = push_map.get("branches")
-            branch_items = _parse_yaml_list_value(branches_entry[0], branches_entry[1], 4) if branches_entry else None
+            branch_items = (
+                _parse_yaml_list_value(branches_entry[0], branches_entry[1], branches_entry[2])
+                if branches_entry
+                else None
+            )
             unexpected_push_keys = set(push_map) - {"branches", "paths-ignore"}
             if branch_items == ["main"] and not unexpected_push_keys:
                 push_targets_main = True
             if "paths-ignore" not in push_map:
                 errors.append("workflow push trigger missing doc-only paths-ignore")
             else:
-                pi_inline, pi_lines = push_map["paths-ignore"]
-                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
+                pi_inline, pi_lines, pi_indent = push_map["paths-ignore"]
+                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, pi_indent)
                 if pi_items is None or set(pi_items) != _ALLOWED_DOC_PATHS_IGNORE:
                     errors.append(f"workflow push paths-ignore must match doc-only exclusions: {pi_items!r}")
         if not push_targets_main:
@@ -2451,16 +2467,16 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
         if "pull_request" not in on_map:
             errors.append("workflow missing pull_request trigger")
         else:
-            _, pr_lines = on_map["pull_request"]
-            pr_map = _split_yaml_mapping(pr_lines, 4)
+            _, pr_lines, _ = on_map["pull_request"]
+            pr_map = _split_yaml_mapping(pr_lines)
             unexpected_pr_keys = set(pr_map) - {"paths-ignore"}
             if unexpected_pr_keys:
                 errors.append(f"workflow pull_request trigger has unexpected filter keys: {sorted(unexpected_pr_keys)!r}")
             if "paths-ignore" not in pr_map:
                 errors.append("workflow pull_request trigger missing doc-only paths-ignore")
             else:
-                pi_inline, pi_lines = pr_map["paths-ignore"]
-                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
+                pi_inline, pi_lines, pi_indent = pr_map["paths-ignore"]
+                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, pi_indent)
                 if pi_items is None or set(pi_items) != _ALLOWED_DOC_PATHS_IGNORE:
                     errors.append(f"workflow pull_request paths-ignore must match doc-only exclusions: {pi_items!r}")
         if "workflow_dispatch" not in on_map:
@@ -2776,6 +2792,12 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertEqual(_validate_analyze_workflow(with_quoted_branches_key), [])
         with_spaced_colon_key = workflow.replace("branches: [main]", "branches : [main]", 1)
         self.assertEqual(_validate_analyze_workflow(with_spaced_colon_key), [])
+        # Reindenting the entire on: block's children 2 spaces deeper preserves the YAML structure.
+        on_start = workflow.index("\non:\n") + len("\non:\n")
+        on_end = workflow.index("\npermissions:", on_start)
+        deeper_on = "\n".join(("  " + ln if ln.strip() else ln) for ln in workflow[on_start:on_end].splitlines())
+        with_deeper_on_indent = workflow[:on_start] + deeper_on + workflow[on_end:]
+        self.assertEqual(_validate_analyze_workflow(with_deeper_on_indent), [])
         with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
         with_tag_push_and_commented_sibling = workflow.replace(
