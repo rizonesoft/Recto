@@ -517,8 +517,9 @@ void skip_ws_raw(
 						gen_int > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
 						return false;
 					}
-					Token dummy;
-					if (!next_tok(dummy) || !next_tok(dummy)) {
+					Token gen_tok;
+					Token r_tok;
+					if (!next_tok(gen_tok) || !next_tok(r_tok)) {
 						return false;
 					}
 					break;
@@ -3126,7 +3127,7 @@ PdfResult<XrefTable> XrefTable::parse(
 					return try_recover(std::move(unpack_res).error());
 				}
 				RECTO_PDF_TRY(PdfValue cloned_dict_val, PdfValue(xstm->dict).deep_clone());
-				rev_trailer = std::move(*cloned_dict_val.as_dict());
+				rev_trailer = *cloned_dict_val.as_dict();
 			} else {
 				return try_recover(make_xref_error(
 					ErrorCode::DamagedFormat,

@@ -335,7 +335,7 @@ TEST(PdfInterpreter, OperatorDispatch)
 TEST(PdfInterpreter, EntryContract)
 {
 	// No `/Contents`, and an empty one: a valid empty list.
-	for (const std::optional<std::string_view> content : {std::optional<std::string_view>{}, std::optional<std::string_view>{""}}) {
+	for (const std::optional<std::string_view>& content : {std::optional<std::string_view>{}, std::optional<std::string_view>{""}}) {
 		const auto r = interpret(one_page_pdf(content));
 		ASSERT_NE(r.list, nullptr);
 		EXPECT_TRUE(r.list->commands().empty());
@@ -3043,7 +3043,7 @@ std::string large_cmap_stream(int count)
 {
 	std::string text = "begincmap 1 begincodespacerange <000000> <FFFFFF> endcodespacerange\n";
 	text += std::to_string(count) + " begincidrange\n";
-	char line[64];
+	char line[64]{};
 	for (int i = 0; i < count; ++i) {
 		const int code = i * 2;
 		std::snprintf(line, sizeof(line), "<%06X> <%06X> 0\n", code, code);

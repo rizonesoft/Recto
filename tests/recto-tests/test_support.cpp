@@ -772,7 +772,7 @@ std::string sha256_file(const std::filesystem::path& path)
 	}
 	hash.handle = raw_hash;
 
-	std::array<uint8_t, 65536> buffer{};
+	std::vector<uint8_t> buffer(65536);
 	for (;;) {
 		DWORD bytes_read = 0;
 		if (!ReadFile(

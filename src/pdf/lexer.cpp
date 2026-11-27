@@ -813,7 +813,7 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos)
 	while (cursor_ < input_.size()) {
 		if (pending_high_nibble < 0 && out.size() < max_token_bytes_) {
 			const size_t max_pairs = max_token_bytes_ - out.size();
-			std::array<uint8_t, 256> chunk;
+			std::array<uint8_t, 256> chunk{};
 			size_t chunk_len = 0;
 			size_t pairs_left = max_pairs;
 			while (pairs_left > 0 && cursor_ + 1 < input_.size()) {

@@ -29,7 +29,7 @@ void report_startup_failure(const recto::ui::StartupFailure& failure, bool inter
 
 } // namespace
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int show_command)
+int WINAPI wWinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ PWSTR, _In_ int show_command)
 {
 	// A single-threaded apartment on the UI thread: OLE drag-and-drop, the
 	// clipboard and the shell dialogs require it (D10 T01 section 17), and

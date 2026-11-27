@@ -1781,6 +1781,13 @@ PdfResult<void> Rasterizer::render_tile(const std::shared_ptr<const DisplayList>
 			s.drop_target();
 			return raster_failure(FAILED(hr) ? hr : E_FAIL, "The rasterizer could not read its target");
 		}
+		if (source_stride < row_bytes ||
+			(height > 0u &&
+				(static_cast<size_t>(height - 1u) > (static_cast<size_t>(source_size) - row_bytes) / source_stride ||
+					static_cast<size_t>(source_size) < row_bytes))) {
+			s.drop_target();
+			return raster_failure(E_BOUNDS, "The rasterizer target buffer is smaller than the locked tile");
+		}
 		for (size_t row = 0; row < height; ++row) {
 			std::memcpy(output.data() + row * stride, source + row * source_stride, row_bytes);
 		}

@@ -183,10 +183,12 @@ Bitmap render_to_bitmap(
 	check(lock->GetDataPointer(&data_size, &data), "IWICBitmapLock::GetDataPointer");
 
 	const size_t row_bytes = static_cast<size_t>(width_px) * 4;
-	if (wic_stride < row_bytes) {
-		throw std::runtime_error("render_to_bitmap: WIC stride is narrower than a pixel row");
+	if (data == nullptr || wic_stride < row_bytes) {
+		throw std::runtime_error("render_to_bitmap: WIC stride is narrower than a pixel row or data is null");
 	}
-	if (static_cast<size_t>(data_size) < static_cast<size_t>(wic_stride) * (height_px - 1) + row_bytes) {
+	if (height_px > 0 &&
+		(static_cast<size_t>(data_size) < row_bytes ||
+			static_cast<size_t>(height_px - 1) > (static_cast<size_t>(data_size) - row_bytes) / wic_stride)) {
 		throw std::runtime_error("render_to_bitmap: WIC buffer is smaller than the bitmap");
 	}
 

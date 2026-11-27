@@ -162,7 +162,7 @@ using Bytes = std::vector<uint8_t>;
 	const size_t xref_at = out.size() - header;
 	out += "xref\n0 " + std::to_string(highest + 1u) + "\n0000000000 65535 f\r\n";
 	for (uint32_t n = 1; n <= highest; ++n) {
-		char row[24];
+		char row[24]{};
 		if (const auto it = offsets.find(n); it != offsets.end()) {
 			std::snprintf(row, sizeof(row), "%010zu 00000 n\r\n", it->second);
 		} else {
@@ -417,7 +417,7 @@ TEST(PdfIncrementalWriter, RoundOneRegressions)
 		const size_t xref_at = out.size();
 		out += "xref\n0 " + std::to_string(rows) + "\n0000000000 65535 f\r\n";
 		for (uint32_t n = 1; n < rows; ++n) {
-			char line[24];
+			char line[24]{};
 			if (n <= 3u) {
 				std::snprintf(line, sizeof(line), "%010zu 00000 n\r\n", at[n]);
 			} else {
@@ -726,21 +726,25 @@ TEST(PdfIncrementalWriter, ObjectRules)
 				member = number;
 			}
 		}
-		ASSERT_TRUE(member.has_value());
+		if (!member.has_value()) {
+			ADD_FAILURE() << "expected a compressed object in compressed-xref-2p.pdf";
+			return;
+		}
+		const uint32_t member_num = *member;
 		IncrementalWriter writer = make_writer(*cdoc);
-		RECTO_EXPECT_ERR(writer.set_object(IndirectRef(*member, 1u), PdfValue{}), ErrorCode::InvalidArgument);
-		auto original = cdoc->resolve_object(IndirectRef(*member));
+		RECTO_EXPECT_ERR(writer.set_object(IndirectRef(member_num, 1u), PdfValue{}), ErrorCode::InvalidArgument);
+		auto original = cdoc->resolve_object(IndirectRef(member_num));
 		RECTO_ASSERT_OK(original);
 		ASSERT_NE(original->as_dict(), nullptr);
 		PdfDict changed = *original->as_dict();
 		changed.set("Recto", PdfValue(true));
-		RECTO_ASSERT_OK(writer.set_object(IndirectRef(*member), PdfValue(changed)));
+		RECTO_ASSERT_OK(writer.set_object(IndirectRef(member_num), PdfValue(changed)));
 		const Bytes out = write_ok(writer);
 		EXPECT_STRICT(out, 2u, XrefSectionKind::Stream);
 		auto reopened = open_doc(out);
 		ASSERT_NE(reopened, nullptr);
-		EXPECT_TRUE(reopened->xref().find(*member)->is_uncompressed());
-		EXPECT_NE(resolve_dict(*reopened, IndirectRef(*member)).get("Recto"), nullptr);
+		EXPECT_TRUE(reopened->xref().find(member_num)->is_uncompressed());
+		EXPECT_NE(resolve_dict(*reopened, IndirectRef(member_num)).get("Recto"), nullptr);
 		EXPECT_EQ(reopened->page_count(), 2u);
 	}
 	{

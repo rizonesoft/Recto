@@ -133,6 +133,7 @@ build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Py
 .\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'  # iteration gate while building and after each review fix (+ -EnableASAN when named; Python-only via unittest/run-tests.py; both for mixed)
 .\build.cmd                                  # stamp gate: x64 Debug and Release, every test, once on the candidate tip that stamps, quoted in stamp --check (-Platform x64,ARM64 adds ARM64)
 .\build.cmd -MSBuild -SkipTests                # Recto.sln through MSBuild, the path CI keeps building for parity until a milestone passes on CMake (D8, D00 T04 §8)
+.\build\build.ps1 -Analyze                     # MSVC /analyze (NativeRecommendedRules + high-confidence C++ Core Check) over all 8 projects; runs in CI (build.yml) on code, build or workflow pushes to main and pull requests (skipping todo/**, docs/** and **/*.md-only changes)
 ```
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.

@@ -19,6 +19,7 @@ build/*
 !build/bootstrap-tools.ps1
 !build/python.cmd
 !build/clangd.cmd
+!build/RectoAnalyze.ruleset
 __pycache__/
 *.pyc
 

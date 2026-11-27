@@ -132,21 +132,25 @@ bool ScopedAllocationFailure::available() noexcept
 
 } // namespace recto::test
 
+_Ret_notnull_ _Post_writable_byte_size_(size)
 void* operator new(std::size_t size)
 {
 	return allocate(size);
 }
 
+_Ret_notnull_ _Post_writable_byte_size_(size)
 void* operator new[](std::size_t size)
 {
 	return allocate(size);
 }
 
+_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(size)
 void* operator new(std::size_t size, const std::nothrow_t&) noexcept
 {
 	return allocate_nothrow(size);
 }
 
+_Ret_maybenull_ _Success_(return != NULL) _Post_writable_byte_size_(size)
 void* operator new[](std::size_t size, const std::nothrow_t&) noexcept
 {
 	return allocate_nothrow(size);

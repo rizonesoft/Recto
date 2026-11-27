@@ -99,7 +99,13 @@ std::vector<XmlElement> parse_xml(std::string_view utf8)
 		throw std::runtime_error("GlobalAlloc failed");
 	}
 	void* data = GlobalLock(memory);
-	std::copy(utf8.begin(), utf8.end(), static_cast<char*>(data));
+	if (data == nullptr) {
+		GlobalFree(memory);
+		throw std::runtime_error("GlobalLock failed");
+	}
+	if (!utf8.empty()) {
+		std::memcpy(data, utf8.data(), utf8.size());
+	}
 	GlobalUnlock(memory);
 	ComPtr<IStream> stream;
 	if (FAILED(CreateStreamOnHGlobal(memory, TRUE, &stream))) {
@@ -137,7 +143,7 @@ std::vector<XmlElement> parse_xml(std::string_view utf8)
 				const wchar_t* name = nullptr;
 				check_hr(reader->GetLocalName(&name, nullptr), "GetLocalName");
 				check_hr(reader->GetValue(&value, nullptr), "GetValue");
-				element.attributes[name] = value;
+				element.attributes[name ? name : L""] = value ? value : L"";
 			}
 			reader->MoveToElement();
 			elements.push_back(std::move(element));
@@ -149,7 +155,7 @@ std::vector<XmlElement> parse_xml(std::string_view utf8)
 		case XmlNodeType_Text:
 		case XmlNodeType_CDATA:
 			check_hr(reader->GetValue(&value, nullptr), "GetValue");
-			if (!open.empty()) {
+			if (!open.empty() && value != nullptr) {
 				elements[open.back()].text += value;
 			}
 			break;
@@ -533,7 +539,7 @@ std::vector<std::string> git_listing(const fs::path& root)
 	// its deadline; at the deadline Process's destructor terminates and reaps it.
 	std::string output;
 	std::thread reader([&] {
-		std::array<char, 65536> buffer{};
+		std::vector<char> buffer(65536);
 		DWORD got = 0;
 		while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
 			output.append(buffer.data(), got);
@@ -708,12 +714,30 @@ RECTO_UI_TEST(App, ExeEmbedsManifest)
 	const fs::path exe = recto_exe();
 	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
 	const HMODULE module = LoadLibraryExW(exe.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
-	ASSERT_NE(module, nullptr);
+	if (module == nullptr) {
+		ADD_FAILURE() << "LoadLibraryExW failed for " << exe.string();
+		return;
+	}
 	const HRSRC resource = FindResourceW(module, MAKEINTRESOURCEW(1), RT_MANIFEST);
-	ASSERT_NE(resource, nullptr) << "Recto.exe carries no application manifest";
+	if (resource == nullptr) {
+		FreeLibrary(module);
+		ADD_FAILURE() << "Recto.exe carries no application manifest";
+		return;
+	}
 	const HGLOBAL loaded = LoadResource(module, resource);
+	if (loaded == nullptr) {
+		FreeLibrary(module);
+		ADD_FAILURE() << "LoadResource failed for Recto.exe manifest";
+		return;
+	}
 	const auto* bytes = static_cast<const char*>(LockResource(loaded));
-	const std::string embedded(bytes, SizeofResource(module, resource));
+	const DWORD resource_size = SizeofResource(module, resource);
+	if (bytes == nullptr || resource_size == 0u) {
+		FreeLibrary(module);
+		ADD_FAILURE() << "LockResource or SizeofResource failed for Recto.exe manifest";
+		return;
+	}
+	const std::string embedded(bytes, resource_size);
 	FreeLibrary(module);
 	const std::vector<std::string> findings = manifest_findings(embedded);
 	EXPECT_TRUE(findings.empty()) << describe(findings);

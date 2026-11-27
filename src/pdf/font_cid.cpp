@@ -970,7 +970,8 @@ PdfResult<std::shared_ptr<const Type0Font>> load_type0_font(
 		std::shared_ptr<const CidCMap> cmap;
 		bool cmap_in_memo = false;
 		if (encoding != nullptr && encoding->is_name()) {
-			const std::string_view name = *encoding->as_name();
+			const std::optional<std::string_view> name_opt = encoding->as_name();
+			const std::string_view name = name_opt.value_or(std::string_view{});
 			if (name != "Identity-H" && name != "Identity-V") {
 				return cid_error(ErrorCode::UnsupportedFeature, "Type 0 font uses a predefined CMap other than Identity");
 			}

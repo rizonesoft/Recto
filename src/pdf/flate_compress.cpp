@@ -343,10 +343,12 @@ void build_dynamic(const std::array<uint32_t, kLitLenCodes>& lit_freq, const std
 	// (11 to 138 zeros).
 	std::array<uint8_t, kLitLenCodes + kDistCodes> all{};
 	size_t total = 0;
-	for (size_t s = 0; s < trees.hlit; ++s) {
+	const size_t hlit = std::min(trees.hlit, kLitLenCodes);
+	const size_t hdist = std::min(trees.hdist, kDistCodes);
+	for (size_t s = 0; s < hlit && total < all.size(); ++s) {
 		all[total++] = trees.lit_lengths[s];
 	}
-	for (size_t s = 0; s < trees.hdist; ++s) {
+	for (size_t s = 0; s < hdist && total < all.size(); ++s) {
 		all[total++] = trees.dist_lengths[s];
 	}
 	trees.cl_count = 0;

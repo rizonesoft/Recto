@@ -1303,7 +1303,7 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 			uint32_t length{0};
 		};
 
-		std::array<LzwEntry, 4096> table{};
+		std::vector<LzwEntry> table(4096);
 		std::vector<uint8_t> dict_pool;
 		dict_pool.reserve(16384);
 
@@ -1982,7 +1982,9 @@ struct CcittLookupEntry {
 
 using CcittDecodeTable = std::array<CcittLookupEntry, 8192>;
 
-[[nodiscard]] constexpr CcittDecodeTable build_ccitt_decode_table(
+// Compile-time only table builder; never runs on the runtime stack.
+#pragma warning(suppress: 6262) // consteval compile-time table builder never allocates on the runtime stack
+[[nodiscard]] consteval CcittDecodeTable build_ccitt_decode_table(
 	std::span<const CcittCodeEntry> entries) noexcept
 {
 	CcittDecodeTable table{};
@@ -2023,7 +2025,11 @@ constexpr CcittDecodeTable kBlackLookup = build_ccitt_decode_table(kCcittBlackCo
 			prefix = (prefix << 1u) | bit;
 		}
 		prefix <<= (13u - peek_n);
-		const CcittLookupEntry entry = table[prefix];
+		const size_t idx = prefix & 0x1FFFu;
+		if (idx >= table.size()) {
+			return false;
+		}
+		const CcittLookupEntry entry = table[idx];
 		if (entry.run_len < 0 || entry.bit_len == 0 || entry.bit_len > avail ||
 			total_run + entry.run_len > max_columns) {
 			return false;
@@ -3138,7 +3144,7 @@ private:
 		return val;
 	}
 
-	std::array<MqContext, 512> contexts_{};
+	std::vector<MqContext> contexts_{512u};
 };
 
 // ISO/IEC 14492 Annex A.3: IAID Symbol ID Arithmetic Decoder.

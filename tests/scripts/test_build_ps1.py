@@ -2253,5 +2253,185 @@ Write-Output ("PORT=" + $info.ServerPort)
                 self._stop_server(sccache_exe, stride_port)
 
 
+def _validate_analyze_workflow(workflow_text: str) -> list[str]:
+    """Validate the analyze job in .github/workflows/build.yml (D06 T02 s10)."""
+    errors: list[str] = []
+    if "push:" not in workflow_text or "pull_request:" not in workflow_text or "workflow_dispatch:" not in workflow_text:
+        errors.append("workflow missing push/pull_request/workflow_dispatch triggers")
+    m = re.search(r"(?m)^  analyze:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
+    if not m:
+        return ["missing 'analyze:' job in build.yml"]
+    job_text = m.group(1)
+    if "ref: ${{ inputs.sha || github.sha }}" not in job_text:
+        errors.append("analyze job does not check out inputs.sha || github.sha")
+    if "REQUESTED_SHA: ${{ inputs.sha }}" not in job_text:
+        errors.append("analyze job does not validate inputs.sha")
+    run_match = re.search(
+        r"- name: Run MSVC /analyze[^\n]*\n(.*?)(?=\n      - name: |\Z)",
+        job_text,
+        re.DOTALL,
+    )
+    if not run_match:
+        errors.append("analyze job missing 'Run MSVC /analyze' step")
+    else:
+        step = run_match.group(1)
+        if "build/build.ps1 -Analyze" not in step:
+            errors.append("analyze step does not invoke build/build.ps1 -Analyze")
+        if re.search(r"continue-on-error\s*:\s*true", step, re.IGNORECASE):
+            errors.append("analyze step sets continue-on-error: true")
+        if re.search(r"(\|\|\s*true|\|\|\s*exit\s+0|;\s*exit\s+0|LASTEXITCODE\s*=\s*0)", step, re.IGNORECASE):
+            errors.append("analyze step swallows non-zero exit code")
+    upload_match = re.search(
+        r"- name: Upload MSVC /analyze SARIF logs[^\n]*\n(.*?)(?=\n      - name: |\Z)",
+        job_text,
+        re.DOTALL,
+    )
+    if not upload_match:
+        errors.append("analyze job missing SARIF upload step")
+    else:
+        up = upload_match.group(1)
+        if "if: always()" not in up:
+            errors.append("SARIF upload step missing 'if: always()'")
+        if "build/analyze/*.sarif" not in up:
+            errors.append("SARIF upload step missing 'build/analyze/*.sarif'")
+    return errors
+
+
+class MsvcAnalyzeContract(unittest.TestCase):
+    """D06 T02 s10: MSVC /analyze folder isolation, ruleset hygiene, SARIF aggregation and CI workflow."""
+
+    def test_analyze_folders_manifests_and_logs_are_isolated_from_plain_build(self):
+        props = (ROOT / "Directory.Build.props").read_text(encoding="utf-8")
+        targets = (ROOT / "Directory.Build.targets").read_text(encoding="utf-8")
+        build_ps1 = BUILD_PS1.read_text(encoding="utf-8")
+        self.assertIn("<RectoBinFolder Condition=\"'$(EnableAnalyze)' == 'true'\">bin-analyze</RectoBinFolder>", props)
+        self.assertIn("<RectoObjFolder Condition=\"'$(EnableAnalyze)' == 'true'\">obj-analyze</RectoObjFolder>", props)
+        self.assertIn("<_RectoBoundaryFolder Condition=\"'$(EnableAnalyze)' == 'true'\">boundary-analyze</_RectoBoundaryFolder>", targets)
+        self.assertIn("$logPrefix = if ($Analyze) { 'msbuild-analyze' } else { 'msbuild' }", build_ps1)
+        self.assertIn("$boundaryFolder = if ($Analyze) { 'boundary-analyze' } else { 'boundary' }", build_ps1)
+        self.assertNotIn("<RectoObjFolder Condition=\"'$(EnableAnalyze)' == 'true'\">obj</RectoObjFolder>", props)
+        self.assertNotIn("<RectoBinFolder Condition=\"'$(EnableAnalyze)' == 'true'\">bin</RectoBinFolder>", props)
+
+    def test_ruleset_includes_native_and_core_check_with_zero_disabled_rules(self):
+        import xml.etree.ElementTree as ET
+
+        ruleset = ROOT / "build" / "RectoAnalyze.ruleset"
+        self.assertTrue(ruleset.is_file(), f"missing {ruleset}")
+        tree = ET.parse(ruleset)
+        root = tree.getroot()
+        includes = {el.attrib.get("Path", "") for el in root.findall("Include")}
+        self.assertIn("NativeRecommendedRules.ruleset", includes)
+        rule_actions = {el.attrib.get("Id", ""): el.attrib.get("Action", "") for el in root.findall(".//Rule")}
+        for required_rule in ("C26815", "C26816", "C26822", "C26459", "C26483", "C26437", "C26478", "C26494"):
+            self.assertEqual(rule_actions.get(required_rule), "Warning", f"missing or weakened {required_rule}")
+        for rule_id, action in rule_actions.items():
+            self.assertNotIn(action.lower(), ("none", "hidden"), f"ruleset disables {rule_id}")
+        ignore_check = subprocess.run(
+            ["git", "check-ignore", "build/RectoAnalyze.ruleset"],
+            cwd=ROOT, capture_output=True, text=True, timeout=30,
+        )
+        self.assertNotEqual(ignore_check.returncode, 0, "build/RectoAnalyze.ruleset must be allowlisted in .gitignore")
+
+    def test_merge_analyze_sarif_aggregates_multi_tu_findings_and_rejects_bad_reports(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("merge_analyze_sarif", ROOT / "scripts" / "merge-analyze-sarif.py")
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest_dir = root / "manifests"
+            out_dir = root / "out"
+            int_dir = root / "obj" / "recto-pdf"
+            manifest_dir.mkdir(parents=True)
+            int_dir.mkdir(parents=True)
+            (manifest_dir / "recto-pdf.txt").write_text(
+                f"project|recto-pdf|{int_dir}|D:\\GitHub\\Recto\\build\\RectoAnalyze.ruleset|true|true\n"
+                f"unit|D:\\GitHub\\Recto\\src\\pdf\\a.cpp||true|D:\\GitHub\\Recto\\build\\RectoAnalyze.ruleset|\n"
+                f"        C:\\VS\\EspXEngine.dll;\n"
+                f"      |{int_dir}\\|a\n"
+                f"unit|D:\\GitHub\\Recto\\src\\pdf\\b.cpp||true|D:\\GitHub\\Recto\\build\\RectoAnalyze.ruleset|C:\\VS\\EspXEngine.dll;|{int_dir}\\|b\n",
+                encoding="utf-8",
+            )
+
+            def write_sarif(stem: str, rule_id: str | None, uri: str, line: int) -> Path:
+                results = []
+                if rule_id:
+                    results.append({
+                        "ruleId": rule_id,
+                        "message": {"text": f"finding {rule_id}"},
+                        "locations": [{"physicalLocation": {"artifactLocation": {"index": 0}, "region": {"startLine": line}}}],
+                    })
+                doc = {
+                    "version": "2.1.0",
+                    "runs": [{
+                        "tool": {"driver": {"name": "PREfast", "rules": [{"id": rule_id}] if rule_id else []}},
+                        "artifacts": [{"location": {"uri": uri}}],
+                        "results": results,
+                    }],
+                }
+                p = int_dir / f"{stem}.nativecodeanalysis.sarif"
+                p.write_text(json.dumps(doc), encoding="utf-8")
+                return p
+
+            # Two findings across two different TUs both survive aggregation with rule IDs and resolved URIs.
+            write_sarif("a", "C6386", "file:///src/pdf/a.cpp", 42)
+            write_sarif("b", "C26800", "file:///src/pdf/b.cpp", 99)
+            code, errs, findings = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertEqual(errs, [])
+            self.assertEqual(len(findings), 2)
+            merged = json.loads((out_dir / "recto-pdf.sarif").read_text(encoding="utf-8"))
+            self.assertEqual(merged["version"], "2.1.0")
+            merged_results = merged["runs"][0]["results"]
+            self.assertEqual([r["ruleId"] for r in merged_results], ["C6386", "C26800"])
+            self.assertEqual(merged_results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"], "file:///src/pdf/a.cpp")
+            self.assertEqual(merged_results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"], "file:///src/pdf/b.cpp")
+
+            # Clean multi-TU run exits 0.
+            write_sarif("a", None, "file:///src/pdf/a.cpp", 1)
+            write_sarif("b", None, "file:///src/pdf/b.cpp", 1)
+            code, errs, findings = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual((code, errs, findings), (0, [], []))
+
+            # Missing or unreadable TU SARIF is refused even with 0 findings.
+            (int_dir / "b.nativecodeanalysis.sarif").unlink()
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("missing per-TU SARIF" in e for e in errs), errs)
+
+            # Stale SARIF (older than run start) is refused.
+            p_b = write_sarif("b", None, "file:///src/pdf/b.cpp", 1)
+            os.utime(p_b, (1000.0, 1000.0))
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset", min_mtime=2000.0)
+            self.assertEqual(code, 1)
+            self.assertTrue(any("stale per-TU SARIF" in e for e in errs), errs)
+
+    def test_workflow_analyze_job_propagates_failure_and_checks_out_requested_sha(self):
+        workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        self.assertEqual(_validate_analyze_workflow(workflow), [])
+        # Negative controls: disabling failure propagation or dropping requested SHA must fail validation.
+        with_continue = workflow.replace(
+            "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
+            "continue-on-error: true\n        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
+        )
+        self.assertTrue(any("continue-on-error" in e for e in _validate_analyze_workflow(with_continue)))
+        with_swallow = workflow.replace(
+            "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
+            "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze || true",
+        )
+        self.assertTrue(any("swallows" in e for e in _validate_analyze_workflow(with_swallow)))
+        without_sha = workflow.replace(
+            "  analyze:\n",
+            "  analyze:\n",
+        )
+        # Drop inputs.sha only inside the analyze job.
+        idx = without_sha.index("  analyze:")
+        mutated_sha = without_sha[:idx] + without_sha[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
+        self.assertTrue(any("inputs.sha" in e for e in _validate_analyze_workflow(mutated_sha)))
+
+
 if __name__ == "__main__":
     unittest.main()

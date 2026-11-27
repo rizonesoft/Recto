@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RuleSet Name="Recto Native and C++ Core Check Analysis Rules" Description="NativeRecommendedRules plus high-confidence non-GSL C++ Core Check lifetime, bounds and type rules, with zero rules disabled (D06 T02 s10)." ToolsVersion="15.0">
+  <Include Path="NativeRecommendedRules.ruleset" Action="Default" />
+  <Rules AnalyzerId="Microsoft.Analyzers.NativeCodeAnalysis" RuleNamespace="Microsoft.Rules.Native">
+    <!-- C++ Core Check high-confidence lifetime rules (C26800, C26829, C26859 are already in NativeRecommendedRules) -->
+    <Rule Id="C26815" Action="Warning" />
+    <Rule Id="C26816" Action="Warning" />
+    <Rule Id="C26822" Action="Warning" />
+    <!-- C++ Core Check non-GSL bounds rules -->
+    <Rule Id="C26459" Action="Warning" />
+    <Rule Id="C26483" Action="Warning" />
+    <!-- C++ Core Check high-confidence non-GSL type rules (C26495 is already in NativeRecommendedRules) -->
+    <Rule Id="C26437" Action="Warning" />
+    <Rule Id="C26478" Action="Warning" />
+    <Rule Id="C26494" Action="Warning" />
+  </Rules>
+</RuleSet>

@@ -543,7 +543,9 @@ void close_during_stalled_open(bool first_cancel_missed)
 	ASSERT_NE(oplock.hEvent, nullptr);
 	const BOOL granted = ::DeviceIoControl(holder, FSCTL_REQUEST_BATCH_OPLOCK, nullptr, 0u, nullptr, 0u, nullptr, &oplock);
 	if (granted != FALSE || ::GetLastError() != ERROR_IO_PENDING) {
-		::CloseHandle(oplock.hEvent);
+		if (oplock.hEvent != nullptr) {
+			::CloseHandle(oplock.hEvent);
+		}
 		::CloseHandle(holder);
 		GTEST_SKIP() << "this volume does not grant batch oplocks";
 	}
@@ -574,7 +576,9 @@ void close_during_stalled_open(bool first_cancel_missed)
 	EXPECT_EQ(result.error().code, ErrorCode::Cancelled);
 	EXPECT_EQ(report, ShutdownReport{});
 	::CloseHandle(holder);
-	::CloseHandle(oplock.hEvent);
+	if (oplock.hEvent != nullptr) {
+		::CloseHandle(oplock.hEvent);
+	}
 }
 
 TEST(Runtime, CloseDuringStalledOpen)

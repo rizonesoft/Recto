@@ -1489,7 +1489,7 @@ public:
 	}
 
 	// ISO/IEC 14492 Annex A: Arithmetic Integer Encoding (small integers -3..3 or OOB).
-	void encode_arith_int(std::array<TestMqContext, 512>& ctxs, int32_t val, bool is_oob = false)
+	void encode_arith_int(std::span<TestMqContext> ctxs, int32_t val, bool is_oob = false)
 	{
 		uint32_t prev = 1u;
 		auto put_bit = [&](uint8_t b) {
@@ -1844,9 +1844,9 @@ TEST(PdfFilters, Jbig2Decode)
 		{
 			TestMqEncoder sd_enc;
 			std::vector<TestMqContext> gb_cx(1024u);
-			std::array<TestMqContext, 512> iadh{};
-			std::array<TestMqContext, 512> iadw{};
-			std::array<TestMqContext, 512> iaex{};
+			std::vector<TestMqContext> iadh(512u);
+			std::vector<TestMqContext> iadw(512u);
+			std::vector<TestMqContext> iaex(512u);
 
 			// Height class 1: delta_h = +2 -> hc_height = 2
 			sd_enc.encode_arith_int(iadh, 2);
@@ -1919,9 +1919,9 @@ TEST(PdfFilters, Jbig2Decode)
 		// Segment 3: Immediate Text Region
 		{
 			TestMqEncoder tr_enc;
-			std::array<TestMqContext, 512> iadt{};
-			std::array<TestMqContext, 512> iafs{};
-			std::array<TestMqContext, 512> iads{};
+			std::vector<TestMqContext> iadt(512u);
+			std::vector<TestMqContext> iafs(512u);
+			std::vector<TestMqContext> iads(512u);
 			std::vector<TestMqContext> iaid(2u);
 
 			tr_enc.encode_arith_int(iadt, 0); // initial stript = 0
@@ -2307,14 +2307,14 @@ TEST(PdfFilters, Jbig2Decode)
 		// Verify that `REFCORNER = TOPLEFT` (`stript = 0` draws at `y = 0`) and strip-ending `IADS` OOB is consumed before `IADW = OOB` and `IAEX`.
 		{
 			TestMqEncoder arith_agg_enc;
-			std::array<TestMqContext, 512> iadh{};
-			std::array<TestMqContext, 512> iadw{};
-			std::array<TestMqContext, 512> iaex{};
-			std::array<TestMqContext, 512> iaai{};
-			std::array<TestMqContext, 512> iadt{};
-			std::array<TestMqContext, 512> iafs{};
-			std::array<TestMqContext, 512> iads{};
-			std::array<TestMqContext, 512> iari{};
+			std::vector<TestMqContext> iadh(512u);
+			std::vector<TestMqContext> iadw(512u);
+			std::vector<TestMqContext> iaex(512u);
+			std::vector<TestMqContext> iaai(512u);
+			std::vector<TestMqContext> iadt(512u);
+			std::vector<TestMqContext> iafs(512u);
+			std::vector<TestMqContext> iads(512u);
+			std::vector<TestMqContext> iari(512u);
 			std::vector<TestMqContext> iaid(4u); // sym_code_len = 2 for 2 imported + 1 new = 3 total symbols
 
 			arith_agg_enc.encode_arith_int(iadh, 2); // DH = +2 -> hc_height = 2
@@ -2400,13 +2400,13 @@ TEST(PdfFilters, Jbig2Decode)
 			EXPECT_NE(((*dec_huff_ref)[0] >> 4u) & 0x0Fu, (*dec_huff_ref)[0] & 0x0Fu);
 
 			TestMqEncoder ovf_enc;
-			std::array<TestMqContext, 512> iadt{};
-			std::array<TestMqContext, 512> iafs{};
-			std::array<TestMqContext, 512> iari{};
-			std::array<TestMqContext, 512> iardw{};
-			std::array<TestMqContext, 512> iardh{};
-			std::array<TestMqContext, 512> iardx{};
-			std::array<TestMqContext, 512> iardy{};
+			std::vector<TestMqContext> iadt(512u);
+			std::vector<TestMqContext> iafs(512u);
+			std::vector<TestMqContext> iari(512u);
+			std::vector<TestMqContext> iardw(512u);
+			std::vector<TestMqContext> iardh(512u);
+			std::vector<TestMqContext> iardx(512u);
+			std::vector<TestMqContext> iardy(512u);
 			std::vector<TestMqContext> iaid(2u);
 
 			ovf_enc.encode_arith_int(iadt, 0);
@@ -5574,9 +5574,9 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		std::vector<TestMqContext> gb_cx(1024u);
 		const auto dictionary = [&](const std::vector<uint8_t>& sym, uint16_t flags, uint32_t ex_skip) {
 			TestMqEncoder enc;
-			std::array<TestMqContext, 512> iadh{};
-			std::array<TestMqContext, 512> iadw{};
-			std::array<TestMqContext, 512> iaex{};
+			std::vector<TestMqContext> iadh(512u);
+			std::vector<TestMqContext> iadw(512u);
+			std::vector<TestMqContext> iaex(512u);
 			enc.encode_arith_int(iadh, 2);
 			enc.encode_arith_int(iadw, 4);
 			encode_test_generic_region_t2(enc, gb_cx, 4u, 2u, 2, -1, sym); // gb_cx carries on from the last dictionary
@@ -8290,7 +8290,7 @@ TEST(PdfFilters, ImageStream)
 	const std::vector<uint8_t> rgb = corpus("dct-3c-adobe-rgb.jpg");
 	{
 		std::string text;
-		char digits[3];
+		char digits[3]{};
 		for (const uint8_t b : rgb) {
 			std::snprintf(digits, sizeof(digits), "%02X", b);
 			text += digits;

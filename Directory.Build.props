@@ -10,17 +10,30 @@
     <CharacterSet>Unicode</CharacterSet>
     <PreferredToolArchitecture Condition="'$(PreferredToolArchitecture)' == ''">x64</PreferredToolArchitecture>
     <EnableASAN Condition="'$(EnableASAN)' == ''">false</EnableASAN>
-    <LinkIncremental Condition="'$(EnableASAN)' == 'true' Or '$(Configuration)' != 'Debug'">false</LinkIncremental>
+    <EnableAnalyze Condition="'$(EnableAnalyze)' == ''">false</EnableAnalyze>
+    <LinkIncremental Condition="'$(EnableASAN)' == 'true' Or '$(EnableAnalyze)' == 'true' Or '$(Configuration)' != 'Debug'">false</LinkIncremental>
     <!-- Compile flags (warning level, language standards, runtime) are
          ClCompile item metadata in VC projects, not properties; they live
          in Directory.Build.targets next to this file. -->
-    <!-- An ASan build has folders of its own, so switching between it and the plain build rebuilds nothing (D00 T04 §1). -->
-    <RectoBinFolder Condition="'$(EnableASAN)' == 'true'">bin-asan</RectoBinFolder>
-    <RectoBinFolder Condition="'$(EnableASAN)' != 'true'">bin</RectoBinFolder>
-    <RectoObjFolder Condition="'$(EnableASAN)' == 'true'">obj-asan</RectoObjFolder>
-    <RectoObjFolder Condition="'$(EnableASAN)' != 'true'">obj</RectoObjFolder>
+    <!-- An ASan or /analyze build has folders of its own, so switching between them and the plain build rebuilds nothing (D00 T04 §1, D06 T02 §10). -->
+    <RectoBinFolder Condition="'$(EnableAnalyze)' == 'true'">bin-analyze</RectoBinFolder>
+    <RectoBinFolder Condition="'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' == 'true'">bin-asan</RectoBinFolder>
+    <RectoBinFolder Condition="'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' != 'true'">bin</RectoBinFolder>
+    <RectoObjFolder Condition="'$(EnableAnalyze)' == 'true'">obj-analyze</RectoObjFolder>
+    <RectoObjFolder Condition="'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' == 'true'">obj-asan</RectoObjFolder>
+    <RectoObjFolder Condition="'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' != 'true'">obj</RectoObjFolder>
     <OutDir>$(MSBuildThisFileDirectory)build\$(RectoBinFolder)\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</OutDir>
     <IntDir>$(MSBuildThisFileDirectory)build\$(RectoObjFolder)\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableAnalyze)' == 'true'">
+    <RunCodeAnalysis>true</RunCodeAnalysis>
+    <EnableMicrosoftCodeAnalysis>true</EnableMicrosoftCodeAnalysis>
+    <EnableCppCoreCheck>true</EnableCppCoreCheck>
+    <UseMultiToolTask>true</UseMultiToolTask>
+    <EnforceProcessCountAcrossBuilds>true</EnforceProcessCountAcrossBuilds>
+    <CodeAnalysisRuleSet>$(MSBuildThisFileDirectory)build\RectoAnalyze.ruleset</CodeAnalysisRuleSet>
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+    <CAExcludePath>$(MSBuildThisFileDirectory)vcpkg_installed;$(CAExcludePath)</CAExcludePath>
   </PropertyGroup>
   <PropertyGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(UseSccache)' == 'true'">
     <UseMultiToolTask>true</UseMultiToolTask>

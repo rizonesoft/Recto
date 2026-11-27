@@ -72,13 +72,40 @@
        check reads this record instead of re-evaluating the project, so it checks the build that ran (D10 T01 §1).
        build/build.ps1 empties build\boundary\<platform>\<configuration> before each configuration. -->
   <Target Name="RectoBoundaryManifest" AfterTargets="ClCompile" Condition="'$(MSBuildProjectName)' == 'recto-pdf' Or '$(MSBuildProjectName)' == 'recto-core' Or '$(MSBuildProjectName)' == 'recto-services' Or '$(MSBuildProjectName)' == 'recto-ui'">
+    <PropertyGroup>
+      <_RectoBoundaryFolder Condition="'$(EnableAnalyze)' == 'true'">boundary-analyze</_RectoBoundaryFolder>
+      <_RectoBoundaryFolder Condition="'$(EnableAnalyze)' != 'true'">boundary</_RectoBoundaryFolder>
+    </PropertyGroup>
     <ItemGroup>
       <_RectoBoundaryLine Include="project|$(MSBuildProjectFullPath)|$(IntDir)|$(OutDir)$(TargetName)$(TargetExt)" />
       <_RectoBoundaryLine Include="@(ClCompile->'unit|%(FullPath)|%(ExcludedFromBuild)|%(GenerateSourceDependencies)|%(SourceDependenciesFile)|%(ObjectFileName)|%(PrecompiledHeader)|%(PrecompiledHeaderOutputFile)|%(AdditionalOptions)')" />
     </ItemGroup>
-    <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\boundary\$(Platform)\$(Configuration)\$(MSBuildProjectName).txt" Lines="@(_RectoBoundaryLine)" Overwrite="true" />
+    <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\$(_RectoBoundaryFolder)\$(Platform)\$(Configuration)\$(MSBuildProjectName).txt" Lines="@(_RectoBoundaryLine)" Overwrite="true" />
     <ItemGroup>
       <_RectoBoundaryLine Remove="@(_RectoBoundaryLine)" />
+    </ItemGroup>
+  </Target>
+  <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableAnalyze)' == 'true'">
+    <ClCompile>
+      <!-- /analyze:log is incompatible with /MP (D9030); UseMultiToolTask parallelizes single-TU compiles cleanly. -->
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+      <EnablePREfast>true</EnablePREfast>
+      <PREfastLog>$(IntDir)</PREfastLog>
+      <PREfastRulesetFile>$(MSBuildThisFileDirectory)build\RectoAnalyze.ruleset</PREfastRulesetFile>
+      <AdditionalOptions>%(AdditionalOptions) /analyze:log:format:sarif /analyze:external-</AdditionalOptions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <!-- Record every ClCompile unit and its PREfast metadata for scripts/merge-analyze-sarif.py (D06 T02 s10). Runs
+       before ClCompile so a failing compile still leaves its manifest for SARIF aggregation and triage. -->
+  <Target Name="RectoAnalyzeManifest" BeforeTargets="ClCompile" Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableAnalyze)' == 'true'">
+    <MakeDir Directories="$(MSBuildThisFileDirectory)build\analyze-manifest" />
+    <ItemGroup>
+      <_RectoAnalyzeLine Include="project|$(MSBuildProjectName)|$(IntDir)|$(CodeAnalysisRuleSet)|$(EnableCppCoreCheck)|$(RunCodeAnalysis)" />
+      <_RectoAnalyzeLine Include="@(ClCompile->'unit|%(FullPath)|%(ExcludedFromBuild)|%(EnablePREfast)|%(PREfastRulesetFile)|%(PREfastAdditionalPlugins)|%(ObjectFileName)|%(Filename)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\analyze-manifest\$(MSBuildProjectName).txt" Lines="@(_RectoAnalyzeLine)" Overwrite="true" />
+    <ItemGroup>
+      <_RectoAnalyzeLine Remove="@(_RectoAnalyzeLine)" />
     </ItemGroup>
   </Target>
   <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableASAN)' == 'true' And '$(Platform)' == 'x64'">

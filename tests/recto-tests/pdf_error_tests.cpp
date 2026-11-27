@@ -77,6 +77,7 @@ struct ThrowingPayload {
 		}
 	}
 
+#pragma warning(suppress: 26439) // intentionally throwing move constructor for PdfResult exception-safety test
 	ThrowingPayload(ThrowingPayload&& other)
 		: v(other.v)
 	{
@@ -129,6 +130,7 @@ struct NonDefaultThrowingPayload {
 		}
 	}
 
+#pragma warning(suppress: 26439) // intentionally throwing move constructor for PdfResult exception-safety test
 	NonDefaultThrowingPayload(NonDefaultThrowingPayload&& other)
 		: v(other.v)
 	{

@@ -1339,27 +1339,28 @@ TEST(PdfFont, EncodingAndDifferences)
 TEST(PdfFont, EffectiveEncoding)
 {
 	const auto named = [](std::string_view name) { return PdfValue(PdfName(name)); };
-	GlyphNames custom{};
+	auto custom_ptr = std::make_unique<GlyphNames>();
+	GlyphNames& custom = *custom_ptr;
 	custom[0x41] = "alpha";
 	custom[0x42] = "beta";
 	// A named encoding.
 	{
 		const PdfValue value = named("WinAnsiEncoding");
-		auto e = SimpleEncoding::build(&value, false, &custom);
-		ASSERT_TRUE(e.has_value());
-		EXPECT_EQ(e->name(0x80), "Euro");
-		EXPECT_EQ(e->named_base(), std::optional<BaseEncoding>(BaseEncoding::WinAnsi));
-		EXPECT_FALSE(e->has_differences());
+		auto e = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&value, false, &custom));
+		ASSERT_TRUE(e->has_value());
+		EXPECT_EQ((*e)->name(0x80), "Euro");
+		EXPECT_EQ((*e)->named_base(), std::optional<BaseEncoding>(BaseEncoding::WinAnsi));
+		EXPECT_FALSE((*e)->has_differences());
 	}
 	// A dictionary with /BaseEncoding.
 	{
 		PdfDict dict;
 		dict.set("BaseEncoding", named("MacRomanEncoding"));
 		const PdfValue value{std::move(dict)};
-		auto e = SimpleEncoding::build(&value, true, &custom);
-		ASSERT_TRUE(e.has_value());
-		EXPECT_EQ(e->name(0x80), "Adieresis");
-		EXPECT_EQ(e->named_base(), std::optional<BaseEncoding>(BaseEncoding::MacRoman));
+		auto e = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&value, true, &custom));
+		ASSERT_TRUE(e->has_value());
+		EXPECT_EQ((*e)->name(0x80), "Adieresis");
+		EXPECT_EQ((*e)->named_base(), std::optional<BaseEncoding>(BaseEncoding::MacRoman));
 	}
 	// A dictionary without /BaseEncoding: StandardEncoding for a non-symbolic font, the built-in for a symbolic one.
 	{
@@ -1369,28 +1370,29 @@ TEST(PdfFont, EffectiveEncoding)
 		PdfDict dict;
 		dict.set("Differences", PdfValue(std::move(differences)));
 		const PdfValue value{std::move(dict)};
-		auto plain = SimpleEncoding::build(&value, false, &custom);
-		ASSERT_TRUE(plain.has_value());
-		EXPECT_EQ(plain->name(0x27), "quoteright");
-		EXPECT_EQ(plain->name(0x41), "A");
-		EXPECT_EQ(plain->name(0x42), "gamma");
-		EXPECT_EQ(plain->named_base(), std::nullopt);
-		auto symbolic = SimpleEncoding::build(&value, true, &custom);
-		ASSERT_TRUE(symbolic.has_value());
-		EXPECT_EQ(symbolic->name(0x41), "alpha"); // the custom built-in encoding
-		EXPECT_EQ(symbolic->name(0x42), "gamma"); // with /Differences over it
-		EXPECT_EQ(symbolic->name(0x27), "");
+		auto plain = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&value, false, &custom));
+		ASSERT_TRUE(plain->has_value());
+		EXPECT_EQ((*plain)->name(0x27), "quoteright");
+		EXPECT_EQ((*plain)->name(0x41), "A");
+		EXPECT_EQ((*plain)->name(0x42), "gamma");
+		EXPECT_EQ((*plain)->named_base(), std::nullopt);
+		auto symbolic = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&value, true, &custom));
+		ASSERT_TRUE(symbolic->has_value());
+		EXPECT_EQ((*symbolic)->name(0x41), "alpha"); // the custom built-in encoding
+		EXPECT_EQ((*symbolic)->name(0x42), "gamma"); // with /Differences over it
+		EXPECT_EQ((*symbolic)->name(0x27), "");
 	}
 	// No /Encoding: the built-in encoding; StandardEncoding for a non-symbolic font without one; none for a symbolic.
 	{
-		auto with = SimpleEncoding::build(nullptr, true, &custom);
-		EXPECT_EQ(with->name(0x41), "alpha");
-		auto standard = SimpleEncoding::build(nullptr, false, nullptr);
-		EXPECT_EQ(standard->name(0x41), "A");
-		auto none = SimpleEncoding::build(nullptr, true, nullptr);
-		EXPECT_EQ(none->name(0x41), "");
+		auto with = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, true, &custom));
+		EXPECT_EQ((*with)->name(0x41), "alpha");
+		auto standard = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, false, nullptr));
+		EXPECT_EQ((*standard)->name(0x41), "A");
+		auto none = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, true, nullptr));
+		EXPECT_EQ((*none)->name(0x41), "");
 		const PdfValue unknown = named("FooEncoding"); // an unknown name: as if absent
-		EXPECT_EQ(SimpleEncoding::build(&unknown, true, &custom)->name(0x42), "beta");
+		auto fallback = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&unknown, true, &custom));
+		EXPECT_EQ((*fallback)->name(0x42), "beta");
 	}
 	// A /Differences array past its bound.
 	{
@@ -1595,31 +1597,38 @@ TEST(PdfFont, TrueTypeCmapSelection)
 		EXPECT_TRUE(parsed.has_value()) << parsed.error().message.view();
 		return parsed.has_value() ? std::move(*parsed) : TrueTypeTables{};
 	};
+	const auto make_encoding = [](std::optional<std::string_view> name, bool symbolic, const PdfArray* diffs = nullptr) {
+		return std::make_unique<SimpleEncoding>(encoding_of(name, symbolic, diffs));
+	};
 	// The name path through (3,1): WinAnsi's 0x80 is Euro, U+20AC.
 	{
 		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x41, 5}, {0x20AC, 9}})}})));
-		const SimpleEncoding win = encoding_of("WinAnsiEncoding", true);
-		EXPECT_EQ(simple_truetype_glyph(t, win, true, false, 0x41), 5u);
-		EXPECT_EQ(simple_truetype_glyph(t, win, true, false, 0x80), 9u);
+		const auto win = make_encoding("WinAnsiEncoding", true);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, true, false, 0x41), 5u);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, true, false, 0x80), 9u);
 		// Non-symbolic with no encoding: StandardEncoding names, the same path.
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, false), false, true, 0x41), 5u);
+		const auto std_enc = make_encoding(std::nullopt, false);
+		EXPECT_EQ(simple_truetype_glyph(t, *std_enc, false, true, 0x41), 5u);
 	}
 	// The name path through (1,0): WinAnsi's 0xC4 is Adieresis, Mac OS Roman 0x80; WinAnsi's 0x80 is Euro, 0xDB there.
 	{
 		const auto t = tables(sfnt(cmap_table({{1, 0, format0({{0x80, 7}, {0xDB, 9}, {0x41, 3}})}})));
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0xC4), 7u);
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x80), 9u);
+		const auto win = make_encoding("WinAnsiEncoding", false);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, false, true, 0xC4), 7u);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, false, true, 0x80), 9u);
 	}
 	// With a (3,1) subtable the (1,0) one is not consulted for a name: a name (3,1) lacks goes to the post names.
 	{
 		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 2}})}, {1, 0, format0({{0x41, 7}})}}),
 			post2({".notdef", "x", "y", "A"})));
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 3u);
+		const auto win = make_encoding("WinAnsiEncoding", false);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, false, true, 0x41), 3u);
 	}
 	// The name path through the post names, a (3,1) subtable lacking the name.
 	{
 		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 2}})}}), post2({".notdef", "x", "y", "A"})));
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 3u);
+		const auto win = make_encoding("WinAnsiEncoding", false);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, false, true, 0x41), 3u);
 		EXPECT_EQ(t.glyph_for_name("y"), std::optional<uint16_t>(uint16_t{2u}));
 		EXPECT_EQ(t.glyph_for_name(".notdef"), std::optional<uint16_t>(uint16_t{0u}));
 	}
@@ -1629,31 +1638,34 @@ TEST(PdfFont, TrueTypeCmapSelection)
 		differences.push_back(PdfValue(int64_t{0x41}));
 		differences.push_back(PdfValue(PdfName("B")));
 		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 4}})}, {3, 0, format4({{0xF041, 8}})}})));
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, true, &differences), true, false, 0x41), 4u);
+		const auto with_diff = make_encoding(std::nullopt, true, &differences);
+		EXPECT_EQ(simple_truetype_glyph(t, *with_diff, true, false, 0x41), 4u);
 		// Without /Differences the symbolic font takes the code path.
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of(std::nullopt, true), true, false, 0x41), 8u);
+		const auto no_diff = make_encoding(std::nullopt, true);
+		EXPECT_EQ(simple_truetype_glyph(t, *no_diff, true, false, 0x41), 8u);
 	}
 	// The code path through (3,0) at each base, the first that maps it winning.
 	{
-		const SimpleEncoding none = encoding_of(std::nullopt, true);
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0x41, 11}})}}))), none, true, false, 0x41), 11u);
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF041, 12}})}}))), none, true, false, 0x41), 12u);
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF141, 13}})}}))), none, true, false, 0x41), 13u);
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF241, 14}})}}))), none, true, false, 0x41), 14u);
+		const auto none = make_encoding(std::nullopt, true);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0x41, 11}})}}))), *none, true, false, 0x41), 11u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF041, 12}})}}))), *none, true, false, 0x41), 12u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF141, 13}})}}))), *none, true, false, 0x41), 13u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{3, 0, format4({{0xF241, 14}})}}))), *none, true, false, 0x41), 14u);
 		// (1,0) at the code, through format 6.
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{1, 0, format6(0x40, {20, 21, 22})}}))), none, true, false, 0x41), 21u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt(cmap_table({{1, 0, format6(0x40, {20, 21, 22})}}))), *none, true, false, 0x41), 21u);
 		// No subtable at all: the code as a glyph index.
-		EXPECT_EQ(simple_truetype_glyph(tables(sfnt({})), none, true, false, 0x41), 0x41u);
+		EXPECT_EQ(simple_truetype_glyph(tables(sfnt({})), *none, true, false, 0x41), 0x41u);
 		// A subtable that does not map the code: missing, not the glyph at that index (whose Unicode is unrelated).
 		const auto miss = tables(sfnt(cmap_table({{3, 0, format4({{0xF042, 7}})}, {3, 1, format4({{0x5A, 0x41}})}})));
-		EXPECT_EQ(simple_truetype_glyph(miss, none, true, false, 0x41), 0u);
-		const SimpleFontText text{nullptr, &none, false, &miss, true, false};
+		EXPECT_EQ(simple_truetype_glyph(miss, *none, true, false, 0x41), 0u);
+		const SimpleFontText text{nullptr, none.get(), false, &miss, true, false};
 		EXPECT_EQ(*simple_font_unicode(text, 0x41), U""); // not Z
 	}
 	// A name the name path cannot find falls to the code path.
 	{
 		const auto t = tables(sfnt(cmap_table({{3, 1, format4({{0x42, 4}})}, {3, 0, format4({{0xF041, 8}})}})));
-		EXPECT_EQ(simple_truetype_glyph(t, encoding_of("WinAnsiEncoding", false), false, true, 0x41), 8u);
+		const auto win = make_encoding("WinAnsiEncoding", false);
+		EXPECT_EQ(simple_truetype_glyph(t, *win, false, true, 0x41), 8u);
 	}
 	// The Unicode subtable read backwards: the lowest scalar of a glyph, and (3,10) over (3,1).
 	{
@@ -1958,15 +1970,15 @@ TEST(PdfFont, UnicodeFallbackOrder)
 {
 	auto cmap = ToUnicodeCMap::parse(bytes_of("1 beginbfchar <41> <005A> endbfchar"));
 	ASSERT_TRUE(cmap.has_value());
-	GlyphNames names{};
-	names[0x41] = "A";
-	names[0x42] = "g123";
-	names[0x43] = "a1";
-	auto encoding = SimpleEncoding::build(nullptr, true, &names);
-	ASSERT_TRUE(encoding.has_value());
+	auto names = std::make_unique<GlyphNames>();
+	(*names)[0x41] = "A";
+	(*names)[0x42] = "g123";
+	(*names)[0x43] = "a1";
+	auto encoding = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, true, names.get()));
+	ASSERT_TRUE(encoding->has_value());
 	auto tables = TrueTypeTables::parse(sfnt(cmap_table({{3, 0, format4({{0xF042, 7}})}, {3, 1, format4({{0x00C5, 7}})}})));
 	ASSERT_TRUE(tables.has_value());
-	SimpleFontText font{&*cmap, &*encoding, false, &*tables, true, false};
+	SimpleFontText font{&*cmap, &**encoding, false, &*tables, true, false};
 	EXPECT_EQ(*simple_font_unicode(font, 0x41), U"Z"); // ToUnicode first
 	font.to_unicode = nullptr;
 	EXPECT_EQ(*simple_font_unicode(font, 0x41), U"A"); // then the glyph name through the AGL

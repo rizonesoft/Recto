@@ -851,7 +851,9 @@ std::wstring child_environment(const Variables& variables)
 			entries.emplace_back(entry);
 		}
 	}
-	FreeEnvironmentStringsW(strings);
+	if (strings != nullptr) {
+		FreeEnvironmentStringsW(strings);
+	}
 	for (const auto& [name, value] : variables) {
 		entries.push_back(name + L"=" + value);
 	}
@@ -1367,8 +1369,8 @@ RECTO_UI_TEST(Project, HarnessRefusesBeforeDrawing)
 	const recto::ui::test::DrawRoot count = [&](const recto::ui::test::RenderContext&) { ++calls; };
 	recto::ui::test::RenderOptions wide;
 	wide.min_stride = (size_t{1} << 24) + 1;
-	const float infinity = std::numeric_limits<float>::infinity();
-	const float nan = std::numeric_limits<float>::quiet_NaN();
+	constexpr float infinity = std::numeric_limits<float>::infinity();
+	constexpr float nan = std::numeric_limits<float>::quiet_NaN();
 	struct Request {
 		uint32_t width;
 		uint32_t height;

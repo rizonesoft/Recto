@@ -1,4 +1,4 @@
-# Recto's one-command build (D00 T01 section 3). From a clean clone:
+﻿# Recto's one-command build (D00 T01 section 3). From a clean clone:
 #
 #     git clone https://github.com/rizonesoft/Recto.git
 #     cd Recto
@@ -43,6 +43,7 @@ param(
     [switch]$Quick,
     [switch]$SkipTests,
     [switch]$EnableASAN,
+    [switch]$Analyze,
     [switch]$ForceRestore,
     [switch]$NoSccache,
     [switch]$MSBuild,
@@ -51,6 +52,20 @@ param(
 $ErrorActionPreference = 'Stop'
 if ($TestFilter.Length -ge 2 -and (($TestFilter.StartsWith("'") -and $TestFilter.EndsWith("'")) -or ($TestFilter.StartsWith('"') -and $TestFilter.EndsWith('"')))) {
     $TestFilter = $TestFilter.Substring(1, $TestFilter.Length - 2)
+}
+if ($Analyze) {
+    if ($EnableASAN) {
+        throw 'MSVC code analysis (-Analyze) cannot be combined with -EnableASAN.'
+    }
+    if (-not $PSBoundParameters.ContainsKey('Platform')) {
+        $Platform = @('x64')
+    }
+    if (-not $PSBoundParameters.ContainsKey('Configuration')) {
+        $Configuration = @('Debug')
+    }
+    $SkipTests = $true
+    $MSBuild = $true
+    $NoSccache = $true
 }
 if (($Quick -or $EnableASAN) -and -not $PSBoundParameters.ContainsKey('Platform')) {
     $Platform = @('x64')
@@ -62,6 +77,9 @@ $Platform = @($Platform | ForEach-Object { $_ -split ',' } | Where-Object { $_ }
 $Configuration = @($Configuration | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if ($EnableASAN -and ($Platform -contains 'ARM64')) {
     throw 'AddressSanitizer (-EnableASAN) is supported on x64 only.'
+}
+if ($Analyze -and ($Platform -contains 'ARM64')) {
+    throw 'MSVC code analysis (-Analyze) is supported on x64 only.'
 }
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -250,6 +268,15 @@ if (-not $env:VCPKG_ROOT) {
 }
 Write-Host "MSBuild:    $msbuildExe"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
+if (-not $CMake -and -not $env:VCToolsVersion) {
+    $vcToolsDefaultFile = Join-Path $vs 'VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt'
+    if (Test-Path -LiteralPath $vcToolsDefaultFile) {
+        $vcToolsVer = (Get-Content -LiteralPath $vcToolsDefaultFile -Raw).Trim()
+        if ($vcToolsVer) {
+            $env:VCToolsVersion = $vcToolsVer
+        }
+    }
+}
 
 . (Join-Path $PSScriptRoot 'asan-runtime.ps1')
 . (Join-Path $PSScriptRoot 'msbuild-log.ps1')
@@ -291,7 +318,7 @@ if ((-not $CMake) -and ($ForceRestore -or -not (Test-RestoreCurrent -RepoRoot $r
 }
 
 $genCompileDb = Join-Path $root 'scripts\gen-compile-commands.py'
-if ((-not $CMake) -and (Test-Path $genCompileDb)) {
+if ((-not $CMake) -and (-not $Analyze) -and (Test-Path $genCompileDb)) {
     & $pinnedPython $genCompileDb | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "gen-compile-commands.py failed (exit $LASTEXITCODE)" }
 }
@@ -358,21 +385,35 @@ if ($CMake) {
 } else {
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
-        # An ASan build has its own obj and bin folders (Directory.Build.props), so neither build touches the other's.
+        # An ASan or /analyze build has its own obj and bin folders (Directory.Build.props), so none touches the plain build's.
         $desiredAsanState = if ($EnableASAN) { 'true' } else { 'false' }
+        $desiredAnalyzeState = if ($Analyze) { 'true' } else { 'false' }
+        $boundaryFolder = if ($Analyze) { 'boundary-analyze' } else { 'boundary' }
+        $logPrefix = if ($Analyze) { 'msbuild-analyze' } else { 'msbuild' }
 
         # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
-        $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
+        $boundaryManifests = Join-Path $root "build\$boundaryFolder\$plat\$cfg"
         if (-not $Project) {
             if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
         }
-        $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
+        $analyzeOutDir = Join-Path $root 'build\analyze'
+        $analyzeManifestDir = Join-Path $root 'build\analyze-manifest'
+        $analyzeStartUnix = $null
+        if ($Analyze) {
+            if (Test-Path $analyzeOutDir) { Remove-Item $analyzeOutDir -Recurse -Force }
+            if (Test-Path $analyzeManifestDir) { Remove-Item $analyzeManifestDir -Recurse -Force }
+            New-Item -ItemType Directory -Path $analyzeOutDir -Force | Out-Null
+            New-Item -ItemType Directory -Path $analyzeManifestDir -Force | Out-Null
+            $analyzeStartUnix = ([double]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) / 1000.0) - 2.0
+        }
+        $logFile = Join-Path $root "build\$logPrefix-$cfg-$plat.log"
         $msbuildArgs = @(
             'Recto.sln',
             "/p:Configuration=$cfg",
             "/p:Platform=$plat",
             "/p:TreatWarningsAsErrors=true",
             "/p:EnableASAN=$desiredAsanState",
+            "/p:EnableAnalyze=$desiredAnalyzeState",
             "/p:CL_MPCount=$clMpCount",
             '/fl',
             "/flp:logfile=$logFile;verbosity=normal",
@@ -380,6 +421,9 @@ foreach ($plat in $Platform) {
             '/nr:false',
             '/nologo'
         )
+        if ($Analyze) {
+            $msbuildArgs += "/p:MultiProcMaxCount=$($parallelism.TotalCompilers)"
+        }
         if ($useSccache -and $null -ne $sccacheInfo) {
             $msbuildArgs += @(
                 '/p:UseSccache=true',
@@ -393,9 +437,18 @@ foreach ($plat in $Platform) {
             if (-not $SkipTests -and $plat -eq 'x64' -and ($targets -notcontains 'recto-tests')) {
                 $targets += 'recto-tests'
             }
-            $msbuildArgs += "-t:$($targets -join ';')"
-            $asanNote = if ($EnableASAN) { ', ASan' } else { '' }
-            Write-Host "=== Recto $cfg|$plat ($($targets -join ';')$asanNote)"
+            if ($Analyze) {
+                $rebuildTargets = @($targets | ForEach-Object { "${_}:Rebuild" })
+                $msbuildArgs += "-t:$($rebuildTargets -join ';')"
+                Write-Host "=== Recto $cfg|$plat ($($targets -join ';'), Analyze)"
+            } else {
+                $msbuildArgs += "-t:$($targets -join ';')"
+                $asanNote = if ($EnableASAN) { ', ASan' } else { '' }
+                Write-Host "=== Recto $cfg|$plat ($($targets -join ';')$asanNote)"
+            }
+        } elseif ($Analyze) {
+            $msbuildArgs += '-t:Rebuild'
+            Write-Host "=== Recto $cfg|$plat (Analyze)"
         } elseif ($EnableASAN) {
             $msbuildArgs += "-t:$($asanProjects -join ';')"
             Write-Host "=== Recto $cfg|$plat (ASan)"
@@ -403,7 +456,25 @@ foreach ($plat in $Platform) {
             Write-Host "=== Recto $cfg|$plat"
         }
         & $msbuildExe @msbuildArgs
-        if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
+        $msbuildExit = $LASTEXITCODE
+        if ($Analyze) {
+            $mergeArgs = @(
+                (Join-Path $root 'scripts\merge-analyze-sarif.py'),
+                '--manifest-dir', $analyzeManifestDir,
+                '--out-dir', $analyzeOutDir,
+                '--ruleset', 'RectoAnalyze.ruleset',
+                '--min-mtime', ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, '{0:F3}', $analyzeStartUnix))
+            )
+            if ($resolvedProject) {
+                $mergeArgs += @('--expected-projects', $resolvedProject, '--allow-extra-projects')
+            }
+            & $pinnedPython @mergeArgs
+            $mergeExit = $LASTEXITCODE
+            if ($msbuildExit -ne 0) { throw "analyze build failed: $cfg|$plat (MSBuild exit $msbuildExit)" }
+            if ($mergeExit -ne 0) { throw "analyze SARIF verification failed: $cfg|$plat (exit $mergeExit)" }
+        } else {
+            if ($msbuildExit -ne 0) { throw "build failed: $cfg|$plat (exit $msbuildExit)" }
+        }
         # A warning from any tool MSBuild runs (not only the compiler, which /WX already stops) fails the build: the
         # build is warning-free on x64 and ARM64 by contract (D00 T01 §3, D06 T05 §27).
         Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
@@ -411,7 +482,7 @@ foreach ($plat in $Platform) {
         # reports and the librarian's directives, members and symbols of this configuration's libraries (D10 T01 §1).
         # It reads what this build compiled from the manifests the RectoBoundaryManifest target wrote (emptied below,
         # before the build), never from a re-evaluation of the projects.
-        if (-not $Project) {
+        if ((-not $Project) -and (-not $Analyze)) {
             & $pinnedPython (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
             if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
         }

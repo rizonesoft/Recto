@@ -145,8 +145,8 @@ Image stitched(const std::shared_ptr<const DisplayList>& list, double scale, int
 			const uint32_t w = std::min(edge, size.width - x);
 			const uint32_t h = std::min(edge, size.height - y);
 			for (uint32_t row = 0; row < h; ++row) {
-				std::copy_n(tile.data() + size_t{row} * edge * 4u, size_t{w} * 4u,
-					out.bytes.data() + (size_t{y + row} * size.width + x) * 4u);
+				std::memcpy(out.bytes.data() + (size_t{y + row} * size.width + x) * 4u,
+					tile.data() + size_t{row} * edge * 4u, size_t{w} * 4u);
 			}
 		}
 	}
@@ -594,7 +594,7 @@ TEST(PdfRasterizer, StrokeAndAlpha)
 		EXPECT_NEAR(coverage, 1.0, 0.1);
 	}
 	// Under any CTM too: the horizontal line a 1 by 4 scale would thicken, the vertical one a 4 by 1 scale would, a shear.
-	for (const PdfMatrix ctm : {PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}, PdfMatrix{4.0, 0.0, 0.0, 1.0, 0.0, 0.0}, PdfMatrix{1.0, 0.0, 0.8, 1.0, 0.0, 0.0}}) {
+	for (const PdfMatrix& ctm : {PdfMatrix{1.0, 0.0, 0.0, 4.0, 0.0, 0.0}, PdfMatrix{4.0, 0.0, 0.0, 1.0, 0.0, 0.0}, PdfMatrix{1.0, 0.0, 0.8, 1.0, 0.0, 0.0}}) {
 		SCOPED_TRACE(ctm.a);
 		DisplayListBuilder builder(kPage100);
 		ASSERT_TRUE(builder.concat_matrix(ctm).has_value());
@@ -1661,8 +1661,8 @@ struct Similarity {
 {
 	Image out{x1 - x0, y1 - y0, std::vector<uint8_t>(size_t{x1 - x0} * (y1 - y0) * 4u)};
 	for (uint32_t y = y0; y < y1; ++y) {
-		std::copy_n(image.bytes.data() + (size_t{y} * image.width + x0) * 4u, size_t{out.width} * 4u,
-			out.bytes.data() + size_t{y - y0} * out.width * 4u);
+		std::memcpy(out.bytes.data() + size_t{y - y0} * out.width * 4u,
+			image.bytes.data() + (size_t{y} * image.width + x0) * 4u, size_t{out.width} * 4u);
 	}
 	return out;
 }

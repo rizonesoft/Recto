@@ -416,8 +416,8 @@ struct TextFontBuilder {
 			static_cast<double>(metrics.font_box[2]), static_cast<double>(metrics.font_box[3])};
 		font->bbox_ = scaled(box, 0.001);
 		// Drawn through Helvetica's face by its AFM codes; a face that cannot load leaves the text positioned only.
-		const GlyphNames built_in = afm_encoding(Standard14Font::Helvetica);
-		auto encoding = SimpleEncoding::build(nullptr, false, &built_in);
+		auto built_in = std::make_unique<GlyphNames>(afm_encoding(Standard14Font::Helvetica));
+		auto encoding = SimpleEncoding::build(nullptr, false, built_in.get());
 		if (encoding.has_value()) {
 			if (auto drawn = standard_glyphs(*font, Standard14Font::Helvetica, *encoding);
 				!drawn.has_value() && drawn.error().code == ErrorCode::OutOfMemory) {
@@ -591,21 +591,28 @@ struct TextFontBuilder {
 			}
 		}
 		// The effective encoding over the built-in one: the program's, or for a standard font its AFM codes.
-		GlyphNames afm{};
+		std::unique_ptr<GlyphNames> afm;
 		const GlyphNames* built_in = nullptr;
 		if (program.has_value() && program->names != nullptr) {
 			built_in = program->names->built_in_encoding();
 		} else if (!program.has_value() && standard.has_value()) {
-			afm = afm_encoding(*standard);
-			built_in = &afm;
+			afm = std::make_unique<GlyphNames>(afm_encoding(*standard));
+			built_in = afm.get();
 		}
 		std::optional<PdfValue> encoding_value;
 		if (const Resolved encoding_entry = resolved(document, dict.get("Encoding"), fatal)) {
 			encoding_value = direct_encoding(document, *encoding_entry, fatal);
 		}
-		RECTO_PDF_TRY(const SimpleEncoding encoding,
-			SimpleEncoding::build(encoding_value.has_value() ? &*encoding_value : nullptr, symbolic, built_in,
-				program.has_value() && program->names != nullptr));
+		std::unique_ptr<SimpleEncoding> encoding_ptr;
+		{
+			auto built_enc = SimpleEncoding::build(encoding_value.has_value() ? &*encoding_value : nullptr, symbolic,
+				built_in, program.has_value() && program->names != nullptr);
+			if (!built_enc.has_value()) {
+				return built_enc.error();
+			}
+			encoding_ptr = std::make_unique<SimpleEncoding>(std::move(*built_enc));
+		}
+		const SimpleEncoding& encoding = *encoding_ptr;
 		const bool has_widths = widths(document, dict, 0.001, missing, *font, fatal);
 		if (program.has_value()) {
 			// Each code's glyph in the program: a TrueType font through its program's `cmap` (9.6.6.4); a Type 1 font,
@@ -688,7 +695,9 @@ struct TextFontBuilder {
 				m[i] = n.value_or(0.0);
 			}
 			if (ok) {
-				std::copy(std::begin(m), std::end(m), std::begin(matrix));
+				for (size_t i = 0; i < 6u; ++i) {
+					matrix[i] = m[i];
+				}
 			} else {
 				(void)make_pdf_error(ErrorCode::DamagedFormat, "Type 3 font /FontMatrix is not six numbers");
 			}

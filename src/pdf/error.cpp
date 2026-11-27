@@ -411,7 +411,9 @@ void copy_bounded_str(
 		dst[len] = src[len];
 		++len;
 	}
-	dst[len] = '\0';
+	if (len < dst.size()) {
+		dst[len] = '\0';
+	}
 }
 
 void read_descriptor_cstr_into(
@@ -627,13 +629,18 @@ extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 	// What Windows answers is counted too: an event counted as emitted but refused by EventWriteTransfer is a failure
 	// the tests can see (etw_write_failures).
 	const ULONG injected = recto::pdf::detail::g_etw_injected_write_status.load(std::memory_order_acquire);
-	const ULONG status = injected != ERROR_SUCCESS ? injected : ::EventWriteTransfer(
-		RegHandle,
-		EventDescriptor,
-		ActivityId,
-		RelatedActivityId,
-		UserDataCount,
-		UserData);
+	ULONG status = ERROR_INVALID_PARAMETER;
+	if (injected != ERROR_SUCCESS) {
+		status = injected;
+	} else if (EventDescriptor != nullptr) {
+		status = ::EventWriteTransfer(
+			RegHandle,
+			EventDescriptor,
+			ActivityId,
+			RelatedActivityId,
+			UserDataCount,
+			UserData);
+	}
 	if (status != ERROR_SUCCESS) {
 		recto::pdf::detail::g_etw_write_failures.fetch_add(1, std::memory_order_relaxed);
 	}
@@ -897,17 +904,17 @@ void clear_captured_etw_events_for_testing() noexcept
 
 std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 {
-	std::array<CapturedEtwSlot, kMaxCapturedEtwEvents> snapshot{};
-	size_t count = 0;
-	{
-		ScopedSrwLockShared lock(g_etw_capture_lock);
-		count = g_etw_capture_count;
-		for (size_t i = 0; i < count; ++i) {
-			snapshot[i] = g_etw_capture_slots[i];
-		}
-	}
-
 	try {
+		std::vector<CapturedEtwSlot> snapshot(kMaxCapturedEtwEvents);
+		size_t count = 0;
+		{
+			ScopedSrwLockShared lock(g_etw_capture_lock);
+			count = std::min(g_etw_capture_count, snapshot.size());
+			for (size_t i = 0; i < count; ++i) {
+				snapshot[i] = g_etw_capture_slots[i];
+			}
+		}
+
 		std::vector<CapturedEtwEvent> out;
 		out.reserve(count);
 		for (size_t i = 0; i < count; ++i) {
@@ -1126,21 +1133,21 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 		return {};
 	}
 
-	std::array<DiagnosticSlot, kDiagnosticRingCapacity> snapshot{};
-	size_t count = 0;
-	{
-		ScopedSrwLockShared lock(g_ring_lock);
-		count = std::min(max_entries, g_ring_count);
-		if (count > 0) {
-			const size_t start_index =
-				(g_ring_write_index + kDiagnosticRingCapacity - count) % kDiagnosticRingCapacity;
-			for (size_t i = 0; i < count; ++i) {
-				snapshot[i] = g_ring_slots[(start_index + i) % kDiagnosticRingCapacity];
+	try {
+		std::vector<DiagnosticSlot> snapshot(std::min(max_entries, kDiagnosticRingCapacity));
+		size_t count = 0;
+		{
+			ScopedSrwLockShared lock(g_ring_lock);
+			count = std::min(snapshot.size(), g_ring_count);
+			if (count > 0) {
+				const size_t start_index =
+					(g_ring_write_index + kDiagnosticRingCapacity - count) % kDiagnosticRingCapacity;
+				for (size_t i = 0; i < count; ++i) {
+					snapshot[i] = g_ring_slots[(start_index + i) % kDiagnosticRingCapacity];
+				}
 			}
 		}
-	}
 
-	try {
 		std::vector<DiagnosticEntry> result;
 		result.reserve(count);
 		for (size_t i = 0; i < count; ++i) {

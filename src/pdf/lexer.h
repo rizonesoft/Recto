@@ -238,7 +238,7 @@ public:
 			size_ = len;
 			return;
 		}
-		if (len > capacity_) {
+		if (data_ == nullptr || len > capacity_) {
 			if (len == static_cast<size_t>(-1)) {
 				throw std::bad_alloc();
 			}
@@ -290,7 +290,7 @@ public:
 			throw std::bad_alloc();
 		}
 		const size_t new_size = size_ + len;
-		if (new_size > capacity_) {
+		if (data_ == nullptr || new_size > capacity_) {
 			if (data_ == nullptr && new_size <= kInlineCap && !detail::lexer_alloc_fault_active()) {
 				data_ = inline_;
 				capacity_ = kInlineCap;
@@ -300,6 +300,9 @@ public:
 					: ((capacity_ > kMaxCap / 2) ? kMaxCap : (capacity_ * 2));
 				reserve(std::max(new_size, grown));
 			}
+		}
+		if (data_ == nullptr) {
+			throw std::bad_alloc();
 		}
 		std::memcpy(data_ + size_, ptr, len);
 		size_ = new_size;
@@ -631,7 +634,7 @@ public:
 			throw std::bad_alloc();
 		}
 		const size_t new_size = size_ + len;
-		if (new_size > capacity_) {
+		if (data_ == nullptr || new_size > capacity_) {
 			if (data_ == nullptr && new_size <= kInlineCap && !detail::lexer_alloc_fault_active()) {
 				data_ = inline_;
 				capacity_ = kInlineCap;
@@ -643,6 +646,9 @@ public:
 						  : (capacity_ * 2));
 				reserve(std::max(new_size, grown));
 			}
+		}
+		if (data_ == nullptr) {
+			throw std::bad_alloc();
 		}
 		std::memcpy(data_ + size_, ptr, len);
 		size_ = new_size;

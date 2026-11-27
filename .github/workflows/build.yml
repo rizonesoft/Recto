@@ -392,3 +392,80 @@ jobs:
           name: msbuild-diagnostics
           path: build/msbuild-*.log
           if-no-files-found: ignore
+
+  analyze:
+    # MSVC /analyze (NativeRecommendedRules + high-confidence C++ Core Check) over all 8 projects (D06 T02 s10).
+    name: MSVC /analyze static analysis over all 8 projects
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check the requested commit
+        if: inputs.sha != ''
+        shell: pwsh
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          if ($env:REQUESTED_SHA -cnotmatch '^[0-9a-f]{40}$') { throw "sha must be a full 40-character commit, not '$env:REQUESTED_SHA'" }
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Cache repo-scoped tools (.tools)
+        uses: actions/cache@v6
+        with:
+          path: .tools
+          key: tools-${{ runner.os }}-${{ hashFiles('build/tools.lock.json', 'build/bootstrap-tools.ps1') }}
+
+      - name: Bootstrap repo-scoped tools (.tools)
+        shell: pwsh
+        run: pwsh -NoProfile -File build/bootstrap-tools.ps1
+
+      - name: Configure NuGet and vcpkg cache directories
+        shell: pwsh
+        run: |
+          $nugetCache = Join-Path $env:RUNNER_TEMP "nuget-packages"
+          $vcpkgCache = Join-Path $env:RUNNER_TEMP "vcpkg-archives"
+          New-Item -ItemType Directory -Path $nugetCache -Force | Out-Null
+          New-Item -ItemType Directory -Path $vcpkgCache -Force | Out-Null
+          "NUGET_PACKAGES=$nugetCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_DEFAULT_BINARY_CACHE=$vcpkgCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Identify the C++ toolchain for the cache key
+        id: toolchain
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $requires = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64')
+          $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationPath
+          $vsVersion = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationVersion
+          $msvc = (Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory | Sort-Object Name | Select-Object -Last 1).Name
+          if (-not $vsVersion -or -not $msvc) { throw 'could not identify the Visual Studio 2026 C++ toolchain' }
+          "id=vs$vsVersion-msvc$msvc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Cache NuGet and vcpkg binary archives
+        uses: actions/cache@v6
+        with:
+          path: |
+            ${{ runner.temp }}/nuget-packages
+            ${{ runner.temp }}/vcpkg-archives
+          key: build-deps-analyze-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          restore-keys: |
+            build-deps-analyze-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
+            build-deps-analyze-${{ runner.os }}-
+
+      - name: Run MSVC /analyze over all 8 projects
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze
+
+      - name: Upload MSVC /analyze SARIF logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: msvc-analyze-sarif
+          path: |
+            build/analyze/*.sarif
+            build/msbuild-analyze-*.log
+          if-no-files-found: ignore

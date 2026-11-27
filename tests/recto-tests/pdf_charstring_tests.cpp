@@ -1380,28 +1380,30 @@ TEST(PdfFont, Type1BuiltInEncoding)
 	dict.set("Differences", PdfValue(std::move(differences)));
 	const PdfValue value{std::move(dict)};
 	// A symbolic font's /Differences apply over the built-in encoding (Table 114).
-	auto symbolic = SimpleEncoding::build(&value, true, built_in);
-	ASSERT_TRUE(symbolic.has_value());
-	EXPECT_EQ(symbolic->name(65), "A");
-	EXPECT_EQ(symbolic->name(66), "curves");
-	EXPECT_EQ(symbolic->name(201), "Aacute");
-	EXPECT_EQ(symbolic->name(67), "curves");
+	auto symbolic = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(&value, true, built_in));
+	ASSERT_TRUE(symbolic->has_value());
+	EXPECT_EQ((*symbolic)->name(65), "A");
+	EXPECT_EQ((*symbolic)->name(66), "curves");
+	EXPECT_EQ((*symbolic)->name(201), "Aacute");
+	EXPECT_EQ((*symbolic)->name(67), "curves");
 	// No /Encoding: the built-in one.
-	auto plain = SimpleEncoding::build(nullptr, false, built_in);
-	ASSERT_TRUE(plain.has_value());
-	EXPECT_EQ(plain->name(66), "box");
-	EXPECT_EQ(plain->name(201), "Aacute");
+	{
+		auto plain = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, false, built_in));
+		ASSERT_TRUE(plain->has_value());
+		EXPECT_EQ((*plain)->name(66), "box");
+		EXPECT_EQ((*plain)->name(201), "Aacute");
+	}
 	// Every name the encoding gives finds its glyph.
 	for (const int code : {65, 66, 67, 68, 69, 70, 194, 201}) {
-		EXPECT_TRUE(font->glyph_for_name(symbolic->name(static_cast<uint8_t>(code))).has_value()) << code;
+		EXPECT_TRUE(font->glyph_for_name((*symbolic)->name(static_cast<uint8_t>(code))).has_value()) << code;
 	}
 
 	const auto cff = load_charstrings_ok(corpus_font("cff-outlines.cff"), CharstringFormat::Type1C);
 	ASSERT_NE(cff, nullptr);
-	auto from_cff = SimpleEncoding::build(nullptr, false, cff->built_in_encoding());
-	ASSERT_TRUE(from_cff.has_value());
-	EXPECT_EQ(from_cff->name(200), "A");
-	EXPECT_EQ(cff->glyph_for_name(from_cff->name(200)), cff->glyph_for_name("A"));
+	auto from_cff = std::make_unique<PdfResult<SimpleEncoding>>(SimpleEncoding::build(nullptr, false, cff->built_in_encoding()));
+	ASSERT_TRUE(from_cff->has_value());
+	EXPECT_EQ((*from_cff)->name(200), "A");
+	EXPECT_EQ(cff->glyph_for_name((*from_cff)->name(200)), cff->glyph_for_name("A"));
 }
 
 // A name-keyed CFF program of these glyphs and subroutines.

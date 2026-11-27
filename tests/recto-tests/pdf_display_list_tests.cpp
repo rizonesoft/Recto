@@ -916,10 +916,10 @@ TEST(PdfDisplayList, ConfigurableBudgetsAndStatePreservation)
 
 TEST(PdfDisplayList, MalformedRecordsRefused)
 {
-	const double nan = std::numeric_limits<double>::quiet_NaN();
-	const double inf = std::numeric_limits<double>::infinity();
-	const float nan_f = std::numeric_limits<float>::quiet_NaN();
-	const float inf_f = std::numeric_limits<float>::infinity();
+	constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+	constexpr double inf = std::numeric_limits<double>::infinity();
+	constexpr float nan_f = std::numeric_limits<float>::quiet_NaN();
+	constexpr float inf_f = std::numeric_limits<float>::infinity();
 
 	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
 	PathBuilder good_pb;
