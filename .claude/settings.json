@@ -37,6 +37,26 @@
             "timeout": 20
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v helio >/dev/null 2>&1 && timeout 3 helio hook claude || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v helio >/dev/null 2>&1 && timeout 3 helio hook claude || true",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
