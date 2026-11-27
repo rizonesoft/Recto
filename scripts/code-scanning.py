@@ -448,6 +448,8 @@ def _matches_source_root_tu(path: str, root: str) -> bool:
 
 
 _QL_ID_RE = re.compile(r"@id\s+([^\s*]+)")
+_QL_KIND_RE = re.compile(r"@kind\s+([^\s*]+)")
+_ALERT_RULE_KINDS = frozenset({"problem", "path-problem"})
 
 
 def resolve_security_extended_rules(
@@ -456,7 +458,7 @@ def resolve_security_extended_rules(
     suite: str = CODEQL_SECURITY_EXTENDED_SUITE,
     run_cmd=None,
 ) -> set[str]:
-    """Resolve the exact complete set of rule IDs in the installed CodeQL security-extended suite."""
+    """Resolve the exact complete set of alert rule IDs in the installed CodeQL security-extended suite."""
     if run_cmd is None:
         def _run(cmd: list[str]) -> tuple[int, str, str]:
             kwargs: dict = {"capture_output": True, "text": True, "timeout": 120}
@@ -490,7 +492,15 @@ def resolve_security_extended_rules(
         match = _QL_ID_RE.search(text)
         if not match:
             raise RuntimeError(f"resolved query {raw_path} is missing an @id metadata tag")
+        kind_match = _QL_KIND_RE.search(text)
+        kind = kind_match.group(1).lower() if kind_match else ""
+        # CodeQL emits @kind problem / path-problem queries in SARIF tool.*.rules[], while
+        # @kind diagnostic / metric queries are emitted as notifications rather than rules.
+        if kind and kind not in _ALERT_RULE_KINDS:
+            continue
         expected.add(match.group(1))
+    if not expected:
+        raise RuntimeError(f"codeql resolve queries returned zero alert rule IDs for {suite}")
     return expected
 
 

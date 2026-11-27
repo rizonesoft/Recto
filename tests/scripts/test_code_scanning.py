@@ -455,13 +455,15 @@ class CodeScanningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             q1 = Path(tmp) / "WeakCrypto.ql"
             q2 = Path(tmp) / "OverrunningWrite.ql"
-            q1.write_text("/**\n * @name Weak crypto\n * @id cpp/weak-cryptographic-algorithm\n */\n", encoding="utf-8")
-            q2.write_text("/**\n * @name Overrunning write\n * @id cpp/overrunning-write\n */\n", encoding="utf-8")
+            q3 = Path(tmp) / "ExtractionWarnings.ql"
+            q1.write_text("/**\n * @name Weak crypto\n * @kind problem\n * @id cpp/weak-cryptographic-algorithm\n */\n", encoding="utf-8")
+            q2.write_text("/**\n * @name Overrunning write\n * @kind path-problem\n * @id cpp/overrunning-write\n */\n", encoding="utf-8")
+            q3.write_text("/**\n * @name Extraction warnings\n * @kind diagnostic\n * @id cpp/diagnostics/extraction-warnings\n */\n", encoding="utf-8")
 
             def fake_run(cmd):
                 self.assertEqual(cmd[:4], ["codeql", "resolve", "queries", "--format=json"])
                 self.assertIn("cpp-security-extended.qls", cmd[4])
-                return 0, json.dumps([str(q1), str(q2)]), ""
+                return 0, json.dumps([str(q1), str(q2), str(q3)]), ""
 
             resolved = self.mod.resolve_security_extended_rules("codeql", run_cmd=fake_run)
             self.assertEqual(resolved, {"cpp/weak-cryptographic-algorithm", "cpp/overrunning-write"})
