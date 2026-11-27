@@ -2742,97 +2742,138 @@ class MsvcAnalyzeContract(unittest.TestCase):
     def test_workflow_analyze_job_propagates_failure_and_checks_out_requested_sha(self):
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
         self.assertEqual(_validate_analyze_workflow(workflow), [])
+        # Use a self-contained fixture for all positive/negative validator regressions so formatting or comment edits
+        # in the live workflow file never break mutation string matches.
+        fixture = (
+            "name: build\n"
+            "on:\n"
+            "  push:\n"
+            "    branches: [main]\n"
+            "    paths-ignore:\n"
+            "      - 'todo/**'\n"
+            "      - 'docs/**'\n"
+            "      - '**/*.md'\n"
+            "  pull_request:\n"
+            "    paths-ignore:\n"
+            "      - 'todo/**'\n"
+            "      - 'docs/**'\n"
+            "      - '**/*.md'\n"
+            "  workflow_dispatch:\n"
+            "permissions:\n"
+            "  contents: read\n"
+            "jobs:\n"
+            "  analyze:\n"
+            "    runs-on: windows-latest\n"
+            "    steps:\n"
+            "      - name: Validate requested commit\n"
+            "        env:\n"
+            "          REQUESTED_SHA: ${{ inputs.sha }}\n"
+            "        run: echo ok\n"
+            "      - uses: actions/checkout@v4\n"
+            "        with:\n"
+            "          ref: ${{ inputs.sha || github.sha }}\n"
+            "      - name: Run MSVC /analyze over all 8 projects\n"
+            "        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze\n"
+            "      - name: Upload MSVC /analyze SARIF logs\n"
+            "        if: always()\n"
+            "        with:\n"
+            "          path: |\n"
+            "            build/analyze/*.sarif\n"
+        )
+        self.assertEqual(_validate_analyze_workflow(fixture), [])
         # Negative controls: disabling failure propagation, job-level skip, or dropping requested SHA must fail validation.
-        with_job_if = workflow.replace(
+        with_job_if = fixture.replace(
             "  analyze:\n",
             "  analyze:\n    if: false\n",
             1,
         )
         self.assertTrue(any("job-level 'if:'" in e for e in _validate_analyze_workflow(with_job_if)))
-        with_job_continue = workflow.replace(
+        with_job_continue = fixture.replace(
             "  analyze:\n",
             "  analyze:\n    continue-on-error: true\n",
             1,
         )
         self.assertTrue(any("job-level continue-on-error" in e for e in _validate_analyze_workflow(with_job_continue)))
-        with_continue = workflow.replace(
+        with_continue = fixture.replace(
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
             "continue-on-error: true\n        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
         )
         self.assertTrue(any("continue-on-error" in e for e in _validate_analyze_workflow(with_continue)))
-        with_swallow = workflow.replace(
+        with_swallow = fixture.replace(
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze || true",
         )
         self.assertTrue(any("must be exactly" in e for e in _validate_analyze_workflow(with_swallow)))
-        with_trailing_exit0 = workflow.replace(
+        with_trailing_exit0 = fixture.replace(
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
             "run: |\n          powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze\n          exit 0",
         )
         self.assertTrue(any("must be exactly" in e for e in _validate_analyze_workflow(with_trailing_exit0)))
-        without_main_push = workflow.replace("branches: [main]", "branches: [other]", 1)
+        without_main_push = fixture.replace("branches: [main]", "branches: [other]", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(without_main_push)))
-        with_branches_ignore = workflow.replace("branches: [main]", "branches-ignore:\n      - main", 1)
+        with_branches_ignore = fixture.replace("branches: [main]", "branches-ignore:\n      - main", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_branches_ignore)))
-        with_negated_main = workflow.replace("branches: [main]", "branches: [main, '!main']", 1)
+        with_negated_main = fixture.replace("branches: [main]", "branches: [main, '!main']", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_negated_main)))
-        with_quoted_comma_branch = workflow.replace("branches: [main]", "branches: ['release,main,stable']", 1)
+        with_quoted_comma_branch = fixture.replace("branches: [main]", "branches: ['release,main,stable']", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_quoted_comma_branch)))
-        with_extra_branch = workflow.replace("branches: [main]", "branches: [main, release]", 1)
+        with_extra_branch = fixture.replace("branches: [main]", "branches: [main, release]", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_extra_branch)))
-        with_block_list_main = workflow.replace("branches: [main]", "branches:\n      - main", 1)
+        with_block_list_main = fixture.replace("branches: [main]", "branches:\n      - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_block_list_main), [])
-        with_aligned_block_list_main = workflow.replace("branches: [main]", "branches:\n    - main", 1)
+        with_aligned_block_list_main = fixture.replace("branches: [main]", "branches:\n    - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_aligned_block_list_main), [])
-        with_comment_block_list_main = workflow.replace("branches: [main]", "branches: # release policy\n      - main", 1)
+        with_comment_block_list_main = fixture.replace("branches: [main]", "branches: # release policy\n      - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_comment_block_list_main), [])
-        with_multiline_flow_main = workflow.replace("branches: [main]", "branches: [\n      main\n    ]", 1)
+        with_multiline_flow_main = fixture.replace("branches: [main]", "branches: [\n      main\n    ]", 1)
         self.assertEqual(_validate_analyze_workflow(with_multiline_flow_main), [])
-        with_quoted_branches_key = workflow.replace("branches: [main]", "'branches': [main]", 1)
+        with_quoted_branches_key = fixture.replace("branches: [main]", "'branches': [main]", 1)
         self.assertEqual(_validate_analyze_workflow(with_quoted_branches_key), [])
-        with_spaced_colon_key = workflow.replace("branches: [main]", "branches : [main]", 1)
+        with_spaced_colon_key = fixture.replace("branches: [main]", "branches : [main]", 1)
         self.assertEqual(_validate_analyze_workflow(with_spaced_colon_key), [])
+        with_on_comment = fixture.replace("on:\n", "on: # CI events\n", 1)
+        self.assertEqual(_validate_analyze_workflow(with_on_comment), [])
         # Reindenting the entire on: block's children 2 spaces deeper preserves the YAML structure.
-        on_start = workflow.index("\non:\n") + len("\non:\n")
-        on_end = workflow.index("\npermissions:", on_start)
-        deeper_on = "\n".join(("  " + ln if ln.strip() else ln) for ln in workflow[on_start:on_end].splitlines())
-        with_deeper_on_indent = workflow[:on_start] + deeper_on + workflow[on_end:]
+        on_start = fixture.index("\non:\n") + len("\non:\n")
+        on_end = fixture.index("\npermissions:", on_start)
+        deeper_on = "\n".join(("  " + ln if ln.strip() else ln) for ln in fixture[on_start:on_end].splitlines())
+        with_deeper_on_indent = fixture[:on_start] + deeper_on + fixture[on_end:]
         self.assertEqual(_validate_analyze_workflow(with_deeper_on_indent), [])
-        with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
+        with_multiline_negated_main = fixture.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
-        with_tag_push_and_commented_sibling = workflow.replace(
+        with_tag_push_and_commented_sibling = fixture.replace(
             "    branches: [main]",
             "    tags: ['v*']\n  workflow_run: # sibling event\n    branches: [main]",
             1,
         )
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_tag_push_and_commented_sibling)))
-        with_pdf_paths_ignore = workflow.replace(
+        with_pdf_paths_ignore = fixture.replace(
             "      - '**/*.md'",
             "      - '**/*.md'\n      - 'src/pdf/**'",
             1,
         )
         self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(with_pdf_paths_ignore)))
-        with_quoted_pdf_paths_ignore = workflow.replace(
+        with_quoted_pdf_paths_ignore = fixture.replace(
             "    paths-ignore:\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'",
             "    'paths-ignore':\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'\n      - 'src/pdf/**'",
             1,
         )
         self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(with_quoted_pdf_paths_ignore)))
-        without_push_paths_ignore = workflow.replace(
+        without_push_paths_ignore = fixture.replace(
             "    paths-ignore:\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'\n",
             "",
             1,
         )
         self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(without_push_paths_ignore)))
-        with_pr_branch_filter = workflow.replace(
+        with_pr_branch_filter = fixture.replace(
             "  pull_request:\n",
             "  pull_request:\n    branches: [release]\n",
             1,
         )
         self.assertTrue(any("pull_request" in e for e in _validate_analyze_workflow(with_pr_branch_filter)))
         # Drop inputs.sha only inside the analyze job.
-        idx = workflow.index("  analyze:")
-        mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
+        idx = fixture.index("  analyze:")
+        mutated_sha = fixture[:idx] + fixture[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
         self.assertTrue(any("inputs.sha" in e for e in _validate_analyze_workflow(mutated_sha)))
 
 
