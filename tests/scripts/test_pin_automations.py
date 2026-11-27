@@ -132,6 +132,34 @@ class ActionsTests(GitRepo):
         self.assertEqual(self.mod.main(["update"], fetch=self.fetch, root=self.root, mail=broken), 1)
         self.assertEqual(self.git("branch", "--list", "pins/actions-*"), "")
 
+    def test_non_numeric_latest_release_falls_back_to_major_tags(self):
+        self.write(
+            ".github/workflows/codeql.yml",
+            "on: push\njobs:\n  a:\n    steps:\n      - uses: github/codeql-action/init@v3\n",
+        )
+        self.commit()
+
+        def fetch(url):
+            if "github/codeql-action/releases/latest" in url:
+                return {"tag_name": "codeql-bundle-v2.27.6"}
+            if "github/codeql-action/git/matching-refs/tags/v" in url:
+                return [{"ref": "refs/tags/v1"}, {"ref": "refs/tags/v3"}, {"ref": "refs/tags/v4"}]
+            return self.fetch(url)
+
+        found = self.mod.faults(self.mod.scan(self.root), fetch)
+        codeql = [f for f in found if f[2] == "github/codeql-action"]
+        self.assertEqual([(f[2], f[3], f[5]) for f in codeql], [("github/codeql-action", "v3", 4)])
+
+        def no_tags(url):
+            if "github/codeql-action/releases/latest" in url:
+                return {"tag_name": "codeql-bundle-v2.27.6"}
+            if "github/codeql-action/git/matching-refs/tags/v" in url:
+                return []
+            return self.fetch(url)
+
+        with self.assertRaises(self.mod.Unreadable):
+            self.mod.latest_major("github/codeql-action", fetch=no_tags)
+
 
 class VcpkgTests(GitRepo):
     OLD, NEW = "a" * 40, "b" * 40

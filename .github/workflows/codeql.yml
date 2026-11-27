@@ -1,0 +1,63 @@
+name: codeql
+
+# CodeQL C++ security-extended static analysis (D06 T02 section 11).
+# Runs a second, independent interprocedural data-flow analyzer alongside MSVC /analyze
+# on every push to main that touches first-party C++ sources or build/dependency inputs,
+# weekly on Monday, and on manual dispatch.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'libs/**'
+      - 'tests/**'
+      - 'fuzz/**'
+      - 'vcpkg.json'
+      - 'vcpkg-configuration.json'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/**'
+      - 'Directory.Build.*'
+      - 'Recto.sln'
+      - 'build/**'
+      - '.github/workflows/codeql.yml'
+  schedule:
+    - cron: '23 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL C++ (security-extended)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          build-mode: manual
+          queries: security-extended
+      - name: Build x64 Debug for CodeQL extraction (sccache off)
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Platform x64 -Configuration Debug -SkipTests -NoSccache
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: '/language:c-cpp'
+          output: build/codeql-sarif
+          upload: true
+      - name: Verify CodeQL SARIF extraction and security-extended suite
+        shell: pwsh
+        run: .\build\python.cmd scripts/code-scanning.py --verify-sarif build/codeql-sarif

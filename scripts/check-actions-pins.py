@@ -28,6 +28,8 @@ WORKFLOWS = ".github/workflows"
 USES = re.compile(r"^(\s*-?\s*uses:\s*)([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)((?:/[^@\s]*)?)@(\S+)(.*)$")
 MAJOR = re.compile(r"^v(\d+)$")
 LATEST = "https://api.github.com/repos/{repo}/releases/latest"
+TAGS_V = "https://api.github.com/repos/{repo}/git/matching-refs/tags/v"
+MAJOR_REF = re.compile(r"^refs/tags/v(\d+)$")
 
 
 def scan(root=ROOT):
@@ -45,9 +47,17 @@ def latest_major(repo, fetch=fetch_json):
     release = fetch(LATEST.format(repo=repo))
     tag = str(release.get("tag_name", "")) if isinstance(release, dict) else ""
     key = version_key(tag)
-    if key is None:
-        raise Unreadable(f"{repo}: latest release tag {tag!r} is not a version")
-    return key[0]
+    if key is not None:
+        return key[0]
+    refs = fetch(TAGS_V.format(repo=repo))
+    majors = [
+        int(m.group(1))
+        for item in (refs if isinstance(refs, list) else [])
+        if isinstance(item, dict) and (m := MAJOR_REF.match(str(item.get("ref", ""))))
+    ]
+    if majors:
+        return max(majors)
+    raise Unreadable(f"{repo}: latest release tag {tag!r} is not a version and no v<N> major tags were found")
 
 
 def faults(references, fetch=fetch_json):

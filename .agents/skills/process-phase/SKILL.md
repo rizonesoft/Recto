@@ -60,6 +60,13 @@ Then check CI, red first: run `build\python.cmd scripts/ci_status.py` (the lates
 - Exit 3 (`gh` missing, unauthenticated or failing): the state is unknown, never green. Record it in the run file and carry on; the next boundary checks again.
 - Record every red in the run file's Sections or Critical events: workflow, commit, run URL, failed jobs, the cause and the outcome (rerun green, fix commit, or the section filed).
 
+Then check CodeQL code scanning on `main` (ordinary mode, never `--scheduled`, so a previously emailed open alert still blocks claiming a new row): run `build\python.cmd scripts/code-scanning.py`.
+
+- Exit 0: the latest `codeql.yml` run on `main` succeeded with an uploaded analysis and zero open alerts; carry on.
+- Exit 1: an open alert exists on `main`, or the latest `codeql.yml` scan failed/cancelled or uploaded no analysis. Fix it before claiming a new row, like a red CI run (fix the defect at its owning layer with a regression test and verify a green follow-up `codeql.yml` run, or dismiss a verified false positive with the reason written on GitHub, and record the outcome in the run file).
+- Exit 2: the latest `codeql.yml` scan on `main` is still queued or in progress; wait or recheck before treating alerts as clean.
+- Exit 3: `gh` or the code-scanning API could not be read; the state is unknown, never green. Record it in the run file and carry on; the next boundary checks again.
+
 Long jobs never stall the run (owner direction 2026-10-23, after a review job died silently and a build was killed for memory):
 
 - One heavy job at a time: a build, the AddressSanitizer build, a review round and a long test suite never overlap, because other sessions share this machine. Before each, read `(Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue`; under 3000 MB, wait (re-check every minute, up to 30 minutes) instead of starting a job the host may kill.
