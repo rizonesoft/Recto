@@ -2259,6 +2259,38 @@ Write-Output ("PORT=" + $info.ServerPort)
                 self._stop_server(sccache_exe, stride_port)
 
 
+def _parse_yaml_scalar(token: str) -> str:
+    val = token.strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+        return val[1:-1]
+    return val
+
+
+def _parse_yaml_flow_sequence(inner: str) -> list[str]:
+    items: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    for ch in inner:
+        if quote is not None:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
+            token = "".join(buf).strip()
+            if token:
+                items.append(_parse_yaml_scalar(token))
+            buf = []
+        else:
+            buf.append(ch)
+    token = "".join(buf).strip()
+    if token:
+        items.append(_parse_yaml_scalar(token))
+    return items
+
+
 def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     """Validate the analyze job in .github/workflows/build.yml (D06 T02 s10)."""
     errors: list[str] = []
@@ -2274,18 +2306,24 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
             branches_match = re.search(r"(?m)^    branches:[ \t]*(.*)$", push_body)
             branch_items: list[str] = []
             if branches_match:
-                inline = branches_match.group(1).strip()
+                inline = re.sub(r"\s+#.*$", "", branches_match.group(1)).strip()
                 if inline.startswith("[") and inline.endswith("]"):
-                    branch_items = [item.strip().strip("'\"") for item in inline[1:-1].split(",") if item.strip()]
+                    branch_items = _parse_yaml_flow_sequence(inline[1:-1])
                 elif not inline:
-                    rest = push_body[branches_match.end():]
-                    block_match = re.match(r"(?:\r?\n)(.*?)(?=^    [A-Za-z0-9_-]+:|\Z)", rest, re.DOTALL | re.MULTILINE)
-                    if block_match:
-                        branch_items = [
-                            m.group(1).strip().strip("'\"")
-                            for m in re.finditer(r"(?m)^      -[ \t]+(.+?)[ \t]*$", block_match.group(1))
-                        ]
-            if "main" in branch_items and not any(item.startswith("!") for item in branch_items):
+                    for raw_line in push_body[branches_match.end():].splitlines():
+                        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+                            continue
+                        indent = len(raw_line) - len(raw_line.lstrip(" "))
+                        if indent < 4:
+                            break
+                        stripped = raw_line.lstrip(" ")
+                        if stripped.startswith("- ") or stripped.startswith("-\t"):
+                            item_text = re.sub(r"\s+#.*$", "", stripped[1:]).strip()
+                            if item_text:
+                                branch_items.append(_parse_yaml_scalar(item_text))
+                        else:
+                            break
+            if branch_items == ["main"]:
                 push_targets_main = True
             ignore_match = re.search(r"(?m)^    branches-ignore:[ \t]*(.*)$", push_body)
             if ignore_match:
@@ -2591,8 +2629,14 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_branches_ignore)))
         with_negated_main = workflow.replace("branches: [main]", "branches: [main, '!main']", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_negated_main)))
+        with_quoted_comma_branch = workflow.replace("branches: [main]", "branches: ['release,main,stable']", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_quoted_comma_branch)))
+        with_extra_branch = workflow.replace("branches: [main]", "branches: [main, release]", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_extra_branch)))
         with_block_list_main = workflow.replace("branches: [main]", "branches:\n      - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_block_list_main), [])
+        with_aligned_block_list_main = workflow.replace("branches: [main]", "branches:\n    - main", 1)
+        self.assertEqual(_validate_analyze_workflow(with_aligned_block_list_main), [])
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)

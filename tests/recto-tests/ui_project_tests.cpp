@@ -1614,3 +1614,23 @@ RECTO_UI_TEST(Project, DisabledMarkerStaysAtTheFront)
 	// GoogleTest disables on a DISABLED_ prefix of the case name, so it must lead.
 	EXPECT_EQ(recto::ui::test::registered_name("Project", "DISABLED_Probe"), "DISABLED_Project.Probe");
 }
+
+RECTO_UI_TEST(Project, HarnessCopyGuardsNullAndShortBuffer)
+{
+	const std::vector<uint8_t> valid(32, 0x42);
+	EXPECT_THROW(
+		{ const auto r = recto::ui::test::copy_locked_bgra_rows(nullptr, 32, 16, 4, 2); (void)r; },
+		std::runtime_error);
+	EXPECT_THROW(
+		{ const auto r = recto::ui::test::copy_locked_bgra_rows(valid.data(), 32, 8, 4, 2); (void)r; },
+		std::runtime_error);
+	EXPECT_THROW(
+		{ const auto r = recto::ui::test::copy_locked_bgra_rows(valid.data(), 31, 16, 4, 2); (void)r; },
+		std::runtime_error);
+	const auto copied = recto::ui::test::copy_locked_bgra_rows(valid.data(), valid.size(), 16, 4, 2, 24);
+	EXPECT_EQ(copied.width, 4u);
+	EXPECT_EQ(copied.height, 2u);
+	EXPECT_EQ(copied.stride, 24u);
+	EXPECT_EQ(copied.bytes[0], 0x42);
+	EXPECT_EQ(copied.bytes[24], 0x42);
+}

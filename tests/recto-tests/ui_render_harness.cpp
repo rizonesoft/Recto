@@ -182,24 +182,35 @@ Bitmap render_to_bitmap(
 	BYTE* data = nullptr;
 	check(lock->GetDataPointer(&data_size, &data), "IWICBitmapLock::GetDataPointer");
 
+	return copy_locked_bgra_rows(data, data_size, wic_stride, width_px, height_px, options.min_stride);
+}
+
+Bitmap copy_locked_bgra_rows(
+	const uint8_t* data,
+	size_t data_size,
+	size_t source_stride,
+	uint32_t width_px,
+	uint32_t height_px,
+	size_t min_stride)
+{
 	const size_t row_bytes = static_cast<size_t>(width_px) * 4;
-	if (data == nullptr || wic_stride < row_bytes) {
+	if (data == nullptr || source_stride < row_bytes) {
 		throw std::runtime_error("render_to_bitmap: WIC stride is narrower than a pixel row or data is null");
 	}
 	if (height_px > 0 &&
-		(static_cast<size_t>(data_size) < row_bytes ||
-			static_cast<size_t>(height_px - 1) > (static_cast<size_t>(data_size) - row_bytes) / wic_stride)) {
+		(data_size < row_bytes ||
+			static_cast<size_t>(height_px - 1) > (data_size - row_bytes) / source_stride)) {
 		throw std::runtime_error("render_to_bitmap: WIC buffer is smaller than the bitmap");
 	}
 
 	Bitmap out;
 	out.width = width_px;
 	out.height = height_px;
-	out.stride = std::max<size_t>(wic_stride, options.min_stride);
+	out.stride = std::max<size_t>(source_stride, min_stride);
 	out.bytes.assign(out.stride * height_px, kPaddingSentinel);
 	for (uint32_t y = 0; y < height_px; ++y) {
 		std::memcpy(out.bytes.data() + static_cast<size_t>(y) * out.stride,
-			data + static_cast<size_t>(y) * wic_stride,
+			data + static_cast<size_t>(y) * source_stride,
 			row_bytes);
 	}
 	return out;
