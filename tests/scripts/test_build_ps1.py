@@ -2262,6 +2262,11 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     if not m:
         return ["missing 'analyze:' job in build.yml"]
     job_text = m.group(1)
+    header_text = job_text.split("    steps:", 1)[0]
+    if re.search(r"(?m)^    if\s*:", header_text):
+        errors.append("analyze job has a job-level 'if:' condition that could skip analysis")
+    if re.search(r"(?m)^    continue-on-error\s*:\s*true", header_text, re.IGNORECASE):
+        errors.append("analyze job sets job-level continue-on-error: true")
     if "ref: ${{ inputs.sha || github.sha }}" not in job_text:
         errors.append("analyze job does not check out inputs.sha || github.sha")
     if "REQUESTED_SHA: ${{ inputs.sha }}" not in job_text:
@@ -2279,6 +2284,8 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
             errors.append("analyze step does not invoke build/build.ps1 -Analyze")
         if re.search(r"continue-on-error\s*:\s*true", step, re.IGNORECASE):
             errors.append("analyze step sets continue-on-error: true")
+        if re.search(r"(?m)^\s+if\s*:", step):
+            errors.append("analyze step has an 'if:' condition that could skip analysis")
         if re.search(r"(\|\|\s*true|\|\|\s*exit\s+0|;\s*exit\s+0|LASTEXITCODE\s*=\s*0)", step, re.IGNORECASE):
             errors.append("analyze step swallows non-zero exit code")
     upload_match = re.search(
@@ -2356,19 +2363,31 @@ class MsvcAnalyzeContract(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            def write_sarif(stem: str, rule_id: str | None, uri: str, line: int) -> Path:
+            def write_sarif(
+                stem: str,
+                rule_id: str | None,
+                uri: str,
+                line: int,
+                *,
+                execution_successful: bool = True,
+                target_uri: str | None = None,
+                rules_list: list[dict] | None = None,
+                rule_index: int = 0,
+            ) -> Path:
                 results = []
                 if rule_id:
                     results.append({
                         "ruleId": rule_id,
+                        "ruleIndex": rule_index,
                         "message": {"text": f"finding {rule_id}"},
                         "locations": [{"physicalLocation": {"artifactLocation": {"index": 0}, "region": {"startLine": line}}}],
                     })
                 doc = {
                     "version": "2.1.0",
                     "runs": [{
-                        "tool": {"driver": {"name": "PREfast", "rules": [{"id": rule_id}] if rule_id else []}},
-                        "artifacts": [{"location": {"uri": uri}}],
+                        "tool": {"driver": {"name": "PREfast", "rules": rules_list if rules_list is not None else ([{"id": rule_id}] if rule_id else [])}},
+                        "invocations": [{"executionSuccessful": execution_successful}],
+                        "artifacts": [{"location": {"uri": target_uri or uri}, "roles": ["analysisTarget"]}],
                         "results": results,
                     }],
                 }
@@ -2376,25 +2395,74 @@ class MsvcAnalyzeContract(unittest.TestCase):
                 p.write_text(json.dumps(doc), encoding="utf-8")
                 return p
 
-            # Two findings across two different TUs both survive aggregation with rule IDs and resolved URIs.
-            write_sarif("a", "C6386", "file:///src/pdf/a.cpp", 42)
-            write_sarif("b", "C26800", "file:///src/pdf/b.cpp", 99)
+            # Two findings across two different TUs both survive in intact runs with ruleIndex and artifacts preserved.
+            write_sarif(
+                "a", "C6386", "file:///D:/GitHub/Recto/src/pdf/a.cpp", 42,
+                rules_list=[{"id": "C6386"}, {"id": "C6001"}], rule_index=0,
+            )
+            write_sarif("b", "C26800", "file:///D:/GitHub/Recto/src/pdf/b.cpp", 99)
             code, errs, findings = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
             self.assertEqual(code, 1)
             self.assertEqual(errs, [])
             self.assertEqual(len(findings), 2)
             merged = json.loads((out_dir / "recto-pdf.sarif").read_text(encoding="utf-8"))
             self.assertEqual(merged["version"], "2.1.0")
-            merged_results = merged["runs"][0]["results"]
-            self.assertEqual([r["ruleId"] for r in merged_results], ["C6386", "C26800"])
-            self.assertEqual(merged_results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"], "file:///src/pdf/a.cpp")
-            self.assertEqual(merged_results[1]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"], "file:///src/pdf/b.cpp")
+            self.assertEqual(len(merged["runs"]), 2)
+            run0 = merged["runs"][0]
+            self.assertEqual(run0["tool"]["driver"]["rules"][run0["results"][0]["ruleIndex"]]["id"], "C6386")
+            self.assertEqual(run0["artifacts"][0]["location"]["uri"], "file:///D:/GitHub/Recto/src/pdf/a.cpp")
+            self.assertEqual(merged["runs"][1]["results"][0]["ruleId"], "C26800")
 
             # Clean multi-TU run exits 0.
-            write_sarif("a", None, "file:///src/pdf/a.cpp", 1)
-            write_sarif("b", None, "file:///src/pdf/b.cpp", 1)
+            write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1)
+            write_sarif("b", None, "file:///D:/GitHub/Recto/src/pdf/b.cpp", 1)
             code, errs, findings = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
             self.assertEqual((code, errs, findings), (0, [], []))
+
+            # Failed analyzer invocation (executionSuccessful=false) is refused.
+            write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1, execution_successful=False)
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("executionSuccessful" in e for e in errs), errs)
+
+            # Empty runs list is refused.
+            (int_dir / "a.nativecodeanalysis.sarif").write_text(json.dumps({"version": "2.1.0", "runs": []}), encoding="utf-8")
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("invalid or empty SARIF 2.1.0 runs" in e for e in errs), errs)
+
+            # Mismatched analysisTarget is refused.
+            write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1, target_uri="file:///D:/GitHub/Recto/src/pdf/other.cpp")
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("analysisTarget" in e for e in errs), errs)
+
+            # Restore a.sarif; test allow_extra_projects emits SARIF for rebuilt dependency projects too.
+            write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1)
+            dep_dir = root / "obj" / "recto-fuzz"
+            dep_dir.mkdir(parents=True)
+            (manifest_dir / "recto-fuzz.txt").write_text(
+                f"project|recto-fuzz|{dep_dir}|D:\\GitHub\\Recto\\build\\RectoAnalyze.ruleset|true|true\n"
+                f"unit|D:\\GitHub\\Recto\\fuzz\\f.cpp||true|D:\\GitHub\\Recto\\build\\RectoAnalyze.ruleset|C:\\VS\\EspXEngine.dll;|{dep_dir}\\|f\n",
+                encoding="utf-8",
+            )
+            (dep_dir / "f.nativecodeanalysis.sarif").write_text(json.dumps({
+                "version": "2.1.0",
+                "runs": [{
+                    "tool": {"driver": {"name": "PREfast"}},
+                    "invocations": [{"executionSuccessful": True}],
+                    "artifacts": [{"location": {"uri": "file:///D:/GitHub/Recto/fuzz/f.cpp"}, "roles": ["analysisTarget"]}],
+                    "results": [],
+                }],
+            }), encoding="utf-8")
+            out_dep = root / "out-dep"
+            code, errs, findings = mod.merge_and_verify(
+                manifest_dir, out_dep, ["recto-fuzz"], "RectoAnalyze.ruleset", allow_extra_projects=True,
+            )
+            self.assertEqual((code, errs, findings), (0, [], []))
+            self.assertTrue((out_dep / "recto-fuzz.sarif").is_file())
+            self.assertTrue((out_dep / "recto-pdf.sarif").is_file())
+            (manifest_dir / "recto-fuzz.txt").unlink()
 
             # Missing or unreadable TU SARIF is refused even with 0 findings.
             (int_dir / "b.nativecodeanalysis.sarif").unlink()
@@ -2403,7 +2471,7 @@ class MsvcAnalyzeContract(unittest.TestCase):
             self.assertTrue(any("missing per-TU SARIF" in e for e in errs), errs)
 
             # Stale SARIF (older than run start) is refused.
-            p_b = write_sarif("b", None, "file:///src/pdf/b.cpp", 1)
+            p_b = write_sarif("b", None, "file:///D:/GitHub/Recto/src/pdf/b.cpp", 1)
             os.utime(p_b, (1000.0, 1000.0))
             code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset", min_mtime=2000.0)
             self.assertEqual(code, 1)
@@ -2412,7 +2480,19 @@ class MsvcAnalyzeContract(unittest.TestCase):
     def test_workflow_analyze_job_propagates_failure_and_checks_out_requested_sha(self):
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
         self.assertEqual(_validate_analyze_workflow(workflow), [])
-        # Negative controls: disabling failure propagation or dropping requested SHA must fail validation.
+        # Negative controls: disabling failure propagation, job-level skip, or dropping requested SHA must fail validation.
+        with_job_if = workflow.replace(
+            "  analyze:\n",
+            "  analyze:\n    if: false\n",
+            1,
+        )
+        self.assertTrue(any("job-level 'if:'" in e for e in _validate_analyze_workflow(with_job_if)))
+        with_job_continue = workflow.replace(
+            "  analyze:\n",
+            "  analyze:\n    continue-on-error: true\n",
+            1,
+        )
+        self.assertTrue(any("job-level continue-on-error" in e for e in _validate_analyze_workflow(with_job_continue)))
         with_continue = workflow.replace(
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
             "continue-on-error: true\n        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
@@ -2423,13 +2503,9 @@ class MsvcAnalyzeContract(unittest.TestCase):
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze || true",
         )
         self.assertTrue(any("swallows" in e for e in _validate_analyze_workflow(with_swallow)))
-        without_sha = workflow.replace(
-            "  analyze:\n",
-            "  analyze:\n",
-        )
         # Drop inputs.sha only inside the analyze job.
-        idx = without_sha.index("  analyze:")
-        mutated_sha = without_sha[:idx] + without_sha[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
+        idx = workflow.index("  analyze:")
+        mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
         self.assertTrue(any("inputs.sha" in e for e in _validate_analyze_workflow(mutated_sha)))
 
 

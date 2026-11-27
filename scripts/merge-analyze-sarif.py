@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from urllib.parse import unquote, urlparse
 
 DEFAULT_PROJECTS = (
     "recto-pdf",
@@ -32,6 +33,17 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def _normalize_path_or_uri(raw: str) -> str:
+    text = raw.strip()
+    if text.lower().startswith("file://"):
+        parsed = urlparse(text)
+        p = unquote(parsed.path)
+        if len(p) >= 3 and p[0] == "/" and p[2] == ":":
+            p = p[1:]
+        text = p
+    return os.path.normcase(os.path.normpath(text.replace("/", os.sep)))
 
 
 def _resolve_tu_sarif(int_dir: Path, obj_file_name: str, stem: str) -> Path:
@@ -132,7 +144,13 @@ def merge_and_verify(
         for extra in sorted(set(manifests.keys()) - expected_set):
             errors.append(f"unexpected analyze manifest for project '{extra}' in {manifest_dir}")
 
-    for proj in expected_projects:
+    # When extra projects (rebuilt dependencies of -Project) are allowed, verify and emit SARIF for them too.
+    projects_to_process = list(expected_projects)
+    if allow_extra_projects:
+        for extra in sorted(set(manifests.keys()) - expected_set):
+            projects_to_process.append(extra)
+
+    for proj in projects_to_process:
         manifest_path = manifests.get(proj)
         if manifest_path is None:
             continue
@@ -155,14 +173,14 @@ def merge_and_verify(
             errors.append(f"{proj}: manifest lists 0 eligible translation units")
             continue
 
-        merged_results: list[dict] = []
-        rules_by_id: dict[str, dict] = {}
-        driver_meta: dict = {"name": "PREfast"}
+        # Keep each TU's SARIF run intact inside the project SARIF 2.1.0 runs[] array so ruleIndex,
+        # artifactLocation.index, artifacts[], and codeFlows references remain 100% faithful.
+        preserved_runs: list[dict] = []
         analyzed_tus: list[str] = []
-        valid_sarif_count = 0
 
         for unit in eligible_units:
             src = unit["source"]
+            expected_src_norm = _normalize_path_or_uri(src)
             if unit["enable_prefast"].lower() != "true":
                 errors.append(f"{proj}: {src}: EnablePREfast is '{unit['enable_prefast']}', expected 'true'")
             if expected_ruleset_name and Path(unit["ruleset"]).name.lower() != expected_ruleset_name.lower():
@@ -191,71 +209,63 @@ def merge_and_verify(
             except (OSError, json.JSONDecodeError) as exc:
                 errors.append(f"{proj}: {src}: unreadable SARIF log {sarif_path}: {exc}")
                 continue
-            if not isinstance(doc, dict) or doc.get("version") != "2.1.0" or not isinstance(doc.get("runs"), list):
-                errors.append(f"{proj}: {src}: invalid SARIF 2.1.0 structure in {sarif_path}")
+            runs = doc.get("runs") if isinstance(doc, dict) else None
+            if not isinstance(doc, dict) or doc.get("version") != "2.1.0" or not isinstance(runs, list) or not runs:
+                errors.append(f"{proj}: {src}: invalid or empty SARIF 2.1.0 runs in {sarif_path}")
                 continue
 
-            valid_sarif_count += 1
-            analyzed_tus.append(src)
-            for run in doc["runs"]:
+            tu_target_matched = False
+            tu_runs_valid = True
+            for run in runs:
                 if not isinstance(run, dict):
+                    errors.append(f"{proj}: {src}: non-object run entry in {sarif_path}")
+                    tu_runs_valid = False
                     continue
-                driver = (run.get("tool") or {}).get("driver") or {}
-                if isinstance(driver, dict):
-                    if driver.get("name"):
-                        driver_meta["name"] = driver["name"]
-                    if driver.get("version"):
-                        driver_meta["version"] = driver["version"]
-                    if driver.get("informationUri"):
-                        driver_meta["informationUri"] = driver["informationUri"]
-                    for rule in driver.get("rules") or []:
-                        if isinstance(rule, dict) and rule.get("id"):
-                            rules_by_id.setdefault(str(rule["id"]), rule)
-                run_artifacts = [
-                    str(((a or {}).get("location") or {}).get("uri") or "")
-                    for a in (run.get("artifacts") or [])
-                    if isinstance(a, dict)
-                ]
+                invocations = run.get("invocations")
+                if not isinstance(invocations, list) or not invocations:
+                    errors.append(f"{proj}: {src}: missing invocations in {sarif_path}")
+                    tu_runs_valid = False
+                elif any(not isinstance(inv, dict) or inv.get("executionSuccessful") is not True for inv in invocations):
+                    errors.append(f"{proj}: {src}: invocation executionSuccessful is not true in {sarif_path}")
+                    tu_runs_valid = False
+
+                run_artifacts: list[str] = []
+                for art in run.get("artifacts") or []:
+                    if not isinstance(art, dict):
+                        run_artifacts.append("")
+                        continue
+                    uri = str(((art.get("location") or {}).get("uri")) or "")
+                    run_artifacts.append(uri)
+                    roles = art.get("roles") or []
+                    if isinstance(roles, list) and "analysisTarget" in roles and uri:
+                        if _normalize_path_or_uri(uri) == expected_src_norm:
+                            tu_target_matched = True
+
+                preserved_runs.append(run)
                 for res in run.get("results") or []:
                     if not isinstance(res, dict):
                         continue
-                    # Resolve artifact index into uri so merged single-run SARIF keeps self-contained locations.
-                    for loc_entry in res.get("locations") or []:
-                        if not isinstance(loc_entry, dict):
-                            continue
-                        phys = loc_entry.get("physicalLocation")
-                        if not isinstance(phys, dict):
-                            continue
-                        al = phys.get("artifactLocation")
-                        if isinstance(al, dict) and not al.get("uri") and isinstance(al.get("index"), int):
-                            idx = al["index"]
-                            if 0 <= idx < len(run_artifacts) and run_artifacts[idx]:
-                                al["uri"] = run_artifacts[idx]
-                                al.pop("index", None)
-                    merged_results.append(res)
                     rule_id = str(res.get("ruleId") or "unknown")
                     loc = _format_location(res, run_artifacts)
                     msg = str(((res.get("message") or {}).get("text")) or "").strip()
                     findings.append(f"{proj} {rule_id} {loc}: {msg}")
 
-        if valid_sarif_count > 0:
-            driver_out = dict(driver_meta)
-            if rules_by_id:
-                driver_out["rules"] = [rules_by_id[k] for k in sorted(rules_by_id)]
+            if not tu_target_matched:
+                errors.append(f"{proj}: {src}: SARIF analysisTarget does not match expected source in {sarif_path}")
+                tu_runs_valid = False
+            if tu_runs_valid:
+                analyzed_tus.append(src)
+
+        if preserved_runs:
             out_doc = {
                 "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
                 "version": "2.1.0",
-                "runs": [
-                    {
-                        "tool": {"driver": driver_out},
-                        "results": merged_results,
-                        "properties": {
-                            "project": proj,
-                            "ruleset": project_meta["ruleset"],
-                            "analyzedTranslationUnits": analyzed_tus,
-                        },
-                    }
-                ],
+                "runs": preserved_runs,
+                "properties": {
+                    "project": proj,
+                    "ruleset": project_meta["ruleset"],
+                    "analyzedTranslationUnits": analyzed_tus,
+                },
             }
             _atomic_write_json(out_dir / f"{proj}.sarif", out_doc)
 

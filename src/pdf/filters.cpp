@@ -2025,11 +2025,8 @@ constexpr CcittDecodeTable kBlackLookup = build_ccitt_decode_table(kCcittBlackCo
 			prefix = (prefix << 1u) | bit;
 		}
 		prefix <<= (13u - peek_n);
-		const size_t idx = prefix & 0x1FFFu;
-		if (idx >= table.size()) {
-			return false;
-		}
-		const CcittLookupEntry entry = table[idx];
+#pragma warning(suppress: 28020) // prefix is masked to 13 bits (0..8191), always within CcittDecodeTable's 8192 entries
+		const CcittLookupEntry entry = table[prefix & 0x1FFFu];
 		if (entry.run_len < 0 || entry.bit_len == 0 || entry.bit_len > avail ||
 			total_run + entry.run_len > max_columns) {
 			return false;
