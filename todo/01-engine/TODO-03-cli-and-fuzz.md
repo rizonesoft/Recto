@@ -32,6 +32,7 @@ track: M1
 - -> XREF: D05 T01 §15 -- organize verbs follow the registration rule.
 - -> XREF: D04 T05 §26 -- a11y verb follows the registration rule.
 - -> XREF: D04 T08 §2 -- verbs --json agreement gate.
+- -> XREF: D00 T06 §13 -- runs each real fuzz entry point built in `§4` under ASan and UBSan for 10 seconds in Windows CI; moving `recto-cli` onto the SDK entry point is `D00 T06` section 11.
 
 ## Outcome
 

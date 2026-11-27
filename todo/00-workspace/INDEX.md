@@ -10,6 +10,7 @@ The git repository, the GPL-3.0 repo-face files, the native C++23 `recto-pdf` an
 | ---- | ----- | :----: |
 | [TODO-04](./TODO-04-build-performance.md) | Build Performance, Repo-Scoped Tools and the Ninja Build | active |
 | [TODO-05](./TODO-05-agent-kits-and-campaign-runtime.md) | Conclave Kits, Portable LSP, Orchestrator Hooks and Campaign Cadence | active |
+| [TODO-06](./TODO-06-impossible-sdk-platform.md) | Impossible SDK as Recto's Platform: Move onto It, Surface by Surface | active |
 
 ## Completed
 

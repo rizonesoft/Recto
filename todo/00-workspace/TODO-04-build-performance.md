@@ -24,6 +24,7 @@ track: M0
 - -> XREF: D00 T05 §5 -- hardens dual-runner unattended campaigns, sleep guard and moved-clone Desktop shortcuts beside `§9` and `§14`
 - -> XREF: D06 T02 §12 -- clang-tidy runs over the compile database `§12` here writes, with the clang-tidy beside the clangd that `build/clangd.cmd` finds; `§17` here keeps that database to single source files under a unity build
 - -> XREF: D06 T02 §10 -- MSVC `/analyze` over every module, which `§17` here waits for so a unity build never hides what it reports
+- -> XREF: D00 T06 §2 -- the SDK boundary ratchet job that builds the shipping release with the SDK toolchain and keeps this file's MSBuild parity build for Recto's own tools.
 
 ## Outcome
 

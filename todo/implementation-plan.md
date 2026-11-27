@@ -836,10 +836,24 @@ Sections: 77 | Checklist items: 548
 
 ### Phase 7: After v1
 
-Sections: 94 | Checklist items: 524
+Sections: 108 | Checklist items: 609
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D00 T06 §1  | `sdk.json`, `app.json` and the SDK pin rule                                              | windows-host                  | 7     |
+| [ ]    | D00 T06 §2  | CI ratchet: SDK toolchain build, source check, link rule and import check                | windows-host                  | 6     |
+| [ ]    | D00 T06 §3  | Move judge: pixels and timings compared separately on one machine                        | windows-host                  | 5     |
+| [ ]    | D00 T06 §4  | Cache budget from the SDK, oversized documents fail with an error                        | windows-host                  | 6     |
+| [ ]    | D00 T06 §5  | `recto-pdf` onto the SDK: files, memory, fonts, drawing and crypto calls                 | windows-host                  | 7     |
+| [ ]    | D00 T06 §6  | `recto-core` onto the SDK: atomic write, threads and time                                | windows-host                  | 6     |
+| [ ]    | D00 T06 §7  | Vellum window, input, clipboard and presentation onto the SDK `window` part              | windows-host, display-session | 7     |
+| [ ]    | D00 T06 §8  | Vellum drawing, text and images onto the SDK `draw` and `text` parts                     | windows-host, display-session | 7     |
+| [ ]    | D00 T06 §9  | Page tiles and `src/services` presenter onto the SDK `gpu` tier, CPU path kept           | windows-host, display-session | 7     |
+| [ ]    | D00 T06 §10 | `src/app` onto the SDK entry point, no `windows.h`, `CoInitializeEx` or `MessageBoxW`    | windows-host, display-session | 6     |
+| [ ]    | D00 T06 §11 | `src/cli` onto the SDK entry point and file calls                                        | windows-host                  | 5     |
+| [ ]    | D00 T06 §12 | Release built and shipped from the SDK toolchain, MSVC kept for tools only               | windows-host                  | 6     |
+| [ ]    | D00 T06 §13 | ASan and UBSan 10-second runs over each real fuzz entry point                            | windows-host                  | 5     |
+| [ ]    | D00 T06 §14 | ARM64 kept until the SDK arm64 target is proved, then moved                              | windows-host, arm64-host      | 5     |
 | [ ]    | D02 T05 §1  | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`                    | none                          | 9     |
 | [ ]    | D02 T05 §2  | `recto-pdf` media model: `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, bounded extract    | windows-host                  | 9     |
 | [ ]    | D02 T05 §3  | Embedded media playback service on Windows media APIs with no network access             | windows-host                  | 7     |
@@ -956,6 +970,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 120/887 verified sections, 51 ready to run now.
+Progress: 120/901 verified sections, 52 ready to run now.
 
-Checklist: 823/6561 items completed (includes Commit items).
+Checklist: 823/6646 items completed (includes Commit items).

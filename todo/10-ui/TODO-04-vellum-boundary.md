@@ -31,6 +31,7 @@ track: M2
 - -> XREF: D02 T01 §18 -- Recto's `RectoIcons.ttf` is registered with §4's `vellum::IconSet` by the app, not compiled into Vellum.
 - -> XREF: D06 T04 §1 -- the board check renders Recto's surfaces through §3's Recto theme mapping.
 - -> XREF: D07 T02 §3 -- `NOTICE.md` and the About page's "Built with" list name Vellum with the version §5 stamps.
+- -> XREF: D00 T06 §7 -- moves Vellum's window, input and presentation onto the SDK `window` part on the `libs/vellum` tree §1 here creates; moving its drawing and text onto the SDK `draw` and `text` parts is `D00 T06` section 8.
 
 ## Outcome
 

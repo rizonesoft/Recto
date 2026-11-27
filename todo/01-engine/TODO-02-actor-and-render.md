@@ -42,6 +42,7 @@ track: M1
 - -> XREF: D02 T03 §24 -- import as layer uses the same builder contract.
 - -> XREF: D02 T03 §25 -- Layers panel drives stage, undo, redo and discard.
 - -> XREF: D02 T01 §8 -- SavePipeline writes the exported revision and marks it saved.
+- -> XREF: D00 T06 §4 -- takes this file's `DocumentActor` page cache budget from the SDK, failing an oversized document with `ResourceLimit`; the rasterizer and font moves onto the SDK parts are `D00 T06` section 5.
 
 ## Outcome
 

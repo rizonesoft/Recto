@@ -44,6 +44,7 @@ track: M2
 - -> XREF: D01 T02 §12 -- transitions read through the actor query.
 - -> XREF: D06 T04 §5 -- the `D-Presentation.png` board and `design/SPEC.md` section 9.10 that §13, §14, §15, §16, §17 here build against.
 - -> XREF: D06 T04 §6 -- the `D-ViewTools.png` board and `design/SPEC.md` section 9.11 that §18, §20, §21, §22, §23, §24 here build against.
+- -> XREF: D00 T06 §9 -- moves the tile presenter and tile texture cache of `§1` and `§3` onto the SDK `gpu` tier with a CPU path; its tile cache budget comes from the SDK in `D00 T06` section 4.
 
 ## Outcome
 
