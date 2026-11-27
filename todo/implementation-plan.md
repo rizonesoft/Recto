@@ -48,7 +48,7 @@ Sections: 63 | Checklist items: 387
 | [ ]    | D00 T05 §4  | RAM-bounded build/test runner cadence and local-vs-CI gate split                         | windows-host | 4     |
 | [ ]    | D00 T05 §5  | Dual-runner unattended campaign launcher, sleep guard and clone-move recovery            | windows-host | 4     |
 | [x]    | D06 T02 §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job                    | windows-host | 7     |
-| [ ]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
+| [x]    | D06 T02 §11 | CodeQL scanning of the C++ sources, with open alerts read by the run                     | windows-host | 5     |
 | [ ]    | D06 T02 §12 | clang-tidy bug, CERT and concurrency checks over the compile database                    | windows-host | 8     |
 | [ ]    | D00 T04 §16 | Link-time code generation (`/GL`, `/LTCG`) for Release, kept only if measured faster     | windows-host | 9     |
 | [ ]    | D00 T04 §17 | Unity builds measured per build kind and kept only where they are faster                 | windows-host | 9     |
@@ -956,6 +956,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 119/887 verified sections, 52 ready to run now.
+Progress: 120/887 verified sections, 51 ready to run now.
 
-Checklist: 822/6561 items completed (includes Commit items).
+Checklist: 823/6561 items completed (includes Commit items).

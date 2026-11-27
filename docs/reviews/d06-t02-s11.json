@@ -1,0 +1,91 @@
+{
+  "ref": "D06 T02 \u00a711",
+  "title": "CodeQL scanning of the C++ sources, with open alerts read by the run",
+  "implementation_sha": "86429ab43bd1bec6f1dc49cbb0b65dd35abac695",
+  "date": "2026-11-27",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T02-s11.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "codeql.yml 45961084043 (20m54s): code-scanning --verify-sarif: OK (1 SARIF file(s), 449 extracted artifact(s), 87/87 security-extended rule(s) (95 total), all 6 first-party C++ TU roots present)",
+    "build.yml 45961084028 green; plan.yml 45961084060 green; scripts/code-scanning.py exit 0 (0 open alerts on main, latest analysis 86429ab43bd1); gh api open alerts []; install.ps1 -Check exit 0 (6 tasks); test_code_scanning + test_pin_automations + test_workflow_yaml 44/44 OK; test_automations.py 47 OK; build.cmd -NoSccache 514 Debug + 514 Release tests OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T02-s11.md",
+    "verdict": "reconciled",
+    "candidate": "86429ab43bd1bec6f1dc49cbb0b65dd35abac695",
+    "reviewer": "astra",
+    "model": "gpt-6.2-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T02-s11.md",
+    "candidate": "8019a04c72aae55e555a34786e26f947d06fee27",
+    "reviewer": "astra",
+    "model": "gpt-6.2-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "8019a04c72aae55e555a34786e26f947d06fee27",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 6,
+  "pass_cap": 33
+}
