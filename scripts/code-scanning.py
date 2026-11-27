@@ -18,10 +18,11 @@ Modes:
         run's email was sent; persists state atomically per (repo, branch) in
         build/code-scanning/state.json.
 
-    python scripts/code-scanning.py --verify-sarif <dir>
-        Verify that <dir> holds CodeQL SARIF 2.1.0 output with the security-extended query suite
-        (medium-precision security rules and config summary when present) and extracted
-        first-party C++ translation units across all production source roots.
+    python scripts/code-scanning.py --verify-sarif <dir> (--codeql-cli <path> | --expected-rules <file>)
+        Verify that <dir> holds CodeQL SARIF 2.1.0 output with required codeqlConfigSummary
+        declaring security-extended, every query ID resolved from the installed CodeQL
+        cpp-security-extended.qls suite, and extracted repository-relative first-party C++
+        translation units across all production source roots.
 
 Stdlib only.
 """
@@ -33,6 +34,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -43,19 +45,11 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO_DEFAULT = "rizonesoft/Recto"
 WORKFLOW_NAME = "codeql.yml"
 CODEQL_CATEGORY = "/language:c-cpp"
+CODEQL_SECURITY_EXTENDED_SUITE = "codeql/cpp-queries:codeql-suites/cpp-security-extended.qls"
 BRANCH_DEFAULT = "main"
 TASK_NAME = "recto-code-scanning"
 STATE_FILE = Path("build") / "code-scanning" / "state.json"
 MAX_ALERTS_PER_EMAIL = 15
-MIN_SECURITY_RULES = 10
-MIN_MEDIUM_SECURITY_RULES = 20
-REQUIRED_SECURITY_EXTENDED_RULES = (
-    "cpp/allocation-too-small",
-    "cpp/cleartext-storage-buffer",
-    "cpp/missing-check-scanf",
-    "cpp/overrunning-write",
-    "cpp/path-injection",
-)
 TRANSLATION_UNIT_SUFFIXES = (".cpp", ".cc", ".cxx", ".c")
 REQUIRED_SOURCE_ROOTS = (
     "src/pdf/",
@@ -453,16 +447,68 @@ def _matches_source_root_tu(path: str, root: str) -> bool:
     return path.startswith(root_l)
 
 
-def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUIRED_SOURCE_ROOTS) -> tuple[int, list[str], dict]:
+_QL_ID_RE = re.compile(r"@id\s+([^\s*]+)")
+
+
+def resolve_security_extended_rules(
+    codeql_cli: str,
+    *,
+    suite: str = CODEQL_SECURITY_EXTENDED_SUITE,
+    run_cmd=None,
+) -> set[str]:
+    """Resolve the exact complete set of rule IDs in the installed CodeQL security-extended suite."""
+    if run_cmd is None:
+        def _run(cmd: list[str]) -> tuple[int, str, str]:
+            kwargs: dict = {"capture_output": True, "text": True, "timeout": 120}
+            if os.name == "nt":
+                kwargs["creationflags"] = 0x08000000
+            try:
+                proc = subprocess.run(cmd, **kwargs)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise RuntimeError(f"codeql resolve queries failed: {exc}") from None
+            return proc.returncode, proc.stdout, proc.stderr
+        run_cmd = _run
+
+    rc, out, err = run_cmd([codeql_cli, "resolve", "queries", "--format=json", suite])
+    if rc != 0:
+        raise RuntimeError(f"codeql resolve queries failed (exit {rc}): {(err or out).strip()}")
+    try:
+        ql_paths = json.loads(out)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"codeql resolve queries returned invalid JSON: {exc}") from None
+    if not isinstance(ql_paths, list) or not ql_paths:
+        raise RuntimeError(f"codeql resolve queries returned empty or non-list result for {suite}")
+
+    expected: set[str] = set()
+    for raw_path in ql_paths:
+        if not isinstance(raw_path, str) or not raw_path:
+            raise RuntimeError(f"invalid query path in resolve queries output: {raw_path!r}")
+        try:
+            text = Path(raw_path).read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise RuntimeError(f"could not read resolved query {raw_path}: {exc}") from None
+        match = _QL_ID_RE.search(text)
+        if not match:
+            raise RuntimeError(f"resolved query {raw_path} is missing an @id metadata tag")
+        expected.add(match.group(1))
+    return expected
+
+
+def verify_sarif_dir(
+    sarif_dir: Path,
+    *,
+    expected_rule_ids: set[str] | frozenset[str],
+    required_roots: tuple[str, ...] = REQUIRED_SOURCE_ROOTS,
+) -> tuple[int, list[str], dict]:
     sarif_files = sorted(Path(sarif_dir).glob("*.sarif"))
     if not sarif_files:
         return 1, [f"no *.sarif files found in {sarif_dir}"], {}
+    if not expected_rule_ids:
+        return 1, ["expected security-extended rule set is empty"], {}
 
     errors: list[str] = []
     extracted_paths: set[str] = set()
     rule_ids: set[str] = set()
-    security_rule_ids: set[str] = set()
-    medium_security_rule_ids: set[str] = set()
     has_codeql_driver = False
     saw_config_summary = False
     config_uses_security_extended = False
@@ -489,7 +535,7 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
             if isinstance(driver_name, str) and "codeql" in driver_name.lower():
                 has_codeql_driver = True
 
-            # Check CodeQL config summary when emitted in run.properties.
+            # Require CodeQL config summary declaring security-extended with no query exclusions.
             run_props = run.get("properties") if isinstance(run.get("properties"), dict) else {}
             cfg = run_props.get("codeqlConfigSummary")
             if isinstance(cfg, dict) and isinstance(cfg.get("queries"), list):
@@ -510,16 +556,8 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
                     if not isinstance(rule, dict):
                         continue
                     rid = rule.get("id")
-                    if not isinstance(rid, str) or not rid:
-                        continue
-                    rule_ids.add(rid)
-                    props = rule.get("properties") if isinstance(rule.get("properties"), dict) else {}
-                    tags = [str(t).lower() for t in (props.get("tags") or [])] if isinstance(props.get("tags"), list) else []
-                    precision = str(props.get("precision") or "").lower()
-                    if "security" in tags:
-                        security_rule_ids.add(rid)
-                        if precision == "medium":
-                            medium_security_rule_ids.add(rid)
+                    if isinstance(rid, str) and rid:
+                        rule_ids.add(rid)
 
             for inv in run.get("invocations") or []:
                 if isinstance(inv, dict) and inv.get("executionSuccessful") is False:
@@ -536,16 +574,13 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
         errors.append("no CodeQL tool.driver.name found in SARIF runs")
     if not saw_config_summary or not config_uses_security_extended:
         errors.append("codeqlConfigSummary missing or does not declare security-extended")
-    missing_canonical = [r for r in REQUIRED_SECURITY_EXTENDED_RULES if r not in medium_security_rule_ids]
-    if missing_canonical:
+    missing_rules = sorted(set(expected_rule_ids) - rule_ids)
+    if missing_rules:
+        sample = ", ".join(missing_rules[:10])
+        suffix = f" (+{len(missing_rules) - 10} more)" if len(missing_rules) > 10 else ""
         errors.append(
-            f"security-extended canonical C++ queries missing: {', '.join(missing_canonical)}"
-        )
-    if len(security_rule_ids) < MIN_SECURITY_RULES or len(medium_security_rule_ids) < MIN_MEDIUM_SECURITY_RULES:
-        errors.append(
-            "security-extended query suite not verified "
-            f"(security_rules={len(security_rule_ids)}, medium_security_rules={len(medium_security_rule_ids)}, "
-            f"total_rules={len(rule_ids)})"
+            f"security-extended suite incomplete: missing {len(missing_rules)} of {len(expected_rule_ids)} "
+            f"expected query ID(s): {sample}{suffix}"
         )
     missing_roots = [
         root for root in required_roots
@@ -558,8 +593,8 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
         "sarif_files": len(sarif_files),
         "extracted_files": len(extracted_paths),
         "rules": len(rule_ids),
-        "security_rules": len(security_rule_ids),
-        "medium_security_rules": len(medium_security_rule_ids),
+        "expected_rules": len(expected_rule_ids),
+        "missing_rules": missing_rules,
         "missing_roots": missing_roots,
     }
     return (0 if not errors else 1), errors, summary
@@ -571,17 +606,40 @@ def main(argv: list[str] | None = None, *, runner=run_gh, root: Path = ROOT, out
     parser.add_argument("--branch", default=BRANCH_DEFAULT, help="Branch to inspect (default: main)")
     parser.add_argument("--scheduled", action="store_true", help="Alert-once mode for recto-code-scanning automation")
     parser.add_argument("--verify-sarif", metavar="DIR", help="Verify CodeQL SARIF extraction and suite in DIR")
+    parser.add_argument("--codeql-cli", metavar="PATH", help="Path to CodeQL CLI for resolving security-extended rules")
+    parser.add_argument("--expected-rules", metavar="FILE", help="JSON list or newline-delimited expected rule IDs")
     args = parser.parse_args(argv)
 
     if args.verify_sarif:
-        code, errors, summary = verify_sarif_dir(Path(args.verify_sarif))
+        if args.codeql_cli:
+            try:
+                expected_rules = resolve_security_extended_rules(args.codeql_cli)
+            except RuntimeError as exc:
+                out(f"code-scanning --verify-sarif: ERROR: {exc}")
+                return 1
+        elif args.expected_rules:
+            try:
+                raw_text = Path(args.expected_rules).read_text(encoding="utf-8").strip()
+                if raw_text.startswith("["):
+                    parsed = json.loads(raw_text)
+                    expected_rules = {str(x) for x in parsed if isinstance(x, str) and x}
+                else:
+                    expected_rules = {ln.strip() for ln in raw_text.splitlines() if ln.strip()}
+            except (OSError, json.JSONDecodeError) as exc:
+                out(f"code-scanning --verify-sarif: ERROR: could not read --expected-rules: {exc}")
+                return 1
+        else:
+            out("code-scanning --verify-sarif: ERROR: pass --codeql-cli or --expected-rules to verify the full suite")
+            return 1
+
+        code, errors, summary = verify_sarif_dir(Path(args.verify_sarif), expected_rule_ids=expected_rules)
         for err in errors:
             out(f"code-scanning --verify-sarif: ERROR: {err}")
         if code == 0:
             out(
                 f"code-scanning --verify-sarif: OK ({summary['sarif_files']} SARIF file(s), "
-                f"{summary['extracted_files']} extracted artifact(s), {summary['rules']} rule(s), "
-                f"{summary['medium_security_rules']} medium-precision security rule(s), "
+                f"{summary['extracted_files']} extracted artifact(s), "
+                f"{summary['rules']}/{summary['expected_rules']} security-extended rule(s), "
                 f"all {len(REQUIRED_SOURCE_ROOTS)} first-party C++ TU roots present)"
             )
         return code

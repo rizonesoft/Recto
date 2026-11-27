@@ -45,6 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Initialize CodeQL
+        id: init
         uses: github/codeql-action/init@v4
         with:
           languages: c-cpp
@@ -61,4 +62,4 @@ jobs:
           upload: true
       - name: Verify CodeQL SARIF extraction and security-extended suite
         shell: pwsh
-        run: .\build\python.cmd scripts/code-scanning.py --verify-sarif build/codeql-sarif
+        run: .\build\python.cmd scripts/code-scanning.py --verify-sarif build/codeql-sarif --codeql-cli "${{ steps.init.outputs.codeql-path }}"

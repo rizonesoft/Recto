@@ -451,22 +451,34 @@ class CodeScanningTests(unittest.TestCase):
                 self.mod._write_json_atomic(state_path, {"scopes": {}}, replace=broken_replace)
             self.assertEqual(state_path.read_text(encoding="utf-8"), before)
 
-    def test_verify_sarif_requires_codeql_security_extended_and_first_party_translation_units(self):
+    def test_resolve_security_extended_rules_extracts_ids_from_ql_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            q1 = Path(tmp) / "WeakCrypto.ql"
+            q2 = Path(tmp) / "OverrunningWrite.ql"
+            q1.write_text("/**\n * @name Weak crypto\n * @id cpp/weak-cryptographic-algorithm\n */\n", encoding="utf-8")
+            q2.write_text("/**\n * @name Overrunning write\n * @id cpp/overrunning-write\n */\n", encoding="utf-8")
+
+            def fake_run(cmd):
+                self.assertEqual(cmd[:4], ["codeql", "resolve", "queries", "--format=json"])
+                self.assertIn("cpp-security-extended.qls", cmd[4])
+                return 0, json.dumps([str(q1), str(q2)]), ""
+
+            resolved = self.mod.resolve_security_extended_rules("codeql", run_cmd=fake_run)
+            self.assertEqual(resolved, {"cpp/weak-cryptographic-algorithm", "cpp/overrunning-write"})
+
+            # Missing @id tag must fail loudly.
+            q_bad = Path(tmp) / "NoId.ql"
+            q_bad.write_text("/** no id here */\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                self.mod.resolve_security_extended_rules(
+                    "codeql", run_cmd=lambda _cmd: (0, json.dumps([str(q_bad)]), "")
+                )
+
+    def test_verify_sarif_requires_exact_security_extended_suite_and_first_party_translation_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             sarif_dir = Path(tmp)
-            high_rules = [
-                {"id": f"cpp/high-sec-{i}", "properties": {"tags": ["security"], "precision": "high"}}
-                for i in range(15)
-            ]
-            canonical_med = [
-                {"id": rid, "properties": {"tags": ["security"], "precision": "medium"}}
-                for rid in self.mod.REQUIRED_SECURITY_EXTENDED_RULES
-            ]
-            extra_med = [
-                {"id": f"cpp/med-sec-{i}", "properties": {"tags": ["security"], "precision": "medium"}}
-                for i in range(15)
-            ]
-            medium_rules = canonical_med + extra_med
+            expected_ids = {f"cpp/high-sec-{i}" for i in range(15)} | {f"cpp/med-sec-{i}" for i in range(20)}
+            all_rules = [{"id": rid} for rid in sorted(expected_ids)]
             artifacts = [
                 {"location": {"uri": "src/pdf/document.cpp"}},
                 {"location": {"uri": "src/core/runtime.cpp"}},
@@ -485,7 +497,7 @@ class CodeScanningTests(unittest.TestCase):
                     },
                     "tool": {
                         "driver": {"name": "CodeQL"},
-                        "extensions": [{"name": "codeql/cpp-queries", "rules": high_rules + medium_rules}],
+                        "extensions": [{"name": "codeql/cpp-queries", "rules": all_rules}],
                     },
                     "invocations": [{"executionSuccessful": True}],
                     "artifacts": artifacts,
@@ -493,15 +505,26 @@ class CodeScanningTests(unittest.TestCase):
                 }],
             }
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code, errs, summary = self.mod.verify_sarif_dir(sarif_dir)
+            code, errs, summary = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
             self.assertEqual((code, errs), (0, []))
             self.assertEqual(summary["extracted_files"], 6)
-            self.assertEqual(summary["medium_security_rules"], 20)
+            self.assertEqual(summary["rules"], len(expected_ids))
+
+            # Filtering out even ONE single high-precision query from security-extended must FAIL
+            # and name the exact omitted query ID.
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = [
+                r for r in all_rules if r["id"] != "cpp/high-sec-0"
+            ]
+            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
+            code_one, errs_one, _ = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
+            self.assertEqual(code_one, 1)
+            self.assertTrue(any("cpp/high-sec-0" in e for e in errs_one), errs_one)
 
             # Header-only artifact under src/pdf/ must NOT certify src/pdf/ translation units.
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = all_rules
             doc["runs"][0]["artifacts"] = [{"location": {"uri": "src/pdf/error.h"}}] + artifacts[1:]
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_hdr, errs_hdr, _ = self.mod.verify_sarif_dir(sarif_dir)
+            code_hdr, errs_hdr, _ = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
             self.assertEqual(code_hdr, 1)
             self.assertTrue(any("src/pdf/" in e for e in errs_hdr), errs_hdr)
 
@@ -510,44 +533,32 @@ class CodeScanningTests(unittest.TestCase):
                 {"location": {"uri": "vcpkg_installed/vendor/src/pdf/main.cpp"}}
             ] + artifacts[1:]
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_dep, errs_dep, _ = self.mod.verify_sarif_dir(sarif_dir)
+            code_dep, errs_dep, _ = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
             self.assertEqual(code_dep, 1)
             self.assertTrue(any("src/pdf/" in e for e in errs_dep), errs_dep)
 
-            # Default-only C++ suite (35 high-precision security rules, 0 medium-precision) must FAIL
-            # even though total rule count stays identical (35 >= 20).
+            # Missing codeqlConfigSummary must FAIL even if all rule IDs are present.
             doc["runs"][0]["artifacts"] = artifacts
-            default_only_rules = [
-                {"id": f"cpp/default-high-{i}", "properties": {"tags": ["security"], "precision": "high"}}
-                for i in range(35)
-            ]
-            doc["runs"][0]["tool"]["extensions"][0]["rules"] = default_only_rules
-            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_def, errs_def, _ = self.mod.verify_sarif_dir(sarif_dir)
-            self.assertEqual(code_def, 1)
-            self.assertTrue(any("security-extended" in e for e in errs_def), errs_def)
-
-            # Partial suite with custom medium-precision rules and no codeqlConfigSummary must FAIL.
             doc["runs"][0]["properties"] = {}
-            doc["runs"][0]["tool"]["extensions"][0]["rules"] = [
-                {"id": f"custom/med-{i}", "properties": {"tags": ["security"], "precision": "medium"}}
-                for i in range(25)
-            ]
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_partial, errs_partial, _ = self.mod.verify_sarif_dir(sarif_dir)
-            self.assertEqual(code_partial, 1)
-            self.assertTrue(any("codeqlConfigSummary" in e for e in errs_partial), errs_partial)
-            self.assertTrue(any("canonical" in e for e in errs_partial), errs_partial)
+            code_nocfg, errs_nocfg, _ = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
+            self.assertEqual(code_nocfg, 1)
+            self.assertTrue(any("codeqlConfigSummary" in e for e in errs_nocfg), errs_nocfg)
 
-            # Mismatched codeqlConfigSummary ("default") must also FAIL even with medium rules present.
-            doc["runs"][0]["tool"]["extensions"][0]["rules"] = high_rules + medium_rules
+            # Mismatched codeqlConfigSummary ("default") must also FAIL.
             doc["runs"][0]["properties"] = {
                 "codeqlConfigSummary": {"queries": [{"type": "builtinSuite", "uses": "default"}]}
             }
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_cfg, errs_cfg, _ = self.mod.verify_sarif_dir(sarif_dir)
+            code_cfg, errs_cfg, _ = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
             self.assertEqual(code_cfg, 1)
             self.assertTrue(any("codeqlConfigSummary" in e for e in errs_cfg), errs_cfg)
+
+            # CLI refuses --verify-sarif without --codeql-cli or --expected-rules.
+            cli_lines: list[str] = []
+            rc_missing_arg = self.mod.main(["--verify-sarif", str(sarif_dir)], out=cli_lines.append)
+            self.assertEqual(rc_missing_arg, 1)
+            self.assertTrue(any("--codeql-cli" in ln for ln in cli_lines), cli_lines)
 
     def test_codeql_workflow_triggers_permissions_and_skill_contract(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -558,6 +569,7 @@ class CodeScanningTests(unittest.TestCase):
         self.assertIn("queries: security-extended", text)
         self.assertIn("-NoSccache", text)
         self.assertIn("--verify-sarif", text)
+        self.assertIn("--codeql-cli", text)
 
         # Extract push paths and verify representative manifest, library, engine, and verifier paths match.
         paths_block = re.search(r"paths:\n((?:\s+-\s+'[^']+'\n)+)", text)
