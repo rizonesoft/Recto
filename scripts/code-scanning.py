@@ -48,7 +48,14 @@ TASK_NAME = "recto-code-scanning"
 STATE_FILE = Path("build") / "code-scanning" / "state.json"
 MAX_ALERTS_PER_EMAIL = 15
 MIN_SECURITY_RULES = 10
-MIN_MEDIUM_SECURITY_RULES = 10
+MIN_MEDIUM_SECURITY_RULES = 20
+REQUIRED_SECURITY_EXTENDED_RULES = (
+    "cpp/allocation-too-small",
+    "cpp/cleartext-storage-buffer",
+    "cpp/missing-check-scanf",
+    "cpp/overrunning-write",
+    "cpp/path-injection",
+)
 TRANSLATION_UNIT_SUFFIXES = (".cpp", ".cc", ".cxx", ".c")
 REQUIRED_SOURCE_ROOTS = (
     "src/pdf/",
@@ -136,9 +143,6 @@ def fetch_latest_analysis(
         f"repos/{repo}/code-scanning/analyses?ref={ref}&per_page=20",
     ])
     if rc != 0:
-        combined = f"{err}\n{out}".lower()
-        if "404" in combined or "no analysis found" in combined:
-            return None
         raise Unavailable(f"gh api code-scanning/analyses failed (exit {rc}): {(err or out).strip()}")
     analyses = _parse_json(out, "code-scanning/analyses")
     if not isinstance(analyses, list):
@@ -391,48 +395,28 @@ def check_scheduled(
     open_numbers = {int(a["number"]) for a in alerts}
     acknowledged &= open_numbers
     unacked = [a for a in alerts if int(a["number"]) not in acknowledged]
+    batch = unacked[:batch_limit]
+    remaining = len(unacked) - len(batch)
+    report_failed_run = run_error is not None and (run_id is None or run_id not in acknowledged_failed_runs)
 
-    if unacked:
-        batch = unacked[:batch_limit]
-        remaining = len(unacked) - len(batch)
+    if batch or report_failed_run:
         stamp = float(now())
         next_bucket = {
             "acknowledged": sorted(acknowledged),
             "acknowledged_failed_runs": acknowledged_failed_runs,
             "raised_alerts": [int(a["number"]) for a in batch],
-            "raised_failed_run": None,
+            "raised_failed_run": run_id if report_failed_run else None,
             "raised_at": stamp,
         }
         _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, next_bucket, replace=replace)
-        out(f"code-scanning: {len(batch)} new open alert(s) on {branch} (showing {len(batch)} of {len(unacked)}):")
-        for alert in batch:
-            out(f"  {format_alert(alert)}")
-        if remaining > 0:
-            out(f"  ... and {remaining} more open alert(s) queued for the next poll")
-        return 1
-
-    if run_error is not None:
-        if run_id is not None and run_id in acknowledged_failed_runs:
-            clean_bucket = {
-                "acknowledged": sorted(acknowledged),
-                "acknowledged_failed_runs": acknowledged_failed_runs,
-                "raised_alerts": [],
-                "raised_failed_run": None,
-                "raised_at": None,
-            }
-            _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, clean_bucket, replace=replace)
-            out(f"{run_error} (already reported for run {run_id})")
-            return 0
-        stamp = float(now())
-        fail_bucket = {
-            "acknowledged": sorted(acknowledged),
-            "acknowledged_failed_runs": acknowledged_failed_runs,
-            "raised_alerts": [],
-            "raised_failed_run": run_id,
-            "raised_at": stamp,
-        }
-        _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, fail_bucket, replace=replace)
-        out(run_error)
+        if report_failed_run and run_error is not None:
+            out(run_error)
+        if batch:
+            out(f"code-scanning: {len(batch)} new open alert(s) on {branch} (showing {len(batch)} of {len(unacked)}):")
+            for alert in batch:
+                out(f"  {format_alert(alert)}")
+            if remaining > 0:
+                out(f"  ... and {remaining} more open alert(s) queued for the next poll")
         return 1
 
     clean_bucket = {
@@ -443,7 +427,9 @@ def check_scheduled(
         "raised_at": None,
     }
     _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, clean_bucket, replace=replace)
-    if status != "completed":
+    if run_error is not None and run_id is not None:
+        out(f"{run_error} (already reported for run {run_id})")
+    elif status != "completed":
         out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} is {status} ({run_url}); 0 unacknowledged open alerts")
     else:
         out(f"code-scanning: 0 unacknowledged open alerts on {branch} ({len(alerts)} total open)")
@@ -460,10 +446,11 @@ def _normalize_sarif_uri(uri: str) -> str:
 
 
 def _matches_source_root_tu(path: str, root: str) -> bool:
+    """Match repository-relative first-party C++ translation units only (never dependency subpaths)."""
     root_l = root.lower()
     if not path.endswith(TRANSLATION_UNIT_SUFFIXES):
         return False
-    return path.startswith(root_l) or f"/{root_l}" in path
+    return path.startswith(root_l)
 
 
 def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUIRED_SOURCE_ROOTS) -> tuple[int, list[str], dict]:
@@ -547,8 +534,13 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
 
     if not has_codeql_driver:
         errors.append("no CodeQL tool.driver.name found in SARIF runs")
-    if saw_config_summary and not config_uses_security_extended:
-        errors.append("codeqlConfigSummary does not declare security-extended")
+    if not saw_config_summary or not config_uses_security_extended:
+        errors.append("codeqlConfigSummary missing or does not declare security-extended")
+    missing_canonical = [r for r in REQUIRED_SECURITY_EXTENDED_RULES if r not in medium_security_rule_ids]
+    if missing_canonical:
+        errors.append(
+            f"security-extended canonical C++ queries missing: {', '.join(missing_canonical)}"
+        )
     if len(security_rule_ids) < MIN_SECURITY_RULES or len(medium_security_rule_ids) < MIN_MEDIUM_SECURITY_RULES:
         errors.append(
             "security-extended query suite not verified "

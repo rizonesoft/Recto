@@ -208,7 +208,8 @@ class CodeScanningTests(unittest.TestCase):
                         "event": "push", "createdAt": "2026-11-27T06:05:00Z"}]
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(runs=pending_run), out=lambda _: None), 2)
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(run_rc=1), out=lambda _: None), 3)
-        self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses_rc=404), out=lambda _: None), 1)
+        self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses=[]), out=lambda _: None), 1)
+        self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses_rc=404), out=lambda _: None), 3)
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses_rc=1), out=lambda _: None), 3)
 
     def test_scheduled_pending_scan_still_reports_existing_open_alerts(self):
@@ -293,6 +294,46 @@ class CodeScanningTests(unittest.TestCase):
                 runner=_make_runner(runs=failed_102), root=root, now=lambda: 1700000200.0, out=lambda _: None
             )
             self.assertEqual(rc3, 1)
+
+    def test_scheduled_reports_both_failed_run_and_new_open_alert_together(self):
+        failed_77 = [{"databaseId": 77, "status": "completed", "conclusion": "failure",
+                      "headSha": "b" * 40, "url": "https://github.com/rizonesoft/Recto/actions/runs/77",
+                      "event": "push", "createdAt": "2026-11-27T06:00:00Z"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            last_path = root / "build" / "automations" / "recto-code-scanning" / "last.json"
+            last_path.parent.mkdir(parents=True)
+            lines: list[str] = []
+            rc1 = self.mod.check_scheduled(
+                runner=_make_runner(runs=failed_77, alert_pages={1: (0, [_alert(7)], "")}),
+                root=root,
+                now=lambda: 1700000010.0,
+                out=lines.append,
+            )
+            self.assertEqual(rc1, 1)
+            joined = "\n".join(lines)
+            self.assertIn("ended with failure", joined)
+            self.assertIn("#7 ", joined)
+
+            state = json.loads((root / "build" / "code-scanning" / "state.json").read_text(encoding="utf-8"))
+            bucket = state["scopes"]["rizonesoft/Recto@main"]
+            self.assertEqual(bucket["raised_alerts"], [7])
+            self.assertEqual(bucket["raised_failed_run"], 77)
+
+            # Confirm delivery -> next poll acknowledges both alert #7 and failed run 77.
+            last_path.write_text(json.dumps({
+                "started": "2023-11-14T22:13:25Z",
+                "finished": "2023-11-14T22:13:35Z",
+                "exit": 1,
+                "alert": "sent",
+            }), encoding="utf-8")
+            rc2 = self.mod.check_scheduled(
+                runner=_make_runner(runs=failed_77, alert_pages={1: (0, [_alert(7)], "")}),
+                root=root,
+                now=lambda: 1700000100.0,
+                out=lambda _: None,
+            )
+            self.assertEqual(rc2, 0)
 
     def test_scheduled_namespaces_state_by_repo_and_branch_and_skips_unchanged_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -415,12 +456,17 @@ class CodeScanningTests(unittest.TestCase):
             sarif_dir = Path(tmp)
             high_rules = [
                 {"id": f"cpp/high-sec-{i}", "properties": {"tags": ["security"], "precision": "high"}}
-                for i in range(12)
+                for i in range(15)
             ]
-            medium_rules = [
+            canonical_med = [
+                {"id": rid, "properties": {"tags": ["security"], "precision": "medium"}}
+                for rid in self.mod.REQUIRED_SECURITY_EXTENDED_RULES
+            ]
+            extra_med = [
                 {"id": f"cpp/med-sec-{i}", "properties": {"tags": ["security"], "precision": "medium"}}
-                for i in range(12)
+                for i in range(15)
             ]
+            medium_rules = canonical_med + extra_med
             artifacts = [
                 {"location": {"uri": "src/pdf/document.cpp"}},
                 {"location": {"uri": "src/core/runtime.cpp"}},
@@ -450,7 +496,7 @@ class CodeScanningTests(unittest.TestCase):
             code, errs, summary = self.mod.verify_sarif_dir(sarif_dir)
             self.assertEqual((code, errs), (0, []))
             self.assertEqual(summary["extracted_files"], 6)
-            self.assertEqual(summary["medium_security_rules"], 12)
+            self.assertEqual(summary["medium_security_rules"], 20)
 
             # Header-only artifact under src/pdf/ must NOT certify src/pdf/ translation units.
             doc["runs"][0]["artifacts"] = [{"location": {"uri": "src/pdf/error.h"}}] + artifacts[1:]
@@ -459,12 +505,21 @@ class CodeScanningTests(unittest.TestCase):
             self.assertEqual(code_hdr, 1)
             self.assertTrue(any("src/pdf/" in e for e in errs_hdr), errs_hdr)
 
-            # Default-only C++ suite (24 high-precision security rules, 0 medium-precision) must FAIL
-            # even though total rule count stays identical (24 >= 10).
+            # Dependency TU with matching suffix (vcpkg_installed/vendor/src/pdf/main.cpp) must NOT satisfy src/pdf/.
+            doc["runs"][0]["artifacts"] = [
+                {"location": {"uri": "vcpkg_installed/vendor/src/pdf/main.cpp"}}
+            ] + artifacts[1:]
+            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
+            code_dep, errs_dep, _ = self.mod.verify_sarif_dir(sarif_dir)
+            self.assertEqual(code_dep, 1)
+            self.assertTrue(any("src/pdf/" in e for e in errs_dep), errs_dep)
+
+            # Default-only C++ suite (35 high-precision security rules, 0 medium-precision) must FAIL
+            # even though total rule count stays identical (35 >= 20).
             doc["runs"][0]["artifacts"] = artifacts
             default_only_rules = [
                 {"id": f"cpp/default-high-{i}", "properties": {"tags": ["security"], "precision": "high"}}
-                for i in range(24)
+                for i in range(35)
             ]
             doc["runs"][0]["tool"]["extensions"][0]["rules"] = default_only_rules
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
@@ -472,11 +527,23 @@ class CodeScanningTests(unittest.TestCase):
             self.assertEqual(code_def, 1)
             self.assertTrue(any("security-extended" in e for e in errs_def), errs_def)
 
+            # Partial suite with custom medium-precision rules and no codeqlConfigSummary must FAIL.
+            doc["runs"][0]["properties"] = {}
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = [
+                {"id": f"custom/med-{i}", "properties": {"tags": ["security"], "precision": "medium"}}
+                for i in range(25)
+            ]
+            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
+            code_partial, errs_partial, _ = self.mod.verify_sarif_dir(sarif_dir)
+            self.assertEqual(code_partial, 1)
+            self.assertTrue(any("codeqlConfigSummary" in e for e in errs_partial), errs_partial)
+            self.assertTrue(any("canonical" in e for e in errs_partial), errs_partial)
+
             # Mismatched codeqlConfigSummary ("default") must also FAIL even with medium rules present.
             doc["runs"][0]["tool"]["extensions"][0]["rules"] = high_rules + medium_rules
-            doc["runs"][0]["properties"]["codeqlConfigSummary"]["queries"] = [
-                {"type": "builtinSuite", "uses": "default"}
-            ]
+            doc["runs"][0]["properties"] = {
+                "codeqlConfigSummary": {"queries": [{"type": "builtinSuite", "uses": "default"}]}
+            }
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
             code_cfg, errs_cfg, _ = self.mod.verify_sarif_dir(sarif_dir)
             self.assertEqual(code_cfg, 1)
