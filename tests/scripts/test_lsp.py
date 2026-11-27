@@ -1363,14 +1363,19 @@ class LspMcpBridge(unittest.TestCase):
             self.assertFalse(cpp_syms["result"]["isError"], cpp_syms)
             self.assertIn("classify_diagnostic_id", cpp_syms["result"]["content"][0]["text"])
 
-            # Hover on `classify_diagnostic_id` at line 701, col 16 in src/pdf/error.cpp
+            # Hover on `classify_diagnostic_id` in src/pdf/error.cpp (locate dynamically so edits above it never drift).
+            error_lines = (ROOT / "src" / "pdf" / "error.cpp").read_text(encoding="utf-8").splitlines()
+            hover_line = next(
+                idx for idx, txt in enumerate(error_lines, 1) if "classify_diagnostic_id(" in txt and "DiagnosticId" in txt
+            )
+            hover_col = error_lines[hover_line - 1].index("classify_diagnostic_id") + 1
             cpp_hover = srv.handle_rpc({
                 "jsonrpc": "2.0",
                 "id": 12,
                 "method": "tools/call",
                 "params": {
                     "name": "lsp_hover",
-                    "arguments": {"file": "src/pdf/error.cpp", "line": 701, "character": 16},
+                    "arguments": {"file": "src/pdf/error.cpp", "line": hover_line, "character": hover_col},
                 },
             })
             self.assertFalse(cpp_hover["result"]["isError"], cpp_hover)

@@ -130,10 +130,10 @@ build\python.cmd scripts/ci_status.py                # main's latest build.yml a
 pwsh .conclave/automations/install.ps1 -Check # tasks are this clone's
 build\python.cmd scripts/gen-compile-commands.py --check # C++23 clangd database matches Recto.sln
 build\python.cmd scripts/run-tests.py --quick        # fast RAM-bounded local Python cadence (+ --full in CI)
-.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<tests>'  # iteration gate (+ -EnableASAN when named; Python via unittest/run-tests.py)
-.\build.cmd                                  # stamp gate: x64 Debug+Release, all tests, once on tip (-Platform x64,ARM64 adds ARM64)
-.\build.cmd -MSBuild -SkipTests              # Recto.sln MSBuild parity path until a milestone passes on CMake (D8, D00 T04 §8)
-.\build\build.ps1 -Analyze                   # MSVC /analyze (NativeRecommendedRules + Core Check) over all 8 projects; CI (build.yml) on main code/build/workflow pushes & PRs (skips todo/**, docs/**, **/*.md)
+.\build.cmd -Platform x64 -Configuration Debug -TestFilter '<the section's tests>'  # iteration gate (+ -EnableASAN; Python via unittest/run-tests.py)
+.\build.cmd                                  # stamp gate: x64 Debug and Release, every test, once on tip (-Platform x64,ARM64 adds ARM64)
+.\build.cmd -MSBuild -SkipTests              # Recto.sln MSBuild parity path (D8, D00 T04 §8)
+.\build\build.ps1 -Analyze                   # MSVC /analyze over all 8 projects; CI (build.yml) on main code/build/workflow pushes & PRs (skips todo/**, docs/**, **/*.md)
 ```
 
 Report only commands actually run, and distinguish static evidence, test output and review proof.
