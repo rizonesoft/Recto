@@ -223,7 +223,8 @@ def merge_and_verify(
                     continue
                 tool = run.get("tool")
                 driver = tool.get("driver") if isinstance(tool, dict) else None
-                if not isinstance(tool, dict) or not isinstance(driver, dict) or not str(driver.get("name") or "").strip():
+                driver_name = driver.get("name") if isinstance(driver, dict) else None
+                if not isinstance(tool, dict) or not isinstance(driver, dict) or not isinstance(driver_name, str) or not driver_name.strip():
                     errors.append(f"{proj}: {src}: SARIF run missing required tool.driver.name in {sarif_path}")
                     tu_runs_valid = False
                 invocations = run.get("invocations")

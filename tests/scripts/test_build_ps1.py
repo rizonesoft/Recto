@@ -392,8 +392,14 @@ class AsanCoverage(unittest.TestCase):
         self.assertNotIn("asan-state", text)
         self.assertIsNone(re.search(r"Remove-Item\s+\$(objDir|binDir)", text))
         props = (ROOT / "Directory.Build.props").read_text(encoding="utf-8-sig")
-        self.assertRegex(props, r"<RectoObjFolder Condition=\"[^\"]*'\$\(EnableASAN\)' == 'true'\">obj-asan</RectoObjFolder>")
-        self.assertRegex(props, r"<RectoBinFolder Condition=\"[^\"]*'\$\(EnableASAN\)' == 'true'\">bin-asan</RectoBinFolder>")
+        self.assertIn(
+            "<RectoObjFolder Condition=\"'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' == 'true'\">obj-asan</RectoObjFolder>",
+            props,
+        )
+        self.assertIn(
+            "<RectoBinFolder Condition=\"'$(EnableAnalyze)' != 'true' And '$(EnableASAN)' == 'true'\">bin-asan</RectoBinFolder>",
+            props,
+        )
         self.assertIn(r"build\$(RectoObjFolder)\$(MSBuildProjectName)", props)
         self.assertIn(r"build\$(RectoBinFolder)\$(Platform)", props)
         self.assertIn(r'build\$binFolder\x64\$cfg\recto-tests\recto-tests.exe', text)
@@ -2262,7 +2268,28 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     else:
         on_block = on_match.group(1)
         push_match = re.search(r"(?m)^  push:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", on_block, re.DOTALL)
-        if not push_match or not re.search(r"(?m)^\s+branches:\s*\[\s*main\s*\]|^\s+-\s*main\s*$", push_match.group(1)):
+        push_targets_main = False
+        if push_match:
+            push_body = push_match.group(1)
+            branches_match = re.search(r"(?m)^    branches:\s*(.*)$", push_body)
+            if branches_match:
+                inline = branches_match.group(1).strip()
+                if inline.startswith("[") and inline.endswith("]"):
+                    items = [item.strip().strip("'\"") for item in inline[1:-1].split(",")]
+                    push_targets_main = "main" in items
+                else:
+                    rest = push_body[branches_match.end():]
+                    block_match = re.match(r"(?:\r?\n)(.*?)(?=^    [A-Za-z0-9_-]+:|\Z)", rest, re.DOTALL | re.MULTILINE)
+                    if block_match:
+                        list_items = [
+                            m.group(1).strip().strip("'\"")
+                            for m in re.finditer(r"(?m)^      -\s+(.+?)\s*$", block_match.group(1))
+                        ]
+                        push_targets_main = "main" in list_items
+            ignore_match = re.search(r"(?m)^    branches-ignore:\s*(.*)$", push_body)
+            if ignore_match:
+                push_targets_main = False
+        if not push_targets_main:
             errors.append("workflow push trigger does not target main branch")
         if not re.search(r"(?m)^  pull_request:\s*$", on_block):
             errors.append("workflow missing pull_request trigger")
@@ -2452,18 +2479,33 @@ class MsvcAnalyzeContract(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertTrue(any("invalid or empty SARIF 2.1.0 runs" in e for e in errs), errs)
 
-            # Run missing required SARIF 2.1.0 tool.driver.name is refused.
-            (int_dir / "a.nativecodeanalysis.sarif").write_text(json.dumps({
-                "version": "2.1.0",
-                "runs": [{
+            # Run missing required SARIF 2.1.0 tool.driver.name or using a non-string name is refused.
+            for bad_run in (
+                {
                     "invocations": [{"executionSuccessful": True}],
                     "artifacts": [{"location": {"uri": "file:///D:/GitHub/Recto/src/pdf/a.cpp"}, "roles": ["analysisTarget"]}],
                     "results": [],
-                }],
-            }), encoding="utf-8")
-            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
-            self.assertEqual(code, 1)
-            self.assertTrue(any("tool.driver.name" in e for e in errs), errs)
+                },
+                {
+                    "tool": {"driver": {"name": 42}},
+                    "invocations": [{"executionSuccessful": True}],
+                    "artifacts": [{"location": {"uri": "file:///D:/GitHub/Recto/src/pdf/a.cpp"}, "roles": ["analysisTarget"]}],
+                    "results": [],
+                },
+                {
+                    "tool": {"driver": {"name": True}},
+                    "invocations": [{"executionSuccessful": True}],
+                    "artifacts": [{"location": {"uri": "file:///D:/GitHub/Recto/src/pdf/a.cpp"}, "roles": ["analysisTarget"]}],
+                    "results": [],
+                },
+            ):
+                (int_dir / "a.nativecodeanalysis.sarif").write_text(json.dumps({
+                    "version": "2.1.0",
+                    "runs": [bad_run],
+                }), encoding="utf-8")
+                code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+                self.assertEqual(code, 1)
+                self.assertTrue(any("tool.driver.name" in e for e in errs), errs)
 
             # Mismatched analysisTarget is refused.
             write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1, target_uri="file:///D:/GitHub/Recto/src/pdf/other.cpp")
@@ -2544,6 +2586,8 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertTrue(any("must be exactly" in e for e in _validate_analyze_workflow(with_trailing_exit0)))
         without_main_push = workflow.replace("branches: [main]", "branches: [other]", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(without_main_push)))
+        with_branches_ignore = workflow.replace("branches: [main]", "branches-ignore:\n      - main", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_branches_ignore)))
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
