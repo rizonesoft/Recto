@@ -221,6 +221,11 @@ def merge_and_verify(
                     errors.append(f"{proj}: {src}: non-object run entry in {sarif_path}")
                     tu_runs_valid = False
                     continue
+                tool = run.get("tool")
+                driver = tool.get("driver") if isinstance(tool, dict) else None
+                if not isinstance(tool, dict) or not isinstance(driver, dict) or not str(driver.get("name") or "").strip():
+                    errors.append(f"{proj}: {src}: SARIF run missing required tool.driver.name in {sarif_path}")
+                    tu_runs_valid = False
                 invocations = run.get("invocations")
                 if not isinstance(invocations, list) or not invocations:
                     errors.append(f"{proj}: {src}: missing invocations in {sarif_path}")

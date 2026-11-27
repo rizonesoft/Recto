@@ -392,8 +392,8 @@ class AsanCoverage(unittest.TestCase):
         self.assertNotIn("asan-state", text)
         self.assertIsNone(re.search(r"Remove-Item\s+\$(objDir|binDir)", text))
         props = (ROOT / "Directory.Build.props").read_text(encoding="utf-8-sig")
-        self.assertRegex(props, r"<RectoObjFolder Condition=\"'\$\(EnableASAN\)' == 'true'\">obj-asan</RectoObjFolder>")
-        self.assertRegex(props, r"<RectoBinFolder Condition=\"'\$\(EnableASAN\)' == 'true'\">bin-asan</RectoBinFolder>")
+        self.assertRegex(props, r"<RectoObjFolder Condition=\"[^\"]*'\$\(EnableASAN\)' == 'true'\">obj-asan</RectoObjFolder>")
+        self.assertRegex(props, r"<RectoBinFolder Condition=\"[^\"]*'\$\(EnableASAN\)' == 'true'\">bin-asan</RectoBinFolder>")
         self.assertIn(r"build\$(RectoObjFolder)\$(MSBuildProjectName)", props)
         self.assertIn(r"build\$(RectoBinFolder)\$(Platform)", props)
         self.assertIn(r'build\$binFolder\x64\$cfg\recto-tests\recto-tests.exe', text)
@@ -2256,11 +2256,21 @@ Write-Output ("PORT=" + $info.ServerPort)
 def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     """Validate the analyze job in .github/workflows/build.yml (D06 T02 s10)."""
     errors: list[str] = []
-    if "push:" not in workflow_text or "pull_request:" not in workflow_text or "workflow_dispatch:" not in workflow_text:
-        errors.append("workflow missing push/pull_request/workflow_dispatch triggers")
+    on_match = re.search(r"(?m)^on:\s*\n(.*?)(?=^[A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
+    if not on_match:
+        errors.append("workflow missing top-level 'on:' block")
+    else:
+        on_block = on_match.group(1)
+        push_match = re.search(r"(?m)^  push:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", on_block, re.DOTALL)
+        if not push_match or not re.search(r"(?m)^\s+branches:\s*\[\s*main\s*\]|^\s+-\s*main\s*$", push_match.group(1)):
+            errors.append("workflow push trigger does not target main branch")
+        if not re.search(r"(?m)^  pull_request:\s*$", on_block):
+            errors.append("workflow missing pull_request trigger")
+        if not re.search(r"(?m)^  workflow_dispatch:\s*$", on_block):
+            errors.append("workflow missing workflow_dispatch trigger")
     m = re.search(r"(?m)^  analyze:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
     if not m:
-        return ["missing 'analyze:' job in build.yml"]
+        return errors + ["missing 'analyze:' job in build.yml"]
     job_text = m.group(1)
     header_text = job_text.split("    steps:", 1)[0]
     if re.search(r"(?m)^    if\s*:", header_text):
@@ -2280,14 +2290,25 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
         errors.append("analyze job missing 'Run MSVC /analyze' step")
     else:
         step = run_match.group(1)
-        if "build/build.ps1 -Analyze" not in step:
-            errors.append("analyze step does not invoke build/build.ps1 -Analyze")
         if re.search(r"continue-on-error\s*:\s*true", step, re.IGNORECASE):
             errors.append("analyze step sets continue-on-error: true")
         if re.search(r"(?m)^\s+if\s*:", step):
             errors.append("analyze step has an 'if:' condition that could skip analysis")
-        if re.search(r"(\|\|\s*true|\|\|\s*exit\s+0|;\s*exit\s+0|LASTEXITCODE\s*=\s*0)", step, re.IGNORECASE):
-            errors.append("analyze step swallows non-zero exit code")
+        cmd_match = re.search(r"(?m)^        run:\s*(.*)$", step)
+        if not cmd_match:
+            errors.append("analyze step missing run command")
+        else:
+            first_val = cmd_match.group(1).strip()
+            rest_lines = [
+                ln.strip()
+                for ln in step[cmd_match.end():].splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            expected_cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze"
+            if first_val != expected_cmd or rest_lines:
+                errors.append(
+                    f"analyze step run command must be exactly '{expected_cmd}' with no trailing lines (got {first_val!r}, extra={rest_lines!r})"
+                )
     upload_match = re.search(
         r"- name: Upload MSVC /analyze SARIF logs[^\n]*\n(.*?)(?=\n      - name: |\Z)",
         job_text,
@@ -2431,6 +2452,19 @@ class MsvcAnalyzeContract(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertTrue(any("invalid or empty SARIF 2.1.0 runs" in e for e in errs), errs)
 
+            # Run missing required SARIF 2.1.0 tool.driver.name is refused.
+            (int_dir / "a.nativecodeanalysis.sarif").write_text(json.dumps({
+                "version": "2.1.0",
+                "runs": [{
+                    "invocations": [{"executionSuccessful": True}],
+                    "artifacts": [{"location": {"uri": "file:///D:/GitHub/Recto/src/pdf/a.cpp"}, "roles": ["analysisTarget"]}],
+                    "results": [],
+                }],
+            }), encoding="utf-8")
+            code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
+            self.assertEqual(code, 1)
+            self.assertTrue(any("tool.driver.name" in e for e in errs), errs)
+
             # Mismatched analysisTarget is refused.
             write_sarif("a", None, "file:///D:/GitHub/Recto/src/pdf/a.cpp", 1, target_uri="file:///D:/GitHub/Recto/src/pdf/other.cpp")
             code, errs, _ = mod.merge_and_verify(manifest_dir, out_dir, ["recto-pdf"], "RectoAnalyze.ruleset")
@@ -2502,7 +2536,14 @@ class MsvcAnalyzeContract(unittest.TestCase):
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
             "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze || true",
         )
-        self.assertTrue(any("swallows" in e for e in _validate_analyze_workflow(with_swallow)))
+        self.assertTrue(any("must be exactly" in e for e in _validate_analyze_workflow(with_swallow)))
+        with_trailing_exit0 = workflow.replace(
+            "run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze",
+            "run: |\n          powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Analyze\n          exit 0",
+        )
+        self.assertTrue(any("must be exactly" in e for e in _validate_analyze_workflow(with_trailing_exit0)))
+        without_main_push = workflow.replace("branches: [main]", "branches: [other]", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(without_main_push)))
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)

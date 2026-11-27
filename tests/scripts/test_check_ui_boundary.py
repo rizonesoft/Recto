@@ -123,7 +123,8 @@ class EvaluationTests(unittest.TestCase):
 
     def test_build_ps1_checks_each_configuration_from_its_own_manifests(self):
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")
-        self.assertIn('$boundaryManifests = Join-Path $root "build\\boundary\\$plat\\$cfg"', build)
+        self.assertIn("$boundaryFolder = if ($Analyze) { 'boundary-analyze' } else { 'boundary' }", build)
+        self.assertIn('$boundaryManifests = Join-Path $root "build\\$boundaryFolder\\$plat\\$cfg"', build)
         self.assertIn("if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }", build)
         self.assertLess(build.index("Remove-Item $boundaryManifests"), build.index("& $msbuildExe @msbuildArgs"))
         self.assertIn("check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs", build)
