@@ -2304,62 +2304,158 @@ def _parse_yaml_flow_sequence(inner: str) -> list[str]:
     return items
 
 
+def _flow_bracket_delta(text: str) -> int:
+    delta = 0
+    quote: str | None = None
+    for ch in text:
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in ("'", '"'):
+            quote = ch
+        elif ch == "[":
+            delta += 1
+        elif ch == "]":
+            delta -= 1
+    return delta
+
+
+def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[str, list[str]]]:
+    """Parse a YAML mapping at exact `map_indent`, stopping each entry before the next key at <= map_indent."""
+    entries: dict[str, tuple[str, list[str]]] = {}
+    key_re = re.compile(r"^([A-Za-z0-9_.-]+):(?:[ \t]+(.*)|[ \t]*)$")
+    idx = 0
+    while idx < len(lines):
+        cleaned = _strip_yaml_comment(lines[idx])
+        if not cleaned.strip():
+            idx += 1
+            continue
+        indent = len(cleaned) - len(cleaned.lstrip(" "))
+        if indent < map_indent:
+            break
+        if indent == map_indent:
+            m = key_re.match(cleaned[indent:])
+            if m:
+                key = m.group(1)
+                inline = (m.group(2) or "").strip()
+                flow_depth = _flow_bracket_delta(inline)
+                child_lines: list[str] = []
+                idx += 1
+                while idx < len(lines):
+                    next_cleaned = _strip_yaml_comment(lines[idx])
+                    if not next_cleaned.strip():
+                        child_lines.append(lines[idx])
+                        idx += 1
+                        continue
+                    if flow_depth > 0:
+                        child_lines.append(lines[idx])
+                        flow_depth += _flow_bracket_delta(next_cleaned)
+                        idx += 1
+                        continue
+                    next_indent = len(next_cleaned) - len(next_cleaned.lstrip(" "))
+                    next_stripped = next_cleaned.lstrip(" ")
+                    if next_indent < map_indent:
+                        break
+                    if next_indent == map_indent and not (
+                        next_stripped == "-" or next_stripped.startswith("- ") or next_stripped.startswith("-\t")
+                    ):
+                        break
+                    child_lines.append(lines[idx])
+                    idx += 1
+                entries[key] = (inline, child_lines)
+                continue
+        idx += 1
+    return entries
+
+
+def _parse_yaml_list_value(inline: str, child_lines: list[str], key_indent: int) -> list[str] | None:
+    """Parse a YAML flow sequence (single or multi-line) or block sequence; returns None if invalid."""
+    if inline.startswith("["):
+        chunks = [inline] + [_strip_yaml_comment(ln).strip() for ln in child_lines if _strip_yaml_comment(ln).strip()]
+        joined = " ".join(chunks)
+        quote: str | None = None
+        close_idx = -1
+        for i, ch in enumerate(joined):
+            if quote is not None:
+                if ch == quote:
+                    quote = None
+            elif ch in ("'", '"'):
+                quote = ch
+            elif ch == "]":
+                close_idx = i
+                break
+        if close_idx == -1 or joined[close_idx + 1:].strip():
+            return None
+        return _parse_yaml_flow_sequence(joined[1:close_idx])
+    if inline:
+        return None
+    items: list[str] = []
+    pending_dash_indent: int | None = None
+    for raw_line in child_lines:
+        cleaned = _strip_yaml_comment(raw_line)
+        if not cleaned.strip():
+            continue
+        indent = len(cleaned) - len(cleaned.lstrip(" "))
+        stripped = cleaned.lstrip(" ")
+        if pending_dash_indent is not None:
+            if indent > pending_dash_indent:
+                items.append(_parse_yaml_scalar(stripped))
+                pending_dash_indent = None
+                continue
+            items.append("")
+            pending_dash_indent = None
+        if indent < key_indent:
+            break
+        if stripped == "-":
+            pending_dash_indent = indent
+        elif stripped.startswith("- ") or stripped.startswith("-\t"):
+            items.append(_parse_yaml_scalar(stripped[1:]))
+        else:
+            return None
+    if pending_dash_indent is not None:
+        items.append("")
+    return items
+
+
+_ALLOWED_DOC_PATHS_IGNORE = {"todo/**", "docs/**", "**/*.md"}
+
+
 def _validate_analyze_workflow(workflow_text: str) -> list[str]:
     """Validate the analyze job in .github/workflows/build.yml (D06 T02 s10)."""
     errors: list[str] = []
-    on_match = re.search(r"(?m)^on:\s*\n(.*?)(?=^[A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
-    if not on_match:
+    top_map = _split_yaml_mapping(workflow_text.splitlines(), 0)
+    if "on" not in top_map:
         errors.append("workflow missing top-level 'on:' block")
     else:
-        on_block = on_match.group(1)
-        push_match = re.search(r"(?m)^  push:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", on_block, re.DOTALL)
+        _, on_lines = top_map["on"]
+        on_map = _split_yaml_mapping(on_lines, 2)
         push_targets_main = False
-        if push_match:
-            push_body = push_match.group(1)
-            branches_match = re.search(r"(?m)^    branches:[ \t]*(.*)$", push_body)
-            branch_items: list[str] = []
-            if branches_match:
-                inline = _strip_yaml_comment(branches_match.group(1)).strip()
-                if inline.startswith("[") and inline.endswith("]"):
-                    branch_items = _parse_yaml_flow_sequence(inline[1:-1])
-                elif not inline:
-                    pending_dash_indent: int | None = None
-                    for raw_line in push_body[branches_match.end():].splitlines():
-                        cleaned = _strip_yaml_comment(raw_line)
-                        if not cleaned.strip():
-                            continue
-                        indent = len(cleaned) - len(cleaned.lstrip(" "))
-                        stripped = cleaned.lstrip(" ")
-                        if pending_dash_indent is not None:
-                            if indent > pending_dash_indent:
-                                branch_items.append(_parse_yaml_scalar(stripped))
-                                pending_dash_indent = None
-                                continue
-                            # Bare dash with no following value is an empty/null item.
-                            branch_items.append("")
-                            pending_dash_indent = None
-                        if indent < 4:
-                            break
-                        if indent == 4 and not (stripped == "-" or stripped.startswith("- ") or stripped.startswith("-\t")):
-                            break
-                        if stripped == "-":
-                            pending_dash_indent = indent
-                        elif stripped.startswith("- ") or stripped.startswith("-\t"):
-                            branch_items.append(_parse_yaml_scalar(stripped[1:]))
-                        else:
-                            branch_items.append("<unparsed>")
-                    if pending_dash_indent is not None:
-                        branch_items.append("")
-            if branch_items == ["main"]:
+        if "push" in on_map:
+            _, push_lines = on_map["push"]
+            push_map = _split_yaml_mapping(push_lines, 4)
+            branches_entry = push_map.get("branches")
+            branch_items = _parse_yaml_list_value(branches_entry[0], branches_entry[1], 4) if branches_entry else None
+            disallowed_push_keys = {"branches-ignore", "tags", "tags-ignore", "paths"} & set(push_map)
+            if branch_items == ["main"] and not disallowed_push_keys:
                 push_targets_main = True
-            ignore_match = re.search(r"(?m)^    branches-ignore:[ \t]*(.*)$", push_body)
-            if ignore_match:
-                push_targets_main = False
+            if "paths-ignore" in push_map:
+                pi_inline, pi_lines = push_map["paths-ignore"]
+                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
+                if pi_items is None or not (set(pi_items) <= _ALLOWED_DOC_PATHS_IGNORE):
+                    errors.append(f"workflow push paths-ignore excludes non-doc paths: {pi_items!r}")
         if not push_targets_main:
             errors.append("workflow push trigger does not target main branch")
-        if not re.search(r"(?m)^  pull_request:\s*$", on_block):
+        if "pull_request" not in on_map:
             errors.append("workflow missing pull_request trigger")
-        if not re.search(r"(?m)^  workflow_dispatch:\s*$", on_block):
+        else:
+            _, pr_lines = on_map["pull_request"]
+            pr_map = _split_yaml_mapping(pr_lines, 4)
+            if "paths-ignore" in pr_map:
+                pi_inline, pi_lines = pr_map["paths-ignore"]
+                pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
+                if pi_items is None or not (set(pi_items) <= _ALLOWED_DOC_PATHS_IGNORE):
+                    errors.append(f"workflow pull_request paths-ignore excludes non-doc paths: {pi_items!r}")
+        if "workflow_dispatch" not in on_map:
             errors.append("workflow missing workflow_dispatch trigger")
     m = re.search(r"(?m)^  analyze:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
     if not m:
@@ -2666,8 +2762,22 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertEqual(_validate_analyze_workflow(with_aligned_block_list_main), [])
         with_comment_block_list_main = workflow.replace("branches: [main]", "branches: # release policy\n      - main", 1)
         self.assertEqual(_validate_analyze_workflow(with_comment_block_list_main), [])
+        with_multiline_flow_main = workflow.replace("branches: [main]", "branches: [\n      main\n    ]", 1)
+        self.assertEqual(_validate_analyze_workflow(with_multiline_flow_main), [])
         with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
+        with_tag_push_and_commented_sibling = workflow.replace(
+            "    branches: [main]",
+            "    tags: ['v*']\n  workflow_run: # sibling event\n    branches: [main]",
+            1,
+        )
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_tag_push_and_commented_sibling)))
+        with_pdf_paths_ignore = workflow.replace(
+            "      - '**/*.md'",
+            "      - '**/*.md'\n      - 'src/pdf/**'",
+            1,
+        )
+        self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(with_pdf_paths_ignore)))
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
