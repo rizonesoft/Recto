@@ -69,7 +69,7 @@ track: M6
 | 7 | §7 | FIPS mode detection and the algorithm policy in `recto-pdf` | D01 T01 §9, D07 T02 §4 | [ ] |
 | 8 | §8 | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI | §7, D01 T02 §5, D05 T01 §7, D05 T01 §11, D04 T07 §5, D07 T02 §15 | [ ] |
 | 9 | §9 | FIPS mode proof script, tested to refuse on an ordinary host | §8 | [ ] |
-| 10 | §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job | -- | [ ] |
+| 10 | §10 | MSVC code analysis (`/analyze`) over every module, clean, as a CI job | -- | [x] |
 | 11 | §11 | CodeQL scanning of the C++ sources, with open alerts read by the run | -- | [ ] |
 | 12 | §12 | clang-tidy bug, CERT and concurrency checks over the compile database | D00 T04 §12 | [ ] |
 
@@ -311,9 +311,12 @@ Filed 2026-11-10. Recto's engine parses hostile files, and its only compile-time
 - [x] Suppress each false report at its line with `#pragma warning(suppress: NNNN)` and a comment giving the reason; no rule is turned off for a file, a project or the build. Done when: `.\build\build.ps1 -Analyze` reports 0 findings across all 8 projects, and a search finds no `/wd`, `disable:` or rule-set edit that silences an analysis rule more widely than one line.
 - [x] Add an `analyze` job to `.github/workflows/build.yml` running `.\build\build.ps1 -Analyze` on `ref: ${{ inputs.sha || github.sha }}` (matching `build`/`asan`/`msbuild`), uploading `build/analyze/*.sarif` with `if: always()` (so failure runs still upload SARIF logs), with a timeout set from the measured complete 8-project time. Done when: the job passes on the pushed commit, and `tests/scripts/test_build_ps1.py` parses `.github/workflows/build.yml` to assert the `analyze` job runs on `push`/`pull_request`/`workflow_dispatch`, checks out `inputs.sha || github.sha`, propagates non-zero exit codes (failing if `continue-on-error: true` or exit-swallowing is introduced), and uploads `build/analyze/*.sarif` with `if: always()`.
 - [x] Name the command in `AGENTS.md`'s Validation list and in both `.agents/skills/review-todo-section/SKILL.md` and `.claude/skills/review-todo-section/SKILL.md` as a check for sections that touch `src/pdf` parsing or decoding. Done when: all three name `.\build\build.ps1 -Analyze` and accurately state it runs in CI (`build.yml`) on code, build or workflow pushes to `main` and pull requests (skipping `todo/**`, `docs/**` and `**/*.md`-only changes).
-- [ ] Commit: `build: MSVC code analysis over every module, clean, in CI`
+- [x] Commit: `build: MSVC code analysis over every module, clean, in CI`
 
 **Test checkpoint:** `.\build\build.ps1 -Analyze` exits 0 on the tree with 8 validated current-run SARIF 2.1.0 logs under `build\analyze\` covering every eligible TU of all 8 projects; separately planting `int a[4]; a[4] = 0;` and a Core Check violation (e.g. C26800 use-after-move) in `src/pdf/error.cpp` each makes `.\build\build.ps1 -Analyze` exit non-zero naming the line and recording the finding in `build\analyze\recto-pdf.sarif`; and `build\python.cmd -m unittest tests.scripts.test_build_ps1` passes.
+
+> **Verified:** 2026-11-27 | §10 | 02e5d08dd22ad50d80d3abac430af12cde210817
+> **Review:** `docs/reviews/d06-t02-s10.json`
 
 ## 11. CodeQL scanning of the C++ sources, with open alerts read by the run
 

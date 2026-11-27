@@ -1,0 +1,91 @@
+{
+  "ref": "D06 T02 \u00a710",
+  "title": "MSVC code analysis (`/analyze`) over every module, clean, as a CI job",
+  "implementation_sha": "02e5d08dd22ad50d80d3abac430af12cde210817",
+  "date": "2026-11-27",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T02-s10.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    ".\\build\\build.ps1 -Analyze -> exit 0, 0 Warning(s), 0 Error(s), Time Elapsed 00:05:13.57, 8 project log(s) verified clean in build\\analyze\\; full-solution negative controls on src/pdf/error.cpp:1304 -> C6386 exit=1 matched=True, C26800 exit=1 matched=True; two-backend isolation -> CMAKE_ISOLATION_FULL rewritten=0, MSBUILD_ISOLATION_FULL object files rewritten 0; tests.scripts.test_build_ps1 -> 38/38 OK + MsvcAnalyzeContract 4/4 OK; CI build.yml 45945031808 + plan.yml 45945031566 green",
+    ".\\build.cmd -NoSccache -> exit 0, Recto build complete. (Debug|x64: 514 tests in 173.256s, Release|x64: 514 tests in 32.640s)"
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T02-s10.md",
+    "verdict": "reconciled",
+    "candidate": "02e5d08dd22ad50d80d3abac430af12cde210817",
+    "reviewer": "astra",
+    "model": "gpt-6.2-astra",
+    "filed": []
+  },
+  "rounds_spent": 1,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/06-quality/D06-T02-s10.md",
+    "candidate": "8757df765f6f4b2cfe1a7064edcb012daf1b031a",
+    "reviewer": "astra",
+    "model": "gpt-6.2-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule_sha": "8757df765f6f4b2cfe1a7064edcb012daf1b031a",
+  "schedule": {
+    "policy": "three-pass",
+    "pass_cap": 33,
+    "blocking": [
+      "P1",
+      "P2"
+    ],
+    "plan": {
+      "lenses": [
+        "plan"
+      ]
+    },
+    "rounds": [
+      {
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "consistency",
+          "quality",
+          "optimization",
+          "design"
+        ]
+      }
+    ],
+    "completion": {
+      "lenses": [
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "reconciliation": {
+      "lenses": [
+        "adversarial",
+        "integration",
+        "plan-delivery",
+        "record"
+      ]
+    },
+    "efforts": {
+      "astra": {
+        "plan": "medium",
+        "rounds": [
+          "medium",
+          "low"
+        ],
+        "completion": "medium",
+        "reconciliation": "low"
+      }
+    }
+  },
+  "passes_spent": 13,
+  "pass_cap": 33
+}
