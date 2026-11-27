@@ -4,6 +4,7 @@ from __future__ import annotations
 import fnmatch
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -36,6 +37,24 @@ def _alert(number: int, *, state: str = "open", ref: str = "refs/heads/main", ru
     }
 
 
+def _analysis(
+    *,
+    commit_sha: str = "a" * 40,
+    ref: str = "refs/heads/main",
+    tool_name: str = "CodeQL",
+    category: str = "/language:c-cpp",
+    error: str = "",
+) -> dict:
+    return {
+        "id": 1,
+        "commit_sha": commit_sha,
+        "ref": ref,
+        "tool": {"name": tool_name},
+        "category": category,
+        "error": error,
+    }
+
+
 def _make_runner(
     *,
     runs: list[dict] | None = None,
@@ -48,7 +67,7 @@ def _make_runner(
     runs_data = [{"databaseId": 100, "status": "completed", "conclusion": "success",
                   "headSha": "a" * 40, "url": "https://github.com/rizonesoft/Recto/actions/runs/100",
                   "event": "push", "createdAt": "2026-11-27T05:00:00Z"}] if runs is None else runs
-    analyses_data = [{"id": 1, "commit_sha": "a" * 40, "ref": "refs/heads/main"}] if analyses is None else analyses
+    analyses_data = [_analysis()] if analyses is None else analyses
     pages = {1: (0, [], "")} if alert_pages is None else alert_pages
 
     def runner(args: list[str]) -> tuple[int, str, str]:
@@ -81,11 +100,16 @@ class CodeScanningTests(unittest.TestCase):
     def test_clean_green_scan_with_zero_alerts_exits_0_and_checks_request_args(self):
         calls: list[list[str]] = []
         lines: list[str] = []
-        rc = self.mod.check_ordinary(runner=_make_runner(calls=calls), out=lines.append)
+        rc = self.mod.check_ordinary(repo="example/fork", runner=_make_runner(calls=calls), out=lines.append)
         self.assertEqual(rc, 0, lines)
         self.assertTrue(any("0 open alerts on main" in ln for ln in lines), lines)
+        run_calls = [c for c in calls if c[:2] == ["run", "list"]]
+        self.assertEqual(len(run_calls), 1)
+        self.assertIn("--repo", run_calls[0])
+        self.assertIn("example/fork", run_calls[0])
         alert_calls = [c for c in calls if c[0] == "api" and "/code-scanning/alerts" in c[1]]
         self.assertEqual(len(alert_calls), 1)
+        self.assertIn("repos/example/fork/code-scanning/alerts", alert_calls[0][1])
         self.assertIn("state=open", alert_calls[0][1])
         self.assertIn("ref=refs/heads/main", alert_calls[0][1])
         self.assertIn("per_page=100", alert_calls[0][1])
@@ -115,6 +139,34 @@ class CodeScanningTests(unittest.TestCase):
             out=lines.append,
         )
         self.assertEqual(rc, 0, lines)
+
+    def test_malformed_alert_record_exits_3_never_0(self):
+        for bad_record in ({}, {"number": 1}, {"state": "open"}, {"number": True, "state": "open"}, "not-a-dict"):
+            lines: list[str] = []
+            rc = self.mod.check_ordinary(
+                runner=_make_runner(alert_pages={1: (0, [bad_record], "")}),
+                out=lines.append,
+            )
+            self.assertEqual(rc, 3, (bad_record, lines))
+
+    def test_mismatched_or_errored_analysis_exits_1_in_both_modes(self):
+        bad_analyses = [
+            [_analysis(commit_sha="b" * 40)],
+            [_analysis(tool_name="OtherScanner")],
+            [_analysis(category="/language:python")],
+            [_analysis(error="upload failed")],
+        ]
+        for analyses in bad_analyses:
+            rc_ord = self.mod.check_ordinary(runner=_make_runner(analyses=analyses), out=lambda _: None)
+            self.assertEqual(rc_ord, 1, analyses)
+            with tempfile.TemporaryDirectory() as tmp:
+                rc_sched = self.mod.check_scheduled(
+                    runner=_make_runner(analyses=analyses),
+                    root=Path(tmp),
+                    now=lambda: 1700000010.0,
+                    out=lambda _: None,
+                )
+                self.assertEqual(rc_sched, 1, analyses)
 
     def test_pagination_reads_two_pages_and_later_page_failure_exits_3(self):
         page1 = [_alert(i) for i in range(1, 101)]
@@ -158,6 +210,132 @@ class CodeScanningTests(unittest.TestCase):
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(run_rc=1), out=lambda _: None), 3)
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses_rc=404), out=lambda _: None), 1)
         self.assertEqual(self.mod.check_ordinary(runner=_make_runner(analyses_rc=1), out=lambda _: None), 3)
+
+    def test_scheduled_pending_scan_still_reports_existing_open_alerts(self):
+        pending_run = [{"databaseId": 102, "status": "in_progress", "conclusion": "",
+                        "headSha": "c" * 40, "url": "https://github.com/rizonesoft/Recto/actions/runs/102",
+                        "event": "push", "createdAt": "2026-11-27T06:05:00Z"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            lines: list[str] = []
+            rc = self.mod.check_scheduled(
+                runner=_make_runner(runs=pending_run, alert_pages={1: (0, [_alert(7)], "")}),
+                root=Path(tmp),
+                now=lambda: 1700000010.0,
+                out=lines.append,
+            )
+            self.assertEqual(rc, 1, lines)
+            self.assertIn("#7 ", "\n".join(lines))
+
+    def test_scheduled_persists_confirmed_receipt_before_intervening_outage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            last_path = root / "build" / "automations" / "recto-code-scanning" / "last.json"
+            last_path.parent.mkdir(parents=True)
+            runner_open = _make_runner(alert_pages={1: (0, [_alert(7)], "")})
+
+            # Poll 1 raises alert #7.
+            rc1 = self.mod.check_scheduled(runner=runner_open, root=root, now=lambda: 1700000010.0, out=lambda _: None)
+            self.assertEqual(rc1, 1)
+            # Runner confirms email sent for poll 1.
+            last_path.write_text(json.dumps({
+                "started": "2023-11-14T22:13:25Z",
+                "finished": "2023-11-14T22:13:35Z",
+                "exit": 1,
+                "alert": "sent",
+            }), encoding="utf-8")
+
+            # Poll 2 encounters an API outage (exit 3), and runner overwrites last.json with exit 3.
+            rc2 = self.mod.check_scheduled(runner=_make_runner(run_rc=1), root=root, now=lambda: 1700000100.0, out=lambda _: None)
+            self.assertEqual(rc2, 3)
+            last_path.write_text(json.dumps({
+                "started": "2023-11-14T22:14:55Z",
+                "finished": "2023-11-14T22:15:05Z",
+                "exit": 3,
+                "alert": "none",
+            }), encoding="utf-8")
+
+            # Poll 3 runs healthy with #7 still open: MUST NOT re-send #7 because poll 2 persisted receipt.
+            rc3 = self.mod.check_scheduled(runner=runner_open, root=root, now=lambda: 1700000200.0, out=lambda _: None)
+            self.assertEqual(rc3, 0)
+
+    def test_scheduled_deduplicates_failed_workflow_runs_by_database_id(self):
+        failed_101 = [{"databaseId": 101, "status": "completed", "conclusion": "failure",
+                       "headSha": "b" * 40, "url": "https://github.com/rizonesoft/Recto/actions/runs/101",
+                       "event": "push", "createdAt": "2026-11-27T06:00:00Z"}]
+        failed_102 = [{"databaseId": 102, "status": "completed", "conclusion": "failure",
+                       "headSha": "c" * 40, "url": "https://github.com/rizonesoft/Recto/actions/runs/102",
+                       "event": "push", "createdAt": "2026-11-28T06:00:00Z"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            last_path = root / "build" / "automations" / "recto-code-scanning" / "last.json"
+            last_path.parent.mkdir(parents=True)
+
+            # First poll reports failed run 101.
+            rc1 = self.mod.check_scheduled(
+                runner=_make_runner(runs=failed_101), root=root, now=lambda: 1700000010.0, out=lambda _: None
+            )
+            self.assertEqual(rc1, 1)
+            last_path.write_text(json.dumps({
+                "started": "2023-11-14T22:13:25Z",
+                "finished": "2023-11-14T22:13:35Z",
+                "exit": 1,
+                "alert": "sent",
+            }), encoding="utf-8")
+
+            # Second poll on the same failed run 101 returns 0 (one email per failed run).
+            rc2 = self.mod.check_scheduled(
+                runner=_make_runner(runs=failed_101), root=root, now=lambda: 1700000100.0, out=lambda _: None
+            )
+            self.assertEqual(rc2, 0)
+
+            # A new failed run 102 returns 1 again.
+            rc3 = self.mod.check_scheduled(
+                runner=_make_runner(runs=failed_102), root=root, now=lambda: 1700000200.0, out=lambda _: None
+            )
+            self.assertEqual(rc3, 1)
+
+    def test_scheduled_namespaces_state_by_repo_and_branch_and_skips_unchanged_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            last_path = root / "build" / "automations" / "recto-code-scanning" / "last.json"
+            last_path.parent.mkdir(parents=True)
+
+            # Acknowledge alert #7 on rizonesoft/Recto@main.
+            runner_7 = _make_runner(alert_pages={1: (0, [_alert(7)], "")})
+            self.assertEqual(
+                self.mod.check_scheduled(runner=runner_7, root=root, now=lambda: 1700000010.0, out=lambda _: None),
+                1,
+            )
+            last_path.write_text(json.dumps({
+                "started": "2023-11-14T22:13:25Z",
+                "finished": "2023-11-14T22:13:35Z",
+                "exit": 1,
+                "alert": "sent",
+            }), encoding="utf-8")
+            self.assertEqual(
+                self.mod.check_scheduled(runner=runner_7, root=root, now=lambda: 1700000100.0, out=lambda _: None),
+                0,
+            )
+
+            # A different repo with alert #7 MUST NOT inherit rizonesoft/Recto@main's acknowledgment.
+            self.assertEqual(
+                self.mod.check_scheduled(
+                    runner=runner_7, repo="example/fork", root=root, now=lambda: 1700000200.0, out=lambda _: None
+                ),
+                1,
+            )
+
+            # Unchanged clean poll on rizonesoft/Recto@main performs zero atomic replaces.
+            writes = []
+            def tracking_replace(src, dst):
+                writes.append((src, dst))
+                return os.replace(src, dst)
+
+            rc_clean = self.mod.check_scheduled(
+                runner=runner_7, root=root, now=lambda: 1700000300.0, out=lambda _: None, replace=tracking_replace
+            )
+            self.assertEqual(rc_clean, 0)
+            self.assertEqual(len(writes), 0, f"expected 0 writes on unchanged poll, got {writes}")
 
     def test_scheduled_delivery_confirmation_retry_foreign_receipt_batching_and_atomic_state(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -229,13 +407,20 @@ class CodeScanningTests(unittest.TestCase):
             def broken_replace(_src, _dst):
                 raise OSError("disk full")
             with self.assertRaises(OSError):
-                self.mod._write_json_atomic(state_path, {"acknowledged": []}, replace=broken_replace)
+                self.mod._write_json_atomic(state_path, {"scopes": {}}, replace=broken_replace)
             self.assertEqual(state_path.read_text(encoding="utf-8"), before)
 
-    def test_verify_sarif_requires_codeql_security_extended_and_all_first_party_roots(self):
+    def test_verify_sarif_requires_codeql_security_extended_and_first_party_translation_units(self):
         with tempfile.TemporaryDirectory() as tmp:
             sarif_dir = Path(tmp)
-            rules = [{"id": f"cpp/rule-{i}", "properties": {"tags": ["security"]}} for i in range(12)]
+            high_rules = [
+                {"id": f"cpp/high-sec-{i}", "properties": {"tags": ["security"], "precision": "high"}}
+                for i in range(12)
+            ]
+            medium_rules = [
+                {"id": f"cpp/med-sec-{i}", "properties": {"tags": ["security"], "precision": "medium"}}
+                for i in range(12)
+            ]
             artifacts = [
                 {"location": {"uri": "src/pdf/document.cpp"}},
                 {"location": {"uri": "src/core/runtime.cpp"}},
@@ -247,7 +432,15 @@ class CodeScanningTests(unittest.TestCase):
             doc = {
                 "version": "2.1.0",
                 "runs": [{
-                    "tool": {"driver": {"name": "CodeQL", "rules": rules}},
+                    "properties": {
+                        "codeqlConfigSummary": {
+                            "queries": [{"type": "builtinSuite", "uses": "security-extended"}]
+                        }
+                    },
+                    "tool": {
+                        "driver": {"name": "CodeQL"},
+                        "extensions": [{"name": "codeql/cpp-queries", "rules": high_rules + medium_rules}],
+                    },
                     "invocations": [{"executionSuccessful": True}],
                     "artifacts": artifacts,
                     "results": [],
@@ -257,21 +450,37 @@ class CodeScanningTests(unittest.TestCase):
             code, errs, summary = self.mod.verify_sarif_dir(sarif_dir)
             self.assertEqual((code, errs), (0, []))
             self.assertEqual(summary["extracted_files"], 6)
+            self.assertEqual(summary["medium_security_rules"], 12)
 
-            # Missing src/pdf/ must fail.
-            doc["runs"][0]["artifacts"] = artifacts[1:]
+            # Header-only artifact under src/pdf/ must NOT certify src/pdf/ translation units.
+            doc["runs"][0]["artifacts"] = [{"location": {"uri": "src/pdf/error.h"}}] + artifacts[1:]
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_no_pdf, errs_no_pdf, _ = self.mod.verify_sarif_dir(sarif_dir)
-            self.assertEqual(code_no_pdf, 1)
-            self.assertTrue(any("src/pdf/" in e for e in errs_no_pdf), errs_no_pdf)
+            code_hdr, errs_hdr, _ = self.mod.verify_sarif_dir(sarif_dir)
+            self.assertEqual(code_hdr, 1)
+            self.assertTrue(any("src/pdf/" in e for e in errs_hdr), errs_hdr)
 
-            # Missing security-extended rules must fail.
+            # Default-only C++ suite (24 high-precision security rules, 0 medium-precision) must FAIL
+            # even though total rule count stays identical (24 >= 10).
             doc["runs"][0]["artifacts"] = artifacts
-            doc["runs"][0]["tool"]["driver"]["rules"] = [{"id": "cpp/only-one", "properties": {"tags": ["correctness"]}}]
+            default_only_rules = [
+                {"id": f"cpp/default-high-{i}", "properties": {"tags": ["security"], "precision": "high"}}
+                for i in range(24)
+            ]
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = default_only_rules
             (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
-            code_no_sec, errs_no_sec, _ = self.mod.verify_sarif_dir(sarif_dir)
-            self.assertEqual(code_no_sec, 1)
-            self.assertTrue(any("security-extended" in e for e in errs_no_sec), errs_no_sec)
+            code_def, errs_def, _ = self.mod.verify_sarif_dir(sarif_dir)
+            self.assertEqual(code_def, 1)
+            self.assertTrue(any("security-extended" in e for e in errs_def), errs_def)
+
+            # Mismatched codeqlConfigSummary ("default") must also FAIL even with medium rules present.
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = high_rules + medium_rules
+            doc["runs"][0]["properties"]["codeqlConfigSummary"]["queries"] = [
+                {"type": "builtinSuite", "uses": "default"}
+            ]
+            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
+            code_cfg, errs_cfg, _ = self.mod.verify_sarif_dir(sarif_dir)
+            self.assertEqual(code_cfg, 1)
+            self.assertTrue(any("codeqlConfigSummary" in e for e in errs_cfg), errs_cfg)
 
     def test_codeql_workflow_triggers_permissions_and_skill_contract(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -283,7 +492,7 @@ class CodeScanningTests(unittest.TestCase):
         self.assertIn("-NoSccache", text)
         self.assertIn("--verify-sarif", text)
 
-        # Extract push paths and verify representative manifest, library, and engine paths match.
+        # Extract push paths and verify representative manifest, library, engine, and verifier paths match.
         paths_block = re.search(r"paths:\n((?:\s+-\s+'[^']+'\n)+)", text)
         self.assertIsNotNone(paths_block)
         patterns = re.findall(r"-\s+'([^']+)'", paths_block.group(1))
@@ -294,6 +503,7 @@ class CodeScanningTests(unittest.TestCase):
             "vcpkg-configuration.json",
             "CMakeLists.txt",
             "build/build.ps1",
+            "scripts/code-scanning.py",
             ".github/workflows/codeql.yml",
         ):
             matched = any(

@@ -3,22 +3,25 @@
 
 Modes:
     python scripts/code-scanning.py
-        Verify the latest codeql.yml run on main succeeded, an analysis exists on refs/heads/main,
-        and list every open alert on refs/heads/main (paginated).
-        Exits 0 when the latest scan succeeded with an uploaded analysis and 0 open alerts,
-        1 when any open alert exists or the latest scan failed/cancelled or no analysis exists,
+        Verify the latest codeql.yml run on main succeeded, a matching CodeQL C++ analysis
+        with empty error exists for that run's headSha on refs/heads/main, and list every
+        open alert on refs/heads/main (paginated).
+        Exits 0 when the latest scan succeeded with a matching analysis and 0 open alerts,
+        1 when any open alert exists or the latest scan failed/cancelled or no matching analysis exists,
         2 when the latest codeql.yml run on main is still queued or in progress,
-        3 when GitHub / gh could not be read (never 0).
+        3 when GitHub / gh could not be read or returned malformed records (never 0).
 
     python scripts/code-scanning.py --scheduled
         The recto-code-scanning automation: exits 1 once per new open alert (in bounded batches
-        fitting alert.py's 60-line email tail) until build/automations/recto-code-scanning/last.json
-        confirms the reporting run's email was sent; persists state atomically in
+        fitting alert.py's 60-line email tail) and once per failed workflow run (keyed by
+        databaseId) until build/automations/recto-code-scanning/last.json confirms the reporting
+        run's email was sent; persists state atomically per (repo, branch) in
         build/code-scanning/state.json.
 
     python scripts/code-scanning.py --verify-sarif <dir>
         Verify that <dir> holds CodeQL SARIF 2.1.0 output with the security-extended query suite
-        and extracted first-party C++ sources across all production source roots.
+        (medium-precision security rules and config summary when present) and extracted
+        first-party C++ translation units across all production source roots.
 
 Stdlib only.
 """
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import copy
 import json
 import os
 from pathlib import Path
@@ -38,10 +42,14 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 REPO_DEFAULT = "rizonesoft/Recto"
 WORKFLOW_NAME = "codeql.yml"
+CODEQL_CATEGORY = "/language:c-cpp"
 BRANCH_DEFAULT = "main"
 TASK_NAME = "recto-code-scanning"
 STATE_FILE = Path("build") / "code-scanning" / "state.json"
 MAX_ALERTS_PER_EMAIL = 15
+MIN_SECURITY_RULES = 10
+MIN_MEDIUM_SECURITY_RULES = 10
+TRANSLATION_UNIT_SUFFIXES = (".cpp", ".cc", ".cxx", ".c")
 REQUIRED_SOURCE_ROOTS = (
     "src/pdf/",
     "src/core/",
@@ -53,7 +61,7 @@ REQUIRED_SOURCE_ROOTS = (
 
 
 class Unavailable(Exception):
-    """GitHub / gh could not be read; never treated as clean."""
+    """GitHub / gh could not be read or returned malformed data; never treated as clean."""
 
 
 def run_gh(args: list[str], *, timeout: int = 60) -> tuple[int, str, str]:
@@ -74,9 +82,14 @@ def _parse_json(text: str, context: str):
         raise Unavailable(f"{context}: invalid JSON: {exc}") from None
 
 
-def fetch_latest_workflow_run(runner, branch: str = BRANCH_DEFAULT) -> dict | None:
+def _is_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def fetch_latest_workflow_run(runner, *, repo: str = REPO_DEFAULT, branch: str = BRANCH_DEFAULT) -> dict | None:
     rc, out, err = runner([
         "run", "list",
+        "--repo", repo,
         "--workflow", WORKFLOW_NAME,
         "--branch", branch,
         "--limit", "5",
@@ -87,13 +100,40 @@ def fetch_latest_workflow_run(runner, branch: str = BRANCH_DEFAULT) -> dict | No
     runs = _parse_json(out, "gh run list")
     if not isinstance(runs, list):
         raise Unavailable("gh run list returned non-list JSON")
-    return runs[0] if runs else None
+    if not runs:
+        return None
+    if not isinstance(runs[0], dict):
+        raise Unavailable("gh run list returned non-object run entry")
+    return runs[0]
 
 
-def fetch_latest_analysis(runner, repo: str, ref: str) -> dict | None:
+def _analysis_matches(analysis: dict, *, head_sha: str | None, category: str) -> bool:
+    if not isinstance(analysis, dict):
+        return False
+    tool = analysis.get("tool")
+    tool_name = str(tool.get("name") or "") if isinstance(tool, dict) else ""
+    if "codeql" not in tool_name.lower():
+        return False
+    if str(analysis.get("category") or "") != category:
+        return False
+    if str(analysis.get("error") or "").strip():
+        return False
+    if head_sha and str(analysis.get("commit_sha") or "") != head_sha:
+        return False
+    return True
+
+
+def fetch_latest_analysis(
+    runner,
+    repo: str,
+    ref: str,
+    *,
+    head_sha: str | None = None,
+    category: str = CODEQL_CATEGORY,
+) -> dict | None:
     rc, out, err = runner([
         "api",
-        f"repos/{repo}/code-scanning/analyses?ref={ref}&per_page=5",
+        f"repos/{repo}/code-scanning/analyses?ref={ref}&per_page=20",
     ])
     if rc != 0:
         combined = f"{err}\n{out}".lower()
@@ -103,7 +143,10 @@ def fetch_latest_analysis(runner, repo: str, ref: str) -> dict | None:
     analyses = _parse_json(out, "code-scanning/analyses")
     if not isinstance(analyses, list):
         raise Unavailable("code-scanning/analyses returned non-list JSON")
-    return analyses[0] if analyses else None
+    for item in analyses:
+        if _analysis_matches(item, head_sha=head_sha, category=category):
+            return item
+    return None
 
 
 def fetch_open_alerts(runner, repo: str, ref: str) -> list[dict]:
@@ -119,10 +162,15 @@ def fetch_open_alerts(runner, repo: str, ref: str) -> list[dict]:
         batch = _parse_json(out, f"code-scanning/alerts page {page}")
         if not isinstance(batch, list):
             raise Unavailable(f"code-scanning/alerts page {page} returned non-list JSON")
-        for item in batch:
+        for idx, item in enumerate(batch):
             if not isinstance(item, dict):
-                continue
-            if item.get("state") != "open":
+                raise Unavailable(f"code-scanning/alerts page {page} entry {idx} is not an object")
+            state = item.get("state")
+            if not _is_int(item.get("number")) or not isinstance(state, str) or not state:
+                raise Unavailable(
+                    f"code-scanning/alerts page {page} entry {idx} missing valid number or state"
+                )
+            if state != "open":
                 continue
             inst = item.get("most_recent_instance")
             if isinstance(inst, dict) and inst.get("ref") and inst.get("ref") != ref:
@@ -131,7 +179,7 @@ def fetch_open_alerts(runner, repo: str, ref: str) -> list[dict]:
         if len(batch) < 100:
             break
         page += 1
-    alerts.sort(key=lambda a: int(a.get("number", 0)))
+    alerts.sort(key=lambda a: int(a["number"]))
     return alerts
 
 
@@ -151,22 +199,29 @@ def format_alert(alert: dict) -> str:
 def check_ordinary(*, runner=run_gh, repo: str = REPO_DEFAULT, branch: str = BRANCH_DEFAULT, out=print) -> int:
     ref = f"refs/heads/{branch}"
     try:
-        latest_run = fetch_latest_workflow_run(runner, branch=branch)
+        latest_run = fetch_latest_workflow_run(runner, repo=repo, branch=branch)
         if latest_run is None:
             out(f"code-scanning: no {WORKFLOW_NAME} workflow run found on {branch}")
             return 1
         status = str(latest_run.get("status") or "")
         conclusion = str(latest_run.get("conclusion") or "")
         run_url = str(latest_run.get("url") or "")
+        head_sha = str(latest_run.get("headSha") or "")
         if status != "completed":
             out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} is {status} ({run_url})")
             return 2
         if conclusion != "success":
             out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} ended with {conclusion} ({run_url})")
             return 1
-        analysis = fetch_latest_analysis(runner, repo=repo, ref=ref)
+        if not head_sha:
+            out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} has no headSha ({run_url})")
+            return 1
+        analysis = fetch_latest_analysis(runner, repo=repo, ref=ref, head_sha=head_sha)
         if analysis is None:
-            out(f"code-scanning: no uploaded analysis found on {ref}")
+            out(
+                f"code-scanning: no clean CodeQL {CODEQL_CATEGORY} analysis found on {ref} "
+                f"for {head_sha[:12]}"
+            )
             return 1
         alerts = fetch_open_alerts(runner, repo=repo, ref=ref)
     except Unavailable as exc:
@@ -222,6 +277,38 @@ def alert_delivered(root: Path, raised_at: float) -> bool:
     return began is not None and ended is not None and began - 1 <= raised_at <= ended + 1
 
 
+def _load_scoped_state(raw: dict | None, scope_key: str) -> tuple[dict, dict]:
+    """Return (root_state_dict, bucket_dict) namespaced by '<repo>@<branch>'."""
+    default_key = f"{REPO_DEFAULT}@{BRANCH_DEFAULT}"
+    if isinstance(raw, dict) and isinstance(raw.get("scopes"), dict):
+        root_state = copy.deepcopy(raw)
+    elif isinstance(raw, dict) and any(k in raw for k in ("acknowledged", "raised_alerts", "raised_at")):
+        # Migrate legacy flat state into the default scope.
+        root_state = {"scopes": {default_key: copy.deepcopy(raw)}}
+    else:
+        root_state = {"scopes": {}}
+    bucket = root_state["scopes"].get(scope_key)
+    if not isinstance(bucket, dict):
+        bucket = {}
+    return root_state, bucket
+
+
+def _save_scoped_state(
+    state_path: Path,
+    raw_on_disk: dict | None,
+    root_state: dict,
+    scope_key: str,
+    bucket: dict,
+    *,
+    replace=os.replace,
+) -> dict:
+    updated = copy.deepcopy(root_state)
+    updated.setdefault("scopes", {})[scope_key] = bucket
+    if updated != raw_on_disk:
+        _write_json_atomic(state_path, updated, replace=replace)
+    return updated
+
+
 def check_scheduled(
     *,
     runner=run_gh,
@@ -234,70 +321,133 @@ def check_scheduled(
     batch_limit: int = MAX_ALERTS_PER_EMAIL,
 ) -> int:
     ref = f"refs/heads/{branch}"
+    scope_key = f"{repo}@{branch}"
     state_path = Path(root) / STATE_FILE
-    state = _read_json_file(state_path) or {}
-    acknowledged = {int(n) for n in state.get("acknowledged", []) if isinstance(n, int)}
-    raised_at = state.get("raised_at")
-    raised_alerts = [int(n) for n in state.get("raised_alerts", []) if isinstance(n, int)]
-    if raised_alerts and isinstance(raised_at, (int, float)) and alert_delivered(root, float(raised_at)):
-        acknowledged.update(raised_alerts)
-        raised_alerts = []
-        raised_at = None
+    raw_on_disk = _read_json_file(state_path)
+    root_state, bucket = _load_scoped_state(raw_on_disk, scope_key)
+
+    acknowledged = {int(n) for n in bucket.get("acknowledged", []) if _is_int(n)}
+    acknowledged_failed_runs = [int(n) for n in bucket.get("acknowledged_failed_runs", []) if _is_int(n)]
+    raised_at = bucket.get("raised_at")
+    raised_alerts = [int(n) for n in bucket.get("raised_alerts", []) if _is_int(n)]
+    raised_failed_run = bucket.get("raised_failed_run") if _is_int(bucket.get("raised_failed_run")) else None
+
+    # Persist confirmed delivery receipts BEFORE any GitHub calls or early returns so a subsequent
+    # pending poll or outage cannot overwrite last.json and lose the receipt.
+    if isinstance(raised_at, (int, float)) and (raised_alerts or raised_failed_run is not None):
+        if alert_delivered(root, float(raised_at)):
+            if raised_alerts:
+                acknowledged.update(raised_alerts)
+            if raised_failed_run is not None and raised_failed_run not in acknowledged_failed_runs:
+                acknowledged_failed_runs.append(raised_failed_run)
+                acknowledged_failed_runs = acknowledged_failed_runs[-20:]
+            raised_alerts = []
+            raised_failed_run = None
+            raised_at = None
+            confirmed_bucket = {
+                "acknowledged": sorted(acknowledged),
+                "acknowledged_failed_runs": acknowledged_failed_runs,
+                "raised_alerts": [],
+                "raised_failed_run": None,
+                "raised_at": None,
+            }
+            root_state = _save_scoped_state(
+                state_path, raw_on_disk, root_state, scope_key, confirmed_bucket, replace=replace
+            )
+            raw_on_disk = copy.deepcopy(root_state)
 
     try:
-        latest_run = fetch_latest_workflow_run(runner, branch=branch)
+        latest_run = fetch_latest_workflow_run(runner, repo=repo, branch=branch)
         if latest_run is None:
             out(f"code-scanning: no {WORKFLOW_NAME} workflow run found on {branch}")
             return 1
         status = str(latest_run.get("status") or "")
         conclusion = str(latest_run.get("conclusion") or "")
         run_url = str(latest_run.get("url") or "")
-        if status != "completed":
-            out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} is {status} ({run_url}); waiting")
-            return 0
-        if conclusion != "success":
-            out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} ended with {conclusion} ({run_url})")
-            return 1
-        analysis = fetch_latest_analysis(runner, repo=repo, ref=ref)
-        if analysis is None:
-            out(f"code-scanning: no uploaded analysis found on {ref}")
-            return 1
+        run_id = latest_run.get("databaseId") if _is_int(latest_run.get("databaseId")) else None
+        head_sha = str(latest_run.get("headSha") or "")
+
+        run_error: str | None = None
+        if status == "completed":
+            if conclusion != "success":
+                run_error = f"code-scanning: latest {WORKFLOW_NAME} run on {branch} ended with {conclusion} ({run_url})"
+            elif not head_sha:
+                run_error = f"code-scanning: latest {WORKFLOW_NAME} run on {branch} has no headSha ({run_url})"
+            else:
+                analysis = fetch_latest_analysis(runner, repo=repo, ref=ref, head_sha=head_sha)
+                if analysis is None:
+                    run_error = (
+                        f"code-scanning: no clean CodeQL {CODEQL_CATEGORY} analysis found on {ref} "
+                        f"for {head_sha[:12]}"
+                    )
+
+        # Always read open alerts (even while a newer push scan is in_progress) so existing
+        # unreported alerts from the preceding scan are never delayed by a running workflow.
         alerts = fetch_open_alerts(runner, repo=repo, ref=ref)
     except Unavailable as exc:
         out(f"code-scanning: unavailable: {exc}")
         return 3
 
-    open_numbers = {int(a["number"]) for a in alerts if isinstance(a.get("number"), int)}
-    # Prune closed/dismissed alerts from acknowledged so state stays compact.
+    open_numbers = {int(a["number"]) for a in alerts}
     acknowledged &= open_numbers
-    unacked = [a for a in alerts if isinstance(a.get("number"), int) and int(a["number"]) not in acknowledged]
-    if not unacked:
-        _write_json_atomic(
-            state_path,
-            {"acknowledged": sorted(acknowledged), "raised_alerts": [], "raised_at": None},
-            replace=replace,
-        )
-        out(f"code-scanning: 0 unacknowledged open alerts on {branch} ({len(alerts)} total open)")
-        return 0
+    unacked = [a for a in alerts if int(a["number"]) not in acknowledged]
 
-    batch = unacked[:batch_limit]
-    remaining = len(unacked) - len(batch)
-    stamp = float(now())
-    _write_json_atomic(
-        state_path,
-        {
+    if unacked:
+        batch = unacked[:batch_limit]
+        remaining = len(unacked) - len(batch)
+        stamp = float(now())
+        next_bucket = {
             "acknowledged": sorted(acknowledged),
+            "acknowledged_failed_runs": acknowledged_failed_runs,
             "raised_alerts": [int(a["number"]) for a in batch],
+            "raised_failed_run": None,
             "raised_at": stamp,
-        },
-        replace=replace,
-    )
-    out(f"code-scanning: {len(batch)} new open alert(s) on {branch} (showing {len(batch)} of {len(unacked)}):")
-    for alert in batch:
-        out(f"  {format_alert(alert)}")
-    if remaining > 0:
-        out(f"  ... and {remaining} more open alert(s) queued for the next poll")
-    return 1
+        }
+        _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, next_bucket, replace=replace)
+        out(f"code-scanning: {len(batch)} new open alert(s) on {branch} (showing {len(batch)} of {len(unacked)}):")
+        for alert in batch:
+            out(f"  {format_alert(alert)}")
+        if remaining > 0:
+            out(f"  ... and {remaining} more open alert(s) queued for the next poll")
+        return 1
+
+    if run_error is not None:
+        if run_id is not None and run_id in acknowledged_failed_runs:
+            clean_bucket = {
+                "acknowledged": sorted(acknowledged),
+                "acknowledged_failed_runs": acknowledged_failed_runs,
+                "raised_alerts": [],
+                "raised_failed_run": None,
+                "raised_at": None,
+            }
+            _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, clean_bucket, replace=replace)
+            out(f"{run_error} (already reported for run {run_id})")
+            return 0
+        stamp = float(now())
+        fail_bucket = {
+            "acknowledged": sorted(acknowledged),
+            "acknowledged_failed_runs": acknowledged_failed_runs,
+            "raised_alerts": [],
+            "raised_failed_run": run_id,
+            "raised_at": stamp,
+        }
+        _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, fail_bucket, replace=replace)
+        out(run_error)
+        return 1
+
+    clean_bucket = {
+        "acknowledged": sorted(acknowledged),
+        "acknowledged_failed_runs": acknowledged_failed_runs,
+        "raised_alerts": [],
+        "raised_failed_run": None,
+        "raised_at": None,
+    }
+    _save_scoped_state(state_path, raw_on_disk, root_state, scope_key, clean_bucket, replace=replace)
+    if status != "completed":
+        out(f"code-scanning: latest {WORKFLOW_NAME} run on {branch} is {status} ({run_url}); 0 unacknowledged open alerts")
+    else:
+        out(f"code-scanning: 0 unacknowledged open alerts on {branch} ({len(alerts)} total open)")
+    return 0
 
 
 def _normalize_sarif_uri(uri: str) -> str:
@@ -309,6 +459,13 @@ def _normalize_sarif_uri(uri: str) -> str:
     return text.lstrip("/").lower()
 
 
+def _matches_source_root_tu(path: str, root: str) -> bool:
+    root_l = root.lower()
+    if not path.endswith(TRANSLATION_UNIT_SUFFIXES):
+        return False
+    return path.startswith(root_l) or f"/{root_l}" in path
+
+
 def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUIRED_SOURCE_ROOTS) -> tuple[int, list[str], dict]:
     sarif_files = sorted(Path(sarif_dir).glob("*.sarif"))
     if not sarif_files:
@@ -317,8 +474,11 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
     errors: list[str] = []
     extracted_paths: set[str] = set()
     rule_ids: set[str] = set()
+    security_rule_ids: set[str] = set()
+    medium_security_rule_ids: set[str] = set()
     has_codeql_driver = False
-    has_security_extended = False
+    saw_config_summary = False
+    config_uses_security_extended = False
 
     for path in sarif_files:
         try:
@@ -342,6 +502,15 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
             if isinstance(driver_name, str) and "codeql" in driver_name.lower():
                 has_codeql_driver = True
 
+            # Check CodeQL config summary when emitted in run.properties.
+            run_props = run.get("properties") if isinstance(run.get("properties"), dict) else {}
+            cfg = run_props.get("codeqlConfigSummary")
+            if isinstance(cfg, dict) and isinstance(cfg.get("queries"), list):
+                saw_config_summary = True
+                for entry in cfg["queries"]:
+                    if isinstance(entry, dict) and "security-extended" in str(entry.get("uses") or "").lower():
+                        config_uses_security_extended = True
+
             # Collect rules from driver.rules and tool.extensions[].rules.
             rule_lists = []
             if isinstance(driver.get("rules"), list):
@@ -354,23 +523,20 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
                     if not isinstance(rule, dict):
                         continue
                     rid = rule.get("id")
-                    if isinstance(rid, str) and rid:
-                        rule_ids.add(rid)
+                    if not isinstance(rid, str) or not rid:
+                        continue
+                    rule_ids.add(rid)
                     props = rule.get("properties") if isinstance(rule.get("properties"), dict) else {}
-                    tags = props.get("tags") if isinstance(props.get("tags"), list) else []
-                    # security-extended includes medium-precision / extended security queries (e.g. cpp/tainted-*,
-                    # cpp/cleartext-*, cpp/weak-crypto, or security-severity tagged rules).
-                    if "security" in [str(t).lower() for t in tags]:
-                        has_security_extended = True
+                    tags = [str(t).lower() for t in (props.get("tags") or [])] if isinstance(props.get("tags"), list) else []
+                    precision = str(props.get("precision") or "").lower()
+                    if "security" in tags:
+                        security_rule_ids.add(rid)
+                        if precision == "medium":
+                            medium_security_rule_ids.add(rid)
 
-            # Check invocations / automationDetails for explicit security-extended suite reference too.
             for inv in run.get("invocations") or []:
-                if isinstance(inv, dict):
-                    if inv.get("executionSuccessful") is False:
-                        errors.append(f"{path.name}: invocation executionSuccessful is false")
-                    inv_text = json.dumps(inv).lower()
-                    if "security-extended" in inv_text:
-                        has_security_extended = True
+                if isinstance(inv, dict) and inv.get("executionSuccessful") is False:
+                    errors.append(f"{path.name}: invocation executionSuccessful is false")
 
             for art in run.get("artifacts") or []:
                 if isinstance(art, dict):
@@ -381,21 +547,27 @@ def verify_sarif_dir(sarif_dir: Path, *, required_roots: tuple[str, ...] = REQUI
 
     if not has_codeql_driver:
         errors.append("no CodeQL tool.driver.name found in SARIF runs")
-    if not has_security_extended or len(rule_ids) < 10:
+    if saw_config_summary and not config_uses_security_extended:
+        errors.append("codeqlConfigSummary does not declare security-extended")
+    if len(security_rule_ids) < MIN_SECURITY_RULES or len(medium_security_rule_ids) < MIN_MEDIUM_SECURITY_RULES:
         errors.append(
-            f"security-extended query suite not verified (has_security={has_security_extended}, rules={len(rule_ids)})"
+            "security-extended query suite not verified "
+            f"(security_rules={len(security_rule_ids)}, medium_security_rules={len(medium_security_rule_ids)}, "
+            f"total_rules={len(rule_ids)})"
         )
     missing_roots = [
         root for root in required_roots
-        if not any((root.lower() in p) and p.endswith((".cpp", ".cc", ".cxx", ".c", ".h", ".hpp")) for p in extracted_paths)
+        if not any(_matches_source_root_tu(p, root) for p in extracted_paths)
     ]
     if missing_roots:
-        errors.append(f"missing extracted first-party C++ sources for: {', '.join(missing_roots)}")
+        errors.append(f"missing extracted first-party C++ translation units for: {', '.join(missing_roots)}")
 
     summary = {
         "sarif_files": len(sarif_files),
         "extracted_files": len(extracted_paths),
         "rules": len(rule_ids),
+        "security_rules": len(security_rule_ids),
+        "medium_security_rules": len(medium_security_rule_ids),
         "missing_roots": missing_roots,
     }
     return (0 if not errors else 1), errors, summary
@@ -417,7 +589,8 @@ def main(argv: list[str] | None = None, *, runner=run_gh, root: Path = ROOT, out
             out(
                 f"code-scanning --verify-sarif: OK ({summary['sarif_files']} SARIF file(s), "
                 f"{summary['extracted_files']} extracted artifact(s), {summary['rules']} rule(s), "
-                f"all {len(REQUIRED_SOURCE_ROOTS)} first-party C++ roots present)"
+                f"{summary['medium_security_rules']} medium-precision security rule(s), "
+                f"all {len(REQUIRED_SOURCE_ROOTS)} first-party C++ TU roots present)"
             )
         return code
 

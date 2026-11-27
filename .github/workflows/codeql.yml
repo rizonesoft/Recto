@@ -20,6 +20,7 @@ on:
       - 'Directory.Build.*'
       - 'Recto.sln'
       - 'build/**'
+      - 'scripts/code-scanning.py'
       - '.github/workflows/codeql.yml'
   schedule:
     - cron: '23 4 * * 1'
