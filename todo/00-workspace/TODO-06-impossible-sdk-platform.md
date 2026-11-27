@@ -26,6 +26,9 @@ frozen: true
 - -> XREF: D01 T03 §4 -- the real libFuzzer entry points that §13 runs under ASan and UBSan for 10 seconds each.
 - -> XREF: D10 T04 §1 -- the move to `libs/vellum` that §7 and §8 build on.
 - -> XREF: D02 T02 §3 -- the tile texture cache and Direct3D 11 upload that §9 moves onto the SDK `gpu` tier and whose budget §4 takes from the SDK.
+- `impossible-os` `todo/11-apps/TODO-05-pdf-viewer.md` §21 -- the OS transfer that reconciles its Recto sections against this file; each OS obligation it gives Recto points here
+- `impossible-sdk` `todo/09-platform/` -- the SDK sections this file waits for: C++ `TODO-01-cxx.md`, boundary `TODO-02-boundary.md`, GPU `TODO-03-gpu.md`, arm64 `TODO-04-arm64.md`, toolkit interfaces `TODO-05-toolkits.md`
+- `impossible-sdk` `tools/contribute.py` -- how this repository builds a missing SDK feature itself: `start` gives a worktree of the SDK main, `finish` pushes the reviewed change and moves this repository's `sdk.json` pin
 
 ## Outcome
 
