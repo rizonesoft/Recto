@@ -2323,7 +2323,7 @@ def _flow_bracket_delta(text: str) -> int:
 def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[str, list[str]]]:
     """Parse a YAML mapping at exact `map_indent`, stopping each entry before the next key at <= map_indent."""
     entries: dict[str, tuple[str, list[str]]] = {}
-    key_re = re.compile(r"""^(?:'([^']+)'|"([^"]+)"|([A-Za-z0-9_.-]+)):(?:[ \t]+(.*)|[ \t]*)$""")
+    key_re = re.compile(r"""^(?:'([^']+)'|"([^"]+)"|([A-Za-z0-9_.-]+))[ \t]*:(?:[ \t]+(.*)|[ \t]*)$""")
     idx = 0
     while idx < len(lines):
         cleaned = _strip_yaml_comment(lines[idx])
@@ -2774,6 +2774,8 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertEqual(_validate_analyze_workflow(with_multiline_flow_main), [])
         with_quoted_branches_key = workflow.replace("branches: [main]", "'branches': [main]", 1)
         self.assertEqual(_validate_analyze_workflow(with_quoted_branches_key), [])
+        with_spaced_colon_key = workflow.replace("branches: [main]", "branches : [main]", 1)
+        self.assertEqual(_validate_analyze_workflow(with_spaced_colon_key), [])
         with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
         with_tag_push_and_commented_sibling = workflow.replace(
