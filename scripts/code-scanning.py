@@ -18,7 +18,7 @@ Modes:
         run's email was sent; persists state atomically per (repo, branch) in
         build/code-scanning/state.json.
 
-    python scripts/code-scanning.py --verify-sarif <dir> (--codeql-cli <path> | --expected-rules <file>)
+    python scripts/code-scanning.py --verify-sarif <dir> --codeql-cli <path>
         Verify that <dir> holds CodeQL SARIF 2.1.0 output with required codeqlConfigSummary
         declaring security-extended, every query ID resolved from the installed CodeQL
         cpp-security-extended.qls suite, and extracted repository-relative first-party C++
@@ -589,11 +589,14 @@ def verify_sarif_dir(
     if missing_roots:
         errors.append(f"missing extracted first-party C++ translation units for: {', '.join(missing_roots)}")
 
+    expected_set = set(expected_rule_ids)
+    matched_expected = len(expected_set & rule_ids)
     summary = {
         "sarif_files": len(sarif_files),
         "extracted_files": len(extracted_paths),
         "rules": len(rule_ids),
-        "expected_rules": len(expected_rule_ids),
+        "matched_expected_rules": matched_expected,
+        "expected_rules": len(expected_set),
         "missing_rules": missing_rules,
         "missing_roots": missing_roots,
     }
@@ -607,29 +610,16 @@ def main(argv: list[str] | None = None, *, runner=run_gh, root: Path = ROOT, out
     parser.add_argument("--scheduled", action="store_true", help="Alert-once mode for recto-code-scanning automation")
     parser.add_argument("--verify-sarif", metavar="DIR", help="Verify CodeQL SARIF extraction and suite in DIR")
     parser.add_argument("--codeql-cli", metavar="PATH", help="Path to CodeQL CLI for resolving security-extended rules")
-    parser.add_argument("--expected-rules", metavar="FILE", help="JSON list or newline-delimited expected rule IDs")
     args = parser.parse_args(argv)
 
     if args.verify_sarif:
-        if args.codeql_cli:
-            try:
-                expected_rules = resolve_security_extended_rules(args.codeql_cli)
-            except RuntimeError as exc:
-                out(f"code-scanning --verify-sarif: ERROR: {exc}")
-                return 1
-        elif args.expected_rules:
-            try:
-                raw_text = Path(args.expected_rules).read_text(encoding="utf-8").strip()
-                if raw_text.startswith("["):
-                    parsed = json.loads(raw_text)
-                    expected_rules = {str(x) for x in parsed if isinstance(x, str) and x}
-                else:
-                    expected_rules = {ln.strip() for ln in raw_text.splitlines() if ln.strip()}
-            except (OSError, json.JSONDecodeError) as exc:
-                out(f"code-scanning --verify-sarif: ERROR: could not read --expected-rules: {exc}")
-                return 1
-        else:
-            out("code-scanning --verify-sarif: ERROR: pass --codeql-cli or --expected-rules to verify the full suite")
+        if not args.codeql_cli:
+            out("code-scanning --verify-sarif: ERROR: --codeql-cli is required to resolve the installed security-extended suite")
+            return 1
+        try:
+            expected_rules = resolve_security_extended_rules(args.codeql_cli)
+        except RuntimeError as exc:
+            out(f"code-scanning --verify-sarif: ERROR: {exc}")
             return 1
 
         code, errors, summary = verify_sarif_dir(Path(args.verify_sarif), expected_rule_ids=expected_rules)
@@ -639,7 +629,8 @@ def main(argv: list[str] | None = None, *, runner=run_gh, root: Path = ROOT, out
             out(
                 f"code-scanning --verify-sarif: OK ({summary['sarif_files']} SARIF file(s), "
                 f"{summary['extracted_files']} extracted artifact(s), "
-                f"{summary['rules']}/{summary['expected_rules']} security-extended rule(s), "
+                f"{summary['matched_expected_rules']}/{summary['expected_rules']} security-extended rule(s) "
+                f"({summary['rules']} total), "
                 f"all {len(REQUIRED_SOURCE_ROOTS)} first-party C++ TU roots present)"
             )
         return code

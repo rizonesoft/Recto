@@ -554,11 +554,24 @@ class CodeScanningTests(unittest.TestCase):
             self.assertEqual(code_cfg, 1)
             self.assertTrue(any("codeqlConfigSummary" in e for e in errs_cfg), errs_cfg)
 
-            # CLI refuses --verify-sarif without --codeql-cli or --expected-rules.
+            # Extra non-suite rules must not inflate matched_expected_rules past expected_rules.
+            doc["runs"][0]["properties"] = {
+                "codeqlConfigSummary": {"queries": [{"type": "builtinSuite", "uses": "security-extended"}]}
+            }
+            doc["runs"][0]["tool"]["extensions"][0]["rules"] = all_rules + [{"id": "cpp/extra-custom-rule"}]
+            (sarif_dir / "cpp.sarif").write_text(json.dumps(doc), encoding="utf-8")
+            code_extra, errs_extra, sum_extra = self.mod.verify_sarif_dir(sarif_dir, expected_rule_ids=expected_ids)
+            self.assertEqual((code_extra, errs_extra), (0, []))
+            self.assertEqual(sum_extra["matched_expected_rules"], len(expected_ids))
+            self.assertEqual(sum_extra["rules"], len(expected_ids) + 1)
+
+            # CLI refuses --verify-sarif without --codeql-cli (and does not accept an override file).
             cli_lines: list[str] = []
             rc_missing_arg = self.mod.main(["--verify-sarif", str(sarif_dir)], out=cli_lines.append)
             self.assertEqual(rc_missing_arg, 1)
             self.assertTrue(any("--codeql-cli" in ln for ln in cli_lines), cli_lines)
+            with self.assertRaises(SystemExit):
+                self.mod.main(["--verify-sarif", str(sarif_dir), "--expected-rules", "x.json"], out=lambda _: None)
 
     def test_codeql_workflow_triggers_permissions_and_skill_contract(self):
         text = WORKFLOW.read_text(encoding="utf-8")
