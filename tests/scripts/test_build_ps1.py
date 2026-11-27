@@ -2271,22 +2271,23 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
         push_targets_main = False
         if push_match:
             push_body = push_match.group(1)
-            branches_match = re.search(r"(?m)^    branches:\s*(.*)$", push_body)
+            branches_match = re.search(r"(?m)^    branches:[ \t]*(.*)$", push_body)
+            branch_items: list[str] = []
             if branches_match:
                 inline = branches_match.group(1).strip()
                 if inline.startswith("[") and inline.endswith("]"):
-                    items = [item.strip().strip("'\"") for item in inline[1:-1].split(",")]
-                    push_targets_main = "main" in items
-                else:
+                    branch_items = [item.strip().strip("'\"") for item in inline[1:-1].split(",") if item.strip()]
+                elif not inline:
                     rest = push_body[branches_match.end():]
                     block_match = re.match(r"(?:\r?\n)(.*?)(?=^    [A-Za-z0-9_-]+:|\Z)", rest, re.DOTALL | re.MULTILINE)
                     if block_match:
-                        list_items = [
+                        branch_items = [
                             m.group(1).strip().strip("'\"")
-                            for m in re.finditer(r"(?m)^      -\s+(.+?)\s*$", block_match.group(1))
+                            for m in re.finditer(r"(?m)^      -[ \t]+(.+?)[ \t]*$", block_match.group(1))
                         ]
-                        push_targets_main = "main" in list_items
-            ignore_match = re.search(r"(?m)^    branches-ignore:\s*(.*)$", push_body)
+            if "main" in branch_items and not any(item.startswith("!") for item in branch_items):
+                push_targets_main = True
+            ignore_match = re.search(r"(?m)^    branches-ignore:[ \t]*(.*)$", push_body)
             if ignore_match:
                 push_targets_main = False
         if not push_targets_main:
@@ -2588,6 +2589,10 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(without_main_push)))
         with_branches_ignore = workflow.replace("branches: [main]", "branches-ignore:\n      - main", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_branches_ignore)))
+        with_negated_main = workflow.replace("branches: [main]", "branches: [main, '!main']", 1)
+        self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_negated_main)))
+        with_block_list_main = workflow.replace("branches: [main]", "branches:\n      - main", 1)
+        self.assertEqual(_validate_analyze_workflow(with_block_list_main), [])
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
