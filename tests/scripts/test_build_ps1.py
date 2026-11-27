@@ -2323,7 +2323,7 @@ def _flow_bracket_delta(text: str) -> int:
 def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[str, list[str]]]:
     """Parse a YAML mapping at exact `map_indent`, stopping each entry before the next key at <= map_indent."""
     entries: dict[str, tuple[str, list[str]]] = {}
-    key_re = re.compile(r"^([A-Za-z0-9_.-]+):(?:[ \t]+(.*)|[ \t]*)$")
+    key_re = re.compile(r"""^(?:'([^']+)'|"([^"]+)"|([A-Za-z0-9_.-]+)):(?:[ \t]+(.*)|[ \t]*)$""")
     idx = 0
     while idx < len(lines):
         cleaned = _strip_yaml_comment(lines[idx])
@@ -2336,8 +2336,8 @@ def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[st
         if indent == map_indent:
             m = key_re.match(cleaned[indent:])
             if m:
-                key = m.group(1)
-                inline = (m.group(2) or "").strip()
+                key = m.group(1) or m.group(2) or m.group(3)
+                inline = (m.group(4) or "").strip()
                 flow_depth = _flow_bracket_delta(inline)
                 child_lines: list[str] = []
                 idx += 1
@@ -2364,6 +2364,7 @@ def _split_yaml_mapping(lines: list[str], map_indent: int) -> dict[str, tuple[st
                     idx += 1
                 entries[key] = (inline, child_lines)
                 continue
+            entries["__unparsed__"] = (cleaned[indent:], [])
         idx += 1
     return entries
 
@@ -2435,14 +2436,16 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
             push_map = _split_yaml_mapping(push_lines, 4)
             branches_entry = push_map.get("branches")
             branch_items = _parse_yaml_list_value(branches_entry[0], branches_entry[1], 4) if branches_entry else None
-            disallowed_push_keys = {"branches-ignore", "tags", "tags-ignore", "paths"} & set(push_map)
-            if branch_items == ["main"] and not disallowed_push_keys:
+            unexpected_push_keys = set(push_map) - {"branches", "paths-ignore"}
+            if branch_items == ["main"] and not unexpected_push_keys:
                 push_targets_main = True
-            if "paths-ignore" in push_map:
+            if "paths-ignore" not in push_map:
+                errors.append("workflow push trigger missing doc-only paths-ignore")
+            else:
                 pi_inline, pi_lines = push_map["paths-ignore"]
                 pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
-                if pi_items is None or not (set(pi_items) <= _ALLOWED_DOC_PATHS_IGNORE):
-                    errors.append(f"workflow push paths-ignore excludes non-doc paths: {pi_items!r}")
+                if pi_items is None or set(pi_items) != _ALLOWED_DOC_PATHS_IGNORE:
+                    errors.append(f"workflow push paths-ignore must match doc-only exclusions: {pi_items!r}")
         if not push_targets_main:
             errors.append("workflow push trigger does not target main branch")
         if "pull_request" not in on_map:
@@ -2450,11 +2453,16 @@ def _validate_analyze_workflow(workflow_text: str) -> list[str]:
         else:
             _, pr_lines = on_map["pull_request"]
             pr_map = _split_yaml_mapping(pr_lines, 4)
-            if "paths-ignore" in pr_map:
+            unexpected_pr_keys = set(pr_map) - {"paths-ignore"}
+            if unexpected_pr_keys:
+                errors.append(f"workflow pull_request trigger has unexpected filter keys: {sorted(unexpected_pr_keys)!r}")
+            if "paths-ignore" not in pr_map:
+                errors.append("workflow pull_request trigger missing doc-only paths-ignore")
+            else:
                 pi_inline, pi_lines = pr_map["paths-ignore"]
                 pi_items = _parse_yaml_list_value(pi_inline, pi_lines, 4)
-                if pi_items is None or not (set(pi_items) <= _ALLOWED_DOC_PATHS_IGNORE):
-                    errors.append(f"workflow pull_request paths-ignore excludes non-doc paths: {pi_items!r}")
+                if pi_items is None or set(pi_items) != _ALLOWED_DOC_PATHS_IGNORE:
+                    errors.append(f"workflow pull_request paths-ignore must match doc-only exclusions: {pi_items!r}")
         if "workflow_dispatch" not in on_map:
             errors.append("workflow missing workflow_dispatch trigger")
     m = re.search(r"(?m)^  analyze:\s*\n(.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", workflow_text, re.DOTALL)
@@ -2764,6 +2772,8 @@ class MsvcAnalyzeContract(unittest.TestCase):
         self.assertEqual(_validate_analyze_workflow(with_comment_block_list_main), [])
         with_multiline_flow_main = workflow.replace("branches: [main]", "branches: [\n      main\n    ]", 1)
         self.assertEqual(_validate_analyze_workflow(with_multiline_flow_main), [])
+        with_quoted_branches_key = workflow.replace("branches: [main]", "'branches': [main]", 1)
+        self.assertEqual(_validate_analyze_workflow(with_quoted_branches_key), [])
         with_multiline_negated_main = workflow.replace("branches: [main]", "branches:\n      - main\n      -\n        '!main'", 1)
         self.assertTrue(any("main branch" in e for e in _validate_analyze_workflow(with_multiline_negated_main)))
         with_tag_push_and_commented_sibling = workflow.replace(
@@ -2778,6 +2788,24 @@ class MsvcAnalyzeContract(unittest.TestCase):
             1,
         )
         self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(with_pdf_paths_ignore)))
+        with_quoted_pdf_paths_ignore = workflow.replace(
+            "    paths-ignore:\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'",
+            "    'paths-ignore':\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'\n      - 'src/pdf/**'",
+            1,
+        )
+        self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(with_quoted_pdf_paths_ignore)))
+        without_push_paths_ignore = workflow.replace(
+            "    paths-ignore:\n      - 'todo/**'\n      - 'docs/**'\n      - '**/*.md'\n",
+            "",
+            1,
+        )
+        self.assertTrue(any("paths-ignore" in e for e in _validate_analyze_workflow(without_push_paths_ignore)))
+        with_pr_branch_filter = workflow.replace(
+            "  pull_request:\n",
+            "  pull_request:\n    branches: [release]\n",
+            1,
+        )
+        self.assertTrue(any("pull_request" in e for e in _validate_analyze_workflow(with_pr_branch_filter)))
         # Drop inputs.sha only inside the analyze job.
         idx = workflow.index("  analyze:")
         mutated_sha = workflow[:idx] + workflow[idx:].replace("ref: ${{ inputs.sha || github.sha }}", "ref: ${{ github.sha }}", 1)
